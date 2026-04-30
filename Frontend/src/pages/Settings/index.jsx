@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Form, Input, Select, Switch, Button, Typography,
-  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table,
+  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip
 } from 'antd';
 import {
   SaveOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
@@ -18,6 +18,20 @@ const MODULES = [
   'Dashboard', 'Sales', 'Operations', 'Tasks', 'Dispatch',
   'Staff', 'Inventory', 'Billing', 'Reports', 'Notifications', 'Settings',
 ];
+
+const MODULE_PERM_TYPES = {
+  Dashboard: ['read'],
+  Sales: ['read', 'add', 'edit', 'delete'],
+  Operations: ['read', 'add', 'edit', 'delete'],
+  Tasks: ['read', 'add', 'edit', 'delete'],
+  Dispatch: ['read', 'add', 'edit', 'delete'],
+  Staff: ['read', 'add', 'edit', 'delete'],
+  Inventory: ['read', 'add', 'edit', 'delete'],
+  Billing: ['read', 'add', 'edit', 'delete'],
+  Reports: ['read', 'add', 'edit', 'delete'],
+  Notifications: ['read'],
+  Settings: ['read', 'add', 'edit', 'delete'],
+};
 
 const ALL_PERMS = { view: true, create: true, edit: true, delete: true };
 const NO_PERMS  = { view: false, create: false, edit: false, delete: false };
@@ -54,11 +68,7 @@ export default function Settings() {
   const subBg      = isDark ? '#2a2a3a' : '#fafafa';
 
   // Roles
-  const [roles, setRoles]         = useState(initRoles);
-  const [editRole, setEditRole]   = useState(null);   // role being edited in modal
-  const [permDraft, setPermDraft] = useState(null);   // draft perms while editing
-  const [addRoleOpen, setAddRoleOpen] = useState(false);
-  const [newRoleName, setNewRoleName] = useState('');
+  const [roles] = useState(initRoles);
 
   // Users
   const [users, setUsers]       = useState(initUsers);
@@ -67,45 +77,6 @@ export default function Settings() {
 
   // Logo
   const [logoUrl, setLogoUrl] = useState('/hng logo new.png');
-
-  const openEditRole = (role) => {
-    setEditRole(role);
-    setPermDraft(JSON.parse(JSON.stringify(role.perms)));
-  };
-
-  const togglePerm = (module, perm) => {
-    setPermDraft(prev => ({
-      ...prev,
-      [module]: { ...prev[module], [perm]: !prev[module][perm] },
-    }));
-  };
-
-  const toggleAllModule = (module) => {
-    const all = Object.values(permDraft[module]).every(Boolean);
-    setPermDraft(prev => ({
-      ...prev,
-      [module]: { view: !all, create: !all, edit: !all, delete: !all },
-    }));
-  };
-
-  const saveRolePerms = () => {
-    setRoles(prev => prev.map(r => r.key === editRole.key ? { ...r, perms: permDraft } : r));
-    setEditRole(null);
-    setPermDraft(null);
-  };
-
-  const addRole = () => {
-    if (!newRoleName.trim()) return;
-    const newRole = {
-      key: Date.now(), role: newRoleName.trim(), color: '#B11E6A',
-      users: 0, status: 'Active', perms: buildPerms([]),
-    };
-    setRoles(prev => [...prev, newRole]);
-    setNewRoleName('');
-    setAddRoleOpen(false);
-  };
-
-  const removeRole = (key) => setRoles(prev => prev.filter(r => r.key !== key));
 
   const addUser = () => {
     userForm.validateFields().then(vals => {
@@ -121,8 +92,6 @@ export default function Settings() {
   };
 
   const removeUser = (key) => setUsers(prev => prev.filter(u => u.key !== key));
-
-  const permCount = (role) => MODULES.filter(m => role.perms[m].view).length;
 
   const saveFooter = (onCancel) => (
     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}`, marginTop: 8 }}>
@@ -241,176 +210,118 @@ export default function Settings() {
             open={addUserOpen}
             onCancel={() => { setAddUserOpen(false); userForm.resetFields(); }}
             footer={null}
-            width={Math.min(480, window.innerWidth - 24)}
-            centered
-            title="Add New User"
-          >
-            <Form form={userForm} layout="vertical" style={{ marginTop: 8 }}>
-              <Form.Item label="Full Name" name="name" rules={[{ required: true, message: 'Required' }]}>
-                <Input placeholder="Ex: Anjali Sharma" style={{ borderRadius: 8, height: 44 }} />
-              </Form.Item>
-              <Form.Item label="Email Address" name="email" rules={[{ required: true, type: 'email', message: 'Valid email required' }]}>
-                <Input placeholder="Ex: anjali@healngl.com" style={{ borderRadius: 8, height: 44 }} />
-              </Form.Item>
-              <Row gutter={12}>
-                <Col span={14}>
-                  <Form.Item label="Assign Role" name="role" rules={[{ required: true, message: 'Required' }]}>
-                    <Select placeholder="Select role" style={{ width: '100%' }}>
-                      {roles.map(r => <Option key={r.key} value={r.role}>{r.role}</Option>)}
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col span={10}>
-                  <Form.Item label="Status" name="status" initialValue="Active">
-                    <Select>
-                      <Option value="Active">Active</Option>
-                      <Option value="Inactive">Inactive</Option>
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Form.Item label="Temporary Password" name="password" rules={[{ required: true, min: 6, message: 'Min 6 characters' }]}>
-                <Input.Password placeholder="Set initial password" style={{ borderRadius: 8, height: 44 }} />
-              </Form.Item>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 14 }}>
-                <Button onClick={() => { setAddUserOpen(false); userForm.resetFields(); }}>Cancel</Button>
-                <Button type="primary" icon={<PlusOutlined />} onClick={addUser} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add User</Button>
-              </div>
-            </Form>
-          </Modal>
-        </TabPane>
-
-        {/* ─── ROLES & PERMISSIONS ─── */}
-        <TabPane tab="Roles & Permissions" key="roles">
-          <Row gutter={[16, 16]}>
-            {roles.map((role) => (
-              <Col xs={24} sm={12} lg={8} key={role.key}>
-                <Card
-                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: `0 4px 20px ${role.color}18` }}
-                  bodyStyle={{ padding: '16px 20px' }}
-                >
-                  {/* Role header */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ width: 38, height: 38, borderRadius: 10, background: `${role.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <UserOutlined style={{ color: role.color, fontSize: 18 }} />
-                      </div>
-                      <div>
-                        <Text strong style={{ color: textColor, fontSize: 14 }}>{role.role}</Text>
-                        <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>{role.users} user{role.users !== 1 ? 's' : ''}</Text>
-                      </div>
-                    </div>
-                    <Space size={4}>
-                      <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEditRole(role)} style={{ color: role.color }} />
-                      {role.role !== 'Super Admin' && (
-                        <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => removeRole(role.key)} style={{ color: '#ff4d4f' }} />
-                      )}
-                    </Space>
-                  </div>
-
-                  {/* Module access pills */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-                    {MODULES.map(m => (
-                      role.perms[m].view
-                        ? <Tag key={m} style={{ borderRadius: 20, fontSize: 11, background: `${role.color}18`, color: role.color, border: `1px solid ${role.color}33`, margin: 0 }}>{m}</Tag>
-                        : null
-                    ))}
-                  </div>
-
-                  {/* Stats bar */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${borderColor}`, paddingTop: 10 }}>
-                    <Text style={{ fontSize: 12, color: '#aaa' }}>{permCount(role)}/{MODULES.length} modules</Text>
-                    <Tag color={role.status === 'Active' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11, margin: 0 }}>{role.status}</Tag>
-                  </div>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-
-          {/* Edit Permissions Modal */}
-          <Modal
-            open={!!editRole}
-            onCancel={() => { setEditRole(null); setPermDraft(null); }}
-            footer={null}
             width={Math.min(760, window.innerWidth - 24)}
             centered
-            title={
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: `${editRole?.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <UserOutlined style={{ color: editRole?.color }} />
-                </div>
-                <Text strong style={{ fontSize: 16 }}>{editRole?.role} — Permissions</Text>
-              </div>
-            }
+            style={{ top: 20 }}
+            title={<Text strong style={{ fontSize: 18 }}>Add New User</Text>}
           >
-            {permDraft && (
-              <>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ background: subBg }}>
-                        <th style={{ textAlign: 'left', padding: '10px 14px', fontWeight: 700, color: textColor, borderBottom: `1px solid ${borderColor}` }}>Module</th>
-                        {['view', 'create', 'edit', 'delete'].map(p => (
-                          <th key={p} style={{ textAlign: 'center', padding: '10px 14px', fontWeight: 700, color: textColor, textTransform: 'capitalize', borderBottom: `1px solid ${borderColor}` }}>{p}</th>
-                        ))}
-                        <th style={{ textAlign: 'center', padding: '10px 14px', fontWeight: 700, color: textColor, borderBottom: `1px solid ${borderColor}` }}>All</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {MODULES.map((mod, i) => {
-                        const allOn = Object.values(permDraft[mod]).every(Boolean);
-                        return (
-                          <tr key={mod} style={{ background: i % 2 === 0 ? 'transparent' : (isDark ? '#ffffff08' : '#fafafa') }}>
-                            <td style={{ padding: '10px 14px', fontWeight: 600, color: textColor, borderBottom: `1px solid ${borderColor}` }}>{mod}</td>
-                            {['view', 'create', 'edit', 'delete'].map(perm => (
-                              <td key={perm} style={{ textAlign: 'center', padding: '10px 14px', borderBottom: `1px solid ${borderColor}` }}>
-                                <Checkbox
-                                  checked={permDraft[mod][perm]}
-                                  onChange={() => togglePerm(mod, perm)}
-                                  style={{ '--ant-primary-color': '#B11E6A' }}
-                                />
-                              </td>
-                            ))}
-                            <td style={{ textAlign: 'center', padding: '10px 14px', borderBottom: `1px solid ${borderColor}` }}>
-                              <Switch
-                                size="small"
-                                checked={allOn}
-                                onChange={() => toggleAllModule(mod)}
-                                style={{ background: allOn ? '#B11E6A' : undefined }}
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 16, marginTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                  <Button onClick={() => { setEditRole(null); setPermDraft(null); }}>Cancel</Button>
-                  <Button type="primary" icon={<SaveOutlined />} onClick={saveRolePerms} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Permissions</Button>
-                </div>
-              </>
-            )}
-          </Modal>
+            <div style={{ maxHeight: 'calc(100vh - 150px)', overflowY: 'auto', paddingRight: 10, paddingBottom: 10 }}>
+              <Form form={userForm} layout="vertical" style={{ marginTop: 16 }}>
+                <Row gutter={16}>
+                  <Col xs={24} sm={12}>
+                    <Form.Item label="Full Name" name="name" rules={[{ required: true, message: 'Required' }]}>
+                      <Input placeholder="Enter full name" style={{ borderRadius: 8, height: 40 }} />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} sm={12}>
+                    <Form.Item label="Email Address" name="email" rules={[{ required: true, type: 'email', message: 'Valid email required' }]}>
+                      <Input placeholder="Enter email" style={{ borderRadius: 8, height: 40 }} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              
+                <Row gutter={16}>
+                  <Col xs={24} sm={12}>
+                    <Form.Item label="Mobile" name="mobile" rules={[{ required: true, message: 'Required' }]}>
+                      <Input placeholder="Enter mobile number" style={{ borderRadius: 8, height: 40 }} />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} sm={12}>
+                    <Form.Item label="Role" name="role" rules={[{ required: true, message: 'Required' }]}>
+                      <Select placeholder="Select role" style={{ width: '100%', height: 40 }}>
+                        {roles.map(r => <Option key={r.key} value={r.role}>{r.role}</Option>)}
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                </Row>
 
-          {/* Add Role Modal */}
-          <Modal
-            open={addRoleOpen}
-            onCancel={() => { setAddRoleOpen(false); setNewRoleName(''); }}
-            footer={null}
-            width={400}
-            centered
-            title="Add New Role"
-          >
-            <Form layout="vertical" style={{ marginTop: 8 }}>
-              <Form.Item label="Role Name" required>
-                <Input value={newRoleName} onChange={e => setNewRoleName(e.target.value)} placeholder="Ex: HR Manager" style={{ borderRadius: 8, height: 44 }} />
-              </Form.Item>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                <Button onClick={() => { setAddRoleOpen(false); setNewRoleName(''); }}>Cancel</Button>
-                <Button type="primary" onClick={addRole} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Create Role</Button>
-              </div>
-            </Form>
+                <Row gutter={16}>
+                  <Col xs={24} sm={12}>
+                    <Form.Item label="Password" name="password" rules={[{ required: true, min: 6, message: 'Min 6 characters' }]}>
+                      <Input.Password placeholder="Min 6 characters" style={{ borderRadius: 8, height: 40 }} />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} sm={12}>
+                    <Form.Item label="Confirm Password" name="confirm" rules={[{ required: true, message: 'Required' }]}>
+                      <Input.Password placeholder="Confirm password" style={{ borderRadius: 8, height: 40 }} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Row gutter={16}>
+                  <Col xs={24} sm={12}>
+                    <Form.Item label="Status" name="status" initialValue="Active" rules={[{ required: true, message: 'Required' }]}>
+                      <Select style={{ height: 40 }}>
+                        <Option value="Active">Active</Option>
+                        <Option value="Inactive">Inactive</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} sm={12}>
+                    <Form.Item label="Language" name="language" initialValue="English">
+                      <Select style={{ height: 40 }}>
+                        <Option value="English">English</Option>
+                        <Option value="Hindi">Hindi</Option>
+                        <Option value="Tamil">Tamil</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Form.Item label="Profile Photo">
+                  <Upload showUploadList={false} beforeUpload={() => false}>
+                    <Button icon={<UploadOutlined />} style={{ borderRadius: 8 }}>Upload Image</Button>
+                  </Upload>
+                </Form.Item>
+
+                <div style={{ marginBottom: 16 }}>
+                  <Text strong style={{ display: 'block', marginBottom: 8 }}>Page Access Permissions</Text>
+                  <Collapse ghost expandIconPosition="end" style={{ background: subBg, borderRadius: 8, border: `1px solid ${borderColor}` }}>
+                    {MODULES.map(mod => (
+                      <Collapse.Panel header={<Text strong>{mod}</Text>} key={mod}>
+                        <div style={{ display: 'flex', gap: 32 }}>
+                          {MODULE_PERM_TYPES[mod].includes('read') && (
+                            <Form.Item name={['perms', mod, 'read']} valuePropName="checked" style={{ margin: 0 }}>
+                              <Checkbox>Read</Checkbox>
+                            </Form.Item>
+                          )}
+                          {MODULE_PERM_TYPES[mod].includes('add') && (
+                            <Form.Item name={['perms', mod, 'add']} valuePropName="checked" style={{ margin: 0 }}>
+                              <Checkbox>Add</Checkbox>
+                            </Form.Item>
+                          )}
+                          {MODULE_PERM_TYPES[mod].includes('edit') && (
+                            <Form.Item name={['perms', mod, 'edit']} valuePropName="checked" style={{ margin: 0 }}>
+                              <Checkbox>Edit</Checkbox>
+                            </Form.Item>
+                          )}
+                          {MODULE_PERM_TYPES[mod].includes('delete') && (
+                            <Form.Item name={['perms', mod, 'delete']} valuePropName="checked" style={{ margin: 0 }}>
+                              <Checkbox>Delete</Checkbox>
+                            </Form.Item>
+                          )}
+                        </div>
+                      </Collapse.Panel>
+                    ))}
+                  </Collapse>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>
+                  <Button onClick={() => { setAddUserOpen(false); userForm.resetFields(); }} style={{ borderRadius: 8 }}>Cancel</Button>
+                  <Button type="primary" onClick={addUser} style={{ background: '#b91c1c', border: 'none', borderRadius: 8 }}>Add User</Button>
+                </div>
+              </Form>
+            </div>
           </Modal>
         </TabPane>
 

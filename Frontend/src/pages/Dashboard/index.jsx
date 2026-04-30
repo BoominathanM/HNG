@@ -1,5 +1,5 @@
-import React from 'react';
-import { Row, Col, Card, Typography, Tag, Table, Progress, List, Avatar, Badge, Timeline } from 'antd';
+import React, { useState } from 'react';
+import { Row, Col, Card, Typography, Tag, Table, Progress, List, Avatar, Badge, Timeline, Select } from 'antd';
 import {
   ShoppingCartOutlined, DollarOutlined, CarOutlined, UserOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined, RiseOutlined,
@@ -77,6 +77,7 @@ const fadeIn = (delay = 0) => ({
 });
 
 export default function Dashboard() {
+  const [statsFilter, setStatsFilter] = useState('This Month');
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -86,12 +87,29 @@ export default function Dashboard() {
       <PageBreadcrumb title="Dashboard" items={[{ label: 'Dashboard' }]} />
 
       {/* Stat Cards */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <Select 
+          value={statsFilter} 
+          onChange={setStatsFilter} 
+          style={{ width: 140 }}
+          options={[
+            { value: 'Today', label: 'Today' },
+            { value: 'This Week', label: 'This Week' },
+            { value: 'This Month', label: 'This Month' },
+            { value: 'All Time', label: 'All Time' },
+          ]}
+        />
+      </div>
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         {[
           { title: 'Total Orders', value: '1,248', icon: <ShoppingCartOutlined />, color: '#B11E6A', change: 12 },
           { title: 'Monthly Revenue', value: '₹9.5L', icon: <DollarOutlined />, color: '#8a1652', change: 8 },
           { title: 'Dispatch Ready', value: '34', icon: <CarOutlined />, color: '#C94F8A', change: -3 },
           { title: 'Active Clients', value: '187', icon: <UserOutlined />, color: '#D85C9E', change: 5 },
+          { title: 'Total Tasks', value: '142', icon: <CheckCircleOutlined />, color: '#6b1240', change: 8 },
+          { title: 'Today\'s Tasks', value: '28', icon: <ClockCircleOutlined />, color: '#8a1652', change: 4 },
+          { title: 'Pending Tasks', value: '15', icon: <WarningOutlined />, color: '#C94F8A', change: -2 },
+          { title: 'Completed Tasks', value: '99', icon: <CheckCircleOutlined />, color: '#D85C9E', change: 6 },
         ].map((s, i) => (
           <Col xs={12} sm={12} lg={6} key={s.title}>
             <motion.div {...fadeIn(i * 0.08)}>

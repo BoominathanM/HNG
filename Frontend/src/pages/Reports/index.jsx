@@ -152,14 +152,6 @@ export default function Reports() {
           </Row>
         </TabPane>
 
-        {/* ── Inventory ── */}
-        <TabPane tab="Inventory" key="inventory">
-          <Card title={<Text strong style={{ color: textColor }}>Inventory Movement</Text>}
-            style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-            bodyStyle={{ padding: '12px 16px 16px' }}>
-            <Text style={{ color: '#999' }}>Inventory usage reports will be shown here.</Text>
-          </Card>
-        </TabPane>
 
       </Tabs>
     </div>

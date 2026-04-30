@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Upload, Typography, Space, Steps, Descriptions, Alert } from 'antd';
-import { CarOutlined, CameraOutlined, CheckCircleOutlined, UploadOutlined, EyeOutlined, EnvironmentOutlined } from '@ant-design/icons';
+import { CarOutlined, CameraOutlined, CheckCircleOutlined, UploadOutlined, EyeOutlined, EnvironmentOutlined, SearchOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
@@ -8,10 +8,10 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 const { Title, Text } = Typography;
 
 const dispatchOrders = [
-  { key: 1, id: 'ORD-2402', client: 'Marriott Mumbai', contactPerson: 'Raju', phone: '+91 9876543210', email: 'raju@marriott.com', product: 'Shampoo 30ml', qty: 1500, boxes: 30, weight: '45 Kg', payment: 'Confirmed', address: 'Mumbai, MH', detailedAddress: 'Marine Drive, Nariman Point', city: 'Mumbai', state: 'MH', pincode: '400021', transport: 'Fast Cargo', status: 'Ready to Dispatch' },
-  { key: 2, id: 'ORD-2403', client: 'Taj Hotels Delhi', contactPerson: 'Raman', phone: '+91 9123456780', email: 'raman@taj.com', product: 'Dental Kit', qty: 3000, boxes: 60, weight: '90 Kg', payment: 'Pending', address: 'Delhi, DL', detailedAddress: 'Sardar Patel Marg', city: 'New Delhi', state: 'DL', pincode: '110021', transport: '-', status: 'Payment Pending' },
-  { key: 3, id: 'ORD-2404', client: 'ITC Grand', contactPerson: 'Sonia', phone: '+91 9988776655', email: 'sonia@itc.com', product: 'Soap + Shampoo Kit', qty: 5000, boxes: 100, weight: '200 Kg', payment: 'Confirmed', address: 'Kolkata, WB', detailedAddress: 'JBS Haldane Avenue', city: 'Kolkata', state: 'WB', pincode: '700046', transport: 'Blue Dart', status: 'Dispatched' },
-  { key: 4, id: 'ORD-2406', client: 'Hyatt Chennai', contactPerson: 'Arun', phone: '+91 9876512345', email: 'arun@hyatt.com', product: 'Conditioner 30ml', qty: 2000, boxes: 40, weight: '60 Kg', payment: 'Confirmed', address: 'Chennai, TN', detailedAddress: '365 Anna Salai, Teynampet', city: 'Chennai', state: 'TN', pincode: '600018', transport: '-', status: 'Packing' },
+  { key: 1, id: 'ORD-2402', client: 'Marriott Mumbai', contactPerson: 'Raju', phone: '+91 9876543210', email: 'raju@marriott.com', product: 'Shampoo 30ml', qty: 1500, boxes: 30, weight: '45 Kg', payment: 'Confirmed', address: 'Mumbai, MH', detailedAddress: 'Marine Drive, Nariman Point', city: 'Mumbai', state: 'MH', pincode: '400021', transport: 'Fast Cargo', status: 'Ready to Dispatch', salesPerson: 'Arun', createdAt: '2024-01-21T11:30:00Z' },
+  { key: 2, id: 'ORD-2403', client: 'Taj Hotels Delhi', contactPerson: 'Raman', phone: '+91 9123456780', email: 'raman@taj.com', product: 'Dental Kit', qty: 3000, boxes: 60, weight: '90 Kg', payment: 'Pending', address: 'Delhi, DL', detailedAddress: 'Sardar Patel Marg', city: 'New Delhi', state: 'DL', pincode: '110021', transport: '-', status: 'Payment Pending', salesPerson: 'Priya', createdAt: '2024-01-22T14:15:00Z' },
+  { key: 3, id: 'ORD-2404', client: 'ITC Grand', contactPerson: 'Sonia', phone: '+91 9988776655', email: 'sonia@itc.com', product: 'Soap + Shampoo Kit', qty: 5000, boxes: 100, weight: '200 Kg', payment: 'Confirmed', address: 'Kolkata, WB', detailedAddress: 'JBS Haldane Avenue', city: 'Kolkata', state: 'WB', pincode: '700046', transport: 'Blue Dart', status: 'Dispatched', salesPerson: 'Karthik', createdAt: '2024-01-23T09:45:00Z' },
+  { key: 4, id: 'ORD-2406', client: 'Hyatt Chennai', contactPerson: 'Arun', phone: '+91 9876512345', email: 'arun@hyatt.com', product: 'Conditioner 30ml', qty: 2000, boxes: 40, weight: '60 Kg', payment: 'Confirmed', address: 'Chennai, TN', detailedAddress: '365 Anna Salai, Teynampet', city: 'Chennai', state: 'TN', pincode: '600018', transport: '-', status: 'Packing', salesPerson: 'Arun', createdAt: '2024-01-24T10:20:00Z' },
 ];
 
 const statusColor = {
@@ -23,6 +23,7 @@ const statusColor = {
 
 export default function Dispatch() {
   const isDark = useSelector((s) => s.theme.isDark);
+  const [searchText, setSearchText] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
@@ -32,6 +33,9 @@ export default function Dispatch() {
   const columns = [
     { title: 'Order', dataIndex: 'id', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
     { title: 'Client', dataIndex: 'client' },
+    { title: 'Location', dataIndex: 'address', responsive: ['md'] },
+    { title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'], render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
+    { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'] },
     { title: 'Product', dataIndex: 'product', responsive: ['md'] },
     { title: 'Boxes', dataIndex: 'boxes', responsive: ['sm'] },
     { title: 'Weight', dataIndex: 'weight', responsive: ['lg'] },
@@ -74,9 +78,28 @@ export default function Dispatch() {
         ))}
       </Row>
 
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
+      <Card 
+        title={<Text strong style={{ color: textColor }}>Dispatch Orders</Text>}
+        extra={
+          <Input 
+            prefix={<SearchOutlined />} 
+            placeholder="Search orders, clients, locations..." 
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)} 
+            allowClear
+            style={{ width: 250, borderRadius: 8 }}
+          />
+        }
+        style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} 
+        bodyStyle={{ padding: 0 }}
+      >
         <div className="table-responsive" style={{ padding: '4px' }}>
-          <Table dataSource={dispatchOrders} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+          <Table 
+            dataSource={dispatchOrders.filter(o => !searchText || o.id.toLowerCase().includes(searchText.toLowerCase()) || o.client.toLowerCase().includes(searchText.toLowerCase()) || o.address.toLowerCase().includes(searchText.toLowerCase()))} 
+            columns={columns} 
+            pagination={{ pageSize: 8, size: 'small' }} 
+            size="small" 
+          />
         </div>
       </Card>
 

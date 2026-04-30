@@ -18,12 +18,12 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const inventory = [
-  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK' },
-  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low' },
-  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low' },
-  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK' },
-  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK' },
-  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out' },
+  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', seller: 'ChemCo India', purchasedDate: '2024-01-15' },
+  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', seller: 'BioLife Ltd', purchasedDate: '2024-01-10' },
+  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', seller: 'PlastiPack', purchasedDate: '2024-01-05' },
+  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', seller: 'BoxWorld', purchasedDate: '2024-01-12' },
+  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', seller: 'PrintFast', purchasedDate: '2024-01-18' },
+  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', seller: 'ChemCo India', purchasedDate: '2023-12-20' },
 ];
 
 const stockChartData = inventory.map((i) => ({
@@ -289,6 +289,8 @@ export default function Inventory() {
     },
     { title: 'Min Req', dataIndex: 'min', responsive: ['lg'], render: (v, r) => `${v} ${r.unit}` },
     { title: 'Price', dataIndex: 'price', responsive: ['md'] },
+    { title: 'Seller', dataIndex: 'seller', responsive: ['lg'] },
+    { title: 'Purchased', dataIndex: 'purchasedDate', responsive: ['lg'] },
     {
       title: 'Status', dataIndex: 'status',
       render: (v) => (
@@ -493,7 +495,7 @@ export default function Inventory() {
             <div style={{ padding: '14px 16px' }}>
               <Form form={receiveForm} layout="vertical">
                 <Row gutter={12}>
-                  <Col span={12}>
+                  <Col span={8}>
                     <Form.Item
                       label={<Text style={{ fontSize: 13 }}>Quantity <span style={{ color: '#ff4d4f' }}>*</span></Text>}
                       name="qty"
@@ -512,7 +514,12 @@ export default function Inventory() {
                       />
                     </Form.Item>
                   </Col>
-                  <Col span={12}>
+                  <Col span={8}>
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Supply Price</Text>} name="supply_price" style={{ marginBottom: 12 }}>
+                      <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8, height: 42, paddingTop: 4 }} placeholder="0.00" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
                     <Form.Item
                       label={<Text style={{ fontSize: 13 }}>Document Date</Text>}
                       name="date"
@@ -664,7 +671,7 @@ export default function Inventory() {
             <div style={{ padding: '14px 16px' }}>
               <Form form={issueForm} layout="vertical">
                 <Row gutter={12}>
-                  <Col span={12}>
+                  <Col span={8}>
                     <Form.Item
                       label={<Text style={{ fontSize: 13 }}>Quantity <span style={{ color: '#ff4d4f' }}>*</span></Text>}
                       name="qty"
@@ -683,7 +690,12 @@ export default function Inventory() {
                       />
                     </Form.Item>
                   </Col>
-                  <Col span={12}>
+                  <Col span={8}>
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Sell Price</Text>} name="sell_price" style={{ marginBottom: 12 }}>
+                      <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8, height: 42, paddingTop: 4 }} placeholder="0.00" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
                     <Form.Item
                       label={<Text style={{ fontSize: 13 }}>Document Date</Text>}
                       name="date"

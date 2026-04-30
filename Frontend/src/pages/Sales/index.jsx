@@ -43,7 +43,8 @@ const INIT_LEADS = [
   {
     key: 1, hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
     contactPerson: 'Reception', phone: '+91 94430 39517', email: '',
-    hotelType: 'OLD', billType: 'GST', gstNumber: '', status: 'Quotation Sent', followUp: '2024-01-20',
+    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1', status: 'Quotation Sent', followUp: '2024-01-20',
+    salesPerson: 'Priya', createdAt: '2024-01-15T10:30:00Z',
     products: [
       { name: 'Soap 15grm', qty: 500, rate: 3.6 }, { name: 'Single Brush', qty: 200, rate: 4 },
       { name: 'Shampoo 15ml', qty: 250, rate: 4.25 }, { name: 'Shaving Kit', qty: 300, rate: 10.5 },
@@ -51,34 +52,49 @@ const INIT_LEADS = [
     ],
     forwardingCharge: true, deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: '30_DAYS_CREDIT',
     logoNeeded: true, logoProducts: 'Soap15grm, Shampoo 10ml, Dental Kit, Shaving kit, Comb',
-    specifications: ['Shampoo Black Screw type bottle needed', 'Large Square type Soap15grm needed', 'Transparent cover needed single Brush', 'Promise paste needed'],
+    specifications: [
+      { product: 'Shampoo 15ml', spec: 'Black Screw type bottle needed', rate: 0 },
+      { product: 'Soap 15grm', spec: 'Large Square type needed', rate: 0 },
+      { product: 'Single Brush', spec: 'Transparent cover needed', rate: 0 },
+      { product: 'Dental Kit (1+1)', spec: 'Promise paste needed', rate: 0 }
+    ],
   },
   {
     key: 2, hotelName: 'Saravana Bhavan Namakkal', billingName: 'Saravana Bhavan Namakkal', location: 'Namakkal',
     contactPerson: 'Manager', phone: '+91 63741 15883', email: '',
-    hotelType: 'OLD', billType: 'GST', gstNumber: '', status: 'New', followUp: '2024-01-22',
+    hotelType: 'OLD', billType: 'GST', gstNumber: '33AABCS1234D1Z2', status: 'New', followUp: '2024-01-22',
+    salesPerson: 'Arun', createdAt: '2024-01-18T14:45:00Z',
     products: [{ name: 'Promise Paste', qty: 500, rate: 4.5 }, { name: 'Brush', qty: 1000, rate: 4.5 }],
     forwardingCharge: true, deliveryBy: 'CLIENT', transportationBy: 'CLIENT', paymentTerms: 'AFTER_DISPATCH',
     logoNeeded: false, logoProducts: '',
-    specifications: ['Transparent cover needed for brush', 'Promise paste needed'],
+    specifications: [
+      { product: 'Brush', spec: 'Transparent cover needed', rate: 0 },
+      { product: 'Promise Paste', spec: 'needed', rate: 0 }
+    ],
   },
   {
     key: 3, hotelName: 'Grand Inn', billingName: 'GRAND INN', location: 'Thiruvanamalai',
     contactPerson: 'Reception', phone: '9443039517', email: '',
-    hotelType: 'OLD', billType: 'GST', gstNumber: '', status: 'Interested', followUp: '2024-01-18',
+    hotelType: 'OLD', billType: 'GST', gstNumber: '33ABDFG4567H1Z3', status: 'Interested', followUp: '2024-01-18',
+    salesPerson: 'Priya', createdAt: '2024-01-12T09:15:00Z',
     products: [{ name: 'Soap 15grm', qty: 1000, rate: 3.65 }],
     forwardingCharge: true, deliveryBy: 'CLIENT', transportationBy: 'CLIENT', paymentTerms: 'AFTER_DISPATCH',
     logoNeeded: true, logoProducts: 'Soap15grm',
-    specifications: ['Square Type Soap15grm needed'],
+    specifications: [
+      { product: 'Soap 15grm', spec: 'Square Type needed', rate: 0 }
+    ],
   },
   {
     key: 4, hotelName: 'TTDC Yercaud', billingName: 'Yercaud TTDC', location: 'Yercaud',
     contactPerson: 'Manager', phone: '', email: '',
     hotelType: 'OLD', billType: 'NON_GST', gstNumber: '', status: 'New', followUp: '2024-01-25',
+    salesPerson: 'Karthik', createdAt: '2024-01-20T11:20:00Z',
     products: [{ name: 'Laundry Liquid 50 Litre', qty: 2, rate: 4500 }],
     forwardingCharge: false, deliveryBy: 'TTDC', transportationBy: 'TTDC', paymentTerms: 'AFTER_DISPATCH',
     logoNeeded: false, logoProducts: '',
-    specifications: ['Full fragrance needed'],
+    specifications: [
+      { product: 'Laundry Liquid 50 Litre', spec: 'Full fragrance needed', rate: 0 }
+    ],
   },
 ];
 
@@ -86,12 +102,16 @@ const INIT_QUOTATIONS = [
   {
     key: 1, qid: 'QT-1001', leadKey: 1,
     hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
-    hotelType: 'OLD', billType: 'GST',
+    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1',
     products: [{ name: 'Soap 15grm', qty: 500, rate: 3.6 }, { name: 'Single Brush', qty: 200, rate: 4 }, { name: 'Shampoo 15ml', qty: 250, rate: 4.25 }],
     forwardingCharge: true, deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: '30_DAYS_CREDIT',
     logoNeeded: true, logoProducts: 'Soap15grm, Shampoo 10ml, Dental Kit',
-    specifications: ['Shampoo Black Screw type bottle needed', 'Promise paste needed'],
+    specifications: [
+      { product: 'Shampoo 15ml', spec: 'Black Screw type bottle needed', rate: 0 },
+      { product: 'Dental Kit', spec: 'Promise paste needed', rate: 0 }
+    ],
     status: 'Sent', date: '2024-01-18', totalAmount: 4825,
+    salesPerson: 'Priya', createdAt: '2024-01-18T10:00:00Z',
   },
 ];
 
@@ -99,10 +119,11 @@ const INIT_ORDERS = [
   {
     key: 1, oid: 'ORD-2401', quotationId: 'QT-1001',
     hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
-    billType: 'GST', paymentTerms: '30_DAYS_CREDIT',
+    billType: 'GST', gstNumber: '33AAACC1206D1Z1', paymentTerms: '30_DAYS_CREDIT',
     products: [{ name: 'Soap 15grm', qty: 500, rate: 3.6 }],
     totalAmount: 1800, advance: 900, status: 'In Production', date: '2024-01-20',
     expectedDelivery: '2024-02-10', notes: '',
+    salesPerson: 'Priya', createdAt: '2024-01-20T14:30:00Z',
   },
 ];
 
@@ -129,7 +150,7 @@ function generateWhatsAppText(data) {
   }
   let specSection = '';
   if (data.logoNeeded) specSection += `Logo Needed\n${data.logoProducts || ''}\n`;
-  if (data.specifications?.length) specSection += data.specifications.filter(Boolean).join('\n');
+  if (data.specifications?.length) specSection += data.specifications.filter(Boolean).map(s => typeof s === 'string' ? s : `${s.product || ''} - ${s.spec || ''} (₹${s.rate || 0})`).join('\n');
 
   return `Hotel Name ${data.billingName || data.hotelName}
 Location ${data.location}
@@ -154,6 +175,46 @@ Miss. Priya will Contact you
 +91 63741 15883`;
 }
 
+const SelectWithAdd = ({ defaultOptions = [], placeholder, ...props }) => {
+  const [items, setItems] = React.useState(defaultOptions);
+  const [name, setName] = React.useState('');
+  const inputRef = React.useRef(null);
+  
+  const addItem = (e) => {
+    e.preventDefault();
+    if (!name || items.some(i => i.value === name)) return;
+    setItems([...items, { value: name, label: name }]);
+    setName('');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+  
+  return (
+    <Select
+      {...props}
+      placeholder={placeholder}
+      dropdownRender={(menu) => (
+        <>
+          {menu}
+          <Divider style={{ margin: '8px 0' }} />
+          <Space style={{ padding: '0 8px 4px' }}>
+            <Input
+              placeholder="Add item"
+              ref={inputRef}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+            <Button type="text" icon={<PlusOutlined />} onClick={addItem}>
+              Add
+            </Button>
+          </Space>
+        </>
+      )}
+      options={items}
+    />
+  );
+};
+
 // ─── Sub-components (defined outside to prevent remount) ──────────────
 function ProductFormList({ fieldName = 'products' }) {
   return (
@@ -167,17 +228,17 @@ function ProductFormList({ fieldName = 'products' }) {
                   <Input placeholder="Product name (e.g. Soap 15grm)" />
                 </Form.Item>
               </Col>
-              <Col style={{ width: 90 }}>
+              <Col style={{ width: 100 }}>
                 <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: 'Qty' }]} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} />
                 </Form.Item>
               </Col>
-              <Col style={{ width: 90 }}>
+              <Col style={{ width: 100 }}>
                 <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: 'Rate' }]} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} />
                 </Form.Item>
               </Col>
-              <Col>
+              <Col flex="none">
                 <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
               </Col>
             </Row>
@@ -191,24 +252,37 @@ function ProductFormList({ fieldName = 'products' }) {
   );
 }
 
-function SpecFormList() {
+function SpecFormList({ form }) {
+  const products = Form.useWatch('products', form) || [];
   return (
     <Form.List name="specifications">
       {(fields, { add, remove }) => (
         <>
           {fields.map(({ key, name, ...rest }) => (
             <Row key={key} gutter={8} align="middle" style={{ marginBottom: 8 }}>
-              <Col flex="auto">
-                <Form.Item {...rest} name={name} style={{ marginBottom: 0 }}>
-                  <Input placeholder="e.g. Black Screw type bottle needed" />
+              <Col span={8}>
+                <Form.Item {...rest} name={[name, 'product']} style={{ marginBottom: 0 }}>
+                  <Select placeholder="Select Product">
+                    {products.filter(p => p && p.name).map(p => <Option key={p.name} value={p.name}>{p.name}</Option>)}
+                  </Select>
                 </Form.Item>
               </Col>
-              <Col>
+              <Col flex="auto">
+                <Form.Item {...rest} name={[name, 'spec']} style={{ marginBottom: 0 }}>
+                  <Input placeholder="Specification..." />
+                </Form.Item>
+              </Col>
+              <Col style={{ width: 100 }}>
+                <Form.Item {...rest} name={[name, 'rate']} style={{ marginBottom: 0 }}>
+                  <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} />
+                </Form.Item>
+              </Col>
+              <Col flex="none">
                 <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
               </Col>
             </Row>
           ))}
-          <Button type="dashed" onClick={() => add('')} icon={<PlusOutlined />} block>
+          <Button type="dashed" onClick={() => add({ product: undefined, spec: '', rate: undefined })} icon={<PlusOutlined />} block>
             Add Specification
           </Button>
         </>
@@ -221,6 +295,16 @@ function DeliveryPaymentFields() {
   return (
     <Row gutter={12}>
       <Col xs={24} sm={12}>
+        <Form.Item label="Delivery By" name="deliveryBy" initialValue="HNG">
+          <SelectWithAdd defaultOptions={[{ value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" />
+        </Form.Item>
+      </Col>
+      <Col xs={24} sm={12}>
+        <Form.Item label="Transportation By" name="transportationBy">
+          <SelectWithAdd defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'TTDC', label: 'TTDC' }]} placeholder="Select or Add" />
+        </Form.Item>
+      </Col>
+      <Col xs={24} sm={12}>
         <Form.Item name="forwardingCharge" valuePropName="checked">
           <Checkbox>Forwarding charge applicable</Checkbox>
         </Form.Item>
@@ -229,24 +313,6 @@ function DeliveryPaymentFields() {
         <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
           <Select>
             {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
-          </Select>
-        </Form.Item>
-      </Col>
-      <Col xs={24} sm={12}>
-        <Form.Item label="Delivery By" name="deliveryBy">
-          <Select>
-            <Option value="HNG">HNG</Option>
-            <Option value="CLIENT">Client</Option>
-            <Option value="TTDC">TTDC</Option>
-          </Select>
-        </Form.Item>
-      </Col>
-      <Col xs={24} sm={12}>
-        <Form.Item label="Transportation By" name="transportationBy">
-          <Select>
-            <Option value="HNG">HNG</Option>
-            <Option value="CLIENT">Client</Option>
-            <Option value="TTDC">TTDC</Option>
           </Select>
         </Form.Item>
       </Col>
@@ -321,7 +387,7 @@ export default function Sales() {
         setLeadsData(prev => prev.map(l => l.key === editingLead.key ? { ...l, ...values } : l));
         message.success('Lead updated');
       } else {
-        setLeadsData(prev => [...prev, { key: Date.now(), status: 'New', followUp: '', ...values }]);
+        setLeadsData(prev => [...prev, { key: Date.now(), status: 'New', followUp: '', createdAt: new Date().toISOString(), salesPerson: 'Current User', ...values }]);
         message.success('Lead added');
       }
       setAddLeadOpen(false);
@@ -350,6 +416,8 @@ export default function Sales() {
         status: 'Draft',
         date: new Date().toISOString().split('T')[0],
         totalAmount: total,
+        createdAt: new Date().toISOString(),
+        salesPerson: quotationFromLead?.salesPerson || 'Current User',
         ...values,
       };
       setQuotationsData(prev => [...prev, newQ]);
@@ -394,6 +462,8 @@ export default function Sales() {
         status: 'In Production',
         date: new Date().toISOString().split('T')[0],
         totalAmount: calcTotal(values.products),
+        createdAt: new Date().toISOString(),
+        salesPerson: orderFromQuotation?.salesPerson || 'Current User',
         ...values,
       };
       setOrdersData(prev => [...prev, newOrder]);
@@ -411,13 +481,10 @@ export default function Sales() {
   const leadColumns = [
     {
       title: 'Hotel / Company', dataIndex: 'hotelName',
-      render: (v, r) => (
-        <div>
-          <Text strong style={{ color: textColor }}>{v}</Text><br />
-          <Text style={{ fontSize: 12, color: '#999' }}>{r.location}</Text>
-        </div>
-      ),
+      render: (v) => <Text strong style={{ color: textColor }}>{v}</Text>,
     },
+    { title: 'Location', dataIndex: 'location' },
+    { title: 'GST Number', dataIndex: 'gstNumber', render: (v) => v || '—' },
     {
       title: 'Phone', dataIndex: 'phone', responsive: ['md'],
       render: (v) => v ? <a href={`tel:${v}`} style={{ color: '#B11E6A' }}>{v}</a> : '—',
@@ -439,6 +506,11 @@ export default function Sales() {
     },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v]}>{v}</Tag> },
     {
+      title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'],
+      render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
+    },
+    { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
+    {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space size={4}>
@@ -456,10 +528,9 @@ export default function Sales() {
 
   const quotationColumns = [
     { title: 'Quote ID', dataIndex: 'qid', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    {
-      title: 'Hotel', dataIndex: 'hotelName',
-      render: (v, r) => <div><Text strong>{v}</Text><br /><Text style={{ fontSize: 12, color: '#999' }}>{r.location}</Text></div>,
-    },
+    { title: 'Hotel', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
+    { title: 'Location', dataIndex: 'location' },
+    { title: 'GST Number', dataIndex: 'gstNumber', render: (v) => v || '—' },
     {
       title: 'Items / Amount', key: 'amt', responsive: ['sm'],
       render: (_, r) => (
@@ -474,6 +545,11 @@ export default function Sales() {
       render: (v) => <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', fontSize: 11 }}>{v === 'GST' ? 'GST' : 'Non-GST'}</Tag>,
     },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v]}>{v}</Tag> },
+    {
+      title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'],
+      render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
+    },
+    { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -496,10 +572,9 @@ export default function Sales() {
 
   const orderColumns = [
     { title: 'Order ID', dataIndex: 'oid', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    {
-      title: 'Hotel', dataIndex: 'hotelName',
-      render: (v, r) => <div><Text strong>{v}</Text><br /><Text style={{ fontSize: 12, color: '#999' }}>{r.location}</Text></div>,
-    },
+    { title: 'Hotel', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
+    { title: 'Location', dataIndex: 'location' },
+    { title: 'GST Number', dataIndex: 'gstNumber', render: (v) => v || '—' },
     {
       title: 'Amount', dataIndex: 'totalAmount', responsive: ['sm'],
       render: (v) => <Text strong>₹{(v || 0).toLocaleString()}</Text>,
@@ -509,6 +584,11 @@ export default function Sales() {
       render: (v) => <Text style={{ color: '#52c41a' }}>₹{(v || 0).toLocaleString()}</Text>,
     },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v]}>{v}</Tag> },
+    {
+      title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'],
+      render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
+    },
+    { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -529,11 +609,11 @@ export default function Sales() {
   // ─── Lead form modal ───────────────────────────────────────────────
   const LeadModal = (
     <Modal
-      title={editingLead ? 'Edit Lead' : 'Add New Lead'}
+      title={editingLead ? 'Edit Customer' : 'Add New Customer'}
       open={addLeadOpen}
       onCancel={() => setAddLeadOpen(false)}
       onOk={saveLead}
-      okText={editingLead ? 'Update' : 'Save Lead'}
+      okText={editingLead ? 'Update' : 'Save Customer'}
       okButtonProps={{ style: { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' } }}
       width={Math.min(700, window.innerWidth - 32)}
     >
@@ -617,7 +697,7 @@ export default function Sales() {
             </Form.Item>
           </Col>
           <Col xs={24} sm={12}>
-            <Form.Item label="Lead Status" name="status">
+            <Form.Item label="Customer Status" name="status">
               <Select>
                 <Option value="New">New</Option>
                 <Option value="Interested">Interested</Option>
@@ -645,7 +725,7 @@ export default function Sales() {
             </Form.Item>
           </Col>
         </Row>
-        <SpecFormList />
+        <SpecFormList form={leadForm} />
 
         <SectionDivider title="Delivery & Payment" />
         <DeliveryPaymentFields />
@@ -658,7 +738,7 @@ export default function Sales() {
     <Drawer
       title={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <span>Lead Details</span>
+          <span>Customer Details</span>
           {selectedLead && (
             <Button type="primary" icon={<FileTextOutlined />} size="small"
               style={{ background: '#B11E6A', border: 'none' }}
@@ -704,33 +784,65 @@ export default function Sales() {
             </div>
           </Card>
 
+          {selectedLead.billType === 'GST' && selectedLead.gstNumber && selectedLead.gstNumber !== '—' && (
+            <Card size="small" style={{ borderRadius: 10, border: '1px solid #e0e0e0' }}>
+              <Text strong style={{ fontSize: 13, color: '#B11E6A' }}>GST Details</Text>
+              <Row style={{ marginTop: 8 }} gutter={[8, 8]}>
+                <Col span={12}><Text style={{ color: '#666', fontSize: 12 }}>Customer Name:</Text><br /><Text strong>{selectedLead.hotelName}</Text></Col>
+                <Col span={12}><Text style={{ color: '#666', fontSize: 12 }}>Phone Number:</Text><br /><Text strong>{selectedLead.phone || '—'}</Text></Col>
+                <Col span={12}><Text style={{ color: '#666', fontSize: 12 }}>PAN Number:</Text><br /><Text strong>{selectedLead.gstNumber.substring(2, 12)}</Text></Col>
+                <Col span={12}><Text style={{ color: '#666', fontSize: 12 }}>GSTIN:</Text><br /><Text strong>{selectedLead.gstNumber}</Text></Col>
+                <Col span={24}><Text style={{ color: '#666', fontSize: 12 }}>Address:</Text><br /><Text strong>{selectedLead.detailedAddress || selectedLead.location}</Text></Col>
+              </Row>
+            </Card>
+          )}
+
           <div>
             <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Order Details</Text>
-            {selectedLead.products?.map((p, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 8px', background: i % 2 === 0 ? 'rgba(177,30,106,0.04)' : 'transparent', borderRadius: 6 }}>
-                <Text>{p.name} — {p.qty} pcs @ ₹{p.rate}</Text>
-                <Text strong>₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}</Text>
-              </div>
-            ))}
+            {selectedLead.products?.map((p, i) => {
+              const productSpecs = selectedLead.specifications?.filter(s => typeof s === 'object' && s.product === p.name) || [];
+              return (
+                <div key={i} style={{ padding: '8px', background: i % 2 === 0 ? 'rgba(177,30,106,0.04)' : 'transparent', borderRadius: 6, marginBottom: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Text strong>{p.name} — {p.qty} pcs @ ₹{p.rate}</Text>
+                    <Text strong>₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}</Text>
+                  </div>
+                  {productSpecs.length > 0 && (
+                    <div style={{ marginTop: 6, paddingLeft: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {productSpecs.map((s, idx) => (
+                         <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                           <CheckOutlined style={{ color: '#B11E6A', fontSize: 10 }} />
+                           <Text style={{ fontSize: 12, color: '#666' }}>{s.spec} {s.rate ? `(+₹${s.rate})` : ''}</Text>
+                         </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>
               <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>Total: ₹{calcTotal(selectedLead.products).toLocaleString()}</Text>
             </div>
           </div>
 
-          {(selectedLead.logoNeeded || selectedLead.specifications?.length > 0) && (
-            <div>
-              <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Specifications</Text>
-              {selectedLead.logoNeeded && (
-                <Tag color="#B11E6A" style={{ marginBottom: 8, whiteSpace: 'normal' }}>Logo Needed: {selectedLead.logoProducts}</Tag>
-              )}
-              {selectedLead.specifications?.filter(Boolean).map((s, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
-                  <CheckOutlined style={{ color: '#B11E6A', fontSize: 11, marginTop: 3 }} />
-                  <Text style={{ fontSize: 13 }}>{s}</Text>
-                </div>
-              ))}
-            </div>
-          )}
+          {(() => {
+            const unmappedSpecs = selectedLead.specifications?.filter(s => typeof s === 'string' || (typeof s === 'object' && !s.product)) || [];
+            if (!selectedLead.logoNeeded && unmappedSpecs.length === 0) return null;
+            return (
+              <div>
+                <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8, marginTop: 12 }}>Additional Requirements</Text>
+                {selectedLead.logoNeeded && (
+                  <Tag color="#B11E6A" style={{ marginBottom: 8, whiteSpace: 'normal' }}>Logo Needed: {selectedLead.logoProducts}</Tag>
+                )}
+                {unmappedSpecs.map((s, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
+                    <CheckOutlined style={{ color: '#B11E6A', fontSize: 11, marginTop: 3 }} />
+                    <Text style={{ fontSize: 13 }}>{typeof s === 'string' ? s : `${s.spec || ''} (₹${s.rate || 0})`}</Text>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           <div>
             <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Delivery & Payment</Text>
@@ -745,7 +857,7 @@ export default function Sales() {
           <Steps direction="vertical" size="small"
             current={['New', 'Interested', 'Quotation Sent', 'Converted'].indexOf(selectedLead.status)}
             items={[
-              { title: 'Lead Created' }, { title: 'Interested' },
+              { title: 'Customer Created' }, { title: 'Interested' },
               { title: 'Quotation Sent' }, { title: 'Order Confirmed' },
             ]}
           />
@@ -827,7 +939,7 @@ export default function Sales() {
             <Form.Item label="Logo on Products" name="logoProducts"><Input placeholder="e.g. Soap15grm, Shampoo" /></Form.Item>
           </Col>
         </Row>
-        <SpecFormList />
+        <SpecFormList form={quotationForm} />
 
         <SectionDivider title="Delivery & Payment" />
         <DeliveryPaymentFields />
@@ -891,7 +1003,7 @@ export default function Sales() {
               {selectedQuotation.specifications?.filter(Boolean).map((s, i) => (
                 <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
                   <CheckOutlined style={{ color: '#B11E6A', fontSize: 11, marginTop: 3 }} />
-                  <Text style={{ fontSize: 13 }}>{s}</Text>
+                  <Text style={{ fontSize: 13 }}>{typeof s === 'string' ? s : `${s.product || ''} - ${s.spec || ''} (₹${s.rate || 0})`}</Text>
                 </div>
               ))}
             </div>
@@ -1002,23 +1114,21 @@ export default function Sales() {
           style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
           onClick={() => {
             if (activeTab === 'leads') openAddLead();
-            else if (activeTab === 'quotations') { setQuotationFromLead(null); quotationForm.resetFields(); setQuotationOpen(true); }
             else { setOrderFromQuotation(null); orderForm.resetFields(); setOrderOpen(true); }
           }}
         >
-          {activeTab === 'leads' ? 'Add Lead' : activeTab === 'quotations' ? 'New Quote' : 'New Order'}
+          {activeTab === 'leads' ? 'Add Customer' : 'New Order'}
         </Button>
       </div>
 
       {/* Flow progress bar */}
       <Card style={{ borderRadius: 14, border: 'none', background: cardBg, marginBottom: 16, boxShadow: '0 2px 12px rgba(177,30,106,0.05)' }} bodyStyle={{ padding: '14px 24px' }}>
         <Steps size="small"
-          current={activeTab === 'leads' ? 0 : activeTab === 'quotations' ? 1 : 2}
-          onChange={(i) => setActiveTab(['leads', 'quotations', 'orders'][i])}
+          current={activeTab === 'leads' ? 0 : 1}
+          onChange={(i) => setActiveTab(['leads', 'orders'][i])}
           style={{ cursor: 'pointer' }}
           items={[
-            { title: 'Leads', description: `${leadsData.length} total` },
-            { title: 'Quotations', description: `${quotationsData.length} total` },
+            { title: 'Customers', description: `${leadsData.length} total` },
             { title: 'Orders', description: `${ordersData.length} total` },
           ]}
         />
@@ -1033,14 +1143,9 @@ export default function Sales() {
             />
           }
         >
-          <TabPane tab={<span><Badge count={leadsData.filter(l => l.status === 'New').length} size="small" offset={[6, 0]}>Leads</Badge></span>} key="leads">
+          <TabPane tab={<span><Badge count={leadsData.filter(l => l.status === 'New').length} size="small" offset={[6, 0]}>Customers</Badge></span>} key="leads">
             <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
               <Table dataSource={filtered(leadsData)} columns={leadColumns} pagination={{ pageSize: 8, size: 'small' }} size="small" rowKey="key" />
-            </div>
-          </TabPane>
-          <TabPane tab={<span><Badge count={quotationsData.filter(q => q.status === 'Draft').length} size="small" offset={[6, 0]}>Quotations</Badge></span>} key="quotations">
-            <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-              <Table dataSource={filtered(quotationsData)} columns={quotationColumns} pagination={{ pageSize: 8, size: 'small' }} size="small" rowKey="key" />
             </div>
           </TabPane>
           <TabPane tab="Orders" key="orders">

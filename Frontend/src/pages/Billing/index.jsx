@@ -19,10 +19,12 @@ const { Option } = Select;
 const { Panel } = Collapse;
 
 const invoices = [
-  { key: 1, inv: 'INV-2401', client: 'Marriott Mumbai', order: 'ORD-2402', date: '2024-01-18', amount: 38500, gst: 6930, total: 45430, advance: 19250, balance: 26180, type: 'GST', status: 'Partially Paid' },
-  { key: 2, inv: 'INV-2402', client: 'Taj Hotels Delhi', order: 'ORD-2403', date: '2024-01-17', amount: 120000, gst: 21600, total: 141600, advance: 60000, balance: 81600, type: 'GST', status: 'Pending' },
-  { key: 3, inv: 'INV-2403', client: 'ITC Grand Kolkata', order: 'ORD-2404', date: '2024-01-16', amount: 250000, gst: 0, total: 250000, advance: 250000, balance: 0, type: 'Non-GST', status: 'Paid' },
-  { key: 4, inv: 'INV-2404', client: 'The Grand Hotel', order: 'ORD-2401', date: '2024-01-10', amount: 42000, gst: 7560, total: 49560, advance: 21000, balance: 28560, type: 'GST', status: 'Partially Paid' },
+  { key: 1, inv: 'INV-2401', client: 'Marriott Mumbai', order: 'ORD-2402', date: '2024-01-18 10:30 AM', amount: 38500, gst: 6930, total: 45430, advance: 19250, balance: 26180, type: 'GST', status: 'Partially Paid' },
+  { key: 2, inv: 'INV-2402', client: 'Taj Hotels Delhi', order: 'ORD-2403', date: '2024-01-17 02:45 PM', amount: 120000, gst: 21600, total: 141600, advance: 60000, balance: 81600, type: 'GST', status: 'Pending' },
+  { key: 3, inv: 'INV-2403', client: 'ITC Grand Kolkata', order: 'ORD-2404', date: '2024-01-16 11:15 AM', amount: 250000, gst: 0, total: 250000, advance: 250000, balance: 0, type: 'Non-GST', status: 'Paid' },
+  { key: 4, inv: 'INV-2404', client: 'The Grand Hotel', order: 'ORD-2401', date: '2024-01-10 09:20 AM', amount: 42000, gst: 7560, total: 49560, advance: 21000, balance: 28560, type: 'GST', status: 'Partially Paid' },
+  { key: 5, inv: 'INV-2389', client: 'Client Demo', order: 'ORD-2389', date: '2023-11-20 04:30 PM', amount: 25000, gst: 4500, total: 29500, advance: 17000, balance: 12500, previousBalance: 0, type: 'GST', status: 'Overdue' },
+  { key: 6, inv: 'INV-2405', client: 'Client Demo', order: 'ORD-2405', date: '2024-01-15 12:00 PM', amount: 50000, gst: 9000, total: 59000, advance: 10000, balance: 49000, previousBalance: 12500, type: 'GST', status: 'Pending' },
 ];
 
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
@@ -34,6 +36,7 @@ const partiesList = [
   { key: 4, name: 'Abirami Royal', type: 'Customer', balance: 0 },
   { key: 5, name: 'ABM Home Stay', type: 'Customer', balance: 0 },
   { key: 6, name: 'ADITYA HERITAGE HOMES', type: 'Customer', balance: 0 },
+  { key: 7, name: 'Client Demo', type: 'Customer', balance: 12500, phone: '9876543210' },
 ];
 
 const itemsList = [
@@ -43,12 +46,12 @@ const itemsList = [
 ];
 
 const indianStates = [
-  'Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa',
-  'Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala',
-  'Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland',
-  'Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura',
-  'Uttar Pradesh','Uttarakhand','West Bengal','Delhi','Jammu & Kashmir',
-  'Ladakh','Puducherry','Chandigarh',
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa',
+  'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala',
+  'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland',
+  'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura',
+  'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Delhi', 'Jammu & Kashmir',
+  'Ladakh', 'Puducherry', 'Chandigarh',
 ];
 
 export default function Billing() {
@@ -91,6 +94,7 @@ export default function Billing() {
 
   // Additional
   const [invoiceType, setInvoiceType] = useState('GST');
+  const [gstPercent, setGstPercent] = useState(18);
   const [noteText, setNoteText] = useState('');
   const [advanceAmt, setAdvanceAmt] = useState(0);
 
@@ -104,7 +108,7 @@ export default function Billing() {
   );
 
   const subtotal = invoiceItems.reduce((s, i) => s + i.price * i.qty, 0);
-  const gstAmt = invoiceType === 'GST' ? subtotal * 0.18 : 0;
+  const gstAmt = invoiceType === 'GST' ? subtotal * (gstPercent / 100) : 0;
   const total = subtotal + gstAmt;
   const balanceDue = Math.max(0, total - (advanceAmt || 0));
 
@@ -206,6 +210,7 @@ export default function Billing() {
 
   const columns = [
     { title: 'Invoice', dataIndex: 'inv', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+    { title: 'Billing Date', dataIndex: 'date', render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Client', dataIndex: 'client' },
     { title: 'Order', dataIndex: 'order', responsive: ['md'], render: (v) => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
     { title: 'Type', dataIndex: 'type', responsive: ['lg'], render: (v) => <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
@@ -249,7 +254,7 @@ export default function Billing() {
         ].map((s, i) => (
           <Col xs={12} sm={6} key={s.label}>
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}>
-              <Card style={{ borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, textAlign: 'center' }} bodyStyle={{ padding: '16px 8px' }}>
+              <Card style={{ borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, textAlign: 'center' }} styles={{ body: { padding: '16px 8px' } }}>
                 <Title level={3} style={{ margin: 0, color: s.color }}>{s.val}</Title>
                 <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>{s.label}</Text>
               </Card>
@@ -259,7 +264,7 @@ export default function Billing() {
       </Row>
 
       {/* Table */}
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
+      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
         <div className="table-responsive" style={{ padding: '4px' }}>
           <Table dataSource={invoices} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
         </div>
@@ -296,12 +301,22 @@ export default function Billing() {
             <Row><Col span={16}><Text>Subtotal</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text>₹{selectedInv.amount.toLocaleString()}</Text></Col></Row>
             {selectedInv.type === 'GST' && <Row style={{ marginTop: 6 }}><Col span={16}><Text>GST (18%)</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text>₹{selectedInv.gst.toLocaleString()}</Text></Col></Row>}
             <Divider />
-            <Row><Col span={16}><Text strong>Total</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{selectedInv.total.toLocaleString()}</Text></Col></Row>
-            <Row style={{ marginTop: 6 }}><Col span={16}><Text style={{ color: '#8a1652' }}>Advance</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text style={{ color: '#8a1652' }}>- ₹{selectedInv.advance.toLocaleString()}</Text></Col></Row>
+            <Row><Col span={16}><Text strong>Current Bill Total</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{selectedInv.total.toLocaleString()}</Text></Col></Row>
+            <Row style={{ marginTop: 6 }}><Col span={16}><Text style={{ color: '#52c41a' }}>Advance</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text style={{ color: '#52c41a' }}>- ₹{selectedInv.advance.toLocaleString()}</Text></Col></Row>
             <Row style={{ marginTop: 6 }}>
-              <Col span={16}><Text strong style={{ color: selectedInv.balance > 0 ? '#B11E6A' : '#52c41a' }}>Balance Due</Text></Col>
+              <Col span={16}><Text strong style={{ color: selectedInv.balance > 0 ? '#B11E6A' : '#52c41a' }}>Current Bill Balance</Text></Col>
               <Col span={8} style={{ textAlign: 'right' }}><Text strong style={{ color: selectedInv.balance > 0 ? '#B11E6A' : '#52c41a', fontSize: 16 }}>₹{selectedInv.balance.toLocaleString()}</Text></Col>
             </Row>
+            {selectedInv.previousBalance > 0 && (
+              <>
+                <Divider style={{ margin: '8px 0' }} />
+                <Row><Col span={16}><Text style={{ color: '#ff4d4f' }}>Existing Overdue Balance</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text style={{ color: '#ff4d4f' }}>₹{selectedInv.previousBalance.toLocaleString()}</Text></Col></Row>
+                <Row style={{ marginTop: 6 }}>
+                  <Col span={16}><Text strong style={{ color: '#ff4d4f', fontSize: 15 }}>Total Pending Balance</Text></Col>
+                  <Col span={8} style={{ textAlign: 'right' }}><Text strong style={{ color: '#ff4d4f', fontSize: 18 }}>₹{(selectedInv.balance + selectedInv.previousBalance).toLocaleString()}</Text></Col>
+                </Row>
+              </>
+            )}
           </div>
         )}
       </Drawer>
@@ -785,11 +800,23 @@ export default function Billing() {
             <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
                 <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 7 }}>Invoice Type</Text>
-                <Space>
-                  {[['GST', 'GST (18%)'], ['Non-GST', 'Non-GST']].map(([val, lbl]) => (
-                    <button key={val} type="button" onClick={() => setInvoiceType(val)} style={pill(invoiceType === val)}>{lbl}</button>
-                  ))}
-                </Space>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Space>
+                    {[['GST', 'GST'], ['Non-GST', 'Non-GST']].map(([val, lbl]) => (
+                      <button key={val} type="button" onClick={() => setInvoiceType(val)} style={pill(invoiceType === val)}>{lbl}</button>
+                    ))}
+                  </Space>
+                  {invoiceType === 'GST' && (
+                    <InputNumber
+                      prefix="GST %"
+                      min={0}
+                      max={100}
+                      value={gstPercent}
+                      onChange={(v) => setGstPercent(v || 0)}
+                      style={{ borderRadius: 8, width: 110 }}
+                    />
+                  )}
+                </div>
               </div>
               <div>
                 <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 5 }}>Note (optional)</Text>
@@ -817,7 +844,7 @@ export default function Billing() {
                 </div>
                 {invoiceType === 'GST' && (
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Text style={{ color: isDark ? '#aaa' : '#666' }}>GST (18%)</Text>
+                    <Text style={{ color: isDark ? '#aaa' : '#666' }}>GST ({gstPercent}%)</Text>
                     <Text style={{ fontWeight: 600, color: textColor }}>₹{gstAmt.toFixed(2)}</Text>
                   </div>
                 )}
@@ -840,9 +867,21 @@ export default function Billing() {
                   />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: balanceDue > 0 ? '#B11E6A10' : '#52c41a10', border: `1.5px solid ${balanceDue > 0 ? '#B11E6A44' : '#52c41a44'}`, marginTop: 4 }}>
-                  <Text style={{ fontWeight: 700, color: balanceDue > 0 ? '#B11E6A' : '#52c41a', fontSize: 14 }}>Balance Due</Text>
+                  <Text style={{ fontWeight: 700, color: balanceDue > 0 ? '#B11E6A' : '#52c41a', fontSize: 14 }}>Current Bill Balance</Text>
                   <Text style={{ fontWeight: 800, color: balanceDue > 0 ? '#B11E6A' : '#52c41a', fontSize: 16 }}>₹{balanceDue.toFixed(2)}</Text>
                 </div>
+                {selectedParty && selectedParty.balance > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 14px', borderRadius: 10, background: '#ff4d4f10', border: `1.5px solid #ff4d4f44`, marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ color: '#ff4d4f', fontSize: 12 }}>Existing Overdue</Text>
+                      <Text style={{ color: '#ff4d4f', fontSize: 12 }}>₹{selectedParty.balance.toFixed(2)}</Text>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Text style={{ fontWeight: 700, color: '#ff4d4f', fontSize: 14 }}>Total Pending Balance</Text>
+                      <Text style={{ fontWeight: 800, color: '#ff4d4f', fontSize: 16 }}>₹{(balanceDue + selectedParty.balance).toFixed(2)}</Text>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
