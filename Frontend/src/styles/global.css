@@ -1,0 +1,465 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --primary: #B11E6A;
+  --secondary: #D85C9E;
+  --bg-light: #F8F9FC;
+  --bg-dark: #121212;
+  --sidebar-width: 240px;
+  --sidebar-collapsed: 72px;
+  --header-height: 64px;
+  --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html {
+  font-size: 18px;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-light);
+  color: #1a1a2e;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.dark-mode {
+  background: var(--bg-dark);
+  color: #e0e0e0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #B11E6A55; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #B11E6A; }
+
+/* Glass card */
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(177, 30, 106, 0.1);
+  border-radius: 14px;
+  box-shadow: 0 4px 24px rgba(177, 30, 106, 0.06);
+  transition: var(--transition);
+}
+
+.glass-card:hover {
+  box-shadow: 0 8px 32px rgba(177, 30, 106, 0.12);
+  transform: translateY(-1px);
+}
+
+.dark-mode .glass-card {
+  background: rgba(30, 30, 46, 0.7);
+  border-color: rgba(216, 92, 158, 0.15);
+}
+
+/* Page container */
+.page-container {
+  padding: 24px;
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .page-container { padding: 16px; }
+}
+
+@media (max-width: 480px) {
+  .page-container { padding: 12px; }
+}
+
+/* Stat card */
+.stat-card {
+  border-radius: 14px;
+  padding: 20px 24px;
+  position: relative;
+  overflow: hidden;
+  transition: var(--transition);
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: -30px;
+  right: -30px;
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #B11E6A, #D85C9E);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Responsive table wrapper */
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Animation classes */
+.fade-in {
+  animation: fadeIn 0.4s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Status badges */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Ant Design overrides */
+.ant-layout-sider {
+  transition: var(--transition) !important;
+}
+
+.ant-menu-item-selected {
+  background: linear-gradient(135deg, rgba(177,30,106,0.15), rgba(216,92,158,0.1)) !important;
+}
+
+.ant-btn-primary {
+  background: linear-gradient(135deg, #B11E6A, #D85C9E) !important;
+  border: none !important;
+  box-shadow: 0 2px 12px rgba(177,30,106,0.3) !important;
+}
+
+.ant-btn-primary:hover {
+  background: linear-gradient(135deg, #9a1a5c, #c44e8e) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(177,30,106,0.4) !important;
+}
+
+/* =============================================
+   MOBILE SIDEBAR
+   ============================================= */
+
+/* Hide the sticky sidebar on mobile — only show it as fixed overlay */
+@media (max-width: 768px) {
+  .crm-sidebar:not(.mobile-open) {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    flex: 0 0 0px !important;
+    overflow: hidden;
+  }
+
+  .crm-sidebar.mobile-open {
+    width: 240px !important;
+    min-width: 240px !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    height: 100vh !important;
+    z-index: 300 !important;
+  }
+}
+
+/* =============================================
+   MODALS — RESPONSIVE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-modal {
+    max-width: calc(100vw - 24px) !important;
+    margin: 12px auto !important;
+    top: 16px !important;
+  }
+  .ant-modal-content {
+    border-radius: 12px !important;
+  }
+  .ant-modal-body {
+    padding: 14px 16px !important;
+    max-height: 72vh;
+    overflow-y: auto;
+  }
+  .ant-modal-header {
+    padding: 12px 16px !important;
+    border-radius: 12px 12px 0 0 !important;
+  }
+  .ant-modal-footer {
+    padding: 10px 16px !important;
+  }
+  .ant-modal-close {
+    top: 10px !important;
+    right: 10px !important;
+  }
+}
+
+/* =============================================
+   TABLES — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: 8px 8px !important;
+    font-size: 12px !important;
+    white-space: nowrap;
+  }
+  .ant-table-pagination {
+    margin: 8px 8px !important;
+  }
+  .ant-pagination-item,
+  .ant-pagination-prev,
+  .ant-pagination-next {
+    min-width: 28px !important;
+    height: 28px !important;
+    line-height: 28px !important;
+    font-size: 12px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: 6px 6px !important;
+    font-size: 11px !important;
+  }
+}
+
+/* =============================================
+   CARDS — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-card-body {
+    padding: 14px !important;
+  }
+  .ant-card-head {
+    padding: 0 14px !important;
+    min-height: 44px !important;
+  }
+  .ant-card-head-title {
+    font-size: 13px !important;
+  }
+}
+
+/* =============================================
+   TABS — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-tabs-nav {
+    padding: 0 8px !important;
+  }
+  .ant-tabs-tab {
+    padding: 8px 8px !important;
+    font-size: 13px !important;
+  }
+  /* Hide extra content (search bar) in tab bar on mobile */
+  .ant-tabs-extra-content {
+    display: none !important;
+  }
+}
+
+/* =============================================
+   FORMS — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-form-item {
+    margin-bottom: 12px !important;
+  }
+  .ant-form-item-label > label {
+    font-size: 13px !important;
+  }
+  .ant-input,
+  .ant-select-selector,
+  .ant-picker {
+    font-size: 14px !important;
+  }
+  .ant-input-number {
+    width: 100% !important;
+  }
+}
+
+/* =============================================
+   DATE PICKER — MOBILE
+   ============================================= */
+
+@media (max-width: 768px) {
+  .ant-picker-range {
+    width: 100% !important;
+    font-size: 13px !important;
+  }
+}
+
+@media (max-width: 576px) {
+  /* Range picker panel stacks on mobile */
+  .ant-picker-panels {
+    flex-direction: column !important;
+  }
+  .ant-picker-panel {
+    width: 100% !important;
+  }
+}
+
+/* =============================================
+   DESCRIPTIONS — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-descriptions-item-label,
+  .ant-descriptions-item-content {
+    font-size: 12px !important;
+    padding: 6px 8px !important;
+  }
+}
+
+/* =============================================
+   STEPS — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-steps-item-title {
+    font-size: 12px !important;
+  }
+  .ant-steps-item-description {
+    font-size: 11px !important;
+  }
+}
+
+/* =============================================
+   BUTTONS — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-btn-sm {
+    font-size: 12px !important;
+    padding: 0 8px !important;
+    height: 26px !important;
+  }
+  .ant-space-item .ant-btn {
+    white-space: nowrap;
+  }
+}
+
+/* =============================================
+   STAT CARD NUMBERS — MOBILE SCALE DOWN
+   ============================================= */
+
+@media (max-width: 576px) {
+  /* h2 level stat numbers (Title level=2) */
+  .ant-typography.ant-typography h2,
+  h2.ant-typography {
+    font-size: 22px !important;
+  }
+  /* h3 level stat numbers (Title level=3) */
+  h3.ant-typography {
+    font-size: 18px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  h2.ant-typography {
+    font-size: 20px !important;
+  }
+  h3.ant-typography {
+    font-size: 16px !important;
+  }
+}
+
+/* =============================================
+   PAGE HEADER ROWS — MOBILE STACK
+   ============================================= */
+
+/* Reports toolbar: stack controls on mobile */
+@media (max-width: 768px) {
+  .ant-space-wrap {
+    flex-wrap: wrap !important;
+  }
+  .ant-space-wrap .ant-select {
+    min-width: 110px;
+  }
+}
+
+/* =============================================
+   DRAWER — MOBILE
+   ============================================= */
+
+@media (max-width: 480px) {
+  .ant-drawer-content-wrapper {
+    width: 100vw !important;
+  }
+  .ant-drawer-body {
+    padding: 16px !important;
+  }
+}
+
+/* =============================================
+   PROGRESS BAR — MOBILE MIN WIDTH
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-progress {
+    min-width: 60px !important;
+  }
+}
+
+/* =============================================
+   ALERTS — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-alert {
+    font-size: 12px !important;
+    padding: 8px 12px !important;
+  }
+  .ant-alert-message {
+    font-size: 12px !important;
+  }
+}
+
+/* =============================================
+   BADGE OVERFLOW FIX
+   ============================================= */
+
+.ant-tabs-tab .ant-badge {
+  margin-left: 2px;
+}
+
+/* =============================================
+   HEADER — MOBILE
+   ============================================= */
+
+@media (max-width: 768px) {
+  .user-info-text { display: none !important; }
+}
+
+/* =============================================
+   LAYOUT — ENSURE CONTENT FILLS AFTER SIDEBAR HIDDEN
+   ============================================= */
+
+@media (max-width: 768px) {
+  /* When sidebar collapses to 0 width, layout should fill */
+  .ant-layout {
+    min-width: 0 !important;
+  }
+}
