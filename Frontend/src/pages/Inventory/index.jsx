@@ -407,12 +407,39 @@ export default function Inventory() {
         <Form form={addItemForm} layout="vertical" style={{ marginTop: 16 }}>
           <Row gutter={16}>
             <Col xs={24} sm={12}><Form.Item label="Item Name" name="name" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} sm={12}><Form.Item label="Category" name="category"><Select><Option value="Raw Material">Raw Material</Option><Option value="Packaging">Packaging</Option><Option value="Sticker">Sticker</Option></Select></Form.Item></Col>
-            <Col xs={24} sm={8}><Form.Item label="Unit" name="unit"><Select><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option></Select></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="Category" name="category"><Select><Option value="Chemicals">Chemicals</Option><Option value="ready stock">ready stock</Option><Option value="addable option">addable option</Option></Select></Form.Item></Col>
+            <Col xs={24} sm={8}><Form.Item label="Unit" name="unit"><Select><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option><Option value="ml">ml</Option><Option value="gram">gram</Option></Select></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
-            <Col xs={24} sm={12}><Form.Item label="Max Stock" name="max"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
-            <Col xs={24} sm={12}><Form.Item label="Unit Price" name="price"><Input prefix="₹" /></Form.Item></Col>
+            
+            <Col xs={24} sm={12}>
+              <Form.Item label="Purchase Price" name="purchase_price">
+                <Input prefix="₹" addonAfter={
+                  <Form.Item name="purchase_price_tax" noStyle initialValue="without_gst">
+                    <Select style={{ width: 120 }}>
+                      <Option value="with_gst">With GST</Option>
+                      <Option value="without_gst">Without GST</Option>
+                    </Select>
+                  </Form.Item>
+                } />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Selling Price" name="selling_price">
+                <Input prefix="₹" addonAfter={
+                  <Form.Item name="selling_price_tax" noStyle initialValue="without_gst">
+                    <Select style={{ width: 120 }}>
+                      <Option value="with_gst">With GST</Option>
+                      <Option value="without_gst">Without GST</Option>
+                    </Select>
+                  </Form.Item>
+                } />
+              </Form.Item>
+            </Col>
+
+            <Col xs={24} sm={8}><Form.Item label="GST" name="gst"><Select defaultValue="None"><Option value="None">None</Option><Option value="5%">5%</Option><Option value="12%">12%</Option><Option value="18%">18%</Option><Option value="28%">28%</Option></Select></Form.Item></Col>
+            <Col xs={24} sm={8}><Form.Item label="HSN" name="hsn"><Input placeholder="Ex: 6704" /></Form.Item></Col>
+            <Col xs={24} sm={8}><Form.Item label="Discount on Sales Price" name="discount"><Input suffix="%" /></Form.Item></Col>
           </Row>
         </Form>
       </Modal>
