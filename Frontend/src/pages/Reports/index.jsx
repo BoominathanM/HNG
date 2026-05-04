@@ -1,5 +1,5 @@
 import React from 'react';
-import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs } from 'antd';
+import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs, Divider, DatePicker } from 'antd';
 import { DownloadOutlined, FileExcelOutlined, FilePdfOutlined } from '@ant-design/icons';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
 import { useSelector } from 'react-redux';
@@ -45,10 +45,8 @@ export default function Reports() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Reports & Analytics" items={[{ label: 'Reports & Analytics' }]} style={{ marginBottom: 0 }} />
         <Space wrap>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 12px', borderRadius: 8, border: `1px solid ${isDark ? '#333' : '#f0f0f0'}` }}>
-            <Input type="date" bordered={false} style={{ width: 130, background: 'transparent', padding: 0 }} />
-            <span style={{ color: '#ccc' }}>—</span>
-            <Input type="date" bordered={false} style={{ width: 130, background: 'transparent', padding: 0 }} />
+          <div style={{ display: 'flex', alignItems: 'center', background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 8px', borderRadius: 8, border: `1px solid ${isDark ? '#333' : '#f0f0f0'}` }}>
+            <DatePicker.RangePicker bordered={false} style={{ width: 260, background: 'transparent' }} />
           </div>
           <Select defaultValue="month" style={{ width: 120, borderRadius: 8 }}>
 
@@ -151,6 +149,71 @@ export default function Reports() {
                   ]}
                   pagination={false} size="small"
                 />
+              </Card>
+            </Col>
+          </Row>
+        </TabPane>
+
+        {/* ── GST Report ── */}
+        <TabPane tab="GST Report" key="gst">
+          <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Title level={5} style={{ color: textColor }}>GST Sales Summary</Title>
+              <Button icon={<DownloadOutlined />} type="primary" size="small" style={{ background: '#B11E6A', border: 'none' }}>Download GSTR-1</Button>
+            </div>
+            <Table
+              size="small"
+              dataSource={[
+                { key: 1, type: 'GST Sales (18%)', taxable: '₹4,50,000', cgst: '₹40,500', sgst: '₹40,500', igst: '₹0', total: '₹5,31,000' },
+                { key: 2, type: 'GST Sales (12%)', taxable: '₹1,20,000', cgst: '₹7,200', sgst: '₹7,200', igst: '₹0', total: '₹1,34,400' },
+                { key: 3, type: 'Non-GST Sales', taxable: '₹85,000', cgst: '—', sgst: '—', igst: '—', total: '₹85,000' },
+              ]}
+              columns={[
+                { title: 'Tax Type', dataIndex: 'type', key: 'type' },
+                { title: 'Taxable Val', dataIndex: 'taxable', key: 'taxable' },
+                { title: 'CGST', dataIndex: 'cgst', key: 'cgst' },
+                { title: 'SGST', dataIndex: 'sgst', key: 'sgst' },
+                { title: 'IGST', dataIndex: 'igst', key: 'igst' },
+                { title: 'Total Amount', dataIndex: 'total', key: 'total', render: (v) => <Text strong>{v}</Text> },
+              ]}
+              pagination={false}
+            />
+          </Card>
+        </TabPane>
+
+        {/* ── Profit & Loss ── */}
+        <TabPane tab="Profit & Loss" key="pl">
+          <Row gutter={[16, 16]}>
+            <Col xs={24} md={12}>
+              <Card title="Revenue & Expenses" style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><Text>Total Sales (Net)</Text><Text strong style={{ color: '#52c41a' }}>₹11,20,000</Text></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><Text>Cost of Goods Sold (COGS)</Text><Text strong style={{ color: '#ff4d4f' }}>- ₹6,40,000</Text></div>
+                  <Divider style={{ margin: '4px 0' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><Text strong>Gross Profit</Text><Text strong style={{ color: '#B11E6A' }}>₹4,80,000</Text></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 12 }}><Text type="secondary">Operating Expenses</Text><Text style={{ color: '#ff4d4f' }}>- ₹1,20,000</Text></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 12 }}><Text type="secondary">Shipping & Logistics</Text><Text style={{ color: '#ff4d4f' }}>- ₹35,000</Text></div>
+                  <Divider style={{ margin: '4px 0' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', background: 'rgba(177,30,106,0.05)', padding: '8px 12px', borderRadius: 8 }}><Title level={4} style={{ margin: 0, color: '#B11E6A' }}>Net Profit</Title><Title level={4} style={{ margin: 0, color: '#52c41a' }}>₹3,25,000</Title></div>
+                </div>
+              </Card>
+            </Col>
+            <Col xs={24} md={12}>
+              <Card title="Branch Comparison" style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={[
+                    { branch: 'Coimbatore', revenue: 650000, profit: 180000 },
+                    { branch: 'Chennai', revenue: 470000, profit: 145000 },
+                  ]}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                    <XAxis dataKey="branch" tick={{ fill: tickColor }} />
+                    <YAxis tick={{ fill: tickColor }} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="revenue" fill="#B11E6A" name="Revenue" />
+                    <Bar dataKey="profit" fill="#52c41a" name="Profit" />
+                  </BarChart>
+                </ResponsiveContainer>
               </Card>
             </Col>
           </Row>

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, Upload, Typography, Space,
-  Steps, Descriptions, Alert, Collapse, Tag,
+  Steps, Descriptions, Alert, Collapse, Tag, DatePicker,
 } from 'antd';
 import {
   CarOutlined, CameraOutlined, UploadOutlined, EnvironmentOutlined,
@@ -267,14 +267,14 @@ export default function DispatchDetail() {
                             <Form form={aiForm} layout="vertical" size="small">
                               <Row gutter={[8, 0]}>
                                 <Col xs={12} sm={8}><Form.Item label="LR Number" name="lrNumber"><Input /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="Date" name="date"><Input type="date" /></Form.Item></Col>
+                                <Col xs={12} sm={8}><Form.Item label="Date" name="date"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
                                 <Col xs={12} sm={8}><Form.Item label="Transport Name" name="transportName"><Input /></Form.Item></Col>
                                 <Col xs={12} sm={8}><Form.Item label="From City" name="fromCity"><Input /></Form.Item></Col>
                                 <Col xs={12} sm={8}><Form.Item label="To City" name="toCity"><Input /></Form.Item></Col>
                                 <Col xs={12} sm={8}><Form.Item label="Weight" name="weight"><Input suffix="Kg" /></Form.Item></Col>
                                 <Col xs={12} sm={8}><Form.Item label="Packages" name="packages"><Input type="number" /></Form.Item></Col>
                                 <Col xs={12} sm={8}><Form.Item label="Freight" name="freight"><Input /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="Expected Delivery" name="deliveryDate"><Input type="date" /></Form.Item></Col>
+                                <Col xs={12} sm={8}><Form.Item label="Expected Delivery" name="deliveryDate"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
                               </Row>
                             </Form>
                           </div>

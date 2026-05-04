@@ -23,6 +23,7 @@ const menuItems = [
   { key: '/staff', icon: <UserOutlined />, label: 'Staff Management' },
   { key: '/inventory', icon: <InboxOutlined />, label: 'Inventory' },
   { key: '/billing', icon: <DollarOutlined />, label: 'Billing' },
+  { key: '/expenses', icon: <DollarOutlined />, label: 'Expenses' },
   { key: '/reports', icon: <BarChartOutlined />, label: 'Reports' },
   { key: '/notifications', icon: <BellOutlined />, label: 'Notifications', badge: 3 },
   { key: '/settings', icon: <SettingOutlined />, label: 'Settings' },

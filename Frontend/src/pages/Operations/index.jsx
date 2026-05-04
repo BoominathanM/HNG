@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Steps, Descriptions, Progress, Select,
-  Typography, Space, Badge, Tooltip, Form, Input, Alert, Tabs, Divider, Upload,
+  Typography, Space, Badge, Tooltip, Form, Input, Alert, Tabs, Divider, Upload, DatePicker,
 } from 'antd';
 import {
   CheckOutlined, PlusOutlined, EyeOutlined, TeamOutlined, ToolOutlined, SearchOutlined,
@@ -548,7 +548,7 @@ export default function Operations() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item label="Due Date" name="due"><Input type="date" /></Form.Item>
+              <Form.Item label="Due Date" name="due"><DatePicker style={{ width: '100%' }} /></Form.Item>
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="End Time" name="endTime"><Input type="time" /></Form.Item>
@@ -830,7 +830,7 @@ export default function Operations() {
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Dispatch Date" name="dispatchDate">
-                <Input type="date" />
+                <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col xs={24}>

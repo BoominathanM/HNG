@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, Progress, Alert, InputNumber, List,
-  Avatar, Divider, Drawer,
+  Avatar, Divider, Drawer, Tabs, DatePicker,
 } from 'antd';
 import {
   PlusOutlined, WarningOutlined, CalculatorOutlined, SearchOutlined, CheckOutlined,
   DownloadOutlined, ShoppingOutlined, LeftOutlined, CloseOutlined,
-  UserOutlined, InfoCircleOutlined,
+  UserOutlined, InfoCircleOutlined, MinusOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -308,10 +308,15 @@ export default function Inventory() {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space size={4} wrap>
+          <div style={{ display: 'flex', alignItems: 'center', background: isDark ? '#2a2a3e' : '#f0f0f0', borderRadius: 6, padding: '2px', border: `1px solid ${borderColor}` }}>
+            <Button size="small" type="text" icon={<MinusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); message.info('Manual decrement'); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+            <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
+            <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); message.info('Manual increment'); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+          </div>
           <Button
             size="small" type="primary"
             icon={<DownloadOutlined />}
-            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 12 }}
+            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
             onClick={() => openReceive(r)}
           >
             Add Stock
@@ -319,7 +324,7 @@ export default function Inventory() {
           <Button
             size="small"
             icon={<ShoppingOutlined />}
-            style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 12 }}
+            style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }}
             onClick={() => openIssue(r)}
           >
             Sell Stock
@@ -381,12 +386,58 @@ export default function Inventory() {
         </Col>
       </Row>
 
-      {/* Inventory table */}
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
-        <div className="table-responsive" style={{ padding: '4px' }}>
-          <Table dataSource={inventory} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
-        </div>
-      </Card>
+      {/* Inventory Tabs */}
+      <Tabs defaultActiveKey="stock" style={{ marginBottom: 20 }}
+        items={[
+          {
+            key: 'stock',
+            label: <Space><ShoppingOutlined />Stock Inventory</Space>,
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
+                <div className="table-responsive" style={{ padding: '4px' }}>
+                  <Table dataSource={inventory} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+                </div>
+              </Card>
+            )
+          },
+          {
+            key: 'documents',
+            label: <Space><FileTextOutlined />Stock Documents</Space>,
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
+                  <Space>
+                    <Select defaultValue="all" style={{ width: 150 }}>
+                      <Option value="all">All Movements</Option>
+                      <Option value="incoming">Incoming (Stock Add)</Option>
+                      <Option value="outgoing">Outgoing (Sales)</Option>
+                      <Option value="adjustment">Stock Taken (Adj)</Option>
+                    </Select>
+                    <DatePicker.RangePicker style={{ width: 280 }} />
+                  </Space>
+                  <Button icon={<DownloadOutlined />}>Download Report</Button>
+                </div>
+                <Table 
+                  size="small"
+                  dataSource={[
+                    { key: 1, date: '2024-05-01', type: 'Incoming', item: 'Soap Base (White)', qty: '+100 Kg', entity: 'ChemCo India', person: 'Admin' },
+                    { key: 2, date: '2024-05-02', type: 'Outgoing', item: 'Dental Kit Boxes', qty: '-50 Pcs', entity: 'Marriott Mumbai', person: 'Priya' },
+                    { key: 3, date: '2024-05-03', type: 'Stock Taken', item: 'Shampoo Bottles', qty: '-2 Pcs', entity: 'Internal Audit', person: 'Admin' },
+                  ]}
+                  columns={[
+                    { title: 'Date', dataIndex: 'date', key: 'date' },
+                    { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t === 'Incoming' ? 'success' : t === 'Outgoing' ? 'processing' : 'warning'}>{t}</Tag> },
+                    { title: 'Item', dataIndex: 'item', key: 'item' },
+                    { title: 'Qty', dataIndex: 'qty', key: 'qty', render: (q) => <Text strong style={{ color: q.startsWith('+') ? '#52c41a' : '#ff4d4f' }}>{q}</Text> },
+                    { title: 'Source/Dest', dataIndex: 'entity', key: 'entity' },
+                    { title: 'By', dataIndex: 'person', key: 'person' },
+                  ]}
+                />
+              </Card>
+            )
+          }
+        ]}
+      />
 
       {/* ═══════════════════════════════════════
           ADD ITEM MODAL (simple, no sub-modals)
@@ -552,7 +603,7 @@ export default function Inventory() {
                       name="date"
                       style={{ marginBottom: 12 }}
                     >
-                      <Input type="date" style={{ width: '100%', borderRadius: 8, height: 42 }} />
+                      <DatePicker style={{ width: '100%', borderRadius: 8, height: 42 }} />
                     </Form.Item>
                   </Col>
                 </Row>
@@ -728,7 +779,7 @@ export default function Inventory() {
                       name="date"
                       style={{ marginBottom: 12 }}
                     >
-                      <Input type="date" style={{ width: '100%', borderRadius: 8, height: 42 }} />
+                      <DatePicker style={{ width: '100%', borderRadius: 8, height: 42 }} />
                     </Form.Item>
                   </Col>
                 </Row>

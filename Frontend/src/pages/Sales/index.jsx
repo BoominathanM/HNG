@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal,
   Form, Row, Col, Typography, Drawer, Steps, Divider, Badge,
-  InputNumber, Tooltip, Checkbox, message, Slider, Upload, Progress,
+  InputNumber, Tooltip, Checkbox, message, Slider, Upload, Progress, DatePicker,
 } from 'antd';
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
@@ -11,7 +11,7 @@ import {
   DownloadOutlined, UploadOutlined, ArrowRightOutlined,
   BankOutlined, EnvironmentOutlined, TeamOutlined, CalendarOutlined,
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
-  HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined,
+  HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -42,7 +42,14 @@ const STATUS_COLORS = {
   'In Production': '#B11E6A', 'Dispatch Ready': '#8a1652', 'Payment Pending': '#fa8c16', Completed: '#52c41a',
   'Partially Completed': '#faad14',
   Hot: '#ff4d4f', Warm: '#fa8c16', Cold: '#1890ff', 'Managers Help': '#722ed1',
-  Negotiation: '#fa8c16', 'Quotation Not Sent': '#d9d9d9',
+  'Need manager help': '#722ed1',
+  'Warm(In discussion)': '#fa8c16',
+  'Hot(Going to close soon)': '#ff4d4f',
+  'Cold(First Intro)': '#1890ff',
+  'Quotation (Sent)': '#B11E6A',
+  'Quotation (Not Sent)': '#d9d9d9',
+  Negotiation: '#fa8c16',
+  Rejected: '#ff4d4f',
 };
 
 const LEAD_STEPS = [
@@ -145,10 +152,10 @@ const CARE_KIT_PRODUCTS = {
 };
 
 const PERFORMANCE_TARGETS = [
-  { key: 'old_hotel', label: 'Old Hotel Sales', target: 500000, achieved: 320000, color: '#B11E6A' },
-  { key: 'new_hotel', label: 'New Hotel Sales', target: 300000, achieved: 150000, color: '#1890ff' },
-  { key: 'payment', label: 'Payment Target', target: 800000, achieved: 600000, color: '#52c41a' },
-  { key: 'software', label: 'Software Target (New)', target: 200000, achieved: 40000, color: '#722ed1' },
+  { key: 'old_hotel', label: 'Old Hotel Sales', target: 500000, achieved: 320000, color: '#B11E6A', reward: 'Special Bonus' },
+  { key: 'new_hotel', label: 'New Hotel Sales', target: 1000000, achieved: 450000, color: '#1890ff', reward: 'iPhone 15 Pro' },
+  { key: 'payment', label: 'Payment Target', target: 800000, achieved: 680000, color: '#52c41a', reward: 'Team Dinner' },
+  { key: 'software', label: 'Software Target (New)', target: 200000, achieved: 45000, color: '#722ed1', reward: 'Tech Gadget' },
 ];
 
 const REMINDERS_DATA = [
@@ -425,18 +432,31 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             )}
           </Col>
 
-          {/* Qty & Rate */}
-          <Col flex="none" style={{ minWidth: 180 }}>
-            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE</Text>
+          {/* Qty, Rate, GST & Sticker */}
+          <Col flex="none" style={{ minWidth: 320 }}>
+            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST / STICKER</Text>
             <Row gutter={4}>
-              <Col span={10}>
+              <Col span={5}>
                 <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
                 </Form.Item>
               </Col>
-              <Col span={14}>
+              <Col span={6}>
                 <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={disabled} size="small" />
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item {...rest} name={[name, 'gst']} initialValue={0} style={{ marginBottom: 0 }}>
+                  <InputNumber placeholder="GST %" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
+                </Form.Item>
+              </Col>
+              <Col span={7}>
+                <Form.Item {...rest} name={[name, 'sticker']} initialValue="NO" style={{ marginBottom: 0 }}>
+                  <Select size="small" placeholder="Sticker">
+                    <Option value="YES">With Sticker</Option>
+                    <Option value="NO">No Sticker</Option>
+                  </Select>
                 </Form.Item>
               </Col>
             </Row>
@@ -469,6 +489,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
 
           <Row gutter={[16, 16]}>
             {/* Row 1 */}
+            <Col xs={24} sm={8}>
+              <Form.Item {...rest} name={[name, 'unit']} label={<span style={{ fontSize: 11 }}>Display Unit</span>} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={disabled} size="small" />
+              </Form.Item>
+            </Col>
             <Col xs={24} sm={8}>
               <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={disabled} size="small" />
@@ -656,14 +681,14 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
             name="paymentReminderDate"
             rules={[{ required: true, message: 'Select a reminder date for the balance payment' }]}
           >
-            <Input type="date" style={{ width: '100%' }} />
+            <DatePicker style={{ width: '100%' }} />
           </Form.Item>
         </Col>
       )}
       {is5050 && disabled && (
         <Col xs={24} sm={12}>
           <Form.Item label="Payment Reminder Date" name="paymentReminderDate">
-            <Input type="date" style={{ width: '100%' }} disabled />
+            <DatePicker style={{ width: '100%' }} disabled />
           </Form.Item>
         </Col>
       )}
@@ -1969,7 +1994,7 @@ export default function Sales() {
                     <InputNumber style={{ width: '100%' }} prefix="₹" min={0} />
                   </Form.Item>
                   <Row gutter={8}>
-                    <Col span={12}><Form.Item label="Order Date" name="date"><Input type="date" /></Form.Item></Col>
+                    <Col span={12}><Form.Item label="Order Date" name="date"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
                     <Col span={12}>
                       <Form.Item label="Delivery Date(s)" name="expectedDelivery">
                         <Input placeholder="YYYY-MM-DD" />
@@ -1984,7 +2009,7 @@ export default function Sales() {
                           <Row key={key} gutter={4} align="middle" style={{ marginTop: 4 }}>
                             <Col flex="auto">
                               <Form.Item {...rest} name={[name, 'date']} style={{ marginBottom: 0 }}>
-                                <Input type="date" size="small" />
+                                <DatePicker size="small" />
                               </Form.Item>
                             </Col>
                             <Col flex="none">
@@ -2034,9 +2059,9 @@ export default function Sales() {
       </Card>
     );
 
-    // Products card: customer detail only (not lead detail), and add-customer when product type is chosen
+    // Products card: show for both leads and customers in add/edit mode
     const isLeadDetail = isDetail && !record.customerId;
-    const showProductsCard = (isDetail && !isLeadDetail) || (isAddCustomer && (watchedProductType === 'PERSONALIZED_KIT' || watchedProductType === 'SEPARATE_PRODUCT'));
+    const showProductsCard = isDetail || isAddLead || isAddCustomer;
 
     return (
       <motion.div
@@ -2300,6 +2325,12 @@ export default function Sales() {
                       </Col>
                     )}
 
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Order Delivery Date" name="orderDeliveryDate">
+                        <DatePicker style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+
                   </Row>
                 )}
               </Card>
@@ -2354,18 +2385,34 @@ export default function Sales() {
                         <Form.Item name="status" label="Status">
                           <SelectWithAdd
                             defaultOptions={[
-                              { value: 'Hot', label: '🔴 Hot' },
-                              { value: 'Warm', label: '🟡 Warm' },
-                              { value: 'Cold', label: '🔵 Cold' },
-                              { value: 'Interested', label: '🟣 Interested' },
+                              { value: 'Need manager help', label: '🟣 Need manager help' },
+                              { value: 'Warm(In discussion)', label: '🟡 Warm(In discussion)' },
+                              { value: 'Hot(Going to close soon)', label: '🔴 Hot(Going to close soon)' },
+                              { value: 'Cold(First Intro)', label: '🔵 Cold(First Intro)' },
+                              { value: 'Quotation (Sent)', label: '📄 Quotation (Sent)' },
+                              { value: 'Quotation (Not Sent)', label: '📄 Quotation (Not Sent)' },
                               { value: 'Negotiation', label: '🤝 Negotiation' },
-                              { value: 'Managers Help', label: '🟣 Managers Help' },
                               { value: 'Converted', label: '✅ Converted' },
+                              { value: 'Rejected', label: '❌ Rejected' },
                             ]}
                             placeholder="Select status"
                           />
                         </Form.Item>
-                        <Form.Item label="Follow-up Date" name="followUpDate"><Input type="date" /></Form.Item>
+                        {watchedStatus === 'Quotation (Sent)' && (
+                          <Row gutter={8}>
+                            <Col span={12}>
+                              <Form.Item label="Quotation No" name="quotationNo" rules={[{ required: true }]}>
+                                <Input placeholder="Q-101" />
+                              </Form.Item>
+                            </Col>
+                            <Col span={12}>
+                              <Form.Item label="Quotation Date" name="quotationDate" rules={[{ required: true }]}>
+                                <DatePicker style={{ width: '100%' }} />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                        )}
+                        <Form.Item label="Follow-up Date" name="followUpDate"><DatePicker style={{ width: '100%' }} /></Form.Item>
                         <Form.Item label="Time" name="followUpTime"><Input type="time" /></Form.Item>
                         <Form.Item label="Task" name="followUpName"><Input placeholder="e.g. Call back" /></Form.Item>
                       </>
@@ -2404,8 +2451,8 @@ export default function Sales() {
                 </Col>
               </Row>
 
-              {/* ── Personalization card — add-customer only ──────────── */}
-              {isAddCustomer && (
+              {/* ── Personalization card — show for both ──────────── */}
+              {(isAddLead || isAddCustomer) && (
                 <Card
                   style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={
@@ -2418,14 +2465,15 @@ export default function Sales() {
                 >
                   <Row gutter={16}>
                     <Col xs={24} sm={12}>
-                      <Form.Item label="Product" name="productType" rules={[{ required: true, message: 'Select product type' }]}>
+                      <Form.Item label="Product Selection" name="productType" rules={[{ required: true, message: 'Select product type' }]}>
                         <SelectWithAdd
+                          mode="multiple"
                           defaultOptions={PERSONALIZATION_OPTIONS}
-                          placeholder="Select product type"
+                          placeholder="Select product types"
                         />
                       </Form.Item>
                     </Col>
-                    {watchedProductType === 'PERSONALIZED_KIT' && (
+                    {watchedProductType?.includes('PERSONALIZED_KIT') && (
                       <Col xs={24} sm={12}>
                         <Form.Item label="Display Unit" name="displayUnit" rules={[{ required: true, message: 'Select display unit' }]}>
                           <SelectWithAdd
@@ -2458,7 +2506,9 @@ export default function Sales() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'rgba(114,46,209,0.06)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.12)' }}>
                           <GiftOutlined style={{ color: '#722ed1' }} />
                           <Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 600 }}>
-                            {record.productType === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product'}
+                            {Array.isArray(record.productType) 
+                              ? record.productType.map(pt => pt === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product').join(' & ') 
+                              : (record.productType === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product')}
                           </Text>
                           {record.displayUnit && (
                             <>
@@ -2820,11 +2870,18 @@ export default function Sales() {
         <Tabs activeKey={activeTab} onChange={setActiveTab} style={{ padding: '0 16px' }}
           tabBarExtraContent={
             <Space size={8}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 12px', borderRadius: 8, border: `1px solid ${borderColor}` }}>
-                <CalendarOutlined style={{ color: '#aaa' }} />
-                <Input type="date" bordered={false} style={{ width: 130, background: 'transparent', padding: 0 }} onChange={(e) => setDateRange([e.target.value, dateRange?.[1]])} />
-                <span style={{ color: '#ccc' }}>—</span>
-                <Input type="date" bordered={false} style={{ width: 130, background: 'transparent', padding: 0 }} onChange={(e) => setDateRange([dateRange?.[0], e.target.value])} />
+              <div style={{ display: 'flex', alignItems: 'center', background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 8px', borderRadius: 8, border: `1px solid ${borderColor}` }}>
+                <DatePicker.RangePicker
+                  bordered={false}
+                  style={{ width: 260, background: 'transparent' }}
+                  onChange={(dates) => {
+                    if (dates) {
+                      setDateRange([dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')]);
+                    } else {
+                      setDateRange(null);
+                    }
+                  }}
+                />
               </div>
               <Input prefix={<SearchOutlined />} placeholder="Search..." value={searchText}
                 onChange={(e) => setSearchText(e.target.value)} allowClear
@@ -2839,22 +2896,27 @@ export default function Sales() {
               <Row gutter={[16, 16]}>
                 {PERFORMANCE_TARGETS.map(t => (
                   <Col xs={24} sm={12} md={6} key={t.key}>
-                    <Card size="small" style={{ borderRadius: 12, border: `1px solid ${t.color}22` }}>
-                      <Text type="secondary" style={{ fontSize: 12 }}>{t.label}</Text>
-                      <div style={{ margin: '8px 0' }}>
+                    <Card size="small" style={{ borderRadius: 12, border: `1px solid ${t.color}22`, background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', position: 'relative', overflow: 'hidden' }}>
+                      <div style={{ position: 'absolute', right: 8, top: 8, opacity: 0.15 }}>
+                        <TrophyOutlined style={{ fontSize: 32, color: t.color }} />
+                      </div>
+                      <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>{t.label}</Text>
+                      <div style={{ margin: '4px 0 8px' }}>
                         <Text strong style={{ fontSize: 18, color: t.color }}>₹{t.achieved.toLocaleString()}</Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}> / ₹{t.target.toLocaleString()}</Text>
+                        <Text type="secondary" style={{ fontSize: 11 }}> / ₹{t.target.toLocaleString()}</Text>
                       </div>
-                      <div style={{ margin: '12px 0' }}>
-                        <Progress
-                          percent={Math.round((t.achieved / t.target) * 100)}
-                          strokeColor={t.color}
-                          trailColor={`${t.color}22`}
-                          size="small"
-                          status="active"
-                        />
+                      <Progress
+                        percent={Math.round((t.achieved / t.target) * 100)}
+                        strokeColor={t.color}
+                        trailColor={`${t.color}15`}
+                        size={['100%', 8]}
+                        status="active"
+                        style={{ marginBottom: 12 }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={{ fontSize: 11, color: t.color, fontWeight: 600 }}>{((t.achieved / t.target) * 100).toFixed(1)}%</Text>
+                        <Tag color={t.color} style={{ borderRadius: 10, fontSize: 10, margin: 0, border: 'none' }}>{t.reward}</Tag>
                       </div>
-                      <Text style={{ fontSize: 11, color: t.color }}>{((t.achieved / t.target) * 100).toFixed(1)}% Achieved</Text>
                     </Card>
                   </Col>
                 ))}

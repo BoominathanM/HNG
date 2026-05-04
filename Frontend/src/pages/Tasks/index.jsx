@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input,
-  Typography, Space, Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip,
+  Typography, Space, Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, DatePicker,
 } from 'antd';
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
@@ -385,7 +385,7 @@ export default function Tasks() {
                 <Select>{['Ramesh K', 'Kavitha S', 'Meena D', 'Suresh T'].map((e) => <Option key={e} value={e}>{e}</Option>)}</Select>
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12}><Form.Item label="Due Date" name="due"><Input type="date" /></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="Due Date" name="due"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={24} sm={12}><Form.Item label="End Time" name="endTime"><Input type="time" /></Form.Item></Col>
             <Col xs={24}><Form.Item label="Description" name="desc"><Input.TextArea rows={3} /></Form.Item></Col>
           </Row>
