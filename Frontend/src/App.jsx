@@ -14,6 +14,7 @@ import Sales from './pages/Sales';
 import Operations from './pages/Operations';
 import Tasks from './pages/Tasks';
 import Dispatch from './pages/Dispatch';
+import DispatchDetail from './pages/Dispatch/DispatchDetail';
 import Staff from './pages/Staff';
 import Inventory from './pages/Inventory';
 import Billing from './pages/Billing';
@@ -47,6 +48,7 @@ function ThemedApp() {
               <Route path="/operations" element={<Operations />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/dispatch" element={<Dispatch />} />
+              <Route path="/dispatch/:id" element={<DispatchDetail />} />
               <Route path="/staff" element={<Staff />} />
               <Route path="/inventory" element={<Inventory />} />
               <Route path="/billing" element={<Billing />} />
