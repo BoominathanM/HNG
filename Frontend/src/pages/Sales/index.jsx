@@ -1,17 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal,
   Form, Row, Col, Typography, Drawer, Steps, Divider, Badge,
-  InputNumber, Tooltip, Checkbox, message, DatePicker,
+  InputNumber, Tooltip, Checkbox, message, DatePicker, Slider, Upload,
 } from 'antd';
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
   FileTextOutlined, PhoneOutlined, MailOutlined, UserOutlined,
   WhatsAppOutlined, MinusCircleOutlined, CheckOutlined,
-  DownloadOutlined, UploadOutlined, FilterOutlined, ArrowRightOutlined,
+  DownloadOutlined, UploadOutlined, ArrowRightOutlined,
   BankOutlined, EnvironmentOutlined, TeamOutlined, CalendarOutlined,
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
-  HistoryOutlined, StarOutlined,
+  HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -24,24 +24,22 @@ const { RangePicker } = DatePicker;
 
 // ─── Constants ────────────────────────────────────────────────────────
 const PAYMENT_OPTIONS = [
-  { value: 'AFTER_DISPATCH', label: 'Payment After Dispatch' },
-  { value: '30_DAYS_CREDIT', label: 'Payment 30 Days Credit' },
-  { value: '50_50', label: 'Payment Before 50 After 50' },
   { value: 'BEFORE_100', label: 'Payment Before 100%' },
+  { value: 'ON_DISPATCH', label: 'On the Date of Dispatch' },
+  { value: '50_ADVANCE_50_AFTER', label: '50 Advance 50% After Dispatch' },
 ];
 
 const PAYMENT_LABELS = {
-  AFTER_DISPATCH: 'PAYMENT AFTER DISPATCH',
-  '30_DAYS_CREDIT': 'PAYMENT 30 DAYS CREDIT',
-  '50_50': 'PAYMENT BEFORE 50 AFTER 50',
   BEFORE_100: 'PAYMENT BEFORE 100%',
+  ON_DISPATCH: 'ON THE DATE OF DISPATCH',
+  '50_ADVANCE_50_AFTER': '50 ADVANCE 50% AFTER DISPATCH',
 };
 
 const STATUS_COLORS = {
   New: '#C94F8A', Interested: '#D85C9E', 'Quotation Sent': '#B11E6A', Converted: '#52c41a',
   Draft: '#aaa', Sent: '#C94F8A', Approved: '#52c41a', Rejected: '#ff4d4f',
   'In Production': '#B11E6A', 'Dispatch Ready': '#8a1652', 'Payment Pending': '#fa8c16', Completed: '#52c41a',
-  Hot: '#ff4d4f', Warm: '#fa8c16', Cold: '#1890ff',
+  Hot: '#ff4d4f', Warm: '#fa8c16', Cold: '#1890ff', 'Managers Help': '#722ed1',
 };
 
 const LEAD_STEPS = [
@@ -52,59 +50,188 @@ const LEAD_STEPS = [
   { title: 'Follow up 5', description: 'Closing' },
 ];
 
+const NEG_STEPS = [
+  { title: 'Initial', description: 'Quotation reviewed' },
+  { title: 'Counter Offer', description: 'Terms proposed' },
+  { title: 'Final Terms', description: 'Near agreement' },
+  { title: 'Approved', description: 'Deal closed' },
+];
+
+const ORDER_STEPS = [
+  { title: 'Confirmed', description: 'Order received' },
+  { title: 'In Production', description: 'Manufacturing' },
+  { title: 'Dispatch Ready', description: 'Quality checked' },
+  { title: 'Dispatched', description: 'On the way' },
+  { title: 'Delivered', description: 'Reached destination' },
+];
+
+const PERSONALIZATION_OPTIONS = [
+  { value: 'PERSONALIZED_KIT', label: 'Personalized Kit' },
+  { value: 'SEPARATE_PRODUCT', label: 'Separate Product' },
+];
+
+const DISPLAY_UNIT_OPTIONS = [
+  { value: 'ZIPLOCK_POUCH', label: 'Ziplock Pouch' },
+  { value: 'STICKY_POUCH', label: 'Sticky Pouch' },
+  { value: 'REXEN_BAG', label: 'Rexen Bag' },
+  { value: 'TDDC_SLICE_BOX', label: 'TDDC Slice Box' },
+  { value: 'PVK_SIZE_BOX', label: 'PVK Size Box' },
+];
+
+const ALTERNATIVE_PERSON_OPTIONS = [
+  { value: 'Finance', label: 'Finance' },
+  { value: 'GM', label: 'GM' },
+  { value: 'Managers', label: 'Managers' },
+];
+
+const PACKING_MATERIAL_OPTIONS = [
+  { value: 'Plastic Box', label: 'Plastic Box' },
+  { value: 'Paper Box', label: 'Paper Box' },
+  { value: 'Pouch', label: 'Pouch' },
+  { value: 'Wrapper', label: 'Wrapper' },
+];
+
+const MATERIAL_CATEGORY_OPTIONS = [
+  { value: 'Eco Friendly', label: 'Eco Friendly' },
+  { value: 'Plastic', label: 'Plastic' },
+  { value: 'Wooden', label: 'Wooden' },
+];
+
+const PRODUCT_TYPE_OPTIONS = [
+  { value: 'Soap', label: 'Soap' },
+  { value: 'Paste', label: 'Paste' },
+  { value: 'Brush', label: 'Brush' },
+  { value: 'Raizer', label: 'Raizer' },
+  { value: 'Gel', label: 'Gel' },
+  { value: 'Face Kit Combo', label: 'Face Kit Combo' },
+  { value: 'Body Kit Combo', label: 'Body Kit Combo' },
+];
+
+const fmtDateTime = (v) =>
+  v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+const fmtDateTimeShort = (v) =>
+  v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+
 // ─── Sample data ──────────────────────────────────────────────────────
 const INIT_LEADS = [
   {
     key: 1, leadId: 'LEAD-1001', hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
     contactPerson: 'Reception', phone: '+91 94430 39517', email: '',
-    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1', status: 'Warm', followUpDate: '2024-01-20',
+    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1', gstPercent: 18,
+    status: 'Warm', followUpDate: '2024-01-20',
     salesPerson: 'Priya', source: 'Google', createdAt: '2024-01-15T10:30:00Z',
+    statusHistory: [{ status: 'Warm', changedAt: '2024-01-15T10:30:00Z' }],
     products: [
       { name: 'Soap 15grm', qty: 500, rate: 3.6 }, { name: 'Single Brush', qty: 200, rate: 4 },
     ],
-    forwardingCharge: true, deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: '30_DAYS_CREDIT',
+    forwardingCharge: true, deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'ON_DISPATCH',
+    priority: 0, rowsInHotel: 50, generalOccupancy: 1000,
+    alternativePerson: ['Managers'], alternativePhone: '+91 94000 00001',
   },
+];
+
+const SHARED_PRODUCTS = [
+  { name: 'Soap 15grm', qty: 500, rate: 3.4, specs: { logo: 'YES', sticker: 'YES', packingMaterial: 'Pouch', materialCategory: 'Eco Friendly', brand: 'HNG Care', product: 'Soap' } },
+  { name: 'Single Brush', qty: 200, rate: 3.8, specs: { logo: 'NO', sticker: 'NO', packingMaterial: 'Wrapper', materialCategory: 'Plastic', brand: 'DentCare', product: 'Brush' } },
+  { name: 'Shampoo 15ml', qty: 300, rate: 4.0, specs: { logo: 'YES', sticker: 'YES', packingMaterial: 'Plastic Box', materialCategory: 'Plastic', brand: 'HNG Care', product: 'Gel' } },
 ];
 
 const INIT_QUOTATIONS = [
   {
-    key: 1, qid: 'QT-1001', leadKey: 1,
+    key: 1, qid: 'QT-1001', customerId: 'CUST-1001', leadKey: 1,
     hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
-    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1',
-    products: [{ name: 'Soap 15grm', qty: 500, rate: 3.6 }, { name: 'Single Brush', qty: 200, rate: 4 }, { name: 'Shampoo 15ml', qty: 250, rate: 4.25 }],
-    forwardingCharge: true, deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: '30_DAYS_CREDIT',
-    logoNeeded: true, logoProducts: 'Soap15grm, Shampoo 10ml, Dental Kit',
-    specifications: [
-      { product: 'Shampoo 15ml', spec: 'Black Screw type bottle needed', rate: 0 },
-      { product: 'Dental Kit', spec: 'Promise paste needed', rate: 0 }
+    contactPerson: 'Reception', phone: '+91 94430 39517',
+    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1', gstPercent: 18,
+    salesPerson: 'Priya',
+    city: 'Coimbatore', state: 'Tamil Nadu', pincode: '641001',
+    detailedAddress: '12, Avinashi Road, Near Gandhipuram Bus Stand, Coimbatore - 641001',
+    products: [
+      { name: 'Soap 15grm', qty: 500, rate: 3.6, specs: { logo: 'YES', sticker: 'YES', packingMaterial: 'Pouch', materialCategory: 'Eco Friendly', brand: 'HNG Care', product: 'Soap' } },
+      { name: 'Single Brush', qty: 200, rate: 4.0, specs: { logo: 'NO', sticker: 'NO', packingMaterial: 'Wrapper', materialCategory: 'Plastic', brand: 'DentCare', product: 'Brush' } },
+      { name: 'Shampoo 15ml', qty: 300, rate: 4.25, specs: { logo: 'YES', sticker: 'YES', packingMaterial: 'Plastic Box', materialCategory: 'Plastic', brand: 'HNG Care', product: 'Gel' } },
     ],
-    status: 'Sent', date: '2024-01-18', totalAmount: 4825,
+    forwardingCharge: true, deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'ON_DISPATCH',
+    status: 'Negotiation', flowStep: 2, date: '2024-01-18', totalAmount: 5075,
     salesPerson: 'Priya', createdAt: '2024-01-18T10:00:00Z',
+    revisionHistory: [
+      { version: 'v1', date: '2024-01-18', by: 'Priya', note: 'Initial quotation — Soap ₹3.6, Brush ₹4.0, Shampoo ₹4.25. Forwarding charge included.' },
+      { version: 'v2', date: '2024-01-20', by: 'Priya', note: 'Customer requested rate review on Soap and Brush. Moved to Negotiation.' },
+    ],
+    notes: 'Logo required on Soap and Shampoo only. Forwarding charge applied at initial stage.',
   },
 ];
 
 const INIT_ORDERS = [
   {
-    key: 1, oid: 'ORD-2401', quotationId: 'QT-1001',
+    key: 1, oid: 'ORD-2401', quotationId: 'QT-1001', negotiationId: 'NEG-1001',
     hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
-    billType: 'GST', gstNumber: '33AAACC1206D1Z1', paymentTerms: '30_DAYS_CREDIT',
-    products: [{ name: 'Soap 15grm', qty: 500, rate: 3.6 }],
-    totalAmount: 1800, advance: 900, status: 'In Production', date: '2024-01-20',
-    expectedDelivery: '2024-02-10', notes: '',
-    salesPerson: 'Priya', createdAt: '2024-01-20T14:30:00Z',
+    contactPerson: 'Reception', phone: '+91 94430 39517',
+    billType: 'GST', gstNumber: '33AAACC1206D1Z1', gstPercent: 18,
+    paymentTerms: '50_ADVANCE_50_AFTER',
+    salesPerson: 'Priya',
+    products: SHARED_PRODUCTS,
+    totalAmount: 4100, advance: 2050, status: 'In Production',
+    date: '2024-01-25', expectedDelivery: '2024-02-10',
+    forwardingCharge: false, deliveryBy: 'HNG', transportationBy: 'CLIENT',
+    createdAt: '2024-01-25T10:00:00Z',
+    notes: 'Advance of ₹2,050 received on 25-Jan-2024. Production commenced. Delivery expected by 10-Feb-2024.',
+    orderStepFlow: 1,
   },
 ];
 
 const INIT_CUSTOMERS = [
   {
-    key: 1, customerId: 'CUST-1001', leadId: 'LEAD-1001', hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
-    contactPerson: 'Reception', phone: '+91 94430 39517', email: '',
-    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1', salesPerson: 'Priya',
+    key: 1, customerId: 'CUST-1001', leadId: 'LEAD-1001',
+    hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
+    contactPerson: 'Reception', phone: '+91 94430 39517', email: 'bluestar@hotel.in',
+    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1', gstPercent: 18,
+    salesPerson: 'Priya', source: 'Google',
+    city: 'Coimbatore', state: 'Tamil Nadu', pincode: '641001',
+    detailedAddress: '12, Avinashi Road, Near Gandhipuram Bus Stand, Coimbatore - 641001',
+    alternativePerson: ['Managers', 'Finance'], alternativePhone: '+91 94000 00001',
+    rowsInHotel: 120, generalOccupancy: 3600,
+    productType: 'PERSONALIZED_KIT', displayUnit: 'ZIPLOCK_POUCH',
+    products: SHARED_PRODUCTS,
+    forwardingCharge: false, deliveryBy: 'HNG', transportationBy: 'CLIENT',
+    paymentTerms: '50_ADVANCE_50_AFTER', paymentReminderDate: '2024-03-15',
+    priority: 70, mentionPriority: 'High-value repeat customer — ensure timely delivery before March 15.',
+    followUpDate: '2024-02-10', followUpTime: '10:00', followUpName: 'Check on order production status',
+    followUpStep: 4,
     createdAt: '2024-01-20T14:30:00Z',
-  }
+    statusHistory: [
+      { status: 'Warm', changedAt: '2024-01-15T10:30:00Z' },
+      { status: 'Quotation Sent', changedAt: '2024-01-18T10:00:00Z' },
+      { status: 'Converted', changedAt: '2024-01-20T14:30:00Z' },
+    ],
+    notes_history: [
+      { date: '2024-01-15', time: '10:30 AM', person: 'Priya', text: 'Initial call done. Hotel Blue Star interested in Soap 15grm and Single Brush for all 120 rooms.' },
+      { date: '2024-01-17', time: '03:00 PM', person: 'Priya', text: 'Sent sample photos via WhatsApp. Customer confirmed logo requirements on Soap and Shampoo only.' },
+      { date: '2024-01-19', time: '11:00 AM', person: 'Priya', text: 'Quotation QT-1001 sent. Customer reviewing pricing. Added Shampoo 15ml to the order.' },
+      { date: '2024-01-20', time: '02:00 PM', person: 'Priya', text: 'Negotiation completed. Final rates agreed. Advance ₹2,050 received. Converted to customer.' },
+    ],
+  },
 ];
 
-const INIT_NEGOTIATIONS = [];
+const INIT_NEGOTIATIONS = [
+  {
+    key: 1, nid: 'NEG-1001', quotationId: 'QT-1001', customerId: 'CUST-1001',
+    hotelName: 'Hotel Blue Star', billingName: 'HOTEL BLUESTAR', location: 'Coimbatore',
+    contactPerson: 'Reception', phone: '+91 94430 39517',
+    hotelType: 'OLD', billType: 'GST', gstNumber: '33AAACC1206D1Z1', gstPercent: 18,
+    salesPerson: 'Priya',
+    products: SHARED_PRODUCTS,
+    forwardingCharge: false, deliveryBy: 'HNG', transportationBy: 'CLIENT',
+    paymentTerms: '50_ADVANCE_50_AFTER',
+    status: 'Final Terms', flowStep: 2, date: '2024-01-22', totalAmount: 4100,
+    createdAt: '2024-01-20T15:00:00Z',
+    rounds: [
+      { round: 1, date: '2024-01-18', by: 'Priya (Sales)', type: 'Quotation', totalAmount: 5075, note: 'Original quotation — Soap ₹3.6, Brush ₹4.0, Shampoo ₹4.25. Forwarding charge included.' },
+      { round: 2, date: '2024-01-20', by: 'Reception (Hotel)', type: 'Counter Offer', totalAmount: 4100, note: 'Requesting rate reduction on all items. Willing to waive forwarding charge.' },
+      { round: 3, date: '2024-01-22', by: 'Priya (Sales)', type: 'Final Terms', totalAmount: 4100, note: 'Rates revised: Soap ₹3.4, Brush ₹3.8, Shampoo ₹4.0. Forwarding charge waived. Payment: 50% advance.' },
+    ],
+    notes: 'Customer requested bulk discount. Final rates agreed after 2 rounds. Forwarding charge waived as goodwill gesture.',
+  },
+];
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 function calcTotal(products = []) {
@@ -154,6 +281,7 @@ Miss. Priya will Contact you
 +91 63741 15883`;
 }
 
+// ─── SelectWithAdd — dropdown with inline add ──────────────────────────
 const SelectWithAdd = ({ defaultOptions = [], placeholder, ...props }) => {
   const [items, setItems] = React.useState(defaultOptions);
   const [name, setName] = React.useState('');
@@ -194,38 +322,127 @@ const SelectWithAdd = ({ defaultOptions = [], placeholder, ...props }) => {
   );
 };
 
-// ─── Sub-components (defined outside to prevent remount) ──────────────
-function ProductFormList({ fieldName = 'products', disabled = false }) {
+// ─── Sub-components ───────────────────────────────────────────────────
+function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false }) {
   return (
     <Form.List name={fieldName}>
       {(fields, { add, remove }) => (
         <>
           {fields.map(({ key, name, ...rest }) => (
-            <Row key={key} gutter={8} align="middle" style={{ marginBottom: 8 }}>
-              <Col flex="auto">
-                <Form.Item {...rest} name={[name, 'name']} rules={[{ required: true, message: 'Product name required' }]} style={{ marginBottom: 0 }}>
-                  <Input placeholder="Product name (e.g. Soap 15grm)" disabled={disabled} />
-                </Form.Item>
-              </Col>
-              <Col style={{ width: 100 }}>
-                <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: 'Qty' }]} style={{ marginBottom: 0 }}>
-                  <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={disabled} />
-                </Form.Item>
-              </Col>
-              <Col style={{ width: 100 }}>
-                <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: 'Rate' }]} style={{ marginBottom: 0 }}>
-                  <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={disabled} />
-                </Form.Item>
-              </Col>
-              {!disabled && (
-                <Col flex="none">
-                  <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+            <div
+              key={key}
+              style={{
+                marginBottom: 12,
+                border: `1px solid ${showSpecs ? 'rgba(177,30,106,0.15)' : 'transparent'}`,
+                borderRadius: showSpecs ? 10 : 0,
+                padding: showSpecs ? '10px 12px 4px' : 0,
+                background: showSpecs ? 'rgba(177,30,106,0.02)' : 'transparent',
+              }}
+            >
+              {/* Product row */}
+              <Row gutter={8} align="middle" style={{ marginBottom: showSpecs ? 8 : 0 }}>
+                <Col flex="auto">
+                  <Form.Item {...rest} name={[name, 'name']} rules={[{ required: true, message: 'Product name required' }]} style={{ marginBottom: 0 }}>
+                    <Input placeholder="Product name (e.g. Soap 15grm)" disabled={disabled} />
+                  </Form.Item>
                 </Col>
+                <Col style={{ width: 100 }}>
+                  <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: 'Qty' }]} style={{ marginBottom: 0 }}>
+                    <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={disabled} />
+                  </Form.Item>
+                </Col>
+                <Col style={{ width: 100 }}>
+                  <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: 'Rate' }]} style={{ marginBottom: 0 }}>
+                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={disabled} />
+                  </Form.Item>
+                </Col>
+                {!disabled && (
+                  <Col flex="none">
+                    <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                  </Col>
+                )}
+              </Row>
+
+              {/* Per-product Specifications */}
+              {showSpecs && !disabled && (
+                <div style={{ paddingTop: 8, borderTop: '1px dashed rgba(177,30,106,0.2)', marginTop: 4 }}>
+                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, display: 'block', marginBottom: 8 }}>
+                    SPECIFICATIONS
+                  </Text>
+                  <Row gutter={[8, 0]}>
+                    <Col xs={12} sm={8}>
+                      <Form.Item
+                        {...rest}
+                        name={[name, 'specs', 'logo']}
+                        label={<Text style={{ fontSize: 11 }}>Logo</Text>}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Select placeholder="Logo?" size="small" allowClear>
+                          <Option value="YES">Logo</Option>
+                          <Option value="NO">No Logo</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Form.Item
+                        {...rest}
+                        name={[name, 'specs', 'sticker']}
+                        label={<Text style={{ fontSize: 11 }}>Sticker</Text>}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Select placeholder="Sticker?" size="small" allowClear>
+                          <Option value="YES">Sticker</Option>
+                          <Option value="NO">No Sticker</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Form.Item
+                        {...rest}
+                        name={[name, 'specs', 'packingMaterial']}
+                        label={<Text style={{ fontSize: 11 }}>Packing Material</Text>}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" size="small" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Form.Item
+                        {...rest}
+                        name={[name, 'specs', 'materialCategory']}
+                        label={<Text style={{ fontSize: 11 }}>Material Category</Text>}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" size="small" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Form.Item
+                        {...rest}
+                        name={[name, 'specs', 'brand']}
+                        label={<Text style={{ fontSize: 11 }}>Brand</Text>}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" size="small" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Form.Item
+                        {...rest}
+                        name={[name, 'specs', 'product']}
+                        label={<Text style={{ fontSize: 11 }}>Product</Text>}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <SelectWithAdd defaultOptions={PRODUCT_TYPE_OPTIONS} placeholder="Select / Add product" size="small" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </div>
               )}
-            </Row>
+            </div>
           ))}
           {!disabled && (
-            <Button type="dashed" onClick={() => add({ name: '', qty: undefined, rate: undefined })} icon={<PlusOutlined />} block>
+            <Button type="dashed" onClick={() => add({ name: '', qty: undefined, rate: undefined, specs: {} })} icon={<PlusOutlined />} block>
               Add Product
             </Button>
           )}
@@ -278,7 +495,10 @@ function SpecFormList({ form, disabled = false }) {
   );
 }
 
-function DeliveryPaymentFields({ disabled = false }) {
+function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
+  const paymentTerms = Form.useWatch('paymentTerms');
+  const is5050 = paymentTerms === '50_ADVANCE_50_AFTER';
+
   return (
     <Row gutter={12}>
       <Col xs={24} sm={12}>
@@ -287,7 +507,7 @@ function DeliveryPaymentFields({ disabled = false }) {
         </Form.Item>
       </Col>
       <Col xs={24} sm={12}>
-        <Form.Item label="Transportation By" name="transportationBy">
+        <Form.Item label="Transport Cost Scope" name="transportationBy">
           <SelectWithAdd defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'TTDC', label: 'TTDC' }]} placeholder="Select or Add" disabled={disabled} />
         </Form.Item>
       </Col>
@@ -302,7 +522,53 @@ function DeliveryPaymentFields({ disabled = false }) {
             {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
           </Select>
         </Form.Item>
+        {!disabled && (
+          <Form.Item name="paymentTermsReminder" valuePropName="checked" style={{ marginTop: -8, marginBottom: 0 }}>
+            <Checkbox>Set reminder for payment terms</Checkbox>
+          </Form.Item>
+        )}
       </Col>
+
+      {/* Date picker for 50 Advance 50% After Dispatch */}
+      {is5050 && !disabled && (
+        <Col xs={24} sm={12}>
+          <Form.Item
+            label="Payment Reminder Date (50% balance)"
+            name="paymentReminderDate"
+            rules={[{ required: true, message: 'Select a reminder date for the balance payment' }]}
+          >
+            <Input type="date" style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+      )}
+      {is5050 && disabled && (
+        <Col xs={24} sm={12}>
+          <Form.Item label="Payment Reminder Date" name="paymentReminderDate">
+            <Input type="date" style={{ width: '100%' }} disabled />
+          </Form.Item>
+        </Col>
+      )}
+
+      {/* Payment proof upload — customer edit only */}
+      {showUpload && !disabled && (
+        <Col xs={24}>
+          <Form.Item
+            label="Payment Proof"
+            name="paymentProofs"
+            valuePropName="fileList"
+            getValueFromEvent={(e) => (Array.isArray(e) ? e : e?.fileList)}
+          >
+            <Upload
+              multiple
+              listType="picture"
+              beforeUpload={() => false}
+              accept="image/*,.pdf"
+            >
+              <Button icon={<UploadOutlined />}>Upload Payment Proof (multiple files allowed)</Button>
+            </Upload>
+          </Form.Item>
+        </Col>
+      )}
     </Row>
   );
 }
@@ -334,76 +600,119 @@ export default function Sales() {
   const [activeTab, setActiveTab] = useState('leads');
   const [searchText, setSearchText] = useState('');
   const [dateRange, setDateRange] = useState(null);
-  const [viewMode, setViewMode] = useState('table'); // 'table', 'add-lead', 'add-customer', 'detail'
+  const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
 
   // Lead state
-  const [leadDrawerOpen, setLeadDrawerOpen] = useState(false);
-  const [selectedLead, setSelectedLead] = useState(null);
-  const [addLeadOpen, setAddLeadOpen] = useState(false);
   const [editingLead, setEditingLead] = useState(null);
   const [leadForm] = Form.useForm();
 
   // Quotation state
-  const [quotationOpen, setQuotationOpen] = useState(false);
   const [quotationFromLead, setQuotationFromLead] = useState(null);
-  const [viewQuotationOpen, setViewQuotationOpen] = useState(false);
-  const [selectedQuotation, setSelectedQuotation] = useState(null);
+  const [editingQuotation, setEditingQuotation] = useState(null);
   const [quotationForm] = Form.useForm();
 
+  // Negotiation state
+  const [negotiationForm] = Form.useForm();
+  const [editingNegotiation, setEditingNegotiation] = useState(null);
+
   // Order state
-  const [orderOpen, setOrderOpen] = useState(false);
   const [orderFromQuotation, setOrderFromQuotation] = useState(null);
+  const [editingOrder, setEditingOrder] = useState(null);
   const [orderForm] = Form.useForm();
+
+  // Watched values for conditional rendering in the add/edit form
+  const watchedBillType = Form.useWatch('billType', leadForm);
+  const watchedProductType = Form.useWatch('productType', leadForm);
+  const watchedPriority = Form.useWatch('priority', leadForm);
 
   const newLeadDefaults = {
     hotelType: 'OLD', billType: 'GST', forwardingCharge: false,
-    deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'AFTER_DISPATCH',
+    deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'BEFORE_100',
     logoNeeded: false,
     products: [{ name: '', qty: undefined, rate: undefined }],
     specifications: [],
-  };
-
-  // ─── Lead handlers ────────────────────────────────────────────────
-  const openAddLead = (lead = null) => {
-    setEditingLead(lead);
-    leadForm.resetFields();
-    leadForm.setFieldsValue(lead ? { ...lead } : newLeadDefaults);
-    setAddLeadOpen(true);
-  };
-
-  const saveLead = async () => {
-    try {
-      const values = await leadForm.validateFields();
-      if (editingLead) {
-        setLeadsData(prev => prev.map(l => l.key === editingLead.key ? { ...l, ...values } : l));
-        message.success('Lead updated');
-      } else {
-        const newKey = Date.now();
-        const newLead = {
-          key: newKey,
-          leadId: `LEAD-${1000 + leadsData.length + 1}`,
-          status: 'Warm',
-          createdAt: new Date().toISOString(),
-          salesPerson: values.salesPerson || 'Current User',
-          ...values
-        };
-        setLeadsData(prev => [...prev, newLead]);
-        message.success('Lead added');
-      }
-      setAddLeadOpen(false);
-      setViewMode('table');
-    } catch (_) { }
+    priority: 0,
+    productType: undefined,
   };
 
   const openDetailNextScreen = (record) => {
+    setEditingLead(null);
     setSelectedRecord(record);
     leadForm.resetFields();
     leadForm.setFieldsValue(record);
     setViewMode('detail');
   };
 
-  const openLeadDrawer = (lead) => { setSelectedLead(lead); setLeadDrawerOpen(true); };
+  // ─── Lead handlers ────────────────────────────────────────────────
+  const openAddLead = (lead = null) => {
+    setEditingLead(lead);
+    setSelectedRecord(lead);
+    leadForm.resetFields();
+    const defaults = lead ? { ...lead } : newLeadDefaults;
+    leadForm.setFieldsValue(defaults);
+    setViewMode(lead?.customerId ? 'add-customer' : 'add-lead');
+  };
+
+  const saveLead = async () => {
+    try {
+      const values = await leadForm.validateFields();
+      const now = new Date().toISOString();
+      if (editingLead) {
+        const prevStatus = editingLead.status;
+        const statusChanged = values.status && values.status !== prevStatus;
+        const updated = {
+          ...editingLead,
+          ...values,
+          statusHistory: statusChanged
+            ? [...(editingLead.statusHistory || []), { status: values.status, changedAt: now }]
+            : (editingLead.statusHistory || []),
+        };
+        if (editingLead.customerId) {
+          setCustomersData(prev => prev.map(c => c.key === editingLead.key ? updated : c));
+          message.success('Customer updated');
+        } else {
+          setLeadsData(prev => prev.map(l => l.key === editingLead.key ? updated : l));
+          message.success('Lead updated');
+        }
+        setEditingLead(null);
+        setSelectedRecord(null);
+        setViewMode('table');
+      } else {
+        const newKey = Date.now();
+        const initialStatus = values.status || 'Warm';
+        const newLead = {
+          key: newKey,
+          leadId: `LEAD-${1000 + leadsData.length + 1}`,
+          status: initialStatus,
+          createdAt: now,
+          salesPerson: values.salesPerson || 'Current User',
+          statusHistory: [{ status: initialStatus, changedAt: now }],
+          ...values,
+        };
+        setLeadsData(prev => [...prev, newLead]);
+        setEditingLead(null);
+        setSelectedRecord(null);
+        setViewMode('table');
+      }
+    } catch (_) { }
+  };
+
+  const saveDraft = (lead) => {
+    const now = new Date().toISOString();
+    setLeadsData(prev => prev.map(l =>
+      l.key === lead.key
+        ? {
+          ...l,
+          status: 'Draft',
+          statusHistory: [...(l.statusHistory || []), { status: 'Draft', changedAt: now }],
+        }
+        : l
+    ));
+    message.info('Lead saved as Draft');
+  };
+
+
 
   const convertToCustomer = (lead) => {
     const newCustomer = {
@@ -418,11 +727,11 @@ export default function Sales() {
   };
 
   const startQuotationFromLead = (lead) => {
-    setLeadDrawerOpen(false);
+    setEditingQuotation(null);
     setQuotationFromLead(lead);
     quotationForm.resetFields();
     quotationForm.setFieldsValue({ ...lead });
-    setQuotationOpen(true);
+    setViewMode('quotation-form');
   };
 
   // ─── Quotation handlers ───────────────────────────────────────────
@@ -430,24 +739,43 @@ export default function Sales() {
     try {
       const values = await quotationForm.validateFields();
       const total = calcTotal(values.products);
-      const newQ = {
-        key: Date.now(),
-        qid: `QT-${1000 + quotationsData.length + 1}`,
-        leadKey: quotationFromLead?.key,
-        status: 'Draft',
-        date: new Date().toISOString().split('T')[0],
-        totalAmount: total,
-        createdAt: new Date().toISOString(),
-        salesPerson: quotationFromLead?.salesPerson || 'Current User',
-        ...values,
-      };
-      setQuotationsData(prev => [...prev, newQ]);
-      if (quotationFromLead) {
-        setLeadsData(prev => prev.map(l => l.key === quotationFromLead.key ? { ...l, status: 'Quotation Sent' } : l));
+      const now = new Date().toISOString().split('T')[0];
+      if (editingQuotation) {
+        const updated = {
+          ...editingQuotation,
+          ...values,
+          totalAmount: total,
+          revisionHistory: [
+            ...(editingQuotation.revisionHistory || []),
+            { version: `v${(editingQuotation.revisionHistory?.length || 0) + 1}`, date: now, by: 'Sales Team', note: 'Products / terms updated' },
+          ],
+        };
+        setQuotationsData(prev => prev.map(q => q.key === editingQuotation.key ? updated : q));
+        setSelectedRecord(updated);
+        message.success('Quotation updated');
+        setEditingQuotation(null);
+      } else {
+        const newQ = {
+          key: Date.now(),
+          qid: `QT-${1000 + quotationsData.length + 1}`,
+          leadKey: quotationFromLead?.key,
+          customerId: quotationFromLead?.customerId,
+          status: 'Draft', flowStep: 0,
+          date: now, totalAmount: total,
+          createdAt: new Date().toISOString(),
+          salesPerson: quotationFromLead?.salesPerson || 'Current User',
+          revisionHistory: [{ version: 'v1', date: now, by: quotationFromLead?.salesPerson || 'Sales', note: 'Initial quotation created' }],
+          ...values,
+        };
+        setQuotationsData(prev => [...prev, newQ]);
+        if (quotationFromLead) {
+          setLeadsData(prev => prev.map(l => l.key === quotationFromLead.key ? { ...l, status: 'Quotation Sent' } : l));
+        }
+        setQuotationFromLead(null);
+        setActiveTab('quotations');
+        message.success('Quotation created');
       }
-      message.success('Quotation created');
-      setQuotationOpen(false);
-      setQuotationFromLead(null);
+      setViewMode('table');
       setActiveTab('quotations');
     } catch (_) { }
   };
@@ -461,16 +789,26 @@ export default function Sales() {
   };
 
   const startOrderFromQuotation = (q) => {
-    setViewQuotationOpen(false);
-    setOrderFromQuotation(q);
-    orderForm.resetFields();
-    orderForm.setFieldsValue({
+    const newOrder = {
+      key: Date.now(),
+      oid: `ORD-${2400 + ordersData.length + 1}`,
+      quotationId: q.qid,
+      status: 'In Production',
+      date: new Date().toISOString().split('T')[0],
+      totalAmount: q.totalAmount || calcTotal(q.products),
+      createdAt: new Date().toISOString(),
+      salesPerson: q.salesPerson || 'Current User',
       hotelName: q.hotelName, billingName: q.billingName, location: q.location,
       detailedAddress: q.detailedAddress, city: q.city, state: q.state, pincode: q.pincode,
       billType: q.billType, paymentTerms: q.paymentTerms,
-      products: q.products, totalAmount: q.totalAmount, advance: 0,
-    });
-    setOrderOpen(true);
+      products: q.products, advance: 0,
+    };
+    setOrdersData(prev => [...prev, newOrder]);
+    setQuotationsData(prev => prev.map(qt => qt.key === q.key ? { ...qt, status: 'Approved' } : qt));
+    setNegotiationsData(prev => prev.map(n => n.quotationId === q.qid ? { ...n, status: 'Approved' } : n));
+    message.success('Order confirmed successfully!');
+    setActiveTab('orders');
+    setViewMode('table');
   };
 
   const saveOrder = async () => {
@@ -490,12 +828,115 @@ export default function Sales() {
       setOrdersData(prev => [...prev, newOrder]);
       if (orderFromQuotation) {
         setQuotationsData(prev => prev.map(q => q.key === orderFromQuotation.key ? { ...q, status: 'Approved' } : q));
+        setNegotiationsData(prev => prev.map(n => n.key === orderFromQuotation.key ? { ...n, status: 'Approved' } : n));
       }
       message.success('Order confirmed!');
-      setOrderOpen(false);
-      setOrderFromQuotation(null);
+      setViewMode('table');
       setActiveTab('orders');
     } catch (_) { }
+  };
+
+  // ─── Detail view openers ──────────────────────────────────────────
+  const openQuotationDetail = (q) => {
+    setSelectedRecord(q);
+    setViewMode('quotation-detail');
+  };
+  const openNegotiationDetail = (n) => { setSelectedRecord(n); setViewMode('negotiation-detail'); };
+  const openOrderDetail = (o) => { setSelectedRecord(o); setViewMode('order-detail'); };
+
+  const editExistingQuotation = (q) => {
+    setEditingQuotation(q);
+    quotationForm.resetFields();
+    quotationForm.setFieldsValue({ ...q });
+    setViewMode('quotation-form');
+  };
+
+  const moveToNegotiation = (q) => {
+    const newNeg = {
+      key: Date.now(),
+      nid: `NEG-${1000 + negotiationsData.length + 1}`,
+      quotationId: q.qid, customerId: q.customerId,
+      hotelName: q.hotelName, billingName: q.billingName, location: q.location,
+      contactPerson: q.contactPerson, phone: q.phone,
+      hotelType: q.hotelType, billType: q.billType, gstNumber: q.gstNumber, gstPercent: q.gstPercent,
+      salesPerson: q.salesPerson,
+      products: (q.products || []).map(p => ({ ...p })),
+      forwardingCharge: q.forwardingCharge, deliveryBy: q.deliveryBy, transportationBy: q.transportationBy,
+      paymentTerms: q.paymentTerms,
+      status: 'Initial', flowStep: 0,
+      date: new Date().toISOString().split('T')[0],
+      totalAmount: calcTotal(q.products),
+      createdAt: new Date().toISOString(),
+      rounds: [{ round: 1, date: q.date, by: q.salesPerson || 'Sales', type: 'Quotation', totalAmount: calcTotal(q.products), note: 'Moved from quotation to negotiation stage.' }],
+      notes: '',
+    };
+    setNegotiationsData(prev => [...prev, newNeg]);
+    setQuotationsData(prev => prev.map(qt => qt.key === q.key ? { ...qt, status: 'Negotiation', flowStep: 2 } : qt));
+    message.success('Moved to Negotiation');
+    setViewMode('table');
+    setActiveTab('quotations');
+  };
+
+  const editNegotiation = (n) => {
+    setEditingNegotiation(n);
+    negotiationForm.resetFields();
+    negotiationForm.setFieldsValue({ ...n, negotiationNote: '' });
+    setViewMode('negotiation-form');
+  };
+
+  const saveNegotiation = async () => {
+    try {
+      const values = await negotiationForm.validateFields();
+      const total = calcTotal(values.products);
+      const updated = {
+        ...editingNegotiation,
+        ...values,
+        totalAmount: total,
+        flowStep: Math.min((editingNegotiation.flowStep || 0) + 1, 3),
+        status: ['Initial', 'Counter Offer', 'Final Terms', 'Approved'][(editingNegotiation.flowStep || 0) + 1] || 'Final Terms',
+        rounds: [
+          ...(editingNegotiation.rounds || []),
+          {
+            round: (editingNegotiation.rounds?.length || 0) + 1,
+            date: new Date().toISOString().split('T')[0],
+            by: 'Sales Team',
+            type: 'Counter Offer',
+            totalAmount: total,
+            note: values.negotiationNote || 'Terms updated',
+          },
+        ],
+      };
+      setNegotiationsData(prev => prev.map(n => n.key === editingNegotiation.key ? updated : n));
+      setSelectedRecord(updated);
+      message.success('Negotiation updated');
+      setViewMode('table');
+      setActiveTab('quotations');
+      setEditingNegotiation(null);
+    } catch (_) { }
+  };
+
+  const convertNegotiationToOrder = (n) => {
+    const newOrder = {
+      key: Date.now(),
+      oid: `ORD-${2400 + ordersData.length + 1}`,
+      quotationId: n.quotationId,
+      negotiationId: n.nid,
+      status: 'In Production',
+      date: new Date().toISOString().split('T')[0],
+      totalAmount: n.totalAmount || calcTotal(n.products),
+      createdAt: new Date().toISOString(),
+      salesPerson: n.salesPerson || 'Current User',
+      hotelName: n.hotelName, billingName: n.billingName, location: n.location,
+      detailedAddress: n.detailedAddress, city: n.city, state: n.state, pincode: n.pincode,
+      billType: n.billType, paymentTerms: n.paymentTerms,
+      products: n.products, advance: 0,
+    };
+    setOrdersData(prev => [...prev, newOrder]);
+    setNegotiationsData(prev => prev.map(neg => neg.key === n.key ? { ...neg, status: 'Approved' } : neg));
+    setQuotationsData(prev => prev.map(qt => qt.qid === n.quotationId ? { ...qt, status: 'Approved' } : qt));
+    message.success('Order confirmed successfully!');
+    setActiveTab('orders');
+    setViewMode('table');
   };
 
   // ─── Table columns ────────────────────────────────────────────────
@@ -516,12 +957,26 @@ export default function Sales() {
       render: (v) => <Tag color={STATUS_COLORS[v] || '#ccc'}>{v}</Tag>
     },
     {
+      title: 'Created At', dataIndex: 'createdAt',
+      render: (v) => fmtDateTimeShort(v),
+    },
+    {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space size={4}>
-          <Tooltip title="View Drawer"><Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); openLeadDrawer(r); }} /></Tooltip>
+          <Tooltip title="View Detail">
+            <Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); openDetailNextScreen(r); }} />
+          </Tooltip>
+          <Tooltip title="Save as Draft">
+            <Button size="small" icon={<SaveOutlined />} style={{ color: '#aaa', borderColor: '#d9d9d9' }}
+              onClick={(e) => { e.stopPropagation(); saveDraft(r); }} />
+          </Tooltip>
+          <Tooltip title="Edit">
+            <Button size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); openAddLead(r); }} />
+          </Tooltip>
           <Tooltip title="Convert to Customer">
-            <Button size="small" icon={<ArrowRightOutlined />} style={{ color: '#52c41a' }} onClick={(e) => { e.stopPropagation(); convertToCustomer(r); }} />
+            <Button size="small" icon={<ArrowRightOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }}
+              onClick={(e) => { e.stopPropagation(); convertToCustomer(r); }} />
           </Tooltip>
         </Space>
       ),
@@ -534,12 +989,17 @@ export default function Sales() {
     { title: 'Location', dataIndex: 'location' },
     { title: 'Phone', dataIndex: 'phone' },
     { title: 'Sales Person', dataIndex: 'salesPerson' },
+    { title: 'Created At', dataIndex: 'createdAt', render: (v) => fmtDateTimeShort(v) },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space size={4}>
-          <Tooltip title="View Drawer"><Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); openLeadDrawer(r); }} /></Tooltip>
+          <Tooltip title="View Detail"><Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); openDetailNextScreen(r); }} /></Tooltip>
           <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); openAddLead(r); }} /></Tooltip>
+          <Tooltip title="Get Order & Send Quotation">
+            <Button size="small" icon={<FileTextOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
+              onClick={(e) => { e.stopPropagation(); startQuotationFromLead(r); }} />
+          </Tooltip>
         </Space>
       ),
     },
@@ -550,12 +1010,17 @@ export default function Sales() {
     { title: 'Location', dataIndex: 'location' },
     { title: 'Sales Person', dataIndex: 'salesPerson' },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v] || 'orange'}>{v}</Tag> },
+    { title: 'Created At', dataIndex: 'createdAt', render: (v) => fmtDateTimeShort(v) },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space size={4}>
-          <Button size="small" icon={<EyeOutlined />} />
-          <Button size="small" type="primary" style={{ fontSize: 11 }}>Order</Button>
+          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedRecord(r); setViewMode('negotiation-detail'); }} /></Tooltip>
+          <Tooltip title="Convert to Order">
+            <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertNegotiationToOrder(r)}>
+              → Order
+            </Button>
+          </Tooltip>
         </Space>
       ),
     },
@@ -581,8 +1046,8 @@ export default function Sales() {
     },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v]}>{v}</Tag> },
     {
-      title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'],
-      render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
+      title: 'Created At', dataIndex: 'createdAt', responsive: ['md'],
+      render: (v) => fmtDateTime(v),
     },
     { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
     {
@@ -590,7 +1055,7 @@ export default function Sales() {
       render: (_, r) => (
         <Space size={4}>
           <Tooltip title="View">
-            <Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedQuotation(r); setViewQuotationOpen(true); }} />
+            <Button size="small" icon={<EyeOutlined />} onClick={() => openQuotationDetail(r)} />
           </Tooltip>
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
@@ -620,16 +1085,20 @@ export default function Sales() {
     },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v]}>{v}</Tag> },
     {
-      title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'],
-      render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
+      title: 'Created At', dataIndex: 'createdAt', responsive: ['md'],
+      render: (v) => fmtDateTime(v),
     },
     { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space size={4}>
-          <Button size="small" icon={<EyeOutlined />} />
-          <Button size="small" icon={<FileTextOutlined />} />
+          <Tooltip title="View">
+            <Button size="small" icon={<EyeOutlined />} onClick={() => openOrderDetail(r)} />
+          </Tooltip>
+          <Tooltip title="Download Invoice">
+            <Button size="small" icon={<FileTextOutlined />} />
+          </Tooltip>
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
           </Tooltip>
@@ -641,573 +1110,728 @@ export default function Sales() {
   const filtered = (arr, keys = ['hotelName', 'location']) =>
     !searchText ? arr : arr.filter(item => keys.some(k => (item[k] || '').toLowerCase().includes(searchText.toLowerCase())));
 
-  // ─── Lead form modal ───────────────────────────────────────────────
-  const LeadModal = (
-    <Modal
-      title={editingLead ? 'Edit Customer' : 'Add New Customer'}
-      open={addLeadOpen}
-      onCancel={() => setAddLeadOpen(false)}
-      onOk={saveLead}
-      okText={editingLead ? 'Update' : 'Save Customer'}
-      okButtonProps={{ style: { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' } }}
-      width={Math.min(700, window.innerWidth - 32)}
-    >
-      <Form form={leadForm} layout="vertical" style={{ marginTop: 12, maxHeight: '65vh', overflowY: 'auto', overflowX: 'hidden', paddingRight: '8px' }}>
-        <SectionDivider title="Hotel / Customer Info" />
-        <Row gutter={12}>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Hotel Name" name="hotelName" rules={[{ required: true }]}>
-              <Input placeholder="e.g. Hotel Blue Star" prefix={<UserOutlined />} />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Billing Name (on invoice)" name="billingName">
-              <Input placeholder="e.g. HOTEL BLUESTAR" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Location / City" name="location" rules={[{ required: true }]}>
-              <Input placeholder="e.g. Coimbatore" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Source" name="source">
-              <SelectWithAdd defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }, { value: 'Google', label: 'Google' }]} />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Sales Person" name="salesPerson">
-              <Input placeholder="Sales person name" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true, message: 'Detailed Address is required' }]}>
-              <Input.TextArea rows={1} placeholder="Full Address" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="City" name="city">
-              <Input placeholder="City" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="State" name="state">
-              <Input placeholder="State" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="Pincode" name="pincode">
-              <Input placeholder="Pincode" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Contact Person" name="contactPerson">
-              <Input placeholder="Name" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Phone" name="phone" rules={[{ required: true, message: 'Phone required' }]}>
-              <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined />} />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Email" name="email">
-              <Input placeholder="optional" prefix={<MailOutlined />} />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
-              <Select>
-                <Option value="OLD">Old Hotel</Option>
-                <Option value="NEW">New Hotel</Option>
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="Bill Type" name="billType" rules={[{ required: true }]}>
-              <Select>
-                <Option value="GST">GST Bill</Option>
-                <Option value="NON_GST">Non-GST Bill</Option>
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="GST Number" name="gstNumber">
-              <Input placeholder="GSTIN (if GST)" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Follow-up Date" name="followUpDate">
-              <Input type="date" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Follow-up Time" name="followUpTime">
-              <Input type="time" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Follow-up Name" name="followUpName">
-              <Input placeholder="Next follow-up task" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Lead Status" name="status">
-              <Select>
-                <Option value="Hot">Hot</Option>
-                <Option value="Warm">Warm</Option>
-                <Option value="Cold">Cold</Option>
-              </Select>
-            </Form.Item>
-          </Col>
-        </Row>
 
-        <SectionDivider title="Order Details (Products)" />
-        <ProductHeaders />
-        <ProductFormList fieldName="products" />
 
-        <SectionDivider title="Specifications" />
-        <Row gutter={12}>
-          <Col xs={24} sm={12}>
-            <Form.Item name="logoNeeded" valuePropName="checked">
-              <Checkbox>Logo Needed</Checkbox>
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Logo on Products" name="logoProducts">
-              <Input placeholder="e.g. Soap15grm, Shampoo, Dental Kit" />
-            </Form.Item>
-          </Col>
-        </Row>
-        <SpecFormList form={leadForm} />
-
-        <SectionDivider title="Delivery & Payment" />
-        <DeliveryPaymentFields />
-      </Form>
-    </Modal>
-  );
-
-  // ─── Lead detail drawer ────────────────────────────────────────────
-  const LeadDrawer = (
-    <Drawer
-      title={
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <span>Customer Details</span>
-          {selectedLead && (
-            <Button type="primary" icon={<FileTextOutlined />} size="small"
-              style={{ background: '#B11E6A', border: 'none' }}
-              onClick={() => startQuotationFromLead(selectedLead)}
-            >
-              Generate Quotation
-            </Button>
-          )}
-        </div>
-      }
-      open={leadDrawerOpen}
-      onClose={() => setLeadDrawerOpen(false)}
-      width={Math.min(500, window.innerWidth - 32)}
-    >
-      {selectedLead && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Card size="small" style={{ borderRadius: 10, background: 'rgba(177,30,106,0.05)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-              <div>
-                <Text strong style={{ fontSize: 16 }}>{selectedLead.hotelName}</Text>
-                {selectedLead.billingName && selectedLead.billingName !== selectedLead.hotelName && (
-                  <><br /><Text style={{ fontSize: 12, color: '#888' }}>Bill as: {selectedLead.billingName}</Text></>
-                )}
-                <br /><Text style={{ color: '#666' }}>{selectedLead.location}</Text>
-              </div>
-              <Space direction="vertical" size={2}>
-                <Tag>{selectedLead.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}</Tag>
-                <Tag color={selectedLead.billType === 'GST' ? '#B11E6A' : '#fa8c16'}>{selectedLead.billType === 'GST' ? 'GST Bill' : 'Non-GST Bill'}</Tag>
-              </Space>
-            </div>
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Text type="secondary">Lead ID:</Text> <Text strong>{selectedLead.leadId || '—'}</Text>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Text type="secondary">Customer ID:</Text> <Text strong>{selectedLead.customerId || '—'}</Text>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Text type="secondary">Source:</Text> <Text strong>{selectedLead.source || '—'}</Text>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Text type="secondary">Sales Person:</Text> <Text strong>{selectedLead.salesPerson || '—'}</Text>
-              </div>
-              {selectedLead.phone && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <PhoneOutlined style={{ color: '#B11E6A' }} />
-                  <a href={`tel:${selectedLead.phone}`}>{selectedLead.phone}</a>
-                </div>
-              )}
-              {selectedLead.email && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <MailOutlined style={{ color: '#B11E6A' }} /><Text>{selectedLead.email}</Text>
-                </div>
-              )}
-            </div>
-          </Card>
-
-          {selectedLead.billType === 'GST' && selectedLead.gstNumber && selectedLead.gstNumber !== '—' && (
-            <Card size="small" style={{ borderRadius: 10, border: '1px solid #e0e0e0' }}>
-              <Text strong style={{ fontSize: 13, color: '#B11E6A' }}>GST Details</Text>
-              <Row style={{ marginTop: 8 }} gutter={[8, 8]}>
-                <Col span={12}><Text style={{ color: '#666', fontSize: 12 }}>Customer Name:</Text><br /><Text strong>{selectedLead.hotelName}</Text></Col>
-                <Col span={12}><Text style={{ color: '#666', fontSize: 12 }}>Phone Number:</Text><br /><Text strong>{selectedLead.phone || '—'}</Text></Col>
-                <Col span={12}><Text style={{ color: '#666', fontSize: 12 }}>PAN Number:</Text><br /><Text strong>{selectedLead.gstNumber.substring(2, 12)}</Text></Col>
-                <Col span={12}><Text style={{ color: '#666', fontSize: 12 }}>GSTIN:</Text><br /><Text strong>{selectedLead.gstNumber}</Text></Col>
-                <Col span={24}><Text style={{ color: '#666', fontSize: 12 }}>Address:</Text><br /><Text strong>{selectedLead.detailedAddress || selectedLead.location}</Text></Col>
-              </Row>
-            </Card>
-          )}
-
-          <div>
-            <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Order Details</Text>
-            {selectedLead.products?.map((p, i) => {
-              const productSpecs = selectedLead.specifications?.filter(s => typeof s === 'object' && s.product === p.name) || [];
-              return (
-                <div key={i} style={{ padding: '8px', background: i % 2 === 0 ? 'rgba(177,30,106,0.04)' : 'transparent', borderRadius: 6, marginBottom: 4 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Text strong>{p.name} — {p.qty} pcs @ ₹{p.rate}</Text>
-                    <Text strong>₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}</Text>
-                  </div>
-                  {productSpecs.length > 0 && (
-                    <div style={{ marginTop: 6, paddingLeft: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {productSpecs.map((s, idx) => (
-                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <CheckOutlined style={{ color: '#B11E6A', fontSize: 10 }} />
-                          <Text style={{ fontSize: 12, color: '#666' }}>{s.spec} {s.rate ? `(+₹${s.rate})` : ''}</Text>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>
-              <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>Total: ₹{calcTotal(selectedLead.products).toLocaleString()}</Text>
-            </div>
-          </div>
-
-          {(() => {
-            const unmappedSpecs = selectedLead.specifications?.filter(s => typeof s === 'string' || (typeof s === 'object' && !s.product)) || [];
-            if (!selectedLead.logoNeeded && unmappedSpecs.length === 0) return null;
-            return (
-              <div>
-                <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8, marginTop: 12 }}>Additional Requirements</Text>
-                {selectedLead.logoNeeded && (
-                  <Tag color="#B11E6A" style={{ marginBottom: 8, whiteSpace: 'normal' }}>Logo Needed: {selectedLead.logoProducts}</Tag>
-                )}
-                {unmappedSpecs.map((s, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
-                    <CheckOutlined style={{ color: '#B11E6A', fontSize: 11, marginTop: 3 }} />
-                    <Text style={{ fontSize: 13 }}>{typeof s === 'string' ? s : `${s.spec || ''} (₹${s.rate || 0})`}</Text>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
-
-          <div>
-            <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Delivery & Payment</Text>
-            <Space wrap>
-              <Tag>{selectedLead.forwardingCharge ? 'Forwarding Charge: YES' : 'No Forwarding Charge'}</Tag>
-              <Tag>Delivery: {selectedLead.deliveryBy}</Tag>
-              <Tag>Transport: {selectedLead.transportationBy}</Tag>
-              <Tag color="#B11E6A">{PAYMENT_LABELS[selectedLead.paymentTerms] || selectedLead.paymentTerms}</Tag>
-            </Space>
-          </div>
-
-          <div style={{ marginTop: 8 }}>
-            <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Follow-up Progress</Text>
-            <Steps direction="vertical" size="small"
-              current={selectedLead.followUpStep || 0}
-              items={LEAD_STEPS}
-            />
-          </div>
-
-          <Divider style={{ margin: '8px 0' }} />
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Text strong style={{ fontSize: 13, color: '#B11E6A' }}>Notes & History</Text>
-              <Button type="link" size="small" icon={<PlusOutlined />}>Add Note</Button>
-            </div>
-            <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(selectedLead.notes_history || [
-                { date: '2024-05-01', time: '10:30 AM', person: 'Priya', text: 'Initial call done. Interested in Soap 15grm.' },
-                { date: '2024-05-01', time: '02:15 PM', person: 'Priya', text: 'Sent sample photos via WhatsApp.' }
-              ]).map((note, idx) => (
-                <div key={idx} style={{ padding: '8px', background: '#f9f9f9', borderRadius: 6, fontSize: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <Text strong style={{ fontSize: 11 }}>{note.person}</Text>
-                    <Text type="secondary" style={{ fontSize: 10 }}>{note.date} {note.time}</Text>
-                  </div>
-                  <Text>{note.text}</Text>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <Button icon={<WhatsAppOutlined />}
-            style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }}
-            block onClick={() => sendViaWhatsApp(selectedLead)}
-          >
-            Send via WhatsApp
-          </Button>
-
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button type="primary" icon={<FileTextOutlined />}
-              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8, flex: 1 }}
-              onClick={() => startQuotationFromLead(selectedLead)}
-            >
-              Quotation
-            </Button>
-            {activeTab === 'leads' && (
-              <Button
-                icon={<ArrowRightOutlined />}
-                style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 8, flex: 1 }}
-                onClick={() => convertToCustomer(selectedLead)}
-              >
-                Convert
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-    </Drawer>
-  );
-
-  // ─── Quotation form modal ──────────────────────────────────────────
-  const QuotationModal = (
-    <Modal
-      title={quotationFromLead ? `New Quotation — ${quotationFromLead.hotelName}` : 'New Quotation'}
-      open={quotationOpen}
-      onCancel={() => { setQuotationOpen(false); setQuotationFromLead(null); }}
-      onOk={saveQuotation}
-      okText="Save Quotation"
-      okButtonProps={{ style: { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' } }}
-      width={Math.min(700, window.innerWidth - 32)}
-    >
-      <Form form={quotationForm} layout="vertical" style={{ marginTop: 12, maxHeight: '65vh', overflowY: 'auto', overflowX: 'hidden', paddingRight: '8px' }}>
-        <SectionDivider title="Hotel Info" />
-        <Row gutter={12}>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Hotel Name" name="hotelName" rules={[{ required: true }]}><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Billing Name" name="billingName"><Input placeholder="Name on quotation" /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Location" name="location" rules={[{ required: true }]}><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true, message: 'Detailed Address is required' }]}><Input.TextArea rows={1} /></Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="City" name="city"><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="State" name="state"><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="Pincode" name="pincode"><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Hotel Type" name="hotelType">
-              <Select><Option value="OLD">Old Hotel</Option><Option value="NEW">New Hotel</Option></Select>
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Bill Type" name="billType">
-              <Select><Option value="GST">GST Bill</Option><Option value="NON_GST">Non-GST Bill</Option></Select>
-            </Form.Item>
-          </Col>
-        </Row>
-
-        <SectionDivider title="Products" />
-        <ProductHeaders />
-        <ProductFormList fieldName="products" />
-
-        <SectionDivider title="Specifications" />
-        <Row gutter={12}>
-          <Col xs={24} sm={12}>
-            <Form.Item name="logoNeeded" valuePropName="checked"><Checkbox>Logo Needed</Checkbox></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Logo on Products" name="logoProducts"><Input placeholder="e.g. Soap15grm, Shampoo" /></Form.Item>
-          </Col>
-        </Row>
-        <SpecFormList form={quotationForm} />
-
-        <SectionDivider title="Delivery & Payment" />
-        <DeliveryPaymentFields />
-      </Form>
-    </Modal>
-  );
-
-  // ─── View quotation drawer ─────────────────────────────────────────
-  const ViewQuotationDrawer = (
-    <Drawer
-      title={
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <span>{selectedQuotation?.qid} — {selectedQuotation?.hotelName}</span>
-          <Button icon={<WhatsAppOutlined />} size="small"
-            style={{ background: '#25D366', color: '#fff', border: 'none' }}
-            onClick={() => selectedQuotation && sendViaWhatsApp(selectedQuotation)}
-          >
-            WhatsApp
-          </Button>
-        </div>
-      }
-      open={viewQuotationOpen}
-      onClose={() => setViewQuotationOpen(false)}
-      width={Math.min(500, window.innerWidth - 32)}
-    >
-      {selectedQuotation && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Card size="small" style={{ borderRadius: 10, background: 'rgba(177,30,106,0.05)' }}>
-            <Text strong style={{ fontSize: 16 }}>{selectedQuotation.billingName || selectedQuotation.hotelName}</Text><br />
-            <Text style={{ color: '#666' }}>{selectedQuotation.location}</Text>
-            <div style={{ marginTop: 8 }}>
-              <Space>
-                <Tag>{selectedQuotation.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}</Tag>
-                <Tag color={selectedQuotation.billType === 'GST' ? '#B11E6A' : '#fa8c16'}>{selectedQuotation.billType === 'GST' ? 'GST' : 'Non-GST'}</Tag>
-                <Tag color={STATUS_COLORS[selectedQuotation.status]}>{selectedQuotation.status}</Tag>
-              </Space>
-            </div>
-          </Card>
-
-          <div>
-            <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Products</Text>
-            {selectedQuotation.products?.map((p, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 8px', background: i % 2 === 0 ? 'rgba(177,30,106,0.04)' : 'transparent', borderRadius: 6 }}>
-                <Text>{p.name} × {p.qty} @ ₹{p.rate}</Text>
-                <Text strong>₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}</Text>
-              </div>
-            ))}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>
-              <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>
-                Total: ₹{calcTotal(selectedQuotation.products).toLocaleString()}
-              </Text>
-            </div>
-          </div>
-
-          {(selectedQuotation.logoNeeded || selectedQuotation.specifications?.length > 0) && (
-            <div>
-              <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Specifications</Text>
-              {selectedQuotation.logoNeeded && (
-                <Tag color="#B11E6A" style={{ marginBottom: 8, whiteSpace: 'normal' }}>Logo: {selectedQuotation.logoProducts}</Tag>
-              )}
-              {selectedQuotation.specifications?.filter(Boolean).map((s, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
-                  <CheckOutlined style={{ color: '#B11E6A', fontSize: 11, marginTop: 3 }} />
-                  <Text style={{ fontSize: 13 }}>{typeof s === 'string' ? s : `${s.product || ''} - ${s.spec || ''} (₹${s.rate || 0})`}</Text>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <Space wrap>
-            <Tag>{selectedQuotation.forwardingCharge ? 'Forwarding Charge: YES' : 'No Forwarding Charge'}</Tag>
-            <Tag color="#B11E6A">{PAYMENT_LABELS[selectedQuotation.paymentTerms]}</Tag>
-          </Space>
-
-          <Button icon={<WhatsAppOutlined />}
-            style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }}
-            block size="large" onClick={() => sendViaWhatsApp(selectedQuotation)}
-          >
-            Send via WhatsApp
-          </Button>
-          <Button type="primary"
-            style={{ background: '#52c41a', border: 'none', borderRadius: 8 }}
-            block onClick={() => startOrderFromQuotation(selectedQuotation)}
-          >
-            Convert to Order
-          </Button>
-        </div>
-      )}
-    </Drawer>
-  );
-
-  // ─── Order confirm modal ───────────────────────────────────────────
-  const OrderModal = (
-    <Modal
-      title={orderFromQuotation ? `Confirm Order — ${orderFromQuotation.hotelName}` : 'New Order'}
-      open={orderOpen}
-      onCancel={() => { setOrderOpen(false); setOrderFromQuotation(null); }}
-      onOk={saveOrder}
-      okText="Confirm Order"
-      okButtonProps={{ style: { background: '#52c41a', border: 'none' } }}
-      width={Math.min(700, window.innerWidth - 32)}
-    >
-      <Form form={orderForm} layout="vertical" style={{ marginTop: 12, maxHeight: '65vh', overflowY: 'auto', overflowX: 'hidden', paddingRight: '8px' }}>
-        <SectionDivider title="Order Info" />
-        <Row gutter={12}>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Hotel Name" name="hotelName" rules={[{ required: true }]}><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Billing Name" name="billingName"><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Location" name="location" rules={[{ required: true }]}><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true, message: 'Detailed Address is required' }]}><Input.TextArea rows={1} /></Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="City" name="city"><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="State" name="state"><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Form.Item label="Pincode" name="pincode"><Input /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Bill Type" name="billType">
-              <Select><Option value="GST">GST Bill</Option><Option value="NON_GST">Non-GST Bill</Option></Select>
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Payment Terms" name="paymentTerms">
-              <Select>{PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}</Select>
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Order Date" name="orderDate"><Input type="date" /></Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Expected Delivery Date" name="expectedDelivery"><Input type="date" /></Form.Item>
-          </Col>
-        </Row>
-
-        <SectionDivider title="Products" />
-        <ProductHeaders />
-        <ProductFormList fieldName="products" />
-
-        <SectionDivider title="Payment" />
-        <Row gutter={12}>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Advance Paid (₹)" name="advance" rules={[{ required: true, message: 'Enter advance amount' }]}>
-              <InputNumber style={{ width: '100%' }} prefix="₹" min={0} placeholder="0" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item label="Notes / Special Instructions" name="notes">
-              <Input.TextArea rows={2} placeholder="Any notes..." />
-            </Form.Item>
-          </Col>
-        </Row>
-      </Form>
-    </Modal>
-  );
 
   // ─── Render ────────────────────────────────────────────────────────
   if (viewMode !== 'table') {
+
+    // ── Shared helpers for detail views ────────────────────────────
+    const DetailProductCards = ({ products = [], totalAmount }) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {products.map((p, i) => (
+          <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 10 }}>PRODUCT</Text>
+                  <Text strong style={{ display: 'block', fontSize: 14 }}>{p.name || '—'}</Text>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <Text strong style={{ display: 'block', fontSize: 18, color: '#B11E6A', lineHeight: 1.2 }}>₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} pcs × ₹{p.rate}</Text>
+              </div>
+            </div>
+            {p.specs && Object.values(p.specs).some(Boolean) && (
+              <div style={{ padding: '12px 16px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
+                <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 10 }}>SPECIFICATIONS</Text>
+                <Row gutter={[12, 10]}>
+                  {p.specs.logo && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Logo</Text><Tag color={p.specs.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}</Tag></Col>}
+                  {p.specs.sticker && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Sticker</Text><Tag color={p.specs.sticker === 'YES' ? 'blue' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.sticker === 'YES' ? '✓ Sticker' : '✗ No Sticker'}</Tag></Col>}
+                  {p.specs.packingMaterial && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Packing</Text><Text strong style={{ fontSize: 12 }}>{p.specs.packingMaterial}</Text></Col>}
+                  {p.specs.materialCategory && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Material</Text><Tag color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.materialCategory}</Tag></Col>}
+                  {p.specs.brand && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Brand</Text><Text strong style={{ fontSize: 12 }}>{p.specs.brand}</Text></Col>}
+                  {p.specs.product && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Type</Text><Tag color="orange" style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.product}</Tag></Col>}
+                </Row>
+              </div>
+            )}
+          </div>
+        ))}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>{products.length} product{products.length !== 1 ? 's' : ''}</Text>
+          <div style={{ textAlign: 'right' }}>
+            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL</Text>
+            <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>₹{(totalAmount || calcTotal(products)).toLocaleString()}</Text>
+          </div>
+        </div>
+      </div>
+    );
+
+    const DetailDeliveryPayment = ({ rec }) => (
+      <Row gutter={12}>
+        <Col xs={24} sm={12}>
+          <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
+            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 10, letterSpacing: 0.5 }}>DELIVERY INFO</Text>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><Text type="secondary" style={{ fontSize: 12 }}>Delivery By</Text><Text strong>{rec.deliveryBy || '—'}</Text></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}><Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text><Text strong>{rec.transportationBy || '—'}</Text></div>
+            <Tag color={rec.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>{rec.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}</Tag>
+          </div>
+        </Col>
+        <Col xs={24} sm={12}>
+          <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.12)', height: '100%' }}>
+            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 10, letterSpacing: 0.5 }}>PAYMENT TERMS</Text>
+            <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[rec.paymentTerms] || rec.paymentTerms || '—'}</Text>
+            {rec.paymentTerms === '50_ADVANCE_50_AFTER' && rec.paymentReminderDate && (
+              <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE DUE DATE</Text>
+                <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{rec.paymentReminderDate}</Text>
+              </div>
+            )}
+          </div>
+        </Col>
+      </Row>
+    );
+
+    // ── Quotation detail ───────────────────────────────────────────
+    if (viewMode === 'quotation-detail') {
+      const q = selectedRecord || {};
+      const QUOT_STEPS = [
+        { title: 'Draft', description: 'Created' },
+        { title: 'Sent', description: 'Sent to client' },
+        { title: 'Negotiation', description: 'Under review' },
+        { title: 'Approved', description: 'Confirmed' },
+      ];
+      return (
+        <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+            <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('quotations'); }} style={{ borderRadius: 8 }}>Back to Quotations</Button>
+            <Space wrap>
+              <Button icon={<EditOutlined />} onClick={() => editExistingQuotation(q)} style={{ borderRadius: 8 }}>Edit Products</Button>
+              <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(q)}>WhatsApp</Button>
+              {(q.flowStep || 0) < 2 && (
+                <Button style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => moveToNegotiation(q)}>Move to Negotiation</Button>
+              )}
+            </Space>
+          </div>
+
+          {/* Hero */}
+          <div style={{ background: 'linear-gradient(135deg, #0c2461 0%, #1e3799 50%, #4a69bd 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20, position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', right: -30, top: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, position: 'relative' }}>
+              <div>
+                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Quotation</Text>
+                <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{q.hotelName || 'Hotel'}</Title>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, display: 'block', marginTop: 4 }}>{q.location} · {q.billingName}</Text>
+                <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {q.contactPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined style={{ opacity: 0.6 }} />{q.contactPerson}</span>}
+                  {q.phone && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ opacity: 0.6 }} />{q.phone}</span>}
+                  {q.salesPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ opacity: 0.6 }} />{q.salesPerson}</span>}
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{q.qid}</Tag>
+                <Tag color={STATUS_COLORS[q.status]} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{q.status}</Tag>
+                <Space>
+                  <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>{q.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
+                  <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>{q.date}</Tag>
+                </Space>
+              </div>
+            </div>
+          </div>
+
+          {/* Flow steps */}
+          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} bodyStyle={{ padding: '16px 24px' }}>
+            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>QUOTATION PROGRESS</Text>
+            <Steps current={q.flowStep || 0} items={QUOT_STEPS} />
+          </Card>
+
+          {/* Stats */}
+          <Row gutter={12} style={{ marginBottom: 20 }}>
+            {[
+              { label: 'Total Value', value: `₹${(q.totalAmount || calcTotal(q.products)).toLocaleString()}`, color: '#B11E6A', icon: <CreditCardOutlined /> },
+              { label: 'Products', value: `${q.products?.length || 0} items`, color: '#1890ff', icon: <ShoppingCartOutlined /> },
+              { label: 'Payment Terms', value: PAYMENT_LABELS[q.paymentTerms]?.split(' ').slice(0, 2).join(' ') || '—', color: '#fa8c16', icon: <CalendarOutlined /> },
+              { label: 'Quote Date', value: q.date || '—', color: '#52c41a', icon: <HistoryOutlined /> },
+            ].map((s, i) => (
+              <Col xs={12} sm={6} key={i}>
+                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} bodyStyle={{ padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
+                  <Text strong style={{ fontSize: 14, color: s.color, display: 'block' }}>{s.value}</Text>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+
+          <Row gutter={20}>
+            <Col xs={24} lg={16}>
+              {/* Customer info */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#1e3799', borderRadius: 2, display: 'inline-block' }} /><BankOutlined style={{ color: '#1e3799' }} /><span>Customer Information</span></Space>}>
+                <Row gutter={[16, 12]}>
+                  <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Hotel / Company</Text><Text strong style={{ display: 'block', fontSize: 15, marginTop: 2 }}>{q.hotelName}</Text></Col>
+                  <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Billing Name</Text><Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{q.billingName || '—'}</Text></Col>
+                  <Col xs={24} sm={8}><Text type="secondary" style={{ fontSize: 11 }}>Location</Text><Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{q.location}</Text></Col>
+                  <Col xs={24} sm={8}><Text type="secondary" style={{ fontSize: 11 }}>Contact Person</Text><Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{q.contactPerson || '—'}</Text></Col>
+                  <Col xs={24} sm={8}><Text type="secondary" style={{ fontSize: 11 }}>Phone</Text><a href={`tel:${q.phone}`} style={{ display: 'block', fontSize: 13, fontWeight: 600, marginTop: 2, color: '#1890ff', textDecoration: 'none' }}>{q.phone || '—'}</a></Col>
+                  {q.billType === 'GST' && <><Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>GSTIN</Text><Text strong style={{ display: 'block', fontSize: 13, fontFamily: 'monospace', marginTop: 2 }}>{q.gstNumber}</Text></Col><Col xs={24} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>GST Rate</Text><Text strong style={{ display: 'block', fontSize: 14, color: '#B11E6A', marginTop: 2 }}>{q.gstPercent ? `${q.gstPercent}%` : '—'}</Text></Col></>}
+                  <Col xs={24} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Sales Person</Text><Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{q.salesPerson}</Text></Col>
+                </Row>
+              </Card>
+
+              {/* Products */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Order Details — Products</span></Space>}>
+                <DetailProductCards products={q.products} totalAmount={q.totalAmount} />
+              </Card>
+
+              {/* Delivery & Payment */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
+                <DetailDeliveryPayment rec={q} />
+              </Card>
+
+              {/* Revision History */}
+              {(q.revisionHistory || []).length > 0 && (
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><HistoryOutlined style={{ color: '#722ed1' }} /><span>Revision History</span></Space>}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {[...(q.revisionHistory || [])].reverse().map((r, i) => (
+                      <div key={i} style={{ padding: '10px 14px', borderRadius: 10, background: isDark ? 'rgba(255,255,255,0.04)' : '#f8f9fc', borderLeft: '3px solid #722ed1' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <Tag color="purple" style={{ borderRadius: 20 }}>{r.version}</Tag>
+                          <Text type="secondary" style={{ fontSize: 11 }}>{r.date} · {r.by}</Text>
+                        </div>
+                        <Text style={{ fontSize: 13 }}>{r.note}</Text>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+
+              {/* Notes */}
+              {q.notes && (
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><span>Notes</span></Space>}>
+                  <Text style={{ fontSize: 13 }}>{q.notes}</Text>
+                </Card>
+              )}
+            </Col>
+
+            <Col xs={24} lg={8}>
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><StarOutlined style={{ color: '#B11E6A' }} /><span>Quotation Status</span></Space>}>
+                <Tag color={STATUS_COLORS[q.status]} style={{ borderRadius: 20, fontSize: 14, padding: '6px 18px', fontWeight: 600 }}>{q.status}</Tag>
+              </Card>
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><span>Quick Actions</span></Space>}>
+                <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                  <Button icon={<EditOutlined />} block size="large" style={{ borderRadius: 10, height: 44 }} onClick={() => editExistingQuotation(q)}>Edit Products / Rates</Button>
+                  <Button icon={<WhatsAppOutlined />} block size="large" style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => sendViaWhatsApp(q)}>Send via WhatsApp</Button>
+                  {(q.flowStep || 0) < 2 && (
+                    <Button block size="large" style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => moveToNegotiation(q)}>Move to Negotiation</Button>
+                  )}
+                  {(q.flowStep || 0) >= 2 && (
+                    <Button block size="large" style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => startOrderFromQuotation(q)}>Convert to Order</Button>
+                  )}
+                </Space>
+              </Card>
+              {q.customerId && (
+                <Card size="small" style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>CUSTOMER ID</Text>
+                  <Text strong style={{ display: 'block', color: '#B11E6A' }}>{q.customerId}</Text>
+                </Card>
+              )}
+            </Col>
+          </Row>
+        </motion.div>
+      );
+    }
+
+    // ── Negotiation detail ─────────────────────────────────────────
+    if (viewMode === 'negotiation-detail') {
+      const n = selectedRecord || {};
+      const NEG_STEPS = [
+        { title: 'Initial', description: 'Quotation reviewed' },
+        { title: 'Counter Offer', description: 'Terms proposed' },
+        { title: 'Final Terms', description: 'Near agreement' },
+        { title: 'Approved', description: 'Deal closed' },
+      ];
+      return (
+        <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+            <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('quotations'); }} style={{ borderRadius: 8 }}>Back to Quotations & Negotiations</Button>
+            <Space wrap>
+              <Button icon={<EditOutlined />} onClick={() => editNegotiation(n)} style={{ borderRadius: 8, background: '#fa8c16', color: '#fff', border: 'none' }}>Submit Counter Offer</Button>
+              <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(n)}>WhatsApp</Button>
+              {(n.flowStep || 0) >= 2 && (
+                <Button style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => convertNegotiationToOrder(n)}>Convert to Order</Button>
+              )}
+            </Space>
+          </div>
+
+          {/* Hero */}
+          <div style={{ background: 'linear-gradient(135deg, #7d3f00 0%, #d46b08 50%, #ffa940 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20, position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', right: -30, top: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, position: 'relative' }}>
+              <div>
+                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Negotiation</Text>
+                <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{n.hotelName || 'Hotel'}</Title>
+                <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, display: 'block', marginTop: 4 }}>{n.location} · {n.billingName}</Text>
+                <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {n.contactPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined style={{ opacity: 0.6 }} />{n.contactPerson}</span>}
+                  {n.phone && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ opacity: 0.6 }} />{n.phone}</span>}
+                  {n.salesPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ opacity: 0.6 }} />{n.salesPerson}</span>}
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{n.nid}</Tag>
+                <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>from {n.quotationId}</Tag>
+                <Tag color={STATUS_COLORS[n.status] || 'orange'} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{n.status}</Tag>
+              </div>
+            </div>
+          </div>
+
+          {/* Flow steps */}
+          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} bodyStyle={{ padding: '16px 24px' }}>
+            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>NEGOTIATION PROGRESS</Text>
+            <Steps current={n.flowStep || 0} items={NEG_STEPS} />
+          </Card>
+
+          {/* Stats */}
+          <Row gutter={12} style={{ marginBottom: 20 }}>
+            {[
+              { label: 'Current Value', value: `₹${(n.totalAmount || calcTotal(n.products)).toLocaleString()}`, color: '#fa8c16', icon: <CreditCardOutlined /> },
+              { label: 'Products', value: `${n.products?.length || 0} items`, color: '#1890ff', icon: <ShoppingCartOutlined /> },
+              { label: 'Rounds', value: `${n.rounds?.length || 0} round${n.rounds?.length !== 1 ? 's' : ''}`, color: '#722ed1', icon: <HistoryOutlined /> },
+              { label: 'Date', value: n.date || '—', color: '#52c41a', icon: <CalendarOutlined /> },
+            ].map((s, i) => (
+              <Col xs={12} sm={6} key={i}>
+                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} bodyStyle={{ padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
+                  <Text strong style={{ fontSize: 14, color: s.color, display: 'block' }}>{s.value}</Text>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+
+          <Row gutter={20}>
+            <Col xs={24} lg={16}>
+              {/* Negotiation rounds */}
+              {(n.rounds || []).length > 0 && (
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><HistoryOutlined style={{ color: '#fa8c16' }} /><span>Negotiation Rounds</span></Space>}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {(n.rounds || []).map((r, i) => (
+                      <div key={i} style={{ padding: '12px 16px', borderRadius: 10, background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderLeft: `3px solid ${r.type === 'Quotation' ? '#1e3799' : r.type === 'Counter Offer' ? '#fa8c16' : '#52c41a'}` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 24, height: 24, borderRadius: '50%', background: r.type === 'Quotation' ? '#1e3799' : r.type === 'Counter Offer' ? '#fa8c16' : '#52c41a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>{r.round}</span>
+                            </div>
+                            <Tag color={r.type === 'Quotation' ? 'blue' : r.type === 'Counter Offer' ? 'orange' : 'green'} style={{ borderRadius: 20, margin: 0 }}>{r.type}</Tag>
+                            <Text type="secondary" style={{ fontSize: 11 }}>{r.by}</Text>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <Text strong style={{ color: '#B11E6A' }}>₹{(r.totalAmount || 0).toLocaleString()}</Text>
+                            <Text type="secondary" style={{ fontSize: 11 }}>{r.date}</Text>
+                          </div>
+                        </div>
+                        <Text style={{ fontSize: 12, color: isDark ? 'rgba(255,255,255,0.65)' : '#555' }}>{r.note}</Text>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+
+              {/* Products */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Agreed Products & Rates</span></Space>}>
+                <DetailProductCards products={n.products} totalAmount={n.totalAmount} />
+              </Card>
+
+              {/* Delivery & Payment */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
+                <DetailDeliveryPayment rec={n} />
+              </Card>
+
+              {n.notes && (
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><span>Notes</span></Space>}>
+                  <Text style={{ fontSize: 13 }}>{n.notes}</Text>
+                </Card>
+              )}
+            </Col>
+
+            <Col xs={24} lg={8}>
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><StarOutlined style={{ color: '#fa8c16' }} /><span>Status</span></Space>}>
+                <Tag color={STATUS_COLORS[n.status] || 'orange'} style={{ borderRadius: 20, fontSize: 14, padding: '6px 18px', fontWeight: 600 }}>{n.status}</Tag>
+              </Card>
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><span>Quick Actions</span></Space>}>
+                <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                  <Button icon={<EditOutlined />} block size="large" style={{ background: '#fa8c16', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => editNegotiation(n)}>Submit Counter Offer</Button>
+                  <Button icon={<WhatsAppOutlined />} block size="large" style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => sendViaWhatsApp(n)}>Send via WhatsApp</Button>
+                  <Button block size="large" style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => convertNegotiationToOrder(n)}>Convert to Order</Button>
+                </Space>
+              </Card>
+              <Card size="small" style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>LINKED TO</Text>
+                <div style={{ marginTop: 6 }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>Quotation: </Text><Text strong style={{ color: '#1e3799' }}>{n.quotationId}</Text>
+                </div>
+                {n.customerId && <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>Customer: </Text><Text strong style={{ color: '#B11E6A' }}>{n.customerId}</Text></div>}
+              </Card>
+            </Col>
+          </Row>
+        </motion.div>
+      );
+    }
+
+    // ── Order detail ───────────────────────────────────────────────
+    if (viewMode === 'order-detail') {
+      const o = selectedRecord || {};
+      const ORDER_STEPS = [
+        { title: 'Confirmed', description: 'Order placed' },
+        { title: 'In Production', description: 'Manufacturing' },
+        { title: 'Quality Check', description: 'QC & packing' },
+        { title: 'Dispatch Ready', description: 'Ready to ship' },
+        { title: 'Delivered', description: 'Completed' },
+      ];
+      const orderStepMap = { 'In Production': 1, 'Quality Check': 2, 'Dispatch Ready': 3, 'Delivered': 4 };
+      const orderCurrentStep = orderStepMap[o.status] ?? 0;
+      const oTotal = calcTotal(o.products);
+      const balance = oTotal - (o.advance || 0);
+      return (
+        <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+            <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('orders'); }} style={{ borderRadius: 8 }}>Back to Orders</Button>
+            <Space wrap>
+              <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(o)}>WhatsApp</Button>
+              <Button icon={<FileTextOutlined />} style={{ borderRadius: 8 }}>Download Invoice</Button>
+            </Space>
+          </div>
+
+          {/* Hero */}
+          <div style={{ background: 'linear-gradient(135deg, #0a3d0f 0%, #1a7a21 50%, #52c41a 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20, position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', right: -30, top: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, position: 'relative' }}>
+              <div>
+                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Confirmed Order</Text>
+                <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{o.hotelName || 'Hotel'}</Title>
+                <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, display: 'block', marginTop: 4 }}>
+                  {[o.location, o.city, o.state].filter(Boolean).join(' · ')}
+                </Text>
+                <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {o.contactPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined style={{ opacity: 0.6 }} />{o.contactPerson}</span>}
+                  {o.phone && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ opacity: 0.6 }} />{o.phone}</span>}
+                  {o.salesPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ opacity: 0.6 }} />{o.salesPerson}</span>}
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{o.oid}</Tag>
+                <Tag color={STATUS_COLORS[o.status] || 'blue'} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{o.status}</Tag>
+                <Space>
+                  <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>{o.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
+                  {o.expectedDelivery && <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>Delivery: {o.expectedDelivery}</Tag>}
+                </Space>
+              </div>
+            </div>
+          </div>
+
+          {/* Order status steps */}
+          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} bodyStyle={{ padding: '16px 24px' }}>
+            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>ORDER STATUS</Text>
+            <Steps current={orderCurrentStep} items={ORDER_STEPS} />
+          </Card>
+
+          {/* Stats */}
+          <Row gutter={12} style={{ marginBottom: 20 }}>
+            {[
+              { label: 'Order Value', value: `₹${oTotal.toLocaleString()}`, color: '#52c41a', icon: <CreditCardOutlined /> },
+              { label: 'Advance Paid', value: `₹${(o.advance || 0).toLocaleString()}`, color: '#B11E6A', icon: <CheckOutlined /> },
+              { label: 'Balance Due', value: `₹${balance.toLocaleString()}`, color: '#fa8c16', icon: <CalendarOutlined /> },
+              { label: 'Expected Delivery', value: o.expectedDelivery || '—', color: '#1890ff', icon: <CarOutlined /> },
+            ].map((s, i) => (
+              <Col xs={12} sm={6} key={i}>
+                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} bodyStyle={{ padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
+                  <Text strong style={{ fontSize: 14, color: s.color, display: 'block' }}>{s.value}</Text>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+
+          <Row gutter={20}>
+            <Col xs={24} lg={16}>
+              {/* Products */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Order Products & Specifications</span></Space>}>
+                <DetailProductCards products={o.products} totalAmount={o.totalAmount} />
+              </Card>
+
+              {/* Delivery & Payment */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
+                <DetailDeliveryPayment rec={o} />
+              </Card>
+
+              {/* Payment summary */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><CreditCardOutlined style={{ color: '#52c41a' }} /><span>Payment Summary</span></Space>}>
+                <Row gutter={12}>
+                  <Col xs={24} sm={8}>
+                    <div style={{ padding: '14px 16px', background: 'rgba(82,196,26,0.06)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)', textAlign: 'center' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>ORDER TOTAL</Text>
+                      <Text strong style={{ fontSize: 20, color: '#52c41a' }}>₹{oTotal.toLocaleString()}</Text>
+                    </div>
+                  </Col>
+                  <Col xs={24} sm={8}>
+                    <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.2)', textAlign: 'center' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>ADVANCE PAID</Text>
+                      <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>₹{(o.advance || 0).toLocaleString()}</Text>
+                    </div>
+                  </Col>
+                  <Col xs={24} sm={8}>
+                    <div style={{ padding: '14px 16px', background: balance > 0 ? 'rgba(250,140,22,0.06)' : 'rgba(82,196,26,0.06)', borderRadius: 10, border: `1px solid ${balance > 0 ? 'rgba(250,140,22,0.2)' : 'rgba(82,196,26,0.2)'}`, textAlign: 'center' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE DUE</Text>
+                      <Text strong style={{ fontSize: 20, color: balance > 0 ? '#fa8c16' : '#52c41a' }}>₹{balance.toLocaleString()}</Text>
+                    </div>
+                  </Col>
+                </Row>
+              </Card>
+
+              {/* Delivery Address */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#52c41a' }} /><span>Delivery Address</span></Space>}>
+                <div style={{ padding: '4px 0' }}>
+                  <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 6 }}>{o.billingName || o.hotelName}</Text>
+                  <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.65)' : '#555', display: 'block', lineHeight: 1.6 }}>
+                    {o.detailedAddress || 'No detailed address provided'}<br />
+                    {[o.city, o.state, o.pincode].filter(Boolean).join(', ')}
+                  </Text>
+                </div>
+              </Card>
+
+              {o.notes && (
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Order Notes</span></Space>}>
+                  <Text style={{ fontSize: 13 }}>{o.notes}</Text>
+                </Card>
+              )}
+            </Col>
+
+            <Col xs={24} lg={8}>
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><StarOutlined style={{ color: '#52c41a' }} /><span>Order Status</span></Space>}>
+                <Tag color={STATUS_COLORS[o.status] || 'blue'} style={{ borderRadius: 20, fontSize: 14, padding: '6px 18px', fontWeight: 600 }}>{o.status}</Tag>
+              </Card>
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><BankOutlined style={{ color: '#1890ff' }} /><span>Billing Details</span></Space>}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Billing Name</Text>
+                    <Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{o.billingName || o.hotelName}</Text>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Bill Type</Text>
+                    <div style={{ marginTop: 4 }}>
+                      <Tag color={o.billType === 'GST' ? 'volcano' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
+                        {o.billType === 'GST' ? 'GST Invoice' : 'Non-GST'}
+                      </Tag>
+                    </div>
+                  </div>
+                  {o.billType === 'GST' && (
+                    <>
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 11 }}>GSTIN</Text>
+                        <Text strong style={{ display: 'block', fontSize: 13, fontFamily: 'monospace', marginTop: 2 }}>{o.gstNumber}</Text>
+                      </div>
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 11 }}>GST Rate</Text>
+                        <Text strong style={{ display: 'block', fontSize: 15, color: '#B11E6A', marginTop: 2 }}>{o.gstPercent ? `${o.gstPercent}%` : '—'}</Text>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </Card>
+              <Card size="small" style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>LINKED TO</Text>
+                <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 11 }}>Quotation: </Text><Text strong style={{ color: '#1e3799' }}>{o.quotationId || '—'}</Text></div>
+                {o.negotiationId && <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>Negotiation: </Text><Text strong style={{ color: '#fa8c16' }}>{o.negotiationId}</Text></div>}
+                <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>Order Date: </Text><Text strong>{o.date || '—'}</Text></div>
+              </Card>
+            </Col>
+          </Row>
+        </motion.div>
+      );
+    }
+
+    // ── Quotation form ─────────────────────────────────────────────
+    if (viewMode === 'quotation-form') {
+      return (
+        <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => setViewMode('table')} style={{ borderRadius: 8 }}>Back to List</Button>
+            <Button type="primary" size="large" icon={<SaveOutlined />}
+              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8, boxShadow: '0 4px 12px rgba(177,30,106,0.3)' }}
+              onClick={saveQuotation}
+            >
+              {editingQuotation ? 'Update Quotation' : 'Save Quotation'}
+            </Button>
+          </div>
+
+          <div style={{ background: 'linear-gradient(135deg, #0c2461 0%, #1e3799 50%, #4a69bd 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>
+              {editingQuotation ? 'Edit Quotation' : 'New Quotation'}
+            </Text>
+            <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>
+              {editingQuotation ? editingQuotation.qid : (quotationFromLead?.hotelName || 'Draft Quotation')}
+            </Title>
+          </div>
+
+          <Form form={quotationForm} layout="vertical">
+            <Row gutter={20}>
+              <Col xs={24} lg={16}>
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><span>Quotation Information</span></Space>}>
+                  <Row gutter={12}>
+                    <Col xs={24} sm={12}><Form.Item label="Hotel Name" name="hotelName" rules={[{ required: true }]}><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Name on quotation" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Location" name="location" rules={[{ required: true }]}><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true, message: 'Detailed Address is required' }]}><Input.TextArea rows={1} /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="City" name="city"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="State" name="state"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="Pincode" name="pincode"><Input /></Form.Item></Col>
+                  </Row>
+                </Card>
+
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Specifications</span></Space>}>
+                  <ProductHeaders />
+                  <ProductFormList fieldName="products" showSpecs={true} />
+                </Card>
+              </Col>
+
+              <Col xs={24} lg={8}>
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Terms & Settings</span></Space>}>
+                  <Form.Item label="Hotel Type" name="hotelType"><Select><Option value="OLD">Old Hotel</Option><Option value="NEW">New Hotel</Option></Select></Form.Item>
+                  <Form.Item label="Bill Type" name="billType"><Select><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item>
+                  <Divider style={{ margin: '12px 0' }} />
+                  <DeliveryPaymentFields />
+                </Card>
+              </Col>
+            </Row>
+          </Form>
+        </motion.div>
+      );
+    }
+
+    // ── Negotiation form ───────────────────────────────────────────
+    if (viewMode === 'negotiation-form') {
+      return (
+        <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => setViewMode('table')} style={{ borderRadius: 8 }}>Back to List</Button>
+            <Button type="primary" size="large" icon={<SaveOutlined />}
+              style={{ background: 'linear-gradient(135deg,#fa8c16,#ffa940)', border: 'none', borderRadius: 8 }}
+              onClick={saveNegotiation}
+            >
+              Submit Counter Offer
+            </Button>
+          </div>
+
+          <div style={{ background: 'linear-gradient(135deg, #7d3f00 0%, #d46b08 50%, #ffa940 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Negotiation</Text>
+            <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{editingNegotiation?.hotelName}</Title>
+          </div>
+
+          <Form form={negotiationForm} layout="vertical">
+            <Row gutter={20}>
+              <Col xs={24} lg={16}>
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Products & Revised Rates</span></Space>}>
+                  <ProductHeaders />
+                  <ProductFormList fieldName="products" showSpecs={true} />
+                </Card>
+
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Negotiation Note</span></Space>}>
+                  <Form.Item label="Note for this round" name="negotiationNote">
+                    <Input.TextArea rows={3} placeholder="e.g. Agreed to reduce Soap rate by 5%, waiving forwarding charge..." />
+                  </Form.Item>
+                </Card>
+              </Col>
+
+              <Col xs={24} lg={8}>
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Payment & Delivery</span></Space>}>
+                  <DeliveryPaymentFields />
+                </Card>
+              </Col>
+            </Row>
+          </Form>
+        </motion.div>
+      );
+    }
+
+    // ── Order form ─────────────────────────────────────────────
+    if (viewMode === 'order-form') {
+      return (
+        <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => setViewMode('table')} style={{ borderRadius: 8 }}>Back to List</Button>
+            <Button type="primary" size="large" icon={<SaveOutlined />}
+              style={{ background: '#52c41a', border: 'none', borderRadius: 8 }}
+              onClick={saveOrder}
+            >
+              Update Order
+            </Button>
+          </div>
+
+          <div style={{ background: 'linear-gradient(135deg, #0a3d0f 0%, #1a7a21 50%, #52c41a 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Edit Order</Text>
+            <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{editingOrder?.oid} — {editingOrder?.hotelName}</Title>
+          </div>
+
+          <Form form={orderForm} layout="vertical">
+            <Row gutter={20}>
+              <Col xs={24} lg={16}>
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><span>Order Details</span></Space>}>
+                  <Row gutter={12}>
+                    <Col xs={24} sm={12}><Form.Item label="Hotel Name" name="hotelName" rules={[{ required: true }]}><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Location" name="location" rules={[{ required: true }]}><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true }]}><Input.TextArea rows={1} /></Form.Item></Col>
+                  </Row>
+                </Card>
+
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Quantities</span></Space>}>
+                  <ProductHeaders />
+                  <ProductFormList fieldName="products" />
+                </Card>
+              </Col>
+
+              <Col xs={24} lg={8}>
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><span>Payment & Delivery</span></Space>}>
+                  <Form.Item label="Payment Terms" name="paymentTerms">
+                    <Select>{PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}</Select>
+                  </Form.Item>
+                  <Form.Item label="Advance Paid (₹)" name="advance" rules={[{ required: true }]}>
+                    <InputNumber style={{ width: '100%' }} prefix="₹" min={0} />
+                  </Form.Item>
+                  <Row gutter={8}>
+                    <Col span={12}><Form.Item label="Order Date" name="date"><Input type="date" /></Form.Item></Col>
+                    <Col span={12}><Form.Item label="Delivery Date" name="expectedDelivery"><Input type="date" /></Form.Item></Col>
+                  </Row>
+                  <Form.Item label="Order Notes" name="notes"><Input.TextArea rows={2} /></Form.Item>
+                </Card>
+              </Col>
+            </Row>
+          </Form>
+        </motion.div>
+      );
+    }
+
     const isDetail = viewMode === 'detail';
     const isAddLead = viewMode === 'add-lead';
     const isAddCustomer = viewMode === 'add-customer';
@@ -1236,6 +1860,10 @@ export default function Sales() {
         {children}
       </Card>
     );
+
+    // Products card: customer detail only (not lead detail), and add-customer when product type is chosen
+    const isLeadDetail = isDetail && !record.customerId;
+    const showProductsCard = (isDetail && !isLeadDetail) || (isAddCustomer && (watchedProductType === 'PERSONALIZED_KIT' || watchedProductType === 'SEPARATE_PRODUCT'));
 
     return (
       <motion.div
@@ -1267,11 +1895,11 @@ export default function Sales() {
               </>
             )}
             {!isDetail && (
-              <Button type="primary" size="large" icon={<PlusOutlined />}
+              <Button type="primary" size="large" icon={editingLead ? <SaveOutlined /> : <PlusOutlined />}
                 style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8, boxShadow: '0 4px 12px rgba(177,30,106,0.3)' }}
                 onClick={saveLead}
               >
-                {isAddLead ? 'Save Lead' : 'Save Customer'}
+                {editingLead ? 'Update Record' : (isAddLead ? 'Save Lead' : 'Save Customer')}
               </Button>
             )}
           </Space>
@@ -1280,11 +1908,7 @@ export default function Sales() {
         {/* Hero Banner */}
         <div style={{
           background: 'linear-gradient(135deg, #8a1252 0%, #B11E6A 45%, #D85C9E 100%)',
-          borderRadius: 16,
-          padding: '24px 28px',
-          marginBottom: 20,
-          overflow: 'hidden',
-          position: 'relative',
+          borderRadius: 16, padding: '24px 28px', marginBottom: 20, overflow: 'hidden', position: 'relative',
         }}>
           <div style={{ position: 'absolute', right: -30, top: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
           <div style={{ position: 'absolute', right: 80, bottom: -50, width: 120, height: 120, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
@@ -1292,10 +1916,10 @@ export default function Sales() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, position: 'relative' }}>
             <div>
               <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>
-                {isDetail ? (record.customerId ? 'Customer Profile' : 'Lead Profile') : isAddLead ? 'New Lead' : 'New Customer'}
+                {isDetail ? (record.qid ? 'Quotation Profile' : record.customerId ? 'Customer Profile' : 'Lead Profile') : (editingLead ? 'Edit Record' : isAddLead ? 'New Lead' : 'New Customer')}
               </Text>
               <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700, lineHeight: 1.2 }}>
-                {isDetail ? (record.hotelName || 'Hotel') : isAddLead ? 'Add New Lead' : 'Add New Customer'}
+                {isDetail ? (record.hotelName || 'Hotel') : (editingLead ? `Edit ${editingLead.hotelName}` : isAddLead ? 'Add New Lead' : 'Add New Customer')}
               </Title>
               {isDetail && (
                 <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, display: 'block', marginTop: 4 }}>
@@ -1312,6 +1936,7 @@ export default function Sales() {
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
               {isDetail && (
                 <Space>
+                  {record.qid && <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{record.qid}</Tag>}
                   {record.leadId && <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{record.leadId}</Tag>}
                   {record.customerId && <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{record.customerId}</Tag>}
                 </Space>
@@ -1388,7 +2013,7 @@ export default function Sales() {
             {/* ── Main Column ─────────────────────────────────────────── */}
             <Col xs={24} lg={16}>
 
-              {/* Hotel / Company Info */}
+              {/* Hotel / Company Information */}
               <Card
                 style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={
@@ -1400,43 +2025,170 @@ export default function Sales() {
                 }
               >
                 {isDetail ? (
-                  <Row gutter={0}>
-                    <Col xs={24} sm={12} style={{ paddingRight: 16 }}>
-                      <InfoRow label="Hotel Name" value={record.hotelName} />
-                      <InfoRow label="Billing Name" value={record.billingName} />
-                      <InfoRow label="Contact Person" value={record.contactPerson} />
-                      <InfoRow label="Phone" value={record.phone} />
-                      <InfoRow label="Email" value={record.email} />
-                      <InfoRow label="Source" value={record.source} />
-                      <InfoRow label="Sales Person" value={record.salesPerson} />
-                    </Col>
-                    <Col xs={24} sm={12}>
-                      <InfoRow label="Location" value={record.location} />
-                      <InfoRow label="Detailed Address" value={record.detailedAddress} />
-                      <InfoRow label="City / State / PIN" value={[record.city, record.state, record.pincode].filter(Boolean).join(', ')} />
-                      <InfoRow label="Hotel Type" value={record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'} />
-                      <InfoRow label="Bill Type" value={record.billType === 'GST' ? 'GST Bill' : 'Non-GST Bill'} />
-                      <InfoRow label="GST Number" value={record.gstNumber} />
-                    </Col>
-                    {record.billType === 'GST' && record.gstNumber && (
-                      <Col span={24} style={{ marginTop: 14 }}>
-                        <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.1)' }}>
-                          <Text strong style={{ color: '#B11E6A', fontSize: 13, display: 'block', marginBottom: 10 }}>GST Details</Text>
-                          <Row gutter={16}>
-                            <Col xs={24} sm={12}><InfoRow label="GSTIN" value={record.gstNumber} /></Col>
-                            <Col xs={24} sm={12}><InfoRow label="PAN Number" value={record.gstNumber.substring(2, 12)} /></Col>
-                          </Row>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                    {/* Group 1 — Hotel Identity */}
+                    <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, padding: '14px 16px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` }}>
+                      <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#B11E6A', display: 'block', marginBottom: 12 }}>HOTEL IDENTITY</Text>
+                      <Row gutter={[16, 12]}>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Hotel / Company Name</Text>
+                          <Text strong style={{ display: 'block', fontSize: 15, marginTop: 2 }}>{record.hotelName || '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Billing Name (on invoice)</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.billingName || '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Hotel Type</Text>
+                          <div style={{ marginTop: 4 }}>
+                            <Tag color={record.hotelType === 'OLD' ? 'blue' : 'green'} style={{ borderRadius: 20 }}>
+                              {record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}
+                            </Tag>
+                          </div>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>No. of Rows in Hotel</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.rowsInHotel ?? '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>General Occupancy / Month</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.generalOccupancy ?? '—'}</Text>
+                        </Col>
+                      </Row>
+                    </div>
+
+                    {/* Group 2 — Contact Information */}
+                    <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, padding: '14px 16px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` }}>
+                      <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#1890ff', display: 'block', marginBottom: 12 }}>CONTACT INFORMATION</Text>
+                      <Row gutter={[16, 12]}>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Contact Person</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.contactPerson || '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Phone</Text>
+                          <a href={`tel:${record.phone}`} style={{ display: 'block', fontSize: 14, fontWeight: 600, marginTop: 2, color: '#1890ff', textDecoration: 'none' }}>
+                            {record.phone || '—'}
+                          </a>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Alternative Person</Text>
+                          <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {(Array.isArray(record.alternativePerson) ? record.alternativePerson : record.alternativePerson ? [record.alternativePerson] : []).length > 0
+                              ? (Array.isArray(record.alternativePerson) ? record.alternativePerson : [record.alternativePerson]).map((ap, ai) => (
+                                <Tag key={ai} color="geekblue" style={{ borderRadius: 20 }}>{ap}</Tag>
+                              ))
+                              : <Text type="secondary">—</Text>
+                            }
+                          </div>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Alternative Phone</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.alternativePhone || '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Email</Text>
+                          <Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{record.email || '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Sales Person</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.salesPerson || '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Lead Source</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.source || '—'}</Text>
+                        </Col>
+                      </Row>
+                    </div>
+
+                    {/* Group 3 — Location & Address */}
+                    <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, padding: '14px 16px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` }}>
+                      <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#52c41a', display: 'block', marginBottom: 12 }}>LOCATION & ADDRESS</Text>
+                      <Row gutter={[16, 12]}>
+                        <Col xs={24} sm={8}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Location / City</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.location || '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>State</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.state || '—'}</Text>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Pincode</Text>
+                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.pincode || '—'}</Text>
+                        </Col>
+                        {record.detailedAddress && (
+                          <Col xs={24}>
+                            <Text type="secondary" style={{ fontSize: 11 }}>Detailed Address</Text>
+                            <Text style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{record.detailedAddress}</Text>
+                          </Col>
+                        )}
+                      </Row>
+                    </div>
+
+                    {/* Group 4 — Billing & Tax */}
+                    <div style={{ background: isDark ? 'rgba(177,30,106,0.04)' : 'rgba(177,30,106,0.03)', borderRadius: 10, padding: '14px 16px', border: '1px solid rgba(177,30,106,0.12)' }}>
+                      <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#B11E6A', display: 'block', marginBottom: 12 }}>BILLING & TAX</Text>
+                      <Row gutter={[16, 12]}>
+                        <Col xs={24} sm={8}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Bill Type</Text>
+                          <div style={{ marginTop: 4 }}>
+                            <Tag color={record.billType === 'GST' ? 'volcano' : 'default'} style={{ borderRadius: 20, fontSize: 13, padding: '2px 10px' }}>
+                              {record.billType === 'GST' ? 'GST Bill' : 'Non-GST Bill'}
+                            </Tag>
+                          </div>
+                        </Col>
+                        {record.billType === 'GST' && (
+                          <>
+                            <Col xs={24} sm={10}>
+                              <Text type="secondary" style={{ fontSize: 11 }}>GST Number (GSTIN)</Text>
+                              <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2, fontFamily: 'monospace', letterSpacing: 0.5 }}>{record.gstNumber || '—'}</Text>
+                            </Col>
+                            <Col xs={24} sm={6}>
+                              <Text type="secondary" style={{ fontSize: 11 }}>GST Rate</Text>
+                              <Text strong style={{ display: 'block', fontSize: 16, marginTop: 2, color: '#B11E6A' }}>{record.gstPercent ? `${record.gstPercent}%` : '—'}</Text>
+                            </Col>
+                          </>
+                        )}
+                      </Row>
+                    </div>
+
+                    {/* Group 5 — Priority (only if set) */}
+                    {record.priority > 0 && (
+                      <div style={{ background: isDark ? 'rgba(250,140,22,0.06)' : 'rgba(250,140,22,0.04)', borderRadius: 10, padding: '14px 16px', border: '1px solid rgba(250,140,22,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#fa8c16', display: 'block', marginBottom: 12 }}>PRIORITY</Text>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: record.mentionPriority ? 10 : 0 }}>
+                          <div style={{ flex: 1, height: 8, borderRadius: 4, background: isDark ? 'rgba(255,255,255,0.08)' : '#f0f0f0', overflow: 'hidden' }}>
+                            <div style={{ width: `${record.priority}%`, height: '100%', background: record.priority >= 75 ? '#f5222d' : record.priority >= 40 ? '#fa8c16' : '#52c41a', borderRadius: 4, transition: 'width 0.3s' }} />
+                          </div>
+                          <Text strong style={{ fontSize: 18, color: record.priority >= 75 ? '#f5222d' : record.priority >= 40 ? '#fa8c16' : '#52c41a', minWidth: 50 }}>{record.priority} / 100</Text>
                         </div>
-                      </Col>
+                        {record.mentionPriority && (
+                          <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.65)' : '#555' }}>{record.mentionPriority}</Text>
+                        )}
+                      </div>
                     )}
-                  </Row>
+                  </div>
                 ) : (
                   <Row gutter={16}>
+                    {/* Hotel Name + No. of Rows + General Occupancy */}
                     <Col xs={24} sm={12}>
                       <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
                         <Input placeholder="e.g. Hotel Blue Star" prefix={<BankOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
+                    <Col xs={24} sm={6}>
+                      <Form.Item label="No. of Rows in Hotel" name="rowsInHotel" rules={[{ required: true, message: 'Required' }]}>
+                        <InputNumber placeholder="e.g. 50" style={{ width: '100%' }} min={0} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={6}>
+                      <Form.Item label="General Occupancy / Month" name="generalOccupancy" rules={[{ required: true, message: 'Required' }]}>
+                        <InputNumber placeholder="e.g. 1000" style={{ width: '100%' }} min={0} />
+                      </Form.Item>
+                    </Col>
+
                     <Col xs={24} sm={12}>
                       <Form.Item label="Billing Name (on invoice)" name="billingName">
                         <Input placeholder="e.g. HOTEL BLUESTAR" />
@@ -1447,6 +2199,31 @@ export default function Sales() {
                         <Input placeholder="Reception / Manager" prefix={<UserOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
+
+                    {/* Alternative Person (multi-select with add) */}
+                    <Col xs={24} sm={12}>
+                      <Form.Item
+                        label="Alternative Person"
+                        name="alternativePerson"
+                        rules={[{ required: true, message: 'Alternative person required' }]}
+                      >
+                        <SelectWithAdd
+                          mode="multiple"
+                          defaultOptions={ALTERNATIVE_PERSON_OPTIONS}
+                          placeholder="Select alternative person(s)"
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item
+                        label="Alternative Person Phone"
+                        name="alternativePhone"
+                        rules={[{ required: true, message: 'Phone required' }]}
+                      >
+                        <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
+                      </Form.Item>
+                    </Col>
+
                     <Col xs={24} sm={12}>
                       <Form.Item label="Phone" name="phone" rules={[{ required: true }]}>
                         <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
@@ -1472,6 +2249,14 @@ export default function Sales() {
                         <SelectWithAdd defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }, { value: 'Google', label: 'Google' }]} placeholder="Select source" />
                       </Form.Item>
                     </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
+                        <Select>
+                          <Option value="OLD">Old Hotel</Option>
+                          <Option value="NEW">New Hotel</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
                     <Col xs={24}>
                       <Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true }]}>
                         <Input.TextArea rows={2} placeholder="Full address with landmark" />
@@ -1486,130 +2271,248 @@ export default function Sales() {
                     <Col xs={24} sm={8}>
                       <Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item>
                     </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
-                        <Select>
-                          <Option value="OLD">Old Hotel</Option>
-                          <Option value="NEW">New Hotel</Option>
-                        </Select>
-                      </Form.Item>
-                    </Col>
+
+                    {/* Bill Type — conditional GST fields */}
                     <Col xs={24} sm={8}>
                       <Form.Item label="Bill Type" name="billType" rules={[{ required: true }]}>
                         <Select>
                           <Option value="GST">GST Bill</Option>
-                          <Option value="NON_GST">Non-GST Bill</Option>
+                          <Option value="NON_GST">Without GST</Option>
                         </Select>
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="GST Number" name="gstNumber">
-                        <Input placeholder="GSTIN (if applicable)" />
+                    {watchedBillType === 'GST' && (
+                      <>
+                        <Col xs={24} sm={8}>
+                          <Form.Item label="GST Number" name="gstNumber" rules={[{ required: true, message: 'GST Number required' }]}>
+                            <Input placeholder="GSTIN" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item label="GST %" name="gstPercent" rules={[{ required: true, message: 'GST % required' }]}>
+                            <InputNumber placeholder="e.g. 18" style={{ width: '100%' }} min={0} max={100} />
+                          </Form.Item>
+                        </Col>
+                      </>
+                    )}
+
+                    {/* Priority slider */}
+                    <Col xs={24}>
+                      <Form.Item label={`Priority (${watchedPriority ?? 0} / 100)`} name="priority" initialValue={0}>
+                        <Slider min={0} max={100} marks={{ 0: '0', 25: '25', 50: '50', 75: '75', 100: '100' }} />
                       </Form.Item>
                     </Col>
+                    {(watchedPriority > 0) && (
+                      <Col xs={24}>
+                        <Form.Item
+                          label="Mention Priority"
+                          name="mentionPriority"
+                          rules={[{ required: watchedPriority > 0, message: 'Please describe the priority' }]}
+                        >
+                          <Input.TextArea rows={2} placeholder="Describe priority reason or details..." />
+                        </Form.Item>
+                      </Col>
+                    )}
                   </Row>
                 )}
               </Card>
 
-              {/* Products */}
-              <Card
-                style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                title={
-                  <Space>
-                    <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
-                    <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                    <span>Order Details — Products</span>
-                  </Space>
-                }
-              >
-                {isDetail ? (
-                  <>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 80px 90px', gap: '0 8px', padding: '8px 10px', background: 'rgba(177,30,106,0.05)', borderRadius: 8, marginBottom: 4 }}>
-                      <Text style={{ fontSize: 11, color: '#999', fontWeight: 600 }}>PRODUCT</Text>
-                      <Text style={{ fontSize: 11, color: '#999', fontWeight: 600 }}>QTY</Text>
-                      <Text style={{ fontSize: 11, color: '#999', fontWeight: 600 }}>RATE</Text>
-                      <Text style={{ fontSize: 11, color: '#999', fontWeight: 600, textAlign: 'right' }}>AMOUNT</Text>
-                    </div>
-                    {(record.products || []).map((p, i) => (
-                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 80px 90px', gap: '0 8px', padding: '10px 10px', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}`, alignItems: 'start' }}>
-                        <div>
-                          <Text strong style={{ fontSize: 13 }}>{p.name}</Text>
-                          {(record.specifications || []).filter(s => s?.product === p.name).map((s, si) => (
-                            <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                              <CheckOutlined style={{ color: '#B11E6A', fontSize: 10 }} />
-                              <Text style={{ fontSize: 11, color: '#888' }}>{s.spec}{s.rate ? ` +₹${s.rate}` : ''}</Text>
-                            </div>
-                          ))}
-                        </div>
-                        <Text style={{ fontSize: 13 }}>{p.qty}</Text>
-                        <Text style={{ fontSize: 13 }}>₹{p.rate}</Text>
-                        <Text strong style={{ textAlign: 'right', color: '#B11E6A', fontSize: 13 }}>₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}</Text>
-                      </div>
-                    ))}
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 10px', borderTop: '2px solid rgba(177,30,106,0.12)', marginTop: 4 }}>
-                      <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>Total: ₹{totalValue.toLocaleString()}</Text>
-                    </div>
-                    {(record.logoNeeded || (record.specifications || []).filter(s => typeof s === 'string' || (typeof s === 'object' && !s?.product)).length > 0) && (
-                      <div style={{ marginTop: 12, padding: '14px', background: 'rgba(177,30,106,0.04)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.08)' }}>
-                        <Text strong style={{ color: '#B11E6A', fontSize: 13, display: 'block', marginBottom: 8 }}>Additional Specifications</Text>
-                        {record.logoNeeded && <Tag color="#B11E6A" style={{ marginBottom: 6 }}>Logo Needed: {record.logoProducts || '—'}</Tag>}
-                        {(record.specifications || []).filter(Boolean).filter(s => typeof s === 'string' || (typeof s === 'object' && !s.product)).map((s, i) => (
-                          <div key={i} style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                            <CheckOutlined style={{ color: '#B11E6A', fontSize: 11, marginTop: 2 }} />
-                            <Text style={{ fontSize: 12, color: textColor }}>{typeof s === 'string' ? s : `${s.spec} (₹${s.rate || 0})`}</Text>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <ProductHeaders />
-                    <ProductFormList fieldName="products" />
-                  </>
-                )}
-              </Card>
-
-              {/* Specifications — add mode only */}
-              {!isDetail && (
+              {/* ── Personalization card — add-customer only ──────────── */}
+              {isAddCustomer && (
                 <Card
                   style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={
                     <Space>
                       <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
-                      <SettingOutlined style={{ color: '#722ed1' }} />
-                      <span>Specifications</span>
+                      <GiftOutlined style={{ color: '#722ed1' }} />
+                      <span>Personalization</span>
                     </Space>
                   }
                 >
-                  <Row gutter={12}>
+                  <Row gutter={16}>
                     <Col xs={24} sm={12}>
-                      <Form.Item name="logoNeeded" valuePropName="checked">
-                        <Checkbox>Logo Needed</Checkbox>
+                      <Form.Item label="Product" name="productType" rules={[{ required: true, message: 'Select product type' }]}>
+                        <SelectWithAdd
+                          defaultOptions={PERSONALIZATION_OPTIONS}
+                          placeholder="Select product type"
+                        />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Logo on Products" name="logoProducts">
-                        <Input placeholder="e.g. Soap15grm, Shampoo, Dental Kit" />
-                      </Form.Item>
-                    </Col>
+                    {watchedProductType === 'PERSONALIZED_KIT' && (
+                      <Col xs={24} sm={12}>
+                        <Form.Item label="Display Unit" name="displayUnit" rules={[{ required: true, message: 'Select display unit' }]}>
+                          <SelectWithAdd
+                            defaultOptions={DISPLAY_UNIT_OPTIONS}
+                            placeholder="Select display unit"
+                          />
+                        </Form.Item>
+                      </Col>
+                    )}
                   </Row>
-                  <SpecFormList form={leadForm} />
                 </Card>
               )}
 
-              {/* Delivery & Payment */}
-              <Card
-                style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                title={
-                  <Space>
-                    <div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} />
-                    <CarOutlined style={{ color: '#fa8c16' }} />
-                    <span>Delivery & Payment</span>
-                  </Space>
-                }
-              >
-                {isDetail ? (
+              {/* ── Order Details Products ────────────────────────────── */}
+              {showProductsCard && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={
+                    <Space>
+                      <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
+                      <ShoppingCartOutlined style={{ color: '#1890ff' }} />
+                      <span>Order Details — Products</span>
+                    </Space>
+                  }
+                >
+                  {isDetail ? (
+                    <>
+                      {/* Personalization badge */}
+                      {record.productType && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'rgba(114,46,209,0.06)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.12)' }}>
+                          <GiftOutlined style={{ color: '#722ed1' }} />
+                          <Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 600 }}>
+                            {record.productType === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product'}
+                          </Text>
+                          {record.displayUnit && (
+                            <>
+                              <span style={{ color: '#ccc' }}>·</span>
+                              <Text style={{ fontSize: 12, color: '#722ed1' }}>Display Unit: {record.displayUnit.replace(/_/g, ' ')}</Text>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Per-product cards */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                        {(record.products || []).map((p, i) => (
+                          <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
+                            {/* Product header row */}
+                            <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>{i + 1}</span>
+                                </div>
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>PRODUCT</Text>
+                                  <Text strong style={{ display: 'block', fontSize: 15 }}>{p.name || '—'}</Text>
+                                </div>
+                              </div>
+                              <div style={{ textAlign: 'right' }}>
+                                <Text strong style={{ display: 'block', fontSize: 20, color: '#B11E6A', lineHeight: 1.2 }}>
+                                  ₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}
+                                </Text>
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  {p.qty || 0} pcs × ₹{p.rate || 0}
+                                </Text>
+                              </div>
+                            </div>
+
+                            {/* Specifications */}
+                            {p.specs && Object.values(p.specs).some(Boolean) && (
+                              <div style={{ padding: '14px 18px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
+                                <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 12 }}>SPECIFICATIONS</Text>
+                                <Row gutter={[12, 14]}>
+                                  {p.specs.logo && (
+                                    <Col xs={12} sm={8}>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Logo</Text>
+                                      <Tag color={p.specs.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
+                                        {p.specs.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}
+                                      </Tag>
+                                    </Col>
+                                  )}
+                                  {p.specs.sticker && (
+                                    <Col xs={12} sm={8}>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Sticker</Text>
+                                      <Tag color={p.specs.sticker === 'YES' ? 'blue' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
+                                        {p.specs.sticker === 'YES' ? '✓ Sticker' : '✗ No Sticker'}
+                                      </Tag>
+                                    </Col>
+                                  )}
+                                  {p.specs.packingMaterial && (
+                                    <Col xs={12} sm={8}>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Packing Material</Text>
+                                      <Text strong style={{ fontSize: 13 }}>{p.specs.packingMaterial}</Text>
+                                    </Col>
+                                  )}
+                                  {p.specs.materialCategory && (
+                                    <Col xs={12} sm={8}>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Material Category</Text>
+                                      <Tag
+                                        color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'}
+                                        style={{ borderRadius: 20, fontSize: 12 }}
+                                      >
+                                        {p.specs.materialCategory}
+                                      </Tag>
+                                    </Col>
+                                  )}
+                                  {p.specs.brand && (
+                                    <Col xs={12} sm={8}>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Brand</Text>
+                                      <Text strong style={{ fontSize: 13 }}>{p.specs.brand}</Text>
+                                    </Col>
+                                  )}
+                                  {p.specs.product && (
+                                    <Col xs={12} sm={8}>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Product Type</Text>
+                                      <Tag color="orange" style={{ borderRadius: 20, fontSize: 12 }}>{p.specs.product}</Tag>
+                                    </Col>
+                                  )}
+                                </Row>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Total footer */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, padding: '14px 18px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
+                        <div>
+                          <Text type="secondary" style={{ fontSize: 12 }}>{(record.products || []).length} product{(record.products || []).length !== 1 ? 's' : ''}</Text>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL ORDER VALUE</Text>
+                          <Text strong style={{ fontSize: 22, color: '#B11E6A' }}>₹{totalValue.toLocaleString()}</Text>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <ProductHeaders />
+                      <ProductFormList fieldName="products" showSpecs={isAddCustomer} />
+                    </>
+                  )}
+                </Card>
+              )}
+
+
+              {/* ── Delivery & Payment — add-customer only ────────────── */}
+              {isAddCustomer && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={
+                    <Space>
+                      <div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} />
+                      <CarOutlined style={{ color: '#fa8c16' }} />
+                      <span>Delivery & Payment</span>
+                    </Space>
+                  }
+                >
+                  <DeliveryPaymentFields showUpload />
+                </Card>
+              )}
+
+              {/* ── Delivery & Payment — customer detail only ────────── */}
+              {isDetail && !isLeadDetail && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={
+                    <Space>
+                      <div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} />
+                      <CarOutlined style={{ color: '#fa8c16' }} />
+                      <span>Delivery & Payment</span>
+                    </Space>
+                  }
+                >
                   <Row gutter={12}>
                     <Col xs={24} sm={12}>
                       <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
@@ -1619,7 +2522,7 @@ export default function Sales() {
                           <Text strong>{record.deliveryBy || '—'}</Text>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                          <Text type="secondary" style={{ fontSize: 12 }}>Transport By</Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text>
                           <Text strong>{record.transportationBy || '—'}</Text>
                         </div>
                         <Tag color={record.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>
@@ -1631,15 +2534,51 @@ export default function Sales() {
                       <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.12)', height: '100%' }}>
                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>PAYMENT TERMS</Text>
                         <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[record.paymentTerms] || record.paymentTerms || '—'}</Text>
+                        {record.paymentTerms === '50_ADVANCE_50_AFTER' && record.paymentReminderDate && (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE PAYMENT DUE</Text>
+                            <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>
+                              {typeof record.paymentReminderDate === 'string'
+                                ? record.paymentReminderDate
+                                : record.paymentReminderDate?.format?.('DD/MM/YYYY') || '—'}
+                            </Text>
+                          </div>
+                        )}
                       </div>
                     </Col>
-                  </Row>
-                ) : (
-                  <DeliveryPaymentFields />
-                )}
-              </Card>
 
-              {/* Follow-up History — detail only */}
+                    {/* Payment proof files */}
+                    {(record.paymentProofs || []).length > 0 && (
+                      <Col xs={24} style={{ marginTop: 12 }}>
+                        <div style={{ padding: '14px 16px', background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, border: '1px solid #f0f0f0' }}>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10, fontWeight: 600, letterSpacing: 0.5 }}>
+                            PAYMENT PROOF ({record.paymentProofs.length} file{record.paymentProofs.length > 1 ? 's' : ''})
+                          </Text>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            {record.paymentProofs.map((file, idx) => (
+                              <div key={idx} style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                padding: '6px 12px', borderRadius: 8, border: '1px solid #d9d9d9',
+                                background: '#fff', cursor: 'pointer',
+                              }}>
+                                <FileTextOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
+                                <Text style={{ fontSize: 12 }}>{file.name || `Proof ${idx + 1}`}</Text>
+                                {file.size && (
+                                  <Text type="secondary" style={{ fontSize: 11 }}>
+                                    ({(file.size / 1024).toFixed(0)} KB)
+                                  </Text>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </Col>
+                    )}
+                  </Row>
+                </Card>
+              )}
+
+              {/* ── Follow-up History — detail only ──────────────────── */}
               {isDetail && (
                 <Card
                   style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -1658,10 +2597,8 @@ export default function Sales() {
                       { date: '2024-05-01', time: '02:15 PM', person: 'Priya', text: 'Sent sample photos via WhatsApp.' }
                     ]).map((note, idx) => (
                       <div key={idx} style={{
-                        padding: '12px 14px',
-                        background: isDark ? 'rgba(255,255,255,0.04)' : '#f8f9fc',
-                        borderRadius: 10,
-                        borderLeft: '3px solid #B11E6A',
+                        padding: '12px 14px', background: isDark ? 'rgba(255,255,255,0.04)' : '#f8f9fc',
+                        borderRadius: 10, borderLeft: '3px solid #B11E6A',
                       }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1687,7 +2624,7 @@ export default function Sales() {
             {/* ── Sidebar ──────────────────────────────────────────────── */}
             <Col xs={24} lg={8}>
 
-              {/* Status Card */}
+              {/* Lead Status */}
               <SidebarCard accentColor="#B11E6A" icon={<StarOutlined />} title={isAddCustomer ? 'Customer Type' : 'Lead Status'}>
                 {isAddCustomer ? (
                   <>
@@ -1697,27 +2634,20 @@ export default function Sales() {
                         <Option value="NEW">New Hotel</Option>
                       </Select>
                     </Form.Item>
-                    <Form.Item label="Bill Type" name="billType" rules={[{ required: true }]}>
-                      <Select placeholder="Select bill type">
-                        <Option value="GST">GST Bill</Option>
-                        <Option value="NON_GST">Non-GST Bill</Option>
-                      </Select>
-                    </Form.Item>
-                    <Form.Item label="GST Number" name="gstNumber">
-                      <Input placeholder="GSTIN (if GST)" />
-                    </Form.Item>
                   </>
                 ) : (
                   <>
                     <Form.Item name="status" label="Status">
-                      <Select disabled={isDetail} placeholder="Select status">
-                        <Option value="Hot">🔴 Hot</Option>
-                        <Option value="Warm">🟡 Warm</Option>
-                        <Option value="Cold">🔵 Cold</Option>
-                        <Option value="Interested">🟣 Interested</Option>
-                        <Option value="Quotation Sent">📄 Quotation Sent</Option>
-                        <Option value="Converted">✅ Converted</Option>
-                      </Select>
+                      <SelectWithAdd
+                        disabled={isDetail}
+                        defaultOptions={[
+                          { value: 'Hot', label: '🔴 Hot' }, { value: 'Warm', label: '🟡 Warm' },
+                          { value: 'Cold', label: '🔵 Cold' }, { value: 'Interested', label: '🟣 Interested' },
+                          { value: 'Quotation Sent', label: '📄 Quotation Sent' }, { value: 'Converted', label: '✅ Converted' },
+                          { value: 'Draft', label: '📝 Draft' }, { value: 'Managers Help', label: '🤝 Managers Help' },
+                        ]}
+                        placeholder="Select status"
+                      />
                     </Form.Item>
 
                     {isDetail && record.followUpDate && (
@@ -1748,6 +2678,9 @@ export default function Sales() {
                             <Form.Item label="Follow-up Task" name="followUpName">
                               <Input placeholder="e.g. Send sample, Call back" />
                             </Form.Item>
+                            <Form.Item name="followUpReminder" valuePropName="checked" style={{ marginTop: -8 }}>
+                              <Checkbox>Set reminder for follow-up task</Checkbox>
+                            </Form.Item>
                           </Col>
                         </Row>
                       </>
@@ -1756,7 +2689,7 @@ export default function Sales() {
                 )}
               </SidebarCard>
 
-              {/* Follow-up Steps — leads only */}
+              {/* Follow-up Progress — leads only */}
               {(isDetail ? record.leadId : isAddLead) && (
                 <SidebarCard accentColor="#722ed1" icon={<CalendarOutlined />} title="Follow-up Progress">
                   <Steps direction="vertical" size="small" current={record.followUpStep || 0} items={LEAD_STEPS} />
@@ -1774,18 +2707,38 @@ export default function Sales() {
                     <Button icon={<FileTextOutlined />} block size="large"
                       style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
                       onClick={() => startQuotationFromLead(record)}
-                    >Generate Quotation</Button>
-                    {record.leadId && !record.customerId && (
+                    >Get Order & Send Quotation</Button>
+                    {(record.leadId && !record.customerId) && (
                       <Button icon={<ArrowRightOutlined />} block size="large"
                         style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
                         onClick={() => convertToCustomer(record)}
                       >Convert to Customer</Button>
+                    )}
+                    {record.qid && record.status !== 'Approved' && (
+                      <Button icon={<ArrowRightOutlined />} block size="large"
+                        style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
+                        onClick={() => startOrderFromQuotation(record)}
+                      >Convert to Order</Button>
                     )}
                     <Button icon={<EditOutlined />} block
                       style={{ borderRadius: 10, height: 40 }}
                       onClick={() => openAddLead(record)}
                     >Edit Details</Button>
                   </Space>
+                </SidebarCard>
+              )}
+
+              {/* Status History — detail only */}
+              {isDetail && (record.statusHistory || []).length > 1 && (
+                <SidebarCard accentColor="#fa8c16" icon={<HistoryOutlined />} title="Status History">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {[...(record.statusHistory || [])].reverse().map((h, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: i < record.statusHistory.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                        <Tag color={STATUS_COLORS[h.status] || '#ccc'} style={{ margin: 0 }}>{h.status}</Tag>
+                        <Text type="secondary" style={{ fontSize: 11 }}>{fmtDateTimeShort(h.changedAt)}</Text>
+                      </div>
+                    ))}
+                  </div>
                 </SidebarCard>
               )}
             </Col>
@@ -1795,6 +2748,7 @@ export default function Sales() {
     );
   }
 
+  // ─── Table view ────────────────────────────────────────────────────
   return (
     <div className="page-container fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
@@ -1802,31 +2756,33 @@ export default function Sales() {
         <Space size={8}>
           <Button icon={<DownloadOutlined />}>Export</Button>
           <Button icon={<UploadOutlined />}>Import</Button>
-          <Button type="primary" icon={<PlusOutlined />}
-            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-            onClick={() => {
-              setSelectedRecord(null);
-              if (activeTab === 'leads') setViewMode('add-lead');
-              else if (activeTab === 'customers') setViewMode('add-customer');
-              else { setOrderFromQuotation(null); orderForm.resetFields(); setOrderOpen(true); }
-            }}
-          >
-            {activeTab === 'leads' ? 'Add Lead' : activeTab === 'customers' ? 'Add Customer' : 'New Order'}
-          </Button>
+          {(activeTab === 'leads' || activeTab === 'customers') && (
+            <Button type="primary" icon={<PlusOutlined />}
+              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+              onClick={() => {
+                setSelectedRecord(null);
+                leadForm.resetFields();
+                leadForm.setFieldsValue(newLeadDefaults);
+                if (activeTab === 'leads') setViewMode('add-lead');
+                else if (activeTab === 'customers') setViewMode('add-customer');
+              }}
+            >
+              {activeTab === 'leads' ? 'Add Lead' : 'Add Customer'}
+            </Button>
+          )}
         </Space>
       </div>
 
       {/* Flow progress bar */}
       <Card style={{ borderRadius: 14, border: 'none', background: cardBg, marginBottom: 16, boxShadow: '0 2px 12px rgba(177,30,106,0.05)' }} bodyStyle={{ padding: '14px 24px' }}>
         <Steps size="small"
-          current={['leads', 'customers', 'quotations', 'negotiations', 'orders'].indexOf(activeTab)}
-          onChange={(i) => setActiveTab(['leads', 'customers', 'quotations', 'negotiations', 'orders'][i])}
+          current={['leads', 'customers', 'quotations', 'orders'].indexOf(activeTab === 'negotiations' ? 'quotations' : activeTab)}
+          onChange={(i) => setActiveTab(['leads', 'customers', 'quotations', 'orders'][i])}
           style={{ cursor: 'pointer' }}
           items={[
             { title: 'Leads', description: `${leadsData.length} total` },
             { title: 'Customers', description: `${customersData.length} total` },
-            { title: 'Quotations', description: `${quotationsData.length} total` },
-            { title: 'Negotiations', description: `${negotiationsData.length} total` },
+            { title: 'Quotations & Negotiations', description: `${quotationsData.length + negotiationsData.length} total` },
             { title: 'Orders', description: `${ordersData.length} total` },
           ]}
         />
@@ -1879,29 +2835,36 @@ export default function Sales() {
               />
             </div>
           </TabPane>
-          <TabPane tab="Quotations" key="quotations">
-            <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-              <Table dataSource={filtered(quotationsData)} columns={quotationColumns} pagination={{ pageSize: 8, size: 'small' }} size="small" rowKey="key" />
-            </div>
-          </TabPane>
-          <TabPane tab="Negotiations" key="negotiations">
-            <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-              <Table dataSource={filtered(negotiationsData)} columns={negotiationColumns} pagination={{ pageSize: 8, size: 'small' }} size="small" rowKey="key" />
+          <TabPane tab="Quotations & Negotiations" key="quotations">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+              <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                <SectionDivider title="Current Quotations" />
+                <Table dataSource={filtered(quotationsData)} columns={quotationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
+                  onRow={(record) => ({ onClick: () => openQuotationDetail(record) })} style={{ cursor: 'pointer' }} />
+              </div>
+              <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                <SectionDivider title="Negotiations In Progress" />
+                <Table dataSource={filtered(negotiationsData)} columns={negotiationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
+                  onRow={(record) => ({ onClick: () => openNegotiationDetail(record) })} style={{ cursor: 'pointer' }} />
+              </div>
             </div>
           </TabPane>
           <TabPane tab="Orders" key="orders">
             <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-              <Table dataSource={filtered(ordersData)} columns={orderColumns} pagination={{ pageSize: 8, size: 'small' }} size="small" rowKey="key" />
+              <Table
+                dataSource={filtered(ordersData)}
+                columns={orderColumns}
+                pagination={{ pageSize: 8, size: 'small' }}
+                size="small"
+                rowKey="key"
+                onRow={(record) => ({ onClick: () => openOrderDetail(record) })}
+                style={{ cursor: 'pointer' }}
+              />
             </div>
           </TabPane>
         </Tabs>
       </Card>
 
-      {LeadModal}
-      {LeadDrawer}
-      {QuotationModal}
-      {ViewQuotationDrawer}
-      {OrderModal}
     </div>
   );
 }
