@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Form, Input, Select, Switch, Button, Typography,
-  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip
+  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber
 } from 'antd';
 import {
   SaveOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   UserOutlined, UploadOutlined, CheckOutlined, CloseOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
+import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 
 const { Title, Text } = Typography;
@@ -74,6 +75,7 @@ export default function Settings() {
   const [users, setUsers]       = useState(initUsers);
   const [addUserOpen, setAddUserOpen] = useState(false);
   const [userForm] = Form.useForm();
+  const watchedDept = Form.useWatch('department', userForm);
 
   // Logo
   const [logoUrl, setLogoUrl] = useState('/hng logo new.png');
@@ -84,6 +86,17 @@ export default function Settings() {
       setUsers(prev => [...prev, {
         key: Date.now(), name: vals.name, email: vals.email,
         role: vals.role, status: vals.status || 'Active',
+        department: vals.department,
+        targets: {
+          amount: vals.targetAmount,
+          people: vals.targetPeople,
+          rewards: {
+            q1: vals.reward14,
+            q2: vals.reward12,
+            q3: vals.reward34,
+            full: vals.rewardFull,
+          }
+        },
         avatar: vals.name[0].toUpperCase(), color: role?.color || '#B11E6A',
       }]);
       userForm.resetFields();
@@ -231,19 +244,74 @@ export default function Settings() {
                 </Row>
               
                 <Row gutter={16}>
-                  <Col xs={24} sm={12}>
+                  <Col xs={24} sm={8}>
                     <Form.Item label="Mobile" name="mobile" rules={[{ required: true, message: 'Required' }]}>
                       <Input placeholder="Enter mobile number" style={{ borderRadius: 8, height: 40 }} />
                     </Form.Item>
                   </Col>
-                  <Col xs={24} sm={12}>
+                  <Col xs={24} sm={8}>
                     <Form.Item label="Role" name="role" rules={[{ required: true, message: 'Required' }]}>
                       <Select placeholder="Select role" style={{ width: '100%', height: 40 }}>
                         {roles.map(r => <Option key={r.key} value={r.role}>{r.role}</Option>)}
                       </Select>
                     </Form.Item>
                   </Col>
+                  <Col xs={24} sm={8}>
+                    <Form.Item label="Department" name="department" rules={[{ required: true, message: 'Required' }]}>
+                      <Select placeholder="Select Dept" style={{ width: '100%', height: 40 }}>
+                        <Option value="Sales">Sales</Option>
+                        <Option value="Marketing">Marketing</Option>
+                        <Option value="Operations">Operations</Option>
+                        <Option value="Dispatch">Dispatch</Option>
+                        <Option value="Finance">Finance</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
                 </Row>
+
+                {(watchedDept === 'Sales' || watchedDept === 'Marketing') && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} style={{ background: subBg, padding: 16, borderRadius: 12, marginBottom: 20, border: '1px solid #B11E6A22' }}>
+                    <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 12 }}>Performance Targets & Rewards</Text>
+                    <Row gutter={16}>
+                      <Col xs={24} sm={12}>
+                        <Form.Item label="Target Amount (Annual/Monthly)" name="targetAmount">
+                          <InputNumber prefix="₹" style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="1,000,000" />
+                        </Form.Item>
+                      </Col>
+                      {watchedDept === 'Sales' && (
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Target People (Leads/Customers)" name="targetPeople">
+                            <InputNumber style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="50" />
+                          </Form.Item>
+                        </Col>
+                      )}
+                    </Row>
+                    <Divider style={{ margin: '8px 0 16px' }} />
+                    <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 8 }}>Price Rewards based on Target Completion milestones:</Text>
+                    <Row gutter={12}>
+                      <Col xs={12} sm={6}>
+                        <Form.Item label="1/4 Target Reward" name="reward14">
+                          <Input placeholder="Reward Name" size="small" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={12} sm={6}>
+                        <Form.Item label="1/2 Target Reward" name="reward12">
+                          <Input placeholder="Reward Name" size="small" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={12} sm={6}>
+                        <Form.Item label="3/4 Target Reward" name="reward34">
+                          <Input placeholder="Reward Name" size="small" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={12} sm={6}>
+                        <Form.Item label="Full Target Reward" name="rewardFull">
+                          <Input placeholder="Reward Name" size="small" />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </motion.div>
+                )}
 
                 <Row gutter={16}>
                   <Col xs={24} sm={12}>
