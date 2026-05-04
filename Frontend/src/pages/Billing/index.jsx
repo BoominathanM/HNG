@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
-  Typography, Space, Divider, DatePicker, TimePicker, Avatar, InputNumber, Collapse,
+  Typography, Space, Divider, TimePicker, Avatar, InputNumber, Collapse,
 } from 'antd';
 import {
   PlusOutlined, PrinterOutlined, DownloadOutlined, EyeOutlined,
@@ -364,13 +364,14 @@ export default function Billing() {
                 </Col>
                 <Col span={12}>
                   <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 5 }}>Invoice Date</Text>
-                  <DatePicker
-                    value={invoiceDate}
-                    onChange={(d) => {
+                  <Input
+                    type="date"
+                    value={invoiceDate ? invoiceDate.format('YYYY-MM-DD') : ''}
+                    onChange={(e) => {
+                      const d = dayjs(e.target.value);
                       setInvoiceDate(d);
                       if (dueDays !== 'custom') setDueDate(d.add(parseInt(dueDays), 'day'));
                     }}
-                    format="DD MMM YYYY"
                     style={{ width: '100%', borderRadius: 8, height: 42 }}
                   />
                 </Col>
@@ -381,10 +382,10 @@ export default function Billing() {
                   <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 5 }}>Due Date</Text>
                   <Row gutter={8}>
                     <Col flex={1}>
-                      <DatePicker
-                        value={dueDate}
-                        onChange={(d) => { setDueDate(d); setDueDays('custom'); }}
-                        format="DD MMM YYYY"
+                      <Input
+                        type="date"
+                        value={dueDate ? dueDate.format('YYYY-MM-DD') : ''}
+                        onChange={(e) => { setDueDate(dayjs(e.target.value)); setDueDays('custom'); }}
                         style={{ width: '100%', borderRadius: 8, height: 42 }}
                       />
                     </Col>
@@ -605,7 +606,7 @@ export default function Billing() {
                         </Col>
                         <Col span={10}>
                           <Form.Item label={<Text style={{ fontSize: 13 }}>Date of Birth</Text>} name="dob" style={{ marginBottom: 0 }}>
-                            <DatePicker format="DD MMM YYYY" placeholder="25 Aug 1999" style={{ width: '100%', borderRadius: 8, height: 40 }} />
+                            <Input type="date" style={{ width: '100%', borderRadius: 8, height: 40 }} />
                           </Form.Item>
                         </Col>
                       </Row>

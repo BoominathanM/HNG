@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal,
   Form, Row, Col, Typography, Drawer, Steps, Divider, Badge,
-  InputNumber, Tooltip, Checkbox, message, DatePicker, Slider, Upload,
+  InputNumber, Tooltip, Checkbox, message, Slider, Upload, Progress,
 } from 'antd';
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
@@ -20,13 +20,14 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 const { Text, Title } = Typography;
 const { TabPane } = Tabs;
 const { Option } = Select;
-const { RangePicker } = DatePicker;
+// const { RangePicker } = DatePicker;
+
 
 // ─── Constants ────────────────────────────────────────────────────────
 const PAYMENT_OPTIONS = [
-  { value: 'BEFORE_100', label: 'Payment Before 100%' },
-  { value: 'ON_DISPATCH', label: 'On the Date of Dispatch' },
-  { value: '50_ADVANCE_50_AFTER', label: '50 Advance 50% After Dispatch' },
+  { value: 'BEFORE_100', label: '100% Payment' },
+  { value: 'ON_DISPATCH', label: '50% Advance, 50% on Dispatch' },
+  { value: '50_ADVANCE_50_AFTER', label: '50% Advance, 50% After Delivery (Max 15 days)' },
 ];
 
 const PAYMENT_LABELS = {
@@ -39,7 +40,9 @@ const STATUS_COLORS = {
   New: '#C94F8A', Interested: '#D85C9E', 'Quotation Sent': '#B11E6A', Converted: '#52c41a',
   Draft: '#aaa', Sent: '#C94F8A', Approved: '#52c41a', Rejected: '#ff4d4f',
   'In Production': '#B11E6A', 'Dispatch Ready': '#8a1652', 'Payment Pending': '#fa8c16', Completed: '#52c41a',
+  'Partially Completed': '#faad14',
   Hot: '#ff4d4f', Warm: '#fa8c16', Cold: '#1890ff', 'Managers Help': '#722ed1',
+  Negotiation: '#fa8c16', 'Quotation Not Sent': '#d9d9d9',
 };
 
 const LEAD_STEPS = [
@@ -105,6 +108,53 @@ const PRODUCT_TYPE_OPTIONS = [
   { value: 'Gel', label: 'Gel' },
   { value: 'Face Kit Combo', label: 'Face Kit Combo' },
   { value: 'Body Kit Combo', label: 'Body Kit Combo' },
+];
+
+const KIT_CATEGORIES = [
+  { value: 'DENTAL_KIT', label: 'Dental Kit' },
+  { value: 'SHAVING_KIT', label: 'Shaving Kit' },
+  { value: 'CARE_KIT', label: 'For Your Care Kit (PVK)' },
+];
+
+const DENTAL_KIT_PRODUCTS = {
+  bases: ['Box', 'Cover', 'Frosted Paper'],
+  brushes: ['Plastic (Anqour)', 'Plastic (Promise)', 'Ecofriendly', 'Wooden'],
+  pastes: ['Promise (8g)', 'Meshwak (8g)', 'Colgate (8g)'],
+  pasteTypes: ['Tube', 'Sachet'],
+};
+
+const SHAVING_KIT_PRODUCTS = {
+  bases: ['Box', 'Cover', 'Frosted Paper'],
+  razors: [
+    { name: 'Darco (Plastic)', cat: 'Plastic' },
+    { name: 'Gillet (Plastic)', cat: 'Plastic' },
+    { name: 'Darco (Biodegradable)', cat: 'Biodegradable' },
+    { name: 'Gillet (Biodegradable)', cat: 'Biodegradable' },
+  ],
+  gels: [
+    { name: 'Oxilife (Plastic)', cat: 'Plastic' },
+    { name: 'Gillet (Plastic)', cat: 'Plastic' },
+    { name: 'Oxilife (Biodegradable)', cat: 'Biodegradable' },
+    { name: 'Gillet (Biodegradable)', cat: 'Biodegradable' },
+  ],
+};
+
+const CARE_KIT_PRODUCTS = {
+  bases: ['Box', 'Cover', 'Frosted Paper'],
+  products: ['Medi Kit', 'Sewing Kit', 'Vanity Kit'],
+};
+
+const PERFORMANCE_TARGETS = [
+  { key: 'old_hotel', label: 'Old Hotel Sales', target: 500000, achieved: 320000, color: '#B11E6A' },
+  { key: 'new_hotel', label: 'New Hotel Sales', target: 300000, achieved: 150000, color: '#1890ff' },
+  { key: 'payment', label: 'Payment Target', target: 800000, achieved: 600000, color: '#52c41a' },
+  { key: 'software', label: 'Software Target (New)', target: 200000, achieved: 40000, color: '#722ed1' },
+];
+
+const REMINDERS_DATA = [
+  { key: 1, type: 'Delayed Payment', customer: 'Hotel Blue Star', amount: 25000, daysDelayed: 12, salesPerson: 'Priya' },
+  { key: 2, type: 'Follow-up', customer: 'Grand Regency', topic: 'Quotation Review', dueDate: '2024-05-05', salesPerson: 'Priya' },
+  { key: 3, type: 'Occupancy Alert', customer: 'Sea View Stay', rooms: 80, occupancy: '85%', action: 'Check next order', salesPerson: 'Priya' },
 ];
 
 const fmtDateTime = (v) =>
@@ -323,127 +373,196 @@ const SelectWithAdd = ({ defaultOptions = [], placeholder, ...props }) => {
 };
 
 // ─── Sub-components ───────────────────────────────────────────────────
+function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark }) {
+  const { name, key, ...rest } = field;
+  const isKit = Form.useWatch([fieldName, name, 'isKit']);
+  const kitType = Form.useWatch([fieldName, name, 'kitType']);
+  const qty = Form.useWatch([fieldName, name, 'qty']);
+  const rate = Form.useWatch([fieldName, name, 'rate']);
+
+  return (
+    <div
+      key={key}
+      style={{
+        marginBottom: 16,
+        border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`,
+        borderRadius: 12,
+        overflow: 'hidden',
+        background: isDark ? '#1a1a2e' : '#fff',
+      }}
+    >
+      {/* Card Header (Editable) */}
+      <div style={{
+        background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)',
+        padding: '12px 16px',
+      }}>
+        <Row gutter={[12, 12]} align="middle">
+          {/* Index Circle */}
+          <Col flex="none">
+            <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{index + 1}</span>
+            </div>
+          </Col>
+
+          {/* Is Kit? */}
+          <Col flex="none">
+            <Form.Item {...rest} name={[name, 'isKit']} valuePropName="checked" style={{ marginBottom: 0 }}>
+              <Checkbox style={{ fontSize: 12 }}>Kit?</Checkbox>
+            </Form.Item>
+          </Col>
+
+          {/* Name / Kit Type Select */}
+          <Col flex="auto">
+            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
+            {!isKit ? (
+              <Form.Item {...rest} name={[name, 'name']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={PRODUCT_TYPE_OPTIONS} placeholder="Select Product" disabled={disabled} size="small" />
+              </Form.Item>
+            ) : (
+              <Form.Item {...rest} name={[name, 'kitType']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={KIT_CATEGORIES} placeholder="Select Kit Type" disabled={disabled} size="small" />
+              </Form.Item>
+            )}
+          </Col>
+
+          {/* Qty & Rate */}
+          <Col flex="none" style={{ minWidth: 180 }}>
+            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE</Text>
+            <Row gutter={4}>
+              <Col span={10}>
+                <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
+                  <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
+                </Form.Item>
+              </Col>
+              <Col span={14}>
+                <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
+                  <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={disabled} size="small" />
+                </Form.Item>
+              </Col>
+            </Row>
+          </Col>
+
+          {/* Subtotal Display */}
+          <Col flex="none" style={{ textAlign: 'right', minWidth: 100 }}>
+            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>SUBTOTAL</Text>
+            <Text strong style={{ display: 'block', fontSize: 16, color: '#B11E6A', lineHeight: 1.2 }}>
+              ₹{((qty || 0) * (rate || 0)).toLocaleString()}
+            </Text>
+          </Col>
+
+          {/* Remove Button */}
+          {!disabled && (
+            <Col flex="none">
+              <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} size="small" />
+            </Col>
+          )}
+        </Row>
+      </div>
+
+      {/* Specifications / Kit Options (Sub-section) */}
+      {(isKit || showSpecs) && (
+        <div style={{ padding: '16px 20px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888' }}>SPECIFICATIONS</Text>
+            {isKit && <Tag color="magenta" style={{ fontSize: 10, borderRadius: 4 }}>KIT MODE</Tag>}
+          </div>
+
+          <Row gutter={[16, 16]}>
+            {/* Row 1 */}
+            <Col xs={24} sm={8}>
+              <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={disabled} size="small" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Form.Item {...rest} name={[name, 'sticker']} label={<span style={{ fontSize: 11 }}>Sticker</span>} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Sticker?" disabled={disabled} size="small" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={disabled} size="small" />
+              </Form.Item>
+            </Col>
+
+            {/* Row 2 */}
+            <Col xs={24} sm={8}>
+              <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={disabled} size="small" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" disabled={disabled} size="small" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Form.Item {...rest} name={[name, 'productType']} label={<span style={{ fontSize: 11 }}>Product</span>} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={[]} placeholder="Select / Add product" disabled={disabled} size="small" />
+              </Form.Item>
+            </Col>
+
+            {isKit && (
+              <Col xs={24}>
+                <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#f9f9f9', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.03)' }}>
+                  <Text strong style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Kit Contents:</Text>
+                  {kitType === 'DENTAL_KIT' && (
+                    <Row gutter={8}>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'brush']} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small">{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'paste']} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small">{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small">{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
+                    </Row>
+                  )}
+                  {kitType === 'SHAVING_KIT' && (
+                    <Row gutter={8}>
+                      <Col span={12}><Form.Item {...rest} name={[name, 'razor']} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small">{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r.name} value={r.name}>{r.name}</Option>)}</Select></Form.Item></Col>
+                      <Col span={12}><Form.Item {...rest} name={[name, 'gel']} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small">{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g.name} value={g.name}>{g.name}</Option>)}</Select></Form.Item></Col>
+                    </Row>
+                  )}
+                  {kitType === 'CARE_KIT' && (
+                    <Form.Item {...rest} name={[name, 'careProducts']} style={{ marginBottom: 0 }}>
+                      <Select mode="multiple" placeholder="Select Products" size="small">{CARE_KIT_PRODUCTS.products.map(p => <Option key={p} value={p}>{p}</Option>)}</Select>
+                    </Form.Item>
+                  )}
+                </div>
+              </Col>
+            )}
+
+            {/* Final Row: Other Specifications */}
+            <Col xs={24}>
+              <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specifications</span>} style={{ marginBottom: 0 }}>
+                <Input.TextArea placeholder="Any other specific requirements..." autoSize={{ minRows: 2, maxRows: 4 }} size="small" />
+              </Form.Item>
+            </Col>
+          </Row>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false }) {
+  const isDark = useSelector((s) => s.theme.isDark);
   return (
     <Form.List name={fieldName}>
       {(fields, { add, remove }) => (
         <>
-          {fields.map(({ key, name, ...rest }) => (
-            <div
-              key={key}
-              style={{
-                marginBottom: 12,
-                border: `1px solid ${showSpecs ? 'rgba(177,30,106,0.15)' : 'transparent'}`,
-                borderRadius: showSpecs ? 10 : 0,
-                padding: showSpecs ? '10px 12px 4px' : 0,
-                background: showSpecs ? 'rgba(177,30,106,0.02)' : 'transparent',
-              }}
-            >
-              {/* Product row */}
-              <Row gutter={8} align="middle" style={{ marginBottom: showSpecs ? 8 : 0 }}>
-                <Col flex="auto">
-                  <Form.Item {...rest} name={[name, 'name']} rules={[{ required: true, message: 'Product name required' }]} style={{ marginBottom: 0 }}>
-                    <Input placeholder="Product name (e.g. Soap 15grm)" disabled={disabled} />
-                  </Form.Item>
-                </Col>
-                <Col style={{ width: 100 }}>
-                  <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: 'Qty' }]} style={{ marginBottom: 0 }}>
-                    <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={disabled} />
-                  </Form.Item>
-                </Col>
-                <Col style={{ width: 100 }}>
-                  <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: 'Rate' }]} style={{ marginBottom: 0 }}>
-                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={disabled} />
-                  </Form.Item>
-                </Col>
-                {!disabled && (
-                  <Col flex="none">
-                    <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
-                  </Col>
-                )}
-              </Row>
-
-              {/* Per-product Specifications */}
-              {showSpecs && !disabled && (
-                <div style={{ paddingTop: 8, borderTop: '1px dashed rgba(177,30,106,0.2)', marginTop: 4 }}>
-                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, display: 'block', marginBottom: 8 }}>
-                    SPECIFICATIONS
-                  </Text>
-                  <Row gutter={[8, 0]}>
-                    <Col xs={12} sm={8}>
-                      <Form.Item
-                        {...rest}
-                        name={[name, 'specs', 'logo']}
-                        label={<Text style={{ fontSize: 11 }}>Logo</Text>}
-                        style={{ marginBottom: 8 }}
-                      >
-                        <Select placeholder="Logo?" size="small" allowClear>
-                          <Option value="YES">Logo</Option>
-                          <Option value="NO">No Logo</Option>
-                        </Select>
-                      </Form.Item>
-                    </Col>
-                    <Col xs={12} sm={8}>
-                      <Form.Item
-                        {...rest}
-                        name={[name, 'specs', 'sticker']}
-                        label={<Text style={{ fontSize: 11 }}>Sticker</Text>}
-                        style={{ marginBottom: 8 }}
-                      >
-                        <Select placeholder="Sticker?" size="small" allowClear>
-                          <Option value="YES">Sticker</Option>
-                          <Option value="NO">No Sticker</Option>
-                        </Select>
-                      </Form.Item>
-                    </Col>
-                    <Col xs={12} sm={8}>
-                      <Form.Item
-                        {...rest}
-                        name={[name, 'specs', 'packingMaterial']}
-                        label={<Text style={{ fontSize: 11 }}>Packing Material</Text>}
-                        style={{ marginBottom: 8 }}
-                      >
-                        <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" size="small" />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={12} sm={8}>
-                      <Form.Item
-                        {...rest}
-                        name={[name, 'specs', 'materialCategory']}
-                        label={<Text style={{ fontSize: 11 }}>Material Category</Text>}
-                        style={{ marginBottom: 8 }}
-                      >
-                        <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" size="small" />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={12} sm={8}>
-                      <Form.Item
-                        {...rest}
-                        name={[name, 'specs', 'brand']}
-                        label={<Text style={{ fontSize: 11 }}>Brand</Text>}
-                        style={{ marginBottom: 8 }}
-                      >
-                        <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" size="small" />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={12} sm={8}>
-                      <Form.Item
-                        {...rest}
-                        name={[name, 'specs', 'product']}
-                        label={<Text style={{ fontSize: 11 }}>Product</Text>}
-                        style={{ marginBottom: 8 }}
-                      >
-                        <SelectWithAdd defaultOptions={PRODUCT_TYPE_OPTIONS} placeholder="Select / Add product" size="small" />
-                      </Form.Item>
-                    </Col>
-                  </Row>
-                </div>
-              )}
-            </div>
+          {fields.map((field, index) => (
+            <ProductItem
+              key={field.key}
+              field={field}
+              index={index}
+              remove={remove}
+              disabled={disabled}
+              fieldName={fieldName}
+              showSpecs={showSpecs}
+              isDark={isDark}
+            />
           ))}
           {!disabled && (
-            <Button type="dashed" onClick={() => add({ name: '', qty: undefined, rate: undefined, specs: {} })} icon={<PlusOutlined />} block>
-              Add Product
+            <Button type="dashed" onClick={() => add({ isKit: false, qty: undefined, rate: undefined })} icon={<PlusOutlined />} block
+              style={{ borderRadius: 10, height: 45, borderDashOffset: 4 }}>
+              Add Product / Kit
             </Button>
           )}
         </>
@@ -591,13 +710,14 @@ export default function Sales() {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
+  const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
   const [leadsData, setLeadsData] = useState(INIT_LEADS);
   const [customersData, setCustomersData] = useState(INIT_CUSTOMERS);
   const [quotationsData, setQuotationsData] = useState(INIT_QUOTATIONS);
   const [negotiationsData, setNegotiationsData] = useState(INIT_NEGOTIATIONS);
   const [ordersData, setOrdersData] = useState(INIT_ORDERS);
-  const [activeTab, setActiveTab] = useState('leads');
+  const [activeTab, setActiveTab] = useState('performance');
   const [searchText, setSearchText] = useState('');
   const [dateRange, setDateRange] = useState(null);
   const [viewMode, setViewMode] = useState('table');
@@ -621,10 +741,11 @@ export default function Sales() {
   const [editingOrder, setEditingOrder] = useState(null);
   const [orderForm] = Form.useForm();
 
-  // Watched values for conditional rendering in the add/edit form
+  // Watched values for conditional rendering
   const watchedBillType = Form.useWatch('billType', leadForm);
   const watchedProductType = Form.useWatch('productType', leadForm);
   const watchedPriority = Form.useWatch('priority', leadForm);
+  const watchedStatus = Form.useWatch('status', leadForm);
 
   const newLeadDefaults = {
     hotelType: 'OLD', billType: 'GST', forwardingCharge: false,
@@ -1136,16 +1257,24 @@ export default function Sales() {
                 <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} pcs × ₹{p.rate}</Text>
               </div>
             </div>
-            {p.specs && Object.values(p.specs).some(Boolean) && (
+            {p.specs && typeof p.specs === 'object' && Object.values(p.specs).some(Boolean) && (
               <div style={{ padding: '12px 16px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
                 <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 10 }}>SPECIFICATIONS</Text>
                 <Row gutter={[12, 10]}>
                   {p.specs.logo && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Logo</Text><Tag color={p.specs.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}</Tag></Col>}
                   {p.specs.sticker && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Sticker</Text><Tag color={p.specs.sticker === 'YES' ? 'blue' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.sticker === 'YES' ? '✓ Sticker' : '✗ No Sticker'}</Tag></Col>}
-                  {p.specs.packingMaterial && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Packing</Text><Text strong style={{ fontSize: 12 }}>{p.specs.packingMaterial}</Text></Col>}
-                  {p.specs.materialCategory && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Material</Text><Tag color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.materialCategory}</Tag></Col>}
+                  {p.specs.packingMaterial && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Packing Material</Text><Text strong style={{ fontSize: 12 }}>{p.specs.packingMaterial}</Text></Col>}
+                  {p.specs.materialCategory && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Material Category</Text><Tag color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.materialCategory}</Tag></Col>}
                   {p.specs.brand && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Brand</Text><Text strong style={{ fontSize: 12 }}>{p.specs.brand}</Text></Col>}
-                  {p.specs.product && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Type</Text><Tag color="orange" style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.product}</Tag></Col>}
+                  {p.specs.productType && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Product</Text><Tag color="orange" style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.productType}</Tag></Col>}
+                  {p.specs.otherSpecs && (
+                    <Col xs={24} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.03)' }}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Other Specifications</Text>
+                      <div style={{ padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fa', borderRadius: 8, fontSize: 12, color: isDark ? '#ccc' : '#444' }}>
+                        {p.specs.otherSpecs}
+                      </div>
+                    </Col>
+                  )}
                 </Row>
               </div>
             )}
@@ -1596,6 +1725,26 @@ export default function Sales() {
                 </Row>
               </Card>
 
+              {/* Compliance — visible if status is Completed or Partially Completed */}
+              {(o.status === 'Completed' || o.status === 'Partially Completed') && (
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><CheckOutlined style={{ color: '#722ed1' }} /><span>Compliance Details</span></Space>}>
+                  <Row gutter={12}>
+                    <Col xs={24} sm={12}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>Product Invoice</Text>
+                      <div style={{ marginTop: 6 }}>
+                        <Button icon={<DownloadOutlined />} size="small">Download Invoice</Button>
+                        <Tag color="success" style={{ marginLeft: 8 }}>Verified</Tag>
+                      </div>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>Compliance Status</Text>
+                      <Text strong style={{ display: 'block', color: '#52c41a' }}>ALL CLEAR</Text>
+                    </Col>
+                  </Row>
+                </Card>
+              )}
+
               {/* Delivery Address */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#52c41a' }} /><span>Delivery Address</span></Space>}>
@@ -1821,8 +1970,32 @@ export default function Sales() {
                   </Form.Item>
                   <Row gutter={8}>
                     <Col span={12}><Form.Item label="Order Date" name="date"><Input type="date" /></Form.Item></Col>
-                    <Col span={12}><Form.Item label="Delivery Date" name="expectedDelivery"><Input type="date" /></Form.Item></Col>
+                    <Col span={12}>
+                      <Form.Item label="Delivery Date(s)" name="expectedDelivery">
+                        <Input placeholder="YYYY-MM-DD" />
+                      </Form.Item>
+                    </Col>
                   </Row>
+                  <Form.List name="splitDates">
+                    {(fields, { add, remove }) => (
+                      <div style={{ marginBottom: 12 }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>Partial Split Dates (+ for urgent)</Text>
+                        {fields.map(({ key, name, ...rest }) => (
+                          <Row key={key} gutter={4} align="middle" style={{ marginTop: 4 }}>
+                            <Col flex="auto">
+                              <Form.Item {...rest} name={[name, 'date']} style={{ marginBottom: 0 }}>
+                                <Input type="date" size="small" />
+                              </Form.Item>
+                            </Col>
+                            <Col flex="none">
+                              <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                            </Col>
+                          </Row>
+                        ))}
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ marginTop: 8 }}>Add Split Date</Button>
+                      </div>
+                    )}
+                  </Form.List>
                   <Form.Item label="Order Notes" name="notes"><Input.TextArea rows={2} /></Form.Item>
                 </Card>
               </Col>
@@ -1991,15 +2164,12 @@ export default function Sales() {
             {[
               { label: 'Total Value', value: `₹${totalValue.toLocaleString()}`, color: '#B11E6A', icon: <CreditCardOutlined /> },
               { label: 'Products', value: `${record.products?.length || 0} items`, color: '#1890ff', icon: <ShoppingCartOutlined /> },
-              { label: 'Payment', value: PAYMENT_LABELS[record.paymentTerms]?.split(' ').slice(0, 2).join(' ') || '—', color: '#fa8c16', icon: <CalendarOutlined /> },
+              { label: 'Hotel Type', value: record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel', color: '#fa8c16', icon: <BankOutlined /> },
               { label: 'Next Follow-up', value: record.followUpDate || 'Not set', color: '#52c41a', icon: <HistoryOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
                 <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} bodyStyle={{ padding: '12px 14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span>
-                    <Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text>
-                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
                   <Text strong style={{ fontSize: 15, color: s.color, display: 'block' }}>{s.value}</Text>
                 </Card>
               </Col>
@@ -2009,11 +2179,7 @@ export default function Sales() {
 
         <Form form={leadForm} layout="vertical" initialValues={isDetail ? record : undefined}>
           <Row gutter={20}>
-
-            {/* ── Main Column ─────────────────────────────────────────── */}
-            <Col xs={24} lg={16}>
-
-              {/* Hotel / Company Information */}
+            <Col span={24}>
               <Card
                 style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={
@@ -2026,171 +2192,43 @@ export default function Sales() {
               >
                 {isDetail ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-                    {/* Group 1 — Hotel Identity */}
                     <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, padding: '14px 16px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` }}>
-                      <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#B11E6A', display: 'block', marginBottom: 12 }}>HOTEL IDENTITY</Text>
                       <Row gutter={[16, 12]}>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Hotel / Company Name</Text>
-                          <Text strong style={{ display: 'block', fontSize: 15, marginTop: 2 }}>{record.hotelName || '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Billing Name (on invoice)</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.billingName || '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Hotel Type</Text>
-                          <div style={{ marginTop: 4 }}>
-                            <Tag color={record.hotelType === 'OLD' ? 'blue' : 'green'} style={{ borderRadius: 20 }}>
-                              {record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}
-                            </Tag>
-                          </div>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>No. of Rows in Hotel</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.rowsInHotel ?? '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>General Occupancy / Month</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.generalOccupancy ?? '—'}</Text>
-                        </Col>
+                        <Col xs={24} sm={12}><InfoRow label="Hotel / Company Name" value={record.hotelName} /></Col>
+                        <Col xs={24} sm={12}><InfoRow label="Billing Name" value={record.billingName} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="No. of Rooms" value={record.rowsInHotel} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="Occupancy" value={record.generalOccupancy} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="Hotel Type" value={record.hotelType} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="Contact Person" value={record.contactPerson} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="POC Designation" value={record.pocDesignation} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="Phone" value={record.phone} /></Col>
+                        <Col xs={24} sm={12}><InfoRow label="Alternative Contact (Role)" value={record.alternativeRole} /></Col>
+                        <Col xs={24} sm={12}><InfoRow label="Alternative Phone" value={record.alternativePhone} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="Email" value={record.email} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="Sales Person" value={record.salesPerson} /></Col>
+                        <Col xs={24} sm={8}><InfoRow label="Location" value={record.location} /></Col>
                       </Row>
                     </div>
-
-                    {/* Group 2 — Contact Information */}
-                    <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, padding: '14px 16px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` }}>
-                      <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#1890ff', display: 'block', marginBottom: 12 }}>CONTACT INFORMATION</Text>
-                      <Row gutter={[16, 12]}>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Contact Person</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.contactPerson || '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Phone</Text>
-                          <a href={`tel:${record.phone}`} style={{ display: 'block', fontSize: 14, fontWeight: 600, marginTop: 2, color: '#1890ff', textDecoration: 'none' }}>
-                            {record.phone || '—'}
-                          </a>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Alternative Person</Text>
-                          <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                            {(Array.isArray(record.alternativePerson) ? record.alternativePerson : record.alternativePerson ? [record.alternativePerson] : []).length > 0
-                              ? (Array.isArray(record.alternativePerson) ? record.alternativePerson : [record.alternativePerson]).map((ap, ai) => (
-                                <Tag key={ai} color="geekblue" style={{ borderRadius: 20 }}>{ap}</Tag>
-                              ))
-                              : <Text type="secondary">—</Text>
-                            }
-                          </div>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Alternative Phone</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.alternativePhone || '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Email</Text>
-                          <Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{record.email || '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Sales Person</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.salesPerson || '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Lead Source</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.source || '—'}</Text>
-                        </Col>
-                      </Row>
-                    </div>
-
-                    {/* Group 3 — Location & Address */}
-                    <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, padding: '14px 16px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` }}>
-                      <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#52c41a', display: 'block', marginBottom: 12 }}>LOCATION & ADDRESS</Text>
-                      <Row gutter={[16, 12]}>
-                        <Col xs={24} sm={8}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Location / City</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.location || '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>State</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.state || '—'}</Text>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Pincode</Text>
-                          <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{record.pincode || '—'}</Text>
-                        </Col>
-                        {record.detailedAddress && (
-                          <Col xs={24}>
-                            <Text type="secondary" style={{ fontSize: 11 }}>Detailed Address</Text>
-                            <Text style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{record.detailedAddress}</Text>
-                          </Col>
-                        )}
-                      </Row>
-                    </div>
-
-                    {/* Group 4 — Billing & Tax */}
-                    <div style={{ background: isDark ? 'rgba(177,30,106,0.04)' : 'rgba(177,30,106,0.03)', borderRadius: 10, padding: '14px 16px', border: '1px solid rgba(177,30,106,0.12)' }}>
-                      <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#B11E6A', display: 'block', marginBottom: 12 }}>BILLING & TAX</Text>
-                      <Row gutter={[16, 12]}>
-                        <Col xs={24} sm={8}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Bill Type</Text>
-                          <div style={{ marginTop: 4 }}>
-                            <Tag color={record.billType === 'GST' ? 'volcano' : 'default'} style={{ borderRadius: 20, fontSize: 13, padding: '2px 10px' }}>
-                              {record.billType === 'GST' ? 'GST Bill' : 'Non-GST Bill'}
-                            </Tag>
-                          </div>
-                        </Col>
-                        {record.billType === 'GST' && (
-                          <>
-                            <Col xs={24} sm={10}>
-                              <Text type="secondary" style={{ fontSize: 11 }}>GST Number (GSTIN)</Text>
-                              <Text strong style={{ display: 'block', fontSize: 14, marginTop: 2, fontFamily: 'monospace', letterSpacing: 0.5 }}>{record.gstNumber || '—'}</Text>
-                            </Col>
-                            <Col xs={24} sm={6}>
-                              <Text type="secondary" style={{ fontSize: 11 }}>GST Rate</Text>
-                              <Text strong style={{ display: 'block', fontSize: 16, marginTop: 2, color: '#B11E6A' }}>{record.gstPercent ? `${record.gstPercent}%` : '—'}</Text>
-                            </Col>
-                          </>
-                        )}
-                      </Row>
-                    </div>
-
-                    {/* Group 5 — Priority (only if set) */}
-                    {record.priority > 0 && (
-                      <div style={{ background: isDark ? 'rgba(250,140,22,0.06)' : 'rgba(250,140,22,0.04)', borderRadius: 10, padding: '14px 16px', border: '1px solid rgba(250,140,22,0.2)' }}>
-                        <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#fa8c16', display: 'block', marginBottom: 12 }}>PRIORITY</Text>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: record.mentionPriority ? 10 : 0 }}>
-                          <div style={{ flex: 1, height: 8, borderRadius: 4, background: isDark ? 'rgba(255,255,255,0.08)' : '#f0f0f0', overflow: 'hidden' }}>
-                            <div style={{ width: `${record.priority}%`, height: '100%', background: record.priority >= 75 ? '#f5222d' : record.priority >= 40 ? '#fa8c16' : '#52c41a', borderRadius: 4, transition: 'width 0.3s' }} />
-                          </div>
-                          <Text strong style={{ fontSize: 18, color: record.priority >= 75 ? '#f5222d' : record.priority >= 40 ? '#fa8c16' : '#52c41a', minWidth: 50 }}>{record.priority} / 100</Text>
-                        </div>
-                        {record.mentionPriority && (
-                          <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.65)' : '#555' }}>{record.mentionPriority}</Text>
-                        )}
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <Row gutter={16}>
-                    {/* Hotel Name + No. of Rows + General Occupancy */}
                     <Col xs={24} sm={12}>
                       <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
                         <Input placeholder="e.g. Hotel Blue Star" prefix={<BankOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={6}>
-                      <Form.Item label="No. of Rows in Hotel" name="rowsInHotel" rules={[{ required: true, message: 'Required' }]}>
-                        <InputNumber placeholder="e.g. 50" style={{ width: '100%' }} min={0} />
+                      <Form.Item label="No. of Rooms" name="rowsInHotel" rules={[{ required: true }]}>
+                        <InputNumber placeholder="50" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={6}>
-                      <Form.Item label="General Occupancy / Month" name="generalOccupancy" rules={[{ required: true, message: 'Required' }]}>
-                        <InputNumber placeholder="e.g. 1000" style={{ width: '100%' }} min={0} />
+                      <Form.Item label="General Occupancy" name="generalOccupancy" rules={[{ required: true }]}>
+                        <InputNumber placeholder="1000" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-
                     <Col xs={24} sm={12}>
-                      <Form.Item label="Billing Name (on invoice)" name="billingName">
+                      <Form.Item label="Billing Name" name="billingName">
                         <Input placeholder="e.g. HOTEL BLUESTAR" />
                       </Form.Item>
                     </Col>
@@ -2199,123 +2237,172 @@ export default function Sales() {
                         <Input placeholder="Reception / Manager" prefix={<UserOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
-
-                    {/* Alternative Person (multi-select with add) */}
-                    <Col xs={24} sm={12}>
-                      <Form.Item
-                        label="Alternative Person"
-                        name="alternativePerson"
-                        rules={[{ required: true, message: 'Alternative person required' }]}
-                      >
-                        <SelectWithAdd
-                          mode="multiple"
-                          defaultOptions={ALTERNATIVE_PERSON_OPTIONS}
-                          placeholder="Select alternative person(s)"
-                        />
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="POC Designation" name="pocDesignation">
+                        <Input placeholder="GM, Manager" />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
-                      <Form.Item
-                        label="Alternative Person Phone"
-                        name="alternativePhone"
-                        rules={[{ required: true, message: 'Phone required' }]}
-                      >
-                        <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
-                      </Form.Item>
-                    </Col>
-
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Phone" name="phone" rules={[{ required: true }]}>
                         <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Email" name="email">
                         <Input placeholder="optional" prefix={<MailOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Alternative Contact" name="alternativeRole" rules={[{ required: true, message: 'Alternative contact is required' }]}>
+                        <SelectWithAdd defaultOptions={ALTERNATIVE_PERSON_OPTIONS} placeholder="Select / Add Role" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Alternative Phone" name="alternativePhone" rules={[{ required: true, message: 'Alternative phone is required' }]}>
+                        <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Sales Person" name="salesPerson">
                         <Input placeholder="Sales person name" prefix={<TeamOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Location / City" name="location" rules={[{ required: true }]}>
                         <Input placeholder="e.g. Coimbatore" prefix={<EnvironmentOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Source" name="source">
-                        <SelectWithAdd defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }, { value: 'Google', label: 'Google' }]} placeholder="Select source" />
+                        <SelectWithAdd defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }]} placeholder="Select source" />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
-                        <Select>
+                        <Select placeholder="Select hotel type">
                           <Option value="OLD">Old Hotel</Option>
                           <Option value="NEW">New Hotel</Option>
                         </Select>
                       </Form.Item>
                     </Col>
-                    <Col xs={24}>
-                      <Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true }]}>
-                        <Input.TextArea rows={2} placeholder="Full address with landmark" />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item>
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item>
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item>
-                    </Col>
 
-                    {/* Bill Type — conditional GST fields */}
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="Bill Type" name="billType" rules={[{ required: true }]}>
-                        <Select>
-                          <Option value="GST">GST Bill</Option>
-                          <Option value="NON_GST">Without GST</Option>
-                        </Select>
-                      </Form.Item>
-                    </Col>
-                    {watchedBillType === 'GST' && (
-                      <>
-                        <Col xs={24} sm={8}>
-                          <Form.Item label="GST Number" name="gstNumber" rules={[{ required: true, message: 'GST Number required' }]}>
-                            <Input placeholder="GSTIN" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item label="GST %" name="gstPercent" rules={[{ required: true, message: 'GST % required' }]}>
-                            <InputNumber placeholder="e.g. 18" style={{ width: '100%' }} min={0} max={100} />
-                          </Form.Item>
-                        </Col>
-                      </>
-                    )}
-
-                    {/* Priority slider */}
+                    {/* Priority settings moved here for cleaner flow */}
                     <Col xs={24}>
-                      <Form.Item label={`Priority (${watchedPriority ?? 0} / 100)`} name="priority" initialValue={0}>
-                        <Slider min={0} max={100} marks={{ 0: '0', 25: '25', 50: '50', 75: '75', 100: '100' }} />
+                      <Form.Item label={`Priority Level (${watchedPriority || 0}%)`} name="priority">
+                        <Slider min={0} max={100} />
                       </Form.Item>
                     </Col>
-                    {(watchedPriority > 0) && (
+                    {watchedPriority > 0 && (
                       <Col xs={24}>
-                        <Form.Item
-                          label="Mention Priority"
-                          name="mentionPriority"
-                          rules={[{ required: watchedPriority > 0, message: 'Please describe the priority' }]}
-                        >
-                          <Input.TextArea rows={2} placeholder="Describe priority reason or details..." />
+                        <Form.Item label="Priority Note" name="mentionPriority" rules={[{ required: true }]}>
+                          <Input.TextArea placeholder="Why is this high priority?" rows={2} />
                         </Form.Item>
                       </Col>
                     )}
+
                   </Row>
                 )}
               </Card>
+            {/* Consolidated Row: Billing, Status, Progress */}
+              <Row gutter={16} style={{ marginBottom: 16 }}>
+                {/* Billing & Address */}
+                <Col xs={24} lg={12}>
+                  <Card
+                    style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#52c41a' }} /><span>Billing & Address</span></Space>}
+                  >
+                    {isDetail ? (
+                      <Row gutter={[24, 12]}>
+                        <Col xs={24} sm={12}><InfoRow label="Bill Type" value={record.billType === 'GST' ? 'GST Bill' : 'Non-GST'} /></Col>
+                        {record.billType === 'GST' && (
+                          <>
+                            <Col xs={24} sm={12}><InfoRow label="GSTIN" value={record.gstNumber} /></Col>
+                            <Col xs={24} sm={12}><InfoRow label="GST Rate" value={`${record.gstPercent}%`} /></Col>
+                          </>
+                        )}
+                        <Col xs={24} sm={12}><InfoRow label="City" value={record.city} /></Col>
+                        <Col xs={24} sm={12}><InfoRow label="State" value={record.state} /></Col>
+                        <Col xs={24} sm={12}><InfoRow label="Pincode" value={record.pincode} /></Col>
+                        <Col xs={24}><InfoRow label="Detailed Address" value={record.detailedAddress} /></Col>
+                      </Row>
+                    ) : (
+                      <Row gutter={12}>
+                        <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true }]}><Input.TextArea rows={2} placeholder="Full address" /></Form.Item></Col>
+                        <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
+                        <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
+                        <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
+                        <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType" rules={[{ required: true }]}><Select placeholder="Select Bill Type"><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
+                        {watchedBillType === 'GST' && (
+                          <>
+                            <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
+                            <Col xs={24} sm={12}><Form.Item label="GST %" name="gstPercent"><InputNumber style={{ width: '100%' }} placeholder="18" /></Form.Item></Col>
+                          </>
+                        )}
+                      </Row>
+                    )}
+                  </Card>
+                </Col>
+
+                {/* Lead Status / Customer Type */}
+                <Col xs={24} lg={6}>
+                  <Card
+                    style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><StarOutlined style={{ color: '#B11E6A' }} /><span>{isAddCustomer ? 'Customer Settings' : 'Lead Status'}</span></Space>}
+                  >
+                    {!isDetail ? (
+                      <>
+                        <Form.Item name="status" label="Status">
+                          <SelectWithAdd
+                            defaultOptions={[
+                              { value: 'Hot', label: '🔴 Hot' },
+                              { value: 'Warm', label: '🟡 Warm' },
+                              { value: 'Cold', label: '🔵 Cold' },
+                              { value: 'Interested', label: '🟣 Interested' },
+                              { value: 'Negotiation', label: '🤝 Negotiation' },
+                              { value: 'Managers Help', label: '🟣 Managers Help' },
+                              { value: 'Converted', label: '✅ Converted' },
+                            ]}
+                            placeholder="Select status"
+                          />
+                        </Form.Item>
+                        <Form.Item label="Follow-up Date" name="followUpDate"><Input type="date" /></Form.Item>
+                        <Form.Item label="Time" name="followUpTime"><Input type="time" /></Form.Item>
+                        <Form.Item label="Task" name="followUpName"><Input placeholder="e.g. Call back" /></Form.Item>
+                      </>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <InfoRow label="Current Status" value={<Tag color={STATUS_COLORS[record.status]}>{record.status}</Tag>} />
+                        {record.followUpDate && (
+                          <div style={{ padding: '10px', background: 'rgba(82,196,26,0.08)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)' }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>NEXT FOLLOW-UP</Text>
+                            <Text strong style={{ color: '#52c41a', fontSize: 13 }}>{record.followUpDate} {record.followUpTime}</Text>
+                          </div>
+                        )}
+                        {(record.statusHistory || []).length > 1 && (
+                          <div style={{ marginTop: 8 }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>STATUS HISTORY</Text>
+                            {[...record.statusHistory].reverse().slice(0, 3).map((h, i) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                                <Text>{h.status}</Text><Text type="secondary">{fmtDateTimeShort(h.changedAt)}</Text>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                </Col>
+
+                {/* Follow-up Progress (Steps) */}
+                <Col xs={24} lg={6}>
+                  <Card
+                    style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><CalendarOutlined style={{ color: '#722ed1' }} /><span>Lead Journey</span></Space>}
+                  >
+                    <Steps direction="vertical" size="small" current={record.followUpStep || 0} items={LEAD_STEPS} />
+                  </Card>
+                </Col>
+              </Row>
 
               {/* ── Personalization card — add-customer only ──────────── */}
               {isAddCustomer && (
@@ -2408,7 +2495,7 @@ export default function Sales() {
                             </div>
 
                             {/* Specifications */}
-                            {p.specs && Object.values(p.specs).some(Boolean) && (
+                            {p.specs && typeof p.specs === 'object' && Object.values(p.specs).some(Boolean) && (
                               <div style={{ padding: '14px 18px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
                                 <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 12 }}>SPECIFICATIONS</Text>
                                 <Row gutter={[12, 14]}>
@@ -2621,127 +2708,63 @@ export default function Sales() {
               )}
             </Col>
 
-            {/* ── Sidebar ──────────────────────────────────────────────── */}
-            <Col xs={24} lg={8}>
-
-              {/* Lead Status */}
-              <SidebarCard accentColor="#B11E6A" icon={<StarOutlined />} title={isAddCustomer ? 'Customer Type' : 'Lead Status'}>
-                {isAddCustomer ? (
-                  <>
-                    <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
-                      <Select placeholder="Select hotel type">
-                        <Option value="OLD">Old Hotel</Option>
-                        <Option value="NEW">New Hotel</Option>
-                      </Select>
-                    </Form.Item>
-                  </>
-                ) : (
-                  <>
-                    <Form.Item name="status" label="Status">
-                      <SelectWithAdd
-                        disabled={isDetail}
-                        defaultOptions={[
-                          { value: 'Hot', label: '🔴 Hot' }, { value: 'Warm', label: '🟡 Warm' },
-                          { value: 'Cold', label: '🔵 Cold' }, { value: 'Interested', label: '🟣 Interested' },
-                          { value: 'Quotation Sent', label: '📄 Quotation Sent' }, { value: 'Converted', label: '✅ Converted' },
-                          { value: 'Draft', label: '📝 Draft' }, { value: 'Managers Help', label: '🤝 Managers Help' },
-                        ]}
-                        placeholder="Select status"
-                      />
-                    </Form.Item>
-
-                    {isDetail && record.followUpDate && (
-                      <div style={{ padding: '12px', background: 'rgba(82,196,26,0.08)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)', marginTop: 4 }}>
-                        <Text type="secondary" style={{ fontSize: 11, display: 'block', letterSpacing: 0.5 }}>NEXT FOLLOW-UP</Text>
-                        <Text strong style={{ display: 'block', marginTop: 4, color: '#52c41a', fontSize: 14 }}>
-                          {record.followUpDate}{record.followUpTime ? ` · ${record.followUpTime}` : ''}
-                        </Text>
-                        {record.followUpName && <Text style={{ fontSize: 12, color: '#666', display: 'block', marginTop: 2 }}>{record.followUpName}</Text>}
+            {/* Quick Actions & History — detail only */}
+            {isDetail && (
+              <Col span={24}>
+                <Row gutter={16}>
+                  <Col xs={24} lg={12}>
+                    <Card
+                      style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                      title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><span>Quick Actions</span></Space>}
+                    >
+                      <Row gutter={12}>
+                        <Col span={12}>
+                          <Button icon={<WhatsAppOutlined />} block
+                            style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
+                            onClick={() => sendViaWhatsApp(record)}
+                          >WhatsApp</Button>
+                        </Col>
+                        <Col span={12}>
+                          <Button icon={<FileTextOutlined />} block
+                            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
+                            onClick={() => startQuotationFromLead(record)}
+                          >Get Order</Button>
+                        </Col>
+                        {(record.leadId && !record.customerId) && (
+                          <Col span={12} style={{ marginTop: 12 }}>
+                            <Button icon={<ArrowRightOutlined />} block
+                              style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
+                              onClick={() => convertToCustomer(record)}
+                            >Convert to Customer</Button>
+                          </Col>
+                        )}
+                        <Col span={12} style={{ marginTop: 12 }}>
+                          <Button icon={<EditOutlined />} block
+                            style={{ borderRadius: 10, height: 44 }}
+                            onClick={() => openAddLead(record)}
+                          >Edit Details</Button>
+                        </Col>
+                      </Row>
+                    </Card>
+                  </Col>
+                  <Col xs={24} lg={12}>
+                    <Card
+                      style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                      title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Status Timeline</span></Space>}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {[...(record.statusHistory || [])].reverse().map((h, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: i < record.statusHistory.length - 1 ? `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` : 'none' }}>
+                            <Tag color={STATUS_COLORS[h.status] || '#ccc'}>{h.status}</Tag>
+                            <Text type="secondary" style={{ fontSize: 11 }}>{fmtDateTimeShort(h.changedAt)}</Text>
+                          </div>
+                        ))}
                       </div>
-                    )}
-
-                    {isAddLead && (
-                      <>
-                        <Divider style={{ margin: '12px 0' }} />
-                        <Row gutter={12}>
-                          <Col span={12}>
-                            <Form.Item label="Follow-up Date" name="followUpDate">
-                              <Input type="date" />
-                            </Form.Item>
-                          </Col>
-                          <Col span={12}>
-                            <Form.Item label="Follow-up Time" name="followUpTime">
-                              <Input type="time" />
-                            </Form.Item>
-                          </Col>
-                          <Col span={24}>
-                            <Form.Item label="Follow-up Task" name="followUpName">
-                              <Input placeholder="e.g. Send sample, Call back" />
-                            </Form.Item>
-                            <Form.Item name="followUpReminder" valuePropName="checked" style={{ marginTop: -8 }}>
-                              <Checkbox>Set reminder for follow-up task</Checkbox>
-                            </Form.Item>
-                          </Col>
-                        </Row>
-                      </>
-                    )}
-                  </>
-                )}
-              </SidebarCard>
-
-              {/* Follow-up Progress — leads only */}
-              {(isDetail ? record.leadId : isAddLead) && (
-                <SidebarCard accentColor="#722ed1" icon={<CalendarOutlined />} title="Follow-up Progress">
-                  <Steps direction="vertical" size="small" current={record.followUpStep || 0} items={LEAD_STEPS} />
-                </SidebarCard>
-              )}
-
-              {/* Quick Actions — detail only */}
-              {isDetail && (
-                <SidebarCard accentColor="#52c41a" icon={null} title="Quick Actions">
-                  <Space direction="vertical" style={{ width: '100%' }} size={10}>
-                    <Button icon={<WhatsAppOutlined />} block size="large"
-                      style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
-                      onClick={() => sendViaWhatsApp(record)}
-                    >Send via WhatsApp</Button>
-                    <Button icon={<FileTextOutlined />} block size="large"
-                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
-                      onClick={() => startQuotationFromLead(record)}
-                    >Get Order & Send Quotation</Button>
-                    {(record.leadId && !record.customerId) && (
-                      <Button icon={<ArrowRightOutlined />} block size="large"
-                        style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
-                        onClick={() => convertToCustomer(record)}
-                      >Convert to Customer</Button>
-                    )}
-                    {record.qid && record.status !== 'Approved' && (
-                      <Button icon={<ArrowRightOutlined />} block size="large"
-                        style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
-                        onClick={() => startOrderFromQuotation(record)}
-                      >Convert to Order</Button>
-                    )}
-                    <Button icon={<EditOutlined />} block
-                      style={{ borderRadius: 10, height: 40 }}
-                      onClick={() => openAddLead(record)}
-                    >Edit Details</Button>
-                  </Space>
-                </SidebarCard>
-              )}
-
-              {/* Status History — detail only */}
-              {isDetail && (record.statusHistory || []).length > 1 && (
-                <SidebarCard accentColor="#fa8c16" icon={<HistoryOutlined />} title="Status History">
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {[...(record.statusHistory || [])].reverse().map((h, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: i < record.statusHistory.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
-                        <Tag color={STATUS_COLORS[h.status] || '#ccc'} style={{ margin: 0 }}>{h.status}</Tag>
-                        <Text type="secondary" style={{ fontSize: 11 }}>{fmtDateTimeShort(h.changedAt)}</Text>
-                      </div>
-                    ))}
-                  </div>
-                </SidebarCard>
-              )}
-            </Col>
+                    </Card>
+                  </Col>
+                </Row>
+              </Col>
+            )}
           </Row>
         </Form>
       </motion.div>
@@ -2755,7 +2778,10 @@ export default function Sales() {
         <PageBreadcrumb title="Sales Team" items={[{ label: 'Sales Team' }]} style={{ marginBottom: 0 }} />
         <Space size={8}>
           <Button icon={<DownloadOutlined />}>Export</Button>
-          <Button icon={<UploadOutlined />}>Import</Button>
+          <Tooltip title="Ensure CSV follows sample format">
+            <Button icon={<UploadOutlined />}>Import</Button>
+          </Tooltip>
+          <Button icon={<DownloadOutlined />} onClick={() => message.info('Sample CSV download started...')}>Sample CSV</Button>
           {(activeTab === 'leads' || activeTab === 'customers') && (
             <Button type="primary" icon={<PlusOutlined />}
               style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
@@ -2776,14 +2802,16 @@ export default function Sales() {
       {/* Flow progress bar */}
       <Card style={{ borderRadius: 14, border: 'none', background: cardBg, marginBottom: 16, boxShadow: '0 2px 12px rgba(177,30,106,0.05)' }} bodyStyle={{ padding: '14px 24px' }}>
         <Steps size="small"
-          current={['leads', 'customers', 'quotations', 'orders'].indexOf(activeTab === 'negotiations' ? 'quotations' : activeTab)}
-          onChange={(i) => setActiveTab(['leads', 'customers', 'quotations', 'orders'][i])}
+          current={['performance', 'leads', 'customers', 'quotations', 'orders', 'reminders'].indexOf(activeTab === 'negotiations' ? 'quotations' : activeTab)}
+          onChange={(i) => setActiveTab(['performance', 'leads', 'customers', 'quotations', 'orders', 'reminders'][i])}
           style={{ cursor: 'pointer' }}
           items={[
+            { title: 'Performance', description: 'Targets' },
             { title: 'Leads', description: `${leadsData.length} total` },
             { title: 'Customers', description: `${customersData.length} total` },
             { title: 'Quotations & Negotiations', description: `${quotationsData.length + negotiationsData.length} total` },
             { title: 'Orders', description: `${ordersData.length} total` },
+            { title: 'Reminders', description: `${REMINDERS_DATA.length} total` },
           ]}
         />
       </Card>
@@ -2792,16 +2820,12 @@ export default function Sales() {
         <Tabs activeKey={activeTab} onChange={setActiveTab} style={{ padding: '0 16px' }}
           tabBarExtraContent={
             <Space size={8}>
-              <RangePicker
-                style={{ width: 250, borderRadius: 8 }}
-                onChange={(dates) => setDateRange(dates)}
-              />
-              <Select placeholder="Filter" style={{ width: 120 }}>
-                <Option value="all">All</Option>
-                <Option value="hot">Hot</Option>
-                <Option value="warm">Warm</Option>
-                <Option value="cold">Cold</Option>
-              </Select>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 12px', borderRadius: 8, border: `1px solid ${borderColor}` }}>
+                <CalendarOutlined style={{ color: '#aaa' }} />
+                <Input type="date" bordered={false} style={{ width: 130, background: 'transparent', padding: 0 }} onChange={(e) => setDateRange([e.target.value, dateRange?.[1]])} />
+                <span style={{ color: '#ccc' }}>—</span>
+                <Input type="date" bordered={false} style={{ width: 130, background: 'transparent', padding: 0 }} onChange={(e) => setDateRange([dateRange?.[0], e.target.value])} />
+              </div>
               <Input prefix={<SearchOutlined />} placeholder="Search..." value={searchText}
                 onChange={(e) => setSearchText(e.target.value)} allowClear
                 style={{ width: 200, borderRadius: 8 }}
@@ -2809,6 +2833,34 @@ export default function Sales() {
             </Space>
           }
         >
+          <TabPane tab="Performance" key="performance">
+            <div style={{ padding: '16px 8px' }}>
+              <Title level={4} style={{ marginBottom: 20 }}>Target Progression</Title>
+              <Row gutter={[16, 16]}>
+                {PERFORMANCE_TARGETS.map(t => (
+                  <Col xs={24} sm={12} md={6} key={t.key}>
+                    <Card size="small" style={{ borderRadius: 12, border: `1px solid ${t.color}22` }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{t.label}</Text>
+                      <div style={{ margin: '8px 0' }}>
+                        <Text strong style={{ fontSize: 18, color: t.color }}>₹{t.achieved.toLocaleString()}</Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}> / ₹{t.target.toLocaleString()}</Text>
+                      </div>
+                      <div style={{ margin: '12px 0' }}>
+                        <Progress
+                          percent={Math.round((t.achieved / t.target) * 100)}
+                          strokeColor={t.color}
+                          trailColor={`${t.color}22`}
+                          size="small"
+                          status="active"
+                        />
+                      </div>
+                      <Text style={{ fontSize: 11, color: t.color }}>{((t.achieved / t.target) * 100).toFixed(1)}% Achieved</Text>
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            </div>
+          </TabPane>
           <TabPane tab="Leads" key="leads">
             <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
               <Table
@@ -2859,6 +2911,27 @@ export default function Sales() {
                 rowKey="key"
                 onRow={(record) => ({ onClick: () => openOrderDetail(record) })}
                 style={{ cursor: 'pointer' }}
+              />
+            </div>
+          </TabPane>
+          <TabPane tab="Reminders" key="reminders">
+            <div className="table-responsive" style={{ padding: '16px 4px 4px' }}>
+              <Table
+                dataSource={REMINDERS_DATA}
+                columns={[
+                  { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'}>{t}</Tag> },
+                  { title: 'Customer', dataIndex: 'customer', key: 'customer' },
+                  {
+                    title: 'Details', key: 'details', render: (_, r) => (
+                      <Text>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days)` : r.topic || `${r.occupancy} occupancy`}</Text>
+                    )
+                  },
+                  { title: 'Due/Action', key: 'action', render: (_, r) => <Text>{r.dueDate || r.action}</Text> },
+                  { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson' },
+                ]}
+                pagination={{ pageSize: 8, size: 'small' }}
+                size="small"
+                rowKey="key"
               />
             </div>
           </TabPane>

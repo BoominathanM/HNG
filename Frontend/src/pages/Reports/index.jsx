@@ -1,5 +1,5 @@
 import React from 'react';
-import { Row, Col, Card, Table, Button, Select, DatePicker, Typography, Space, Tabs } from 'antd';
+import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs } from 'antd';
 import { DownloadOutlined, FileExcelOutlined, FilePdfOutlined } from '@ant-design/icons';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
 import { useSelector } from 'react-redux';
@@ -8,7 +8,6 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
-const { RangePicker } = DatePicker;
 const { Option } = Select;
 
 const salesTrend = [
@@ -46,8 +45,13 @@ export default function Reports() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Reports & Analytics" items={[{ label: 'Reports & Analytics' }]} style={{ marginBottom: 0 }} />
         <Space wrap>
-          <RangePicker style={{ borderRadius: 8 }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 12px', borderRadius: 8, border: `1px solid ${isDark ? '#333' : '#f0f0f0'}` }}>
+            <Input type="date" bordered={false} style={{ width: 130, background: 'transparent', padding: 0 }} />
+            <span style={{ color: '#ccc' }}>—</span>
+            <Input type="date" bordered={false} style={{ width: 130, background: 'transparent', padding: 0 }} />
+          </div>
           <Select defaultValue="month" style={{ width: 120, borderRadius: 8 }}>
+
             <Option value="week">This Week</Option>
             <Option value="month">This Month</Option>
             <Option value="quarter">Quarter</Option>

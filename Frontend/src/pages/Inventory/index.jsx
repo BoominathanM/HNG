@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, Progress, Alert, InputNumber, DatePicker, List,
+  Typography, Space, Progress, Alert, InputNumber, List,
   Avatar, Divider, Drawer,
 } from 'antd';
 import {
@@ -525,7 +525,7 @@ export default function Inventory() {
                       name="date"
                       style={{ marginBottom: 12 }}
                     >
-                      <DatePicker style={{ width: '100%', borderRadius: 8, height: 42 }} format="DD/MM/YYYY" />
+                      <Input type="date" style={{ width: '100%', borderRadius: 8, height: 42 }} />
                     </Form.Item>
                   </Col>
                 </Row>
@@ -701,7 +701,7 @@ export default function Inventory() {
                       name="date"
                       style={{ marginBottom: 12 }}
                     >
-                      <DatePicker style={{ width: '100%', borderRadius: 8, height: 42 }} format="DD/MM/YYYY" />
+                      <Input type="date" style={{ width: '100%', borderRadius: 8, height: 42 }} />
                     </Form.Item>
                   </Col>
                 </Row>
