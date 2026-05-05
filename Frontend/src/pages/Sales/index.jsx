@@ -94,15 +94,17 @@ const ALTERNATIVE_PERSON_OPTIONS = [
 ];
 
 const PACKING_MATERIAL_OPTIONS = [
-  { value: 'Plastic Box', label: 'Plastic Box' },
-  { value: 'Paper Box', label: 'Paper Box' },
+  { value: 'Box', label: 'Box' },
+  { value: 'Cover', label: 'Cover' },
+  { value: 'Frosted Paper', label: 'Frosted Paper' },
   { value: 'Pouch', label: 'Pouch' },
   { value: 'Wrapper', label: 'Wrapper' },
 ];
 
 const MATERIAL_CATEGORY_OPTIONS = [
-  { value: 'Eco Friendly', label: 'Eco Friendly' },
   { value: 'Plastic', label: 'Plastic' },
+  { value: 'Eco Friendly', label: 'Eco Friendly' },
+  { value: 'Biodegradable', label: 'Biodegradable' },
   { value: 'Wooden', label: 'Wooden' },
 ];
 
@@ -110,7 +112,7 @@ const PRODUCT_TYPE_OPTIONS = [
   { value: 'Soap', label: 'Soap' },
   { value: 'Paste', label: 'Paste' },
   { value: 'Brush', label: 'Brush' },
-  { value: 'Raizer', label: 'Raizer' },
+  { value: 'Razor', label: 'Razor' },
   { value: 'Gel', label: 'Gel' },
   { value: 'Face Kit Combo', label: 'Face Kit Combo' },
   { value: 'Body Kit Combo', label: 'Body Kit Combo' },
@@ -119,7 +121,7 @@ const PRODUCT_TYPE_OPTIONS = [
 const KIT_CATEGORIES = [
   { value: 'DENTAL_KIT', label: 'Dental Kit' },
   { value: 'SHAVING_KIT', label: 'Shaving Kit' },
-  { value: 'CARE_KIT', label: 'For Your Care Kit (PVK)' },
+  { value: 'CARE_KIT', label: 'For Your Care Kit (Personal Vanity Kit)' },
 ];
 
 const DENTAL_KIT_PRODUCTS = {
@@ -131,18 +133,9 @@ const DENTAL_KIT_PRODUCTS = {
 
 const SHAVING_KIT_PRODUCTS = {
   bases: ['Box', 'Cover', 'Frosted Paper'],
-  razors: [
-    { name: 'Darco (Plastic)', cat: 'Plastic' },
-    { name: 'Gillet (Plastic)', cat: 'Plastic' },
-    { name: 'Darco (Biodegradable)', cat: 'Biodegradable' },
-    { name: 'Gillet (Biodegradable)', cat: 'Biodegradable' },
-  ],
-  gels: [
-    { name: 'Oxilife (Plastic)', cat: 'Plastic' },
-    { name: 'Gillet (Plastic)', cat: 'Plastic' },
-    { name: 'Oxilife (Biodegradable)', cat: 'Biodegradable' },
-    { name: 'Gillet (Biodegradable)', cat: 'Biodegradable' },
-  ],
+  razors: ['Darco', 'Gillette'],
+  gels: ['Oxilife', 'Gillette'],
+  materialCategories: ['Plastic', 'Biodegradable'],
 };
 
 const CARE_KIT_PRODUCTS = {
@@ -541,19 +534,21 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   <Text strong style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Kit Contents:</Text>
                   {kitType === 'DENTAL_KIT' && (
                     <Row gutter={8}>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'brush']} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small">{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'paste']} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small">{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small">{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'brush']} label={<span style={{ fontSize: 10 }}>Brush</span>} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small">{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'paste']} label={<span style={{ fontSize: 10 }}>Paste</span>} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small">{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} label={<span style={{ fontSize: 10 }}>Type</span>} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small">{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
                     </Row>
                   )}
                   {kitType === 'SHAVING_KIT' && (
                     <Row gutter={8}>
-                      <Col span={12}><Form.Item {...rest} name={[name, 'razor']} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small">{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r.name} value={r.name}>{r.name}</Option>)}</Select></Form.Item></Col>
-                      <Col span={12}><Form.Item {...rest} name={[name, 'gel']} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small">{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g.name} value={g.name}>{g.name}</Option>)}</Select></Form.Item></Col>
+                      <Col span={6}><Form.Item {...rest} name={[name, 'razor']} label={<span style={{ fontSize: 10 }}>Razor Brand</span>} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small">{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r} value={r}>{r}</Option>)}</Select></Form.Item></Col>
+                      <Col span={6}><Form.Item {...rest} name={[name, 'razorMaterial']} label={<span style={{ fontSize: 10 }}>Material</span>} style={{ marginBottom: 0 }}><Select placeholder="Material" size="small">{SHAVING_KIT_PRODUCTS.materialCategories.map(m => <Option key={m} value={m}>{m}</Option>)}</Select></Form.Item></Col>
+                      <Col span={6}><Form.Item {...rest} name={[name, 'gel']} label={<span style={{ fontSize: 10 }}>Gel Brand</span>} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small">{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g} value={g}>{g}</Option>)}</Select></Form.Item></Col>
+                      <Col span={6}><Form.Item {...rest} name={[name, 'gelMaterial']} label={<span style={{ fontSize: 10 }}>Material</span>} style={{ marginBottom: 0 }}><Select placeholder="Material" size="small">{SHAVING_KIT_PRODUCTS.materialCategories.map(m => <Option key={m} value={m}>{m}</Option>)}</Select></Form.Item></Col>
                     </Row>
                   )}
                   {kitType === 'CARE_KIT' && (
-                    <Form.Item {...rest} name={[name, 'careProducts']} style={{ marginBottom: 0 }}>
+                    <Form.Item {...rest} name={[name, 'careProducts']} label={<span style={{ fontSize: 10 }}>Select Products</span>} style={{ marginBottom: 0 }}>
                       <Select mode="multiple" placeholder="Select Products" size="small">{CARE_KIT_PRODUCTS.products.map(p => <Option key={p} value={p}>{p}</Option>)}</Select>
                     </Form.Item>
                   )}
