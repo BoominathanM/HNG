@@ -18,7 +18,6 @@ import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 
 const { Text, Title } = Typography;
-const { TabPane } = Tabs;
 const { Option } = Select;
 // const { RangePicker } = DatePicker;
 
@@ -1400,7 +1399,7 @@ export default function Sales() {
           </div>
 
           {/* Flow steps */}
-          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} bodyStyle={{ padding: '16px 24px' }}>
+          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} styles={{ body: { padding: '16px 24px' } }}>
             <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>QUOTATION PROGRESS</Text>
             <Steps current={q.flowStep || 0} items={QUOT_STEPS} />
           </Card>
@@ -1414,7 +1413,7 @@ export default function Sales() {
               { label: 'Quote Date', value: q.date || '—', color: '#52c41a', icon: <HistoryOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
-                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} bodyStyle={{ padding: '12px 14px' }}>
+                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} styles={{ body: { padding: '12px 14px' } }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
                   <Text strong style={{ fontSize: 14, color: s.color, display: 'block' }}>{s.value}</Text>
                 </Card>
@@ -1552,7 +1551,7 @@ export default function Sales() {
           </div>
 
           {/* Flow steps */}
-          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} bodyStyle={{ padding: '16px 24px' }}>
+          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} styles={{ body: { padding: '16px 24px' } }}>
             <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>NEGOTIATION PROGRESS</Text>
             <Steps current={n.flowStep || 0} items={NEG_STEPS} />
           </Card>
@@ -1566,7 +1565,7 @@ export default function Sales() {
               { label: 'Date', value: n.date || '—', color: '#52c41a', icon: <CalendarOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
-                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} bodyStyle={{ padding: '12px 14px' }}>
+                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} styles={{ body: { padding: '12px 14px' } }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
                   <Text strong style={{ fontSize: 14, color: s.color, display: 'block' }}>{s.value}</Text>
                 </Card>
@@ -1701,7 +1700,7 @@ export default function Sales() {
           </div>
 
           {/* Order status steps */}
-          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} bodyStyle={{ padding: '16px 24px' }}>
+          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} styles={{ body: { padding: '16px 24px' } }}>
             <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>ORDER STATUS</Text>
             <Steps current={orderCurrentStep} items={ORDER_STEPS} />
           </Card>
@@ -1715,7 +1714,7 @@ export default function Sales() {
               { label: 'Expected Delivery', value: o.expectedDelivery || '—', color: '#1890ff', icon: <CarOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
-                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} bodyStyle={{ padding: '12px 14px' }}>
+                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} styles={{ body: { padding: '12px 14px' } }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
                   <Text strong style={{ fontSize: 14, color: s.color, display: 'block' }}>{s.value}</Text>
                 </Card>
@@ -2205,7 +2204,7 @@ export default function Sales() {
               { label: 'Next Follow-up', value: record.followUpDate || 'Not set', color: '#52c41a', icon: <HistoryOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
-                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} bodyStyle={{ padding: '12px 14px' }}>
+                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} styles={{ body: { padding: '12px 14px' } }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
                   <Text strong style={{ fontSize: 15, color: s.color, display: 'block' }}>{s.value}</Text>
                 </Card>
@@ -2855,14 +2854,14 @@ export default function Sales() {
                 else if (activeTab === 'customers') setViewMode('add-customer');
               }}
             >
-              {activeTab === 'leads' ? 'Add Lead' : 'Add Customer'}
+              {activeTab === 'leads' ? 'Add Lead' : 'Add Party'}
             </Button>
           )}
         </Space>
       </div>
 
       {/* Flow progress bar */}
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, marginBottom: 16, boxShadow: '0 2px 12px rgba(177,30,106,0.05)' }} bodyStyle={{ padding: '14px 24px' }}>
+      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, marginBottom: 16, boxShadow: '0 2px 12px rgba(177,30,106,0.05)' }} styles={{ body: { padding: '14px 24px' } }}>
         <Steps size="small"
           current={['performance', 'leads', 'reminders', 'quotations', 'orders', 'customers'].indexOf(activeTab === 'negotiations' ? 'quotations' : activeTab)}
           onChange={(i) => setActiveTab(['performance', 'leads', 'reminders', 'quotations', 'orders', 'customers'][i])}
@@ -2873,12 +2872,12 @@ export default function Sales() {
             { title: 'Reminders', description: `${REMINDERS_DATA.length} total` },
             { title: 'Quotations & Negotiations', description: `${quotationsData.length + negotiationsData.length} total` },
             { title: 'Orders', description: `${ordersData.length} total` },
-            { title: 'Customers', description: `${customersData.length} total` },
+            { title: 'Parties', description: `${customersData.length} total` },
           ]}
         />
       </Card>
 
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
+      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
         <Tabs activeKey={activeTab} onChange={setActiveTab} style={{ padding: '0 16px' }}
           tabBarExtraContent={
             <Space size={8}>
@@ -2901,181 +2900,192 @@ export default function Sales() {
               />
             </Space>
           }
-        >
-          <TabPane tab="Performance" key="performance">
-            <div style={{ padding: '16px 8px' }}>
-              <Title level={4} style={{ marginBottom: 20 }}>Target Progression</Title>
-              <Row gutter={[16, 16]}>
-                {(() => {
-                  const totalTarget = PERFORMANCE_TARGETS.reduce((s, t) => s + t.target, 0);
-                  const totalAchieved = PERFORMANCE_TARGETS.reduce((s, t) => s + t.achieved, 0);
-                  const totalPercent = (totalAchieved / totalTarget) * 100;
+          items={[
+            {
+              key: 'performance',
+              label: 'Performance',
+              children: (
+                <div style={{ padding: '16px 8px' }}>
+                  <Title level={4} style={{ marginBottom: 20 }}>Target Progression</Title>
+                  <Row gutter={[16, 16]}>
+                    {(() => {
+                      const totalTarget = PERFORMANCE_TARGETS.reduce((s, t) => s + t.target, 0);
+                      const totalAchieved = PERFORMANCE_TARGETS.reduce((s, t) => s + t.achieved, 0);
+                      const totalPercent = (totalAchieved / totalTarget) * 100;
 
-                  const milestones = [
-                    { percent: 25, label: '1/4', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q1).join(' + ') },
-                    { percent: 50, label: '1/2', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q2).join(' + ') },
-                    { percent: 75, label: '3/4', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q3).join(' + ') },
-                    { percent: 100, label: 'Full', reward: PERFORMANCE_TARGETS.map(t => t.milestones.full).join(' + ') },
-                  ];
+                      const milestones = [
+                        { percent: 25, label: '1/4', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q1).join(' + ') },
+                        { percent: 50, label: '1/2', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q2).join(' + ') },
+                        { percent: 75, label: '3/4', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q3).join(' + ') },
+                        { percent: 100, label: 'Full', reward: PERFORMANCE_TARGETS.map(t => t.milestones.full).join(' + ') },
+                      ];
 
-                  return (
-                    <Col span={24}>
-                      <Card style={{ borderRadius: 16, border: 'none', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', boxShadow: '0 4px 20px rgba(177,30,106,0.06)', padding: '10px 20px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
-                          <div>
-                            <Text type="secondary" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Combined Team Performance</Text>
-                            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-                              <Title level={2} style={{ margin: 0, color: '#B11E6A' }}>₹{totalAchieved.toLocaleString()}</Title>
-                              <Text type="secondary">of ₹{totalTarget.toLocaleString()}</Text>
+                      return (
+                        <Col span={24}>
+                          <Card style={{ borderRadius: 16, border: 'none', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', boxShadow: '0 4px 20px rgba(177,30,106,0.06)', padding: '10px 20px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
+                              <div>
+                                <Text type="secondary" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Combined Team Performance</Text>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+                                  <Title level={2} style={{ margin: 0, color: '#B11E6A' }}>₹{totalAchieved.toLocaleString()}</Title>
+                                  <Text type="secondary">of ₹{totalTarget.toLocaleString()}</Text>
+                                </div>
+                              </div>
+                              <div style={{ textAlign: 'right' }}>
+                                <Title level={3} style={{ margin: 0, color: '#B11E6A' }}>{totalPercent.toFixed(1)}%</Title>
+                              </div>
                             </div>
-                          </div>
-                          <div style={{ textAlign: 'right' }}>
-                            <Title level={3} style={{ margin: 0, color: '#B11E6A' }}>{totalPercent.toFixed(1)}%</Title>
-                          </div>
-                        </div>
 
-                        <div style={{ position: 'relative', padding: '20px 0 60px' }}>
-                          <Progress
-                            percent={Math.round(totalPercent)}
-                            strokeColor={{ '0%': '#B11E6A', '100%': '#D85C9E' }}
-                            trailColor={isDark ? 'rgba(255,255,255,0.05)' : '#f0f0f0'}
-                            strokeWidth={14}
-                            showInfo={false}
-                            status="active"
-                          />
-                          
-                          {/* Milestone Markers */}
-                          {milestones.map((m) => {
-                            const isReached = totalPercent >= m.percent;
-                            return (
-                              <div key={m.percent} style={{ position: 'absolute', left: `${m.percent}%`, top: 12, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', width: 140 }}>
-                                <div style={{ width: 4, height: 26, background: isReached ? '#B11E6A' : (isDark ? '#444' : '#ddd'), borderRadius: 2, marginBottom: 4 }} />
-                                <div style={{ 
-                                  padding: '4px 10px', 
-                                  borderRadius: 12, 
-                                  background: isReached ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : (isDark ? '#222' : '#f5f5f5'),
-                                  color: isReached ? '#fff' : '#888',
-                                  fontSize: 10,
-                                  fontWeight: 700,
-                                  boxShadow: isReached ? '0 2px 8px rgba(177,30,106,0.3)' : 'none',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                  whiteSpace: 'nowrap'
-                                }}>
-                                  {isReached ? <CheckOutlined style={{ fontSize: 10 }} /> : null}
-                                  {m.label} REACHED
-                                </div>
-                                <div style={{ marginTop: 8, textAlign: 'center', width: '100%' }}>
-                                  <Tooltip title={m.reward}>
-                                    <Tag color={isReached ? 'magenta' : 'default'} style={{ margin: 0, fontSize: 9, borderRadius: 4, maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                      <GiftOutlined style={{ marginRight: 3 }} />
-                                      {isReached ? 'CLAIMED' : 'LOCKED'}
-                                    </Tag>
-                                  </Tooltip>
-                                  <div style={{ fontSize: 9, color: isReached ? '#B11E6A' : '#aaa', marginTop: 4, lineHeight: 1.2, height: 24, overflow: 'hidden' }}>
-                                    {m.reward}
+                            <div style={{ position: 'relative', padding: '20px 0 60px' }}>
+                              <Progress
+                                percent={Math.round(totalPercent)}
+                                strokeColor={{ '0%': '#B11E6A', '100%': '#D85C9E' }}
+                                trailColor={isDark ? 'rgba(255,255,255,0.05)' : '#f0f0f0'}
+                                strokeWidth={14}
+                                showInfo={false}
+                                status="active"
+                              />
+                              {milestones.map((m) => {
+                                const isReached = totalPercent >= m.percent;
+                                return (
+                                  <div key={m.percent} style={{ position: 'absolute', left: `${m.percent}%`, top: 12, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', width: 140 }}>
+                                    <div style={{ width: 4, height: 26, background: isReached ? '#B11E6A' : (isDark ? '#444' : '#ddd'), borderRadius: 2, marginBottom: 4 }} />
+                                    <div style={{ padding: '4px 10px', borderRadius: 12, background: isReached ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : (isDark ? '#222' : '#f5f5f5'), color: isReached ? '#fff' : '#888', fontSize: 10, fontWeight: 700, boxShadow: isReached ? '0 2px 8px rgba(177,30,106,0.3)' : 'none', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                      {isReached ? <CheckOutlined style={{ fontSize: 10 }} /> : null}
+                                      {m.label} REACHED
+                                    </div>
+                                    <div style={{ marginTop: 8, textAlign: 'center', width: '100%' }}>
+                                      <Tooltip title={m.reward}>
+                                        <Tag color={isReached ? 'magenta' : 'default'} style={{ margin: 0, fontSize: 9, borderRadius: 4, maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                          <GiftOutlined style={{ marginRight: 3 }} />
+                                          {isReached ? 'CLAIMED' : 'LOCKED'}
+                                        </Tag>
+                                      </Tooltip>
+                                      <div style={{ fontSize: 9, color: isReached ? '#B11E6A' : '#aaa', marginTop: 4, lineHeight: 1.2, height: 24, overflow: 'hidden' }}>
+                                        {m.reward}
+                                      </div>
+                                    </div>
                                   </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                                );
+                              })}
+                            </div>
 
-                        <Divider style={{ margin: '10px 0 20px' }} />
-                        <Row gutter={16}>
-                          {PERFORMANCE_TARGETS.map(t => (
-                            <Col xs={12} sm={6} key={t.key}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Text style={{ fontSize: 11, color: '#888' }}>{t.label}</Text>
-                                <Text strong style={{ fontSize: 11 }}>{Math.round((t.achieved / t.target) * 100)}%</Text>
-                              </div>
-                              <Progress percent={Math.round((t.achieved / t.target) * 100)} size="small" strokeColor={t.color} showInfo={false} />
-                            </Col>
-                          ))}
-                        </Row>
-                      </Card>
-                    </Col>
-                  );
-                })()}
-              </Row>
-            </div>
-          </TabPane>
-          <TabPane tab="Leads" key="leads">
-            <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-              <Table
-                dataSource={filtered(leadsData)}
-                columns={leadColumns}
-                pagination={{ pageSize: 8, size: 'small' }}
-                size="small"
-                rowKey="key"
-                onRow={(record) => ({ onClick: () => openDetailNextScreen(record) })}
-                style={{ cursor: 'pointer' }}
-              />
-            </div>
-          </TabPane>
-          <TabPane tab="Reminders" key="reminders">
-            <div className="table-responsive" style={{ padding: '16px 4px 4px' }}>
-              <Table
-                dataSource={REMINDERS_DATA}
-                columns={[
-                  { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'}>{t}</Tag> },
-                  { title: 'Customer', dataIndex: 'customer', key: 'customer' },
-                  {
-                    title: 'Details', key: 'details', render: (_, r) => (
-                      <Text>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days)` : r.topic || `${r.occupancy} occupancy`}</Text>
-                    )
-                  },
-                  { title: 'Due/Action', key: 'action', render: (_, r) => <Text>{r.dueDate || r.action}</Text> },
-                  { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson' },
-                ]}
-                pagination={{ pageSize: 8, size: 'small' }}
-                size="small"
-                rowKey="key"
-              />
-            </div>
-          </TabPane>
-          <TabPane tab="Quotations & Negotiations" key="quotations">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-                <SectionDivider title="Current Quotations" />
-                <Table dataSource={filtered(quotationsData)} columns={quotationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
-                  onRow={(record) => ({ onClick: () => openQuotationDetail(record) })} style={{ cursor: 'pointer' }} />
-              </div>
-              <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-                <SectionDivider title="Negotiations In Progress" />
-                <Table dataSource={filtered(negotiationsData)} columns={negotiationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
-                  onRow={(record) => ({ onClick: () => openNegotiationDetail(record) })} style={{ cursor: 'pointer' }} />
-              </div>
-            </div>
-          </TabPane>
-          <TabPane tab="Orders" key="orders">
-            <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-              <Table
-                dataSource={filtered(ordersData)}
-                columns={orderColumns}
-                pagination={{ pageSize: 8, size: 'small' }}
-                size="small"
-                rowKey="key"
-                onRow={(record) => ({ onClick: () => openOrderDetail(record) })}
-                style={{ cursor: 'pointer' }}
-              />
-            </div>
-          </TabPane>
-          <TabPane tab="Customers" key="customers">
-            <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-              <Table
-                dataSource={filtered(customersData)}
-                columns={customerColumns}
-                pagination={{ pageSize: 8, size: 'small' }}
-                size="small"
-                rowKey="key"
-                onRow={(record) => ({ onClick: () => openDetailNextScreen(record) })}
-                style={{ cursor: 'pointer' }}
-              />
-            </div>
-          </TabPane>
-        </Tabs>
+                            <Divider style={{ margin: '10px 0 20px' }} />
+                            <Row gutter={16}>
+                              {PERFORMANCE_TARGETS.map(t => (
+                                <Col xs={12} sm={6} key={t.key}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Text style={{ fontSize: 11, color: '#888' }}>{t.label}</Text>
+                                    <Text strong style={{ fontSize: 11 }}>{Math.round((t.achieved / t.target) * 100)}%</Text>
+                                  </div>
+                                  <Progress percent={Math.round((t.achieved / t.target) * 100)} size="small" strokeColor={t.color} showInfo={false} />
+                                </Col>
+                              ))}
+                            </Row>
+                          </Card>
+                        </Col>
+                      );
+                    })()}
+                  </Row>
+                </div>
+              ),
+            },
+            {
+              key: 'leads',
+              label: 'Leads',
+              children: (
+                <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <Table
+                    dataSource={filtered(leadsData)}
+                    columns={leadColumns}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    rowKey="key"
+                    onRow={(record) => ({ onClick: () => openDetailNextScreen(record) })}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </div>
+              ),
+            },
+            {
+              key: 'reminders',
+              label: 'Reminders',
+              children: (
+                <div className="table-responsive" style={{ padding: '16px 4px 4px' }}>
+                  <Table
+                    dataSource={REMINDERS_DATA}
+                    columns={[
+                      { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'}>{t}</Tag> },
+                      { title: 'Party', dataIndex: 'customer', key: 'customer' },
+                      {
+                        title: 'Details', key: 'details', render: (_, r) => (
+                          <Text>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days)` : r.topic || `${r.occupancy} occupancy`}</Text>
+                        )
+                      },
+                      { title: 'Due/Action', key: 'action', render: (_, r) => <Text>{r.dueDate || r.action}</Text> },
+                      { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson' },
+                    ]}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    rowKey="key"
+                  />
+                </div>
+              ),
+            },
+            {
+              key: 'quotations',
+              label: 'Quotations & Negotiations',
+              children: (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                  <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                    <SectionDivider title="Current Quotations" />
+                    <Table dataSource={filtered(quotationsData)} columns={quotationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
+                      onRow={(record) => ({ onClick: () => openQuotationDetail(record) })} style={{ cursor: 'pointer' }} />
+                  </div>
+                  <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                    <SectionDivider title="Negotiations In Progress" />
+                    <Table dataSource={filtered(negotiationsData)} columns={negotiationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
+                      onRow={(record) => ({ onClick: () => openNegotiationDetail(record) })} style={{ cursor: 'pointer' }} />
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'orders',
+              label: 'Orders',
+              children: (
+                <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <Table
+                    dataSource={filtered(ordersData)}
+                    columns={orderColumns}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    rowKey="key"
+                    onRow={(record) => ({ onClick: () => openOrderDetail(record) })}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </div>
+              ),
+            },
+            {
+              key: 'customers',
+              label: 'Parties',
+              children: (
+                <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <Table
+                    dataSource={filtered(customersData)}
+                    columns={customerColumns}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    rowKey="key"
+                    onRow={(record) => ({ onClick: () => openDetailNextScreen(record) })}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </div>
+              ),
+            },
+          ]}
+        />
       </Card>
 
     </div>

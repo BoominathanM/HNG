@@ -463,3 +463,209 @@ body.dark-mode {
     min-width: 0 !important;
   }
 }
+
+/* =============================================
+   STEPS — HORIZONTAL SCROLL ON MOBILE
+   ============================================= */
+
+@media (max-width: 768px) {
+  .ant-steps-horizontal {
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+    padding-bottom: 8px;
+  }
+  .ant-steps-item {
+    min-width: 90px;
+    flex-shrink: 0;
+  }
+  .ant-steps-item-title {
+    font-size: 11px !important;
+    white-space: nowrap;
+  }
+  .ant-steps-item-description {
+    font-size: 10px !important;
+    white-space: nowrap;
+  }
+}
+
+/* =============================================
+   RECHARTS — SMALLER HEIGHT ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .recharts-responsive-container {
+    min-height: 160px !important;
+  }
+}
+
+/* =============================================
+   PAGE HEADER — RANGE PICKER WRAP ON MOBILE
+   ============================================= */
+
+@media (max-width: 640px) {
+  /* Range picker inside page header toolbars goes full-width */
+  .ant-picker-range {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  /* Stat card numbers compact on smallest screens */
+  .ant-card .ant-typography {
+    word-break: break-word;
+  }
+}
+
+/* =============================================
+   INLINE FIXED-WIDTH CONTAINERS — MOBILE OVERRIDE
+   ============================================= */
+
+@media (max-width: 640px) {
+  /* Override any inline width on select filters in page headers */
+  .ant-space-wrap .ant-select {
+    width: 100px !important;
+    min-width: 90px !important;
+  }
+  /* Buttons in header Space shouldn't overflow */
+  .ant-space-wrap .ant-btn {
+    padding: 0 8px !important;
+    font-size: 12px !important;
+  }
+}
+
+/* =============================================
+   COLLAPSE / PERMISSIONS — MOBILE OVERFLOW FIX
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-collapse-content-box {
+    padding: 8px 10px !important;
+    overflow-x: auto;
+  }
+  /* Permission checkboxes wrap */
+  .ant-collapse-content .ant-checkbox-wrapper {
+    font-size: 12px !important;
+  }
+}
+
+/* =============================================
+   DESCRIPTIONS — VERTICAL ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-descriptions-view {
+    overflow-x: auto;
+  }
+  .ant-descriptions-row > td {
+    display: block !important;
+    width: 100% !important;
+  }
+}
+
+/* =============================================
+   UPLOAD DRAGGER — MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-upload-drag {
+    padding: 12px !important;
+  }
+  .ant-upload-drag .ant-upload-drag-icon {
+    font-size: 28px !important;
+  }
+}
+
+/* =============================================
+   LIST — MOBILE PADDING
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-list-item {
+    padding: 10px 12px !important;
+    flex-wrap: wrap !important;
+    gap: 6px;
+  }
+  .ant-list-item-meta-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .ant-list-item-meta-title {
+    font-size: 13px !important;
+  }
+  .ant-list-item-meta-description {
+    font-size: 12px !important;
+  }
+}
+
+/* =============================================
+   TAGS — PREVENT OVERFLOW IN TABLES
+   ============================================= */
+
+.ant-table-cell .ant-tag {
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 120px;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 576px) {
+  .ant-table-cell .ant-tag {
+    max-width: 80px;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+  }
+}
+
+/* =============================================
+   AVATAR — SCALE ON MOBILE
+   ============================================= */
+
+@media (max-width: 480px) {
+  .ant-avatar-lg {
+    width: 36px !important;
+    height: 36px !important;
+    line-height: 36px !important;
+    font-size: 16px !important;
+  }
+}
+
+/* =============================================
+   SLIDER — MOBILE TOUCH AREA
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-slider {
+    margin: 8px 6px !important;
+  }
+  .ant-slider-handle {
+    width: 18px !important;
+    height: 18px !important;
+    margin-top: -7px !important;
+  }
+}
+
+/* =============================================
+   BADGE COUNTER — PREVENT CLIPPING
+   ============================================= */
+
+.ant-badge-count {
+  z-index: 10;
+}
+
+/* =============================================
+   TOOLTIP — PREVENT OVERFLOW ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-tooltip {
+    max-width: calc(100vw - 24px) !important;
+  }
+}
+
+/* =============================================
+   PROGRESS LABELS — COMPACT ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-progress-text {
+    font-size: 11px !important;
+  }
+}

@@ -126,7 +126,7 @@ export default function Dashboard() {
             <Card
               title={<Text strong style={{ color: textColor }}>Revenue & Orders Trend</Text>}
               style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-              bodyStyle={{ padding: '12px 16px 16px' }}
+              styles={{ body: { padding: '12px 16px 16px' } }}
             >
               <ResponsiveContainer width="100%" height={260}>
                 <AreaChart data={salesData}>
@@ -155,7 +155,7 @@ export default function Dashboard() {
             <Card
               title={<Text strong style={{ color: textColor }}>Order Status</Text>}
               style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-              bodyStyle={{ padding: '12px 16px 16px' }}
+              styles={{ body: { padding: '12px 16px 16px' } }}
             >
               <ResponsiveContainer width="100%" height={260}>
                 <PieChart>
@@ -190,7 +190,7 @@ export default function Dashboard() {
               <Card
                 title={<Text strong style={{ color: textColor }}>Recent Orders</Text>}
                 style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                bodyStyle={{ padding: 0 }}
+                styles={{ body: { padding: 0 } }}
               >
                 <div className="table-responsive">
                   <Table
@@ -223,7 +223,7 @@ export default function Dashboard() {
                   </div>
                 }
                 style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                bodyStyle={{ padding: '8px 16px 16px' }}
+                styles={{ body: { padding: '8px 16px 16px' } }}
               >
                 <ResponsiveContainer width="100%" height={210}>
                   <BarChart data={productPerformance} margin={{ top: 4, right: 0, left: -10, bottom: 0 }} barGap={4}>
@@ -294,7 +294,7 @@ export default function Dashboard() {
                     </div>
                   }
                   style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                  bodyStyle={{ padding: '12px 16px' }}
+                  styles={{ body: { padding: '12px 16px' } }}
                 >
                   {lowStockItems.map((item) => (
                     <div key={item.item} style={{ marginBottom: 14 }}>
@@ -323,7 +323,7 @@ export default function Dashboard() {
                 <Card
                   title={<Text strong style={{ color: textColor }}>Recent Activity</Text>}
                   style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                  bodyStyle={{ padding: '12px 16px' }}
+                  styles={{ body: { padding: '12px 16px' } }}
                 >
                   <Timeline
                     items={[

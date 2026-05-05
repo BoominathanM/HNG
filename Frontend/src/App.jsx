@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ConfigProvider, theme as antTheme } from 'antd';
+import enUS from 'antd/locale/en_US';
 import { Provider, useSelector } from 'react-redux';
 import { SnackbarProvider } from 'notistack';
 import { store } from './store';
@@ -34,6 +35,7 @@ function ThemedApp() {
 
   return (
     <ConfigProvider
+      locale={enUS}
       theme={{
         algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
         token: isDark ? darkTheme.token : lightTheme.token,

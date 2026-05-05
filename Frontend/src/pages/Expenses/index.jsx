@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import dayjs from 'dayjs';
 import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker } from 'antd';
 import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
@@ -156,7 +157,7 @@ export default function Expenses() {
               </Space>
             }
             style={{ borderRadius: 14, background: cardBg, border: 'none', boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-            bodyStyle={{ padding: 0 }}
+            styles={{ body: { padding: 0 } }}
           >
             <Table 
               dataSource={expenses} 
@@ -213,7 +214,7 @@ export default function Expenses() {
         width={400}
         centered
       >
-        <Form form={form} layout="vertical" onFinish={handleAddExpense} initialValues={{ date: new Date().toISOString().split('T')[0] }}>
+        <Form form={form} layout="vertical" onFinish={handleAddExpense} initialValues={{ date: dayjs() }}>
           <Form.Item label="Date" name="date" rules={[{ required: true }]}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>

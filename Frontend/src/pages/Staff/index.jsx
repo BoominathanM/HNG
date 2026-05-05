@@ -61,7 +61,7 @@ export default function Staff() {
         ].map((s, i) => (
           <Col xs={12} sm={6} key={s.label}>
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}>
-              <Card style={{ borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, boxShadow: `0 4px 20px ${s.color}20`, textAlign: 'center' }} bodyStyle={{ padding: '16px 8px' }}>
+              <Card style={{ borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, boxShadow: `0 4px 20px ${s.color}20`, textAlign: 'center' }} styles={{ body: { padding: '16px 8px' } }}>
                 <Title level={2} style={{ margin: 0, color: s.color }}>{s.val}</Title>
                 <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>{s.label}</Text>
               </Card>
@@ -70,7 +70,7 @@ export default function Staff() {
         ))}
       </Row>
 
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
+      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
         <div className="table-responsive" style={{ padding: '4px' }}>
           <Table dataSource={staff} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
         </div>

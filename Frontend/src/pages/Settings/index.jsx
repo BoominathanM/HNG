@@ -12,7 +12,6 @@ import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 
 const { Title, Text } = Typography;
-const { TabPane } = Tabs;
 const { Option } = Select;
 
 const MODULES = [
@@ -117,350 +116,338 @@ export default function Settings() {
     <div className="page-container fade-in">
       <PageBreadcrumb title="Settings" items={[{ label: 'Settings' }]} />
 
-      <Tabs defaultActiveKey="general">
-
-        {/* ─── GENERAL ─── */}
-        <TabPane tab="General" key="general">
-
-          <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-            <Form layout="vertical">
-              {/* Logo Upload */}
-              <Form.Item label={<Text strong style={{ color: textColor }}>Company Logo</Text>} style={{ marginBottom: 20 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-                  <div style={{ width: 100, height: 100, borderRadius: 12, border: `2px dashed ${isDark ? '#444' : '#ddd'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: subBg }}>
-                    {logoUrl
-                      ? <img src={logoUrl} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                      : <UserOutlined style={{ fontSize: 32, color: '#ccc' }} />}
-                  </div>
-                  <div>
-                    <Upload
-                      accept="image/*"
-                      showUploadList={false}
-                      beforeUpload={(file) => {
-                        const reader = new FileReader();
-                        reader.onload = (e) => setLogoUrl(e.target.result);
-                        reader.readAsDataURL(file);
-                        return false;
-                      }}
-                    >
-                      <Button icon={<UploadOutlined />} style={{ marginBottom: 8, display: 'block', color: '#B11E6A', borderColor: '#B11E6A55' }}>Upload Logo</Button>
-                    </Upload>
-                    <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>PNG, JPG up to 2MB</Text>
-                    <Text style={{ fontSize: 12, color: '#aaa' }}>Recommended: 200×200px</Text>
-                  </div>
-                </div>
-              </Form.Item>
-              <Divider style={{ margin: '4px 0 20px' }} />
-              <Row gutter={16}>
-                <Col xs={24} sm={12}><Form.Item label="Company Name"><Input defaultValue="Heal N Glow" /></Form.Item></Col>
-                <Col xs={24} sm={12}><Form.Item label="GST Number"><Input defaultValue="29ABCDE1234F1Z5" /></Form.Item></Col>
-                <Col xs={24} sm={12}><Form.Item label="Primary Currency"><Select defaultValue="INR"><Option value="INR">₹ Indian Rupee</Option></Select></Form.Item></Col>
-                <Col xs={24} sm={12}><Form.Item label="Date Format"><Select defaultValue="DD/MM/YYYY"><Option value="DD/MM/YYYY">DD/MM/YYYY</Option><Option value="MM/DD/YYYY">MM/DD/YYYY</Option></Select></Form.Item></Col>
-                <Col xs={24}><Form.Item label="Business Address"><Input.TextArea rows={3} defaultValue="123, Industrial Area, Bengaluru - 560001, Karnataka" /></Form.Item></Col>
-              </Row>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>
-                <Button>Cancel</Button>
-                <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Settings</Button>
-              </div>
-            </Form>
-          </Card>
-        </TabPane>
-
-        {/* ─── USER MANAGEMENT ─── */}
-        <TabPane tab="User Management" key="users">
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddUserOpen(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add User</Button>
-          </div>
-          <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
-            <Table
-              dataSource={users}
-              rowKey="key"
-              pagination={false}
-              style={{ borderRadius: 14, overflow: 'hidden' }}
-              columns={[
-                {
-                  title: 'User',
-                  key: 'user',
-                  render: (_, user) => (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <Avatar size={36} style={{ background: `linear-gradient(135deg,${user.color},${user.color}99)`, fontSize: 15, fontWeight: 700, flexShrink: 0 }}>{user.avatar}</Avatar>
+      <Tabs
+        defaultActiveKey="general"
+        items={[
+          {
+            key: 'general',
+            label: 'General',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <Form layout="vertical">
+                  <Form.Item label={<Text strong style={{ color: textColor }}>Company Logo</Text>} style={{ marginBottom: 20 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+                      <div style={{ width: 100, height: 100, borderRadius: 12, border: `2px dashed ${isDark ? '#444' : '#ddd'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: subBg }}>
+                        {logoUrl
+                          ? <img src={logoUrl} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                          : <UserOutlined style={{ fontSize: 32, color: '#ccc' }} />}
+                      </div>
                       <div>
-                        <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{user.name}</Text>
-                        <Text style={{ fontSize: 12, color: '#aaa' }}>{user.email}</Text>
+                        <Upload
+                          accept="image/*"
+                          showUploadList={false}
+                          beforeUpload={(file) => {
+                            const reader = new FileReader();
+                            reader.onload = (e) => setLogoUrl(e.target.result);
+                            reader.readAsDataURL(file);
+                            return false;
+                          }}
+                        >
+                          <Button icon={<UploadOutlined />} style={{ marginBottom: 8, display: 'block', color: '#B11E6A', borderColor: '#B11E6A55' }}>Upload Logo</Button>
+                        </Upload>
+                        <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>PNG, JPG up to 2MB</Text>
+                        <Text style={{ fontSize: 12, color: '#aaa' }}>Recommended: 200×200px</Text>
                       </div>
                     </div>
-                  ),
-                },
-                {
-                  title: 'Role',
-                  dataIndex: 'role',
-                  key: 'role',
-                  render: (role) => {
-                    const color = roles.find(r => r.role === role)?.color || '#B11E6A';
-                    return <Tag style={{ borderRadius: 20, fontSize: 11, background: `${color}18`, color, border: `1px solid ${color}33`, margin: 0 }}>{role}</Tag>;
-                  },
-                },
-                {
-                  title: 'Status',
-                  dataIndex: 'status',
-                  key: 'status',
-                  render: (status) => <Badge status={status === 'Active' ? 'success' : 'default'} text={<Text style={{ fontSize: 13, color: textColor }}>{status}</Text>} />,
-                },
-                {
-                  title: '',
-                  key: 'actions',
-                  width: 48,
-                  render: (_, user) => (
-                    <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => removeUser(user.key)} style={{ color: '#ff4d4f' }} />
-                  ),
-                },
-              ]}
-            />
-          </Card>
+                  </Form.Item>
+                  <Divider style={{ margin: '4px 0 20px' }} />
+                  <Row gutter={16}>
+                    <Col xs={24} sm={12}><Form.Item label="Company Name"><Input defaultValue="Heal N Glow" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="GST Number"><Input defaultValue="29ABCDE1234F1Z5" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Primary Currency"><Select defaultValue="INR"><Option value="INR">₹ Indian Rupee</Option></Select></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Date Format"><Select defaultValue="DD/MM/YYYY"><Option value="DD/MM/YYYY">DD/MM/YYYY</Option><Option value="MM/DD/YYYY">MM/DD/YYYY</Option></Select></Form.Item></Col>
+                    <Col xs={24}><Form.Item label="Business Address"><Input.TextArea rows={3} defaultValue="123, Industrial Area, Bengaluru - 560001, Karnataka" /></Form.Item></Col>
+                  </Row>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>
+                    <Button>Cancel</Button>
+                    <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Settings</Button>
+                  </div>
+                </Form>
+              </Card>
+            ),
+          },
+          {
+            key: 'users',
+            label: 'User Management',
+            children: (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddUserOpen(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add User</Button>
+                </div>
+                <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                  <Table
+                    dataSource={users}
+                    rowKey="key"
+                    pagination={false}
+                    style={{ borderRadius: 14, overflow: 'hidden' }}
+                    columns={[
+                      {
+                        title: 'User',
+                        key: 'user',
+                        render: (_, user) => (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <Avatar size={36} style={{ background: `linear-gradient(135deg,${user.color},${user.color}99)`, fontSize: 15, fontWeight: 700, flexShrink: 0 }}>{user.avatar}</Avatar>
+                            <div>
+                              <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{user.name}</Text>
+                              <Text style={{ fontSize: 12, color: '#aaa' }}>{user.email}</Text>
+                            </div>
+                          </div>
+                        ),
+                      },
+                      {
+                        title: 'Role',
+                        dataIndex: 'role',
+                        key: 'role',
+                        render: (role) => {
+                          const color = roles.find(r => r.role === role)?.color || '#B11E6A';
+                          return <Tag style={{ borderRadius: 20, fontSize: 11, background: `${color}18`, color, border: `1px solid ${color}33`, margin: 0 }}>{role}</Tag>;
+                        },
+                      },
+                      {
+                        title: 'Status',
+                        dataIndex: 'status',
+                        key: 'status',
+                        render: (status) => <Badge status={status === 'Active' ? 'success' : 'default'} text={<Text style={{ fontSize: 13, color: textColor }}>{status}</Text>} />,
+                      },
+                      {
+                        title: '',
+                        key: 'actions',
+                        width: 48,
+                        render: (_, user) => (
+                          <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => removeUser(user.key)} style={{ color: '#ff4d4f' }} />
+                        ),
+                      },
+                    ]}
+                  />
+                </Card>
 
-          {/* Add User Modal */}
-          <Modal
-            open={addUserOpen}
-            onCancel={() => { setAddUserOpen(false); userForm.resetFields(); }}
-            footer={null}
-            width={Math.min(760, window.innerWidth - 24)}
-            centered
-            style={{ top: 20 }}
-            title={<Text strong style={{ fontSize: 18 }}>Add New User</Text>}
-          >
-            <div style={{ maxHeight: 'calc(100vh - 150px)', overflowY: 'auto', paddingRight: 10, paddingBottom: 10 }}>
-              <Form form={userForm} layout="vertical" style={{ marginTop: 16 }}>
-                <Row gutter={16}>
-                  <Col xs={24} sm={12}>
-                    <Form.Item label="Full Name" name="name" rules={[{ required: true, message: 'Required' }]}>
-                      <Input placeholder="Enter full name" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Form.Item label="Email Address" name="email" rules={[{ required: true, type: 'email', message: 'Valid email required' }]}>
-                      <Input placeholder="Enter email" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                </Row>
-              
-                <Row gutter={16}>
-                  <Col xs={24} sm={8}>
-                    <Form.Item label="Mobile" name="mobile" rules={[{ required: true, message: 'Required' }]}>
-                      <Input placeholder="Enter mobile number" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} sm={8}>
-                    <Form.Item label="Role" name="role" rules={[{ required: true, message: 'Required' }]}>
-                      <Select placeholder="Select role" style={{ width: '100%', height: 40 }}>
-                        {roles.map(r => <Option key={r.key} value={r.role}>{r.role}</Option>)}
-                      </Select>
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} sm={8}>
-                    <Form.Item label="Department" name="department" rules={[{ required: true, message: 'Required' }]}>
-                      <Select placeholder="Select Dept" style={{ width: '100%', height: 40 }}>
-                        <Option value="Sales">Sales</Option>
-                        <Option value="Marketing">Marketing</Option>
-                        <Option value="Operations">Operations</Option>
-                        <Option value="Dispatch">Dispatch</Option>
-                        <Option value="Finance">Finance</Option>
-                      </Select>
-                    </Form.Item>
-                  </Col>
-                </Row>
-
-                {(watchedDept === 'Sales' || watchedDept === 'Marketing') && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} style={{ background: subBg, padding: 16, borderRadius: 12, marginBottom: 20, border: '1px solid #B11E6A22' }}>
-                    <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 12 }}>Performance Targets & Rewards</Text>
-                    <Row gutter={16}>
-                      <Col xs={24} sm={12}>
-                        <Form.Item label="Target Amount (Annual/Monthly)" name="targetAmount">
-                          <InputNumber prefix="₹" style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="1,000,000" />
-                        </Form.Item>
-                      </Col>
-                      {watchedDept === 'Sales' && (
+                <Modal
+                  open={addUserOpen}
+                  onCancel={() => { setAddUserOpen(false); userForm.resetFields(); }}
+                  footer={null}
+                  width={Math.min(760, window.innerWidth - 24)}
+                  centered
+                  style={{ top: 20 }}
+                  title={<Text strong style={{ fontSize: 18 }}>Add New User</Text>}
+                >
+                  <div style={{ maxHeight: 'calc(100vh - 150px)', overflowY: 'auto', paddingRight: 10, paddingBottom: 10 }}>
+                    <Form form={userForm} layout="vertical" style={{ marginTop: 16 }}>
+                      <Row gutter={16}>
                         <Col xs={24} sm={12}>
-                          <Form.Item label="Target People (Leads/Customers)" name="targetPeople">
-                            <InputNumber style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="50" />
+                          <Form.Item label="Full Name" name="name" rules={[{ required: true, message: 'Required' }]}>
+                            <Input placeholder="Enter full name" style={{ borderRadius: 8, height: 40 }} />
                           </Form.Item>
                         </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Email Address" name="email" rules={[{ required: true, type: 'email', message: 'Valid email required' }]}>
+                            <Input placeholder="Enter email" style={{ borderRadius: 8, height: 40 }} />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+
+                      <Row gutter={16}>
+                        <Col xs={24} sm={8}>
+                          <Form.Item label="Mobile" name="mobile" rules={[{ required: true, message: 'Required' }]}>
+                            <Input placeholder="Enter mobile number" style={{ borderRadius: 8, height: 40 }} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item label="Role" name="role" rules={[{ required: true, message: 'Required' }]}>
+                            <Select placeholder="Select role" style={{ width: '100%', height: 40 }}>
+                              {roles.map(r => <Option key={r.key} value={r.role}>{r.role}</Option>)}
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item label="Department" name="department" rules={[{ required: true, message: 'Required' }]}>
+                            <Select placeholder="Select Dept" style={{ width: '100%', height: 40 }}>
+                              <Option value="Sales">Sales</Option>
+                              <Option value="Marketing">Marketing</Option>
+                              <Option value="Operations">Operations</Option>
+                              <Option value="Dispatch">Dispatch</Option>
+                              <Option value="Finance">Finance</Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+
+                      {(watchedDept === 'Sales' || watchedDept === 'Marketing') && (
+                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} style={{ background: subBg, padding: 16, borderRadius: 12, marginBottom: 20, border: '1px solid #B11E6A22' }}>
+                          <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 12 }}>Performance Targets & Rewards</Text>
+                          <Row gutter={16}>
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="Target Amount (Annual/Monthly)" name="targetAmount">
+                                <InputNumber prefix="₹" style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="1,000,000" />
+                              </Form.Item>
+                            </Col>
+                            {watchedDept === 'Sales' && (
+                              <Col xs={24} sm={12}>
+                                <Form.Item label="Target People (Leads/Parties)" name="targetPeople">
+                                  <InputNumber style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="50" />
+                                </Form.Item>
+                              </Col>
+                            )}
+                          </Row>
+                          <Divider style={{ margin: '8px 0 16px' }} />
+                          <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 8 }}>Price Rewards based on Target Completion milestones:</Text>
+                          <Row gutter={12}>
+                            <Col xs={12} sm={6}><Form.Item label="1/4 Target Reward" name="reward14"><Input placeholder="Reward Name" size="small" /></Form.Item></Col>
+                            <Col xs={12} sm={6}><Form.Item label="1/2 Target Reward" name="reward12"><Input placeholder="Reward Name" size="small" /></Form.Item></Col>
+                            <Col xs={12} sm={6}><Form.Item label="3/4 Target Reward" name="reward34"><Input placeholder="Reward Name" size="small" /></Form.Item></Col>
+                            <Col xs={12} sm={6}><Form.Item label="Full Target Reward" name="rewardFull"><Input placeholder="Reward Name" size="small" /></Form.Item></Col>
+                          </Row>
+                        </motion.div>
                       )}
-                    </Row>
-                    <Divider style={{ margin: '8px 0 16px' }} />
-                    <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 8 }}>Price Rewards based on Target Completion milestones:</Text>
-                    <Row gutter={12}>
-                      <Col xs={12} sm={6}>
-                        <Form.Item label="1/4 Target Reward" name="reward14">
-                          <Input placeholder="Reward Name" size="small" />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={12} sm={6}>
-                        <Form.Item label="1/2 Target Reward" name="reward12">
-                          <Input placeholder="Reward Name" size="small" />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={12} sm={6}>
-                        <Form.Item label="3/4 Target Reward" name="reward34">
-                          <Input placeholder="Reward Name" size="small" />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={12} sm={6}>
-                        <Form.Item label="Full Target Reward" name="rewardFull">
-                          <Input placeholder="Reward Name" size="small" />
-                        </Form.Item>
-                      </Col>
-                    </Row>
-                  </motion.div>
-                )}
 
-                <Row gutter={16}>
-                  <Col xs={24} sm={12}>
-                    <Form.Item label="Password" name="password" rules={[{ required: true, min: 6, message: 'Min 6 characters' }]}>
-                      <Input.Password placeholder="Min 6 characters" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Form.Item label="Confirm Password" name="confirm" rules={[{ required: true, message: 'Required' }]}>
-                      <Input.Password placeholder="Confirm password" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                </Row>
+                      <Row gutter={16}>
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Password" name="password" rules={[{ required: true, min: 6, message: 'Min 6 characters' }]}>
+                            <Input.Password placeholder="Min 6 characters" style={{ borderRadius: 8, height: 40 }} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Confirm Password" name="confirm" rules={[{ required: true, message: 'Required' }]}>
+                            <Input.Password placeholder="Confirm password" style={{ borderRadius: 8, height: 40 }} />
+                          </Form.Item>
+                        </Col>
+                      </Row>
 
-                <Row gutter={16}>
-                  <Col xs={24} sm={12}>
-                    <Form.Item label="Status" name="status" initialValue="Active" rules={[{ required: true, message: 'Required' }]}>
-                      <Select style={{ height: 40 }}>
-                        <Option value="Active">Active</Option>
-                        <Option value="Inactive">Inactive</Option>
-                      </Select>
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Form.Item label="Language" name="language" initialValue="English">
-                      <Select style={{ height: 40 }}>
-                        <Option value="English">English</Option>
-                        <Option value="Hindi">Hindi</Option>
-                        <Option value="Tamil">Tamil</Option>
-                      </Select>
-                    </Form.Item>
-                  </Col>
-                </Row>
+                      <Row gutter={16}>
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Status" name="status" initialValue="Active" rules={[{ required: true, message: 'Required' }]}>
+                            <Select style={{ height: 40 }}>
+                              <Option value="Active">Active</Option>
+                              <Option value="Inactive">Inactive</Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Language" name="language" initialValue="English">
+                            <Select style={{ height: 40 }}>
+                              <Option value="English">English</Option>
+                              <Option value="Hindi">Hindi</Option>
+                              <Option value="Tamil">Tamil</Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                      </Row>
 
-                <Form.Item label="Profile Photo">
-                  <Upload showUploadList={false} beforeUpload={() => false}>
-                    <Button icon={<UploadOutlined />} style={{ borderRadius: 8 }}>Upload Image</Button>
-                  </Upload>
-                </Form.Item>
+                      <Form.Item label="Profile Photo">
+                        <Upload showUploadList={false} beforeUpload={() => false}>
+                          <Button icon={<UploadOutlined />} style={{ borderRadius: 8 }}>Upload Image</Button>
+                        </Upload>
+                      </Form.Item>
 
-                <div style={{ marginBottom: 16 }}>
-                  <Text strong style={{ display: 'block', marginBottom: 8 }}>Page Access Permissions</Text>
-                  <Collapse ghost expandIconPosition="end" style={{ background: subBg, borderRadius: 8, border: `1px solid ${borderColor}` }}>
-                    {MODULES.map(mod => (
-                      <Collapse.Panel header={<Text strong>{mod}</Text>} key={mod}>
-                        <div style={{ display: 'flex', gap: 32 }}>
-                          {MODULE_PERM_TYPES[mod].includes('read') && (
-                            <Form.Item name={['perms', mod, 'read']} valuePropName="checked" style={{ margin: 0 }}>
-                              <Checkbox>Read</Checkbox>
-                            </Form.Item>
-                          )}
-                          {MODULE_PERM_TYPES[mod].includes('add') && (
-                            <Form.Item name={['perms', mod, 'add']} valuePropName="checked" style={{ margin: 0 }}>
-                              <Checkbox>Add</Checkbox>
-                            </Form.Item>
-                          )}
-                          {MODULE_PERM_TYPES[mod].includes('edit') && (
-                            <Form.Item name={['perms', mod, 'edit']} valuePropName="checked" style={{ margin: 0 }}>
-                              <Checkbox>Edit</Checkbox>
-                            </Form.Item>
-                          )}
-                          {MODULE_PERM_TYPES[mod].includes('delete') && (
-                            <Form.Item name={['perms', mod, 'delete']} valuePropName="checked" style={{ margin: 0 }}>
-                              <Checkbox>Delete</Checkbox>
-                            </Form.Item>
-                          )}
-                        </div>
-                      </Collapse.Panel>
-                    ))}
-                  </Collapse>
-                </div>
+                      <div style={{ marginBottom: 16 }}>
+                        <Text strong style={{ display: 'block', marginBottom: 8 }}>Page Access Permissions</Text>
+                        <Collapse
+                          ghost
+                          expandIconPosition="end"
+                          style={{ background: subBg, borderRadius: 8, border: `1px solid ${borderColor}` }}
+                          items={MODULES.map(mod => ({
+                            key: mod,
+                            label: <Text strong>{mod}</Text>,
+                            children: (
+                              <div style={{ display: 'flex', gap: 32 }}>
+                                {MODULE_PERM_TYPES[mod].includes('read') && (
+                                  <Form.Item name={['perms', mod, 'read']} valuePropName="checked" style={{ margin: 0 }}>
+                                    <Checkbox>Read</Checkbox>
+                                  </Form.Item>
+                                )}
+                                {MODULE_PERM_TYPES[mod].includes('add') && (
+                                  <Form.Item name={['perms', mod, 'add']} valuePropName="checked" style={{ margin: 0 }}>
+                                    <Checkbox>Add</Checkbox>
+                                  </Form.Item>
+                                )}
+                                {MODULE_PERM_TYPES[mod].includes('edit') && (
+                                  <Form.Item name={['perms', mod, 'edit']} valuePropName="checked" style={{ margin: 0 }}>
+                                    <Checkbox>Edit</Checkbox>
+                                  </Form.Item>
+                                )}
+                                {MODULE_PERM_TYPES[mod].includes('delete') && (
+                                  <Form.Item name={['perms', mod, 'delete']} valuePropName="checked" style={{ margin: 0 }}>
+                                    <Checkbox>Delete</Checkbox>
+                                  </Form.Item>
+                                )}
+                              </div>
+                            ),
+                          }))}
+                        />
+                      </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>
-                  <Button onClick={() => { setAddUserOpen(false); userForm.resetFields(); }} style={{ borderRadius: 8 }}>Cancel</Button>
-                  <Button type="primary" onClick={addUser} style={{ background: '#b91c1c', border: 'none', borderRadius: 8 }}>Add User</Button>
-                </div>
-              </Form>
-            </div>
-          </Modal>
-        </TabPane>
-
-        {/* ─── NOTIFICATIONS ─── */}
-        <TabPane tab="Notifications" key="notifications">
-          <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-            <Form layout="vertical">
-              {[
-                { label: 'Payment Reminders',    desc: 'Alert when invoices are overdue or due soon', key: 'pay',      default: true  },
-                { label: 'Low Stock Alerts',     desc: 'Notify when inventory falls below minimum',   key: 'stock',    default: true  },
-                { label: 'Dispatch Reminders',   desc: 'Remind team when orders are ready to ship',   key: 'dispatch', default: true  },
-                { label: 'Task Notifications',   desc: 'Updates when tasks are assigned or completed', key: 'task',    default: true  },
-                { label: 'WhatsApp Notifications', desc: 'Send alerts via WhatsApp Business',         key: 'wa',      default: false },
-                { label: 'Email Notifications',  desc: 'Send daily summary emails to managers',       key: 'email',   default: false },
-              ].map((n, i) => (
-                <div key={n.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: i < 5 ? `1px solid ${borderColor}` : 'none' }}>
-                  <div>
-                    <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{n.label}</Text>
-                    <Text style={{ fontSize: 12, color: '#aaa' }}>{n.desc}</Text>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>
+                        <Button onClick={() => { setAddUserOpen(false); userForm.resetFields(); }} style={{ borderRadius: 8 }}>Cancel</Button>
+                        <Button type="primary" onClick={addUser} style={{ background: '#b91c1c', border: 'none', borderRadius: 8 }}>Add User</Button>
+                      </div>
+                    </Form>
                   </div>
-                  <Switch defaultChecked={n.default} style={{ background: n.default ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
-                </div>
-              ))}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 8 }}>
-                <Button>Cancel</Button>
-                <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
-              </div>
-            </Form>
-          </Card>
-        </TabPane>
-
-        {/* ─── GST & TAX ─── */}
-        <TabPane tab="GST & Tax" key="gst">
-          <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-            <Form layout="vertical">
-              <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="Default GST Rate">
-                    <Select defaultValue="18">
-                      <Option value="5">5%</Option>
-                      <Option value="12">12%</Option>
-                      <Option value="18">18%</Option>
-                      <Option value="28">28%</Option>
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="CGST"><Input defaultValue="9%" /></Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="SGST"><Input defaultValue="9%" /></Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="IGST (Interstate)"><Input defaultValue="18%" /></Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="HSN Code (Default)"><Input placeholder="Ex: 3401" /></Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="Tax Invoice Prefix"><Input defaultValue="INV-" /></Form.Item>
-                </Col>
-              </Row>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 4 }}>
-                <Button>Cancel</Button>
-                <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
-              </div>
-            </Form>
-          </Card>
-        </TabPane>
-
-      </Tabs>
+                </Modal>
+              </>
+            ),
+          },
+          {
+            key: 'notifications',
+            label: 'Notifications',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <Form layout="vertical">
+                  {[
+                    { label: 'Payment Reminders',    desc: 'Alert when invoices are overdue or due soon', key: 'pay',      default: true  },
+                    { label: 'Low Stock Alerts',     desc: 'Notify when inventory falls below minimum',   key: 'stock',    default: true  },
+                    { label: 'Dispatch Reminders',   desc: 'Remind team when orders are ready to ship',   key: 'dispatch', default: true  },
+                    { label: 'Task Notifications',   desc: 'Updates when tasks are assigned or completed', key: 'task',    default: true  },
+                    { label: 'WhatsApp Notifications', desc: 'Send alerts via WhatsApp Business',         key: 'wa',      default: false },
+                    { label: 'Email Notifications',  desc: 'Send daily summary emails to managers',       key: 'email',   default: false },
+                  ].map((n, i) => (
+                    <div key={n.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: i < 5 ? `1px solid ${borderColor}` : 'none' }}>
+                      <div>
+                        <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{n.label}</Text>
+                        <Text style={{ fontSize: 12, color: '#aaa' }}>{n.desc}</Text>
+                      </div>
+                      <Switch defaultChecked={n.default} style={{ background: n.default ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 8 }}>
+                    <Button>Cancel</Button>
+                    <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
+                  </div>
+                </Form>
+              </Card>
+            ),
+          },
+          {
+            key: 'gst',
+            label: 'GST & Tax',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <Form layout="vertical">
+                  <Row gutter={16}>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Default GST Rate">
+                        <Select defaultValue="18">
+                          <Option value="5">5%</Option>
+                          <Option value="12">12%</Option>
+                          <Option value="18">18%</Option>
+                          <Option value="28">28%</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}><Form.Item label="CGST"><Input defaultValue="9%" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="SGST"><Input defaultValue="9%" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="IGST (Interstate)"><Input defaultValue="18%" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="HSN Code (Default)"><Input placeholder="Ex: 3401" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Tax Invoice Prefix"><Input defaultValue="INV-" /></Form.Item></Col>
+                  </Row>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 4 }}>
+                    <Button>Cancel</Button>
+                    <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
+                  </div>
+                </Form>
+              </Card>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }

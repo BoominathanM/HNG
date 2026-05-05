@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
-  Typography, Space, Divider, TimePicker, Avatar, InputNumber, Collapse, Tabs, Tooltip, Modal, DatePicker,
+  Typography, Space, Divider, Avatar, InputNumber, Tabs, Tooltip, Modal, DatePicker, message,
 } from 'antd';
 import {
   PlusOutlined, PrinterOutlined, DownloadOutlined, EyeOutlined,
@@ -16,8 +16,6 @@ import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
-const { Panel } = Collapse;
-const { TabPane } = Tabs;
 
 const invoices = [
   { key: 1, inv: 'INV-2401', client: 'Marriott Mumbai', order: 'ORD-2402', date: '2024-01-18 10:30 AM', amount: 38500, gst: 6930, total: 45430, advance: 19250, balance: 26180, type: 'GST', status: 'Partially Paid' },
@@ -276,44 +274,54 @@ export default function Billing() {
       </Row>
 
       {/* Table */}
-      <Tabs defaultActiveKey="invoices">
-        <TabPane tab="Invoices" key="invoices">
-          <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
-            <div className="table-responsive" style={{ padding: '4px' }}>
-              <Table dataSource={invoices} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
-            </div>
-          </Card>
-        </TabPane>
-
-        <TabPane tab="Ledger (TO COLLECT)" key="ledger">
-          <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-              <Title level={5} style={{ color: textColor }}>Client Credit/Debit Ledger</Title>
-              <Space>
-                <Button type="primary" size="small" style={{ background: '#52c41a', border: 'none' }} onClick={() => { setNoteType('Credit'); setNoteModalOpen(true); }}>+ Credit Note</Button>
-                <Button type="primary" size="small" danger onClick={() => { setNoteType('Debit'); setNoteModalOpen(true); }}>+ Debit Note</Button>
-              </Space>
-            </div>
-            <Table
-              size="small"
-              dataSource={[
-                { key: 1, date: '2024-05-01', client: 'Hotel Blue Star', type: 'Invoice', doc: 'INV-1001', debit: '₹25,000', credit: '—', balance: '₹25,000' },
-                { key: 2, date: '2024-05-02', client: 'Hotel Blue Star', type: 'Payment', doc: 'REC-2041', debit: '—', credit: '₹15,000', balance: '₹10,000' },
-                { key: 3, date: '2024-05-03', client: 'Hotel Blue Star', type: 'Credit Note', doc: 'CN-501', debit: '—', credit: '₹2,000', balance: '₹8,000' },
-              ]}
-              columns={[
-                { title: 'Date', dataIndex: 'date' },
-                { title: 'Client', dataIndex: 'client' },
-                { title: 'Type', dataIndex: 'type', render: (t) => <Tag color={t === 'Invoice' ? 'blue' : t === 'Payment' ? 'green' : 'orange'}>{t}</Tag> },
-                { title: 'Doc #', dataIndex: 'doc' },
-                { title: 'Debit (+)', dataIndex: 'debit', render: (v) => <Text style={{ color: '#ff4d4f' }}>{v}</Text> },
-                { title: 'Credit (-)', dataIndex: 'credit', render: (v) => <Text style={{ color: '#52c41a' }}>{v}</Text> },
-                { title: 'Running Bal', dataIndex: 'balance', render: (v) => <Text strong>{v}</Text> },
-              ]}
-            />
-          </Card>
-        </TabPane>
-      </Tabs>
+      <Tabs
+        defaultActiveKey="invoices"
+        items={[
+          {
+            key: 'invoices',
+            label: 'Invoices',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                <div className="table-responsive" style={{ padding: '4px' }}>
+                  <Table dataSource={invoices} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+                </div>
+              </Card>
+            ),
+          },
+          {
+            key: 'ledger',
+            label: 'Ledger (TO COLLECT)',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <Title level={5} style={{ color: textColor }}>Client Credit/Debit Ledger</Title>
+                  <Space>
+                    <Button type="primary" size="small" style={{ background: '#52c41a', border: 'none' }} onClick={() => { setNoteType('Credit'); setNoteModalOpen(true); }}>+ Credit Note</Button>
+                    <Button type="primary" size="small" danger onClick={() => { setNoteType('Debit'); setNoteModalOpen(true); }}>+ Debit Note</Button>
+                  </Space>
+                </div>
+                <Table
+                  size="small"
+                  dataSource={[
+                    { key: 1, date: '2024-05-01', client: 'Hotel Blue Star', type: 'Invoice', doc: 'INV-1001', debit: '₹25,000', credit: '—', balance: '₹25,000' },
+                    { key: 2, date: '2024-05-02', client: 'Hotel Blue Star', type: 'Payment', doc: 'REC-2041', debit: '—', credit: '₹15,000', balance: '₹10,000' },
+                    { key: 3, date: '2024-05-03', client: 'Hotel Blue Star', type: 'Credit Note', doc: 'CN-501', debit: '—', credit: '₹2,000', balance: '₹8,000' },
+                  ]}
+                  columns={[
+                    { title: 'Date', dataIndex: 'date' },
+                    { title: 'Client', dataIndex: 'client' },
+                    { title: 'Type', dataIndex: 'type', render: (t) => <Tag color={t === 'Invoice' ? 'blue' : t === 'Payment' ? 'green' : 'orange'}>{t}</Tag> },
+                    { title: 'Doc #', dataIndex: 'doc' },
+                    { title: 'Debit (+)', dataIndex: 'debit', render: (v) => <Text style={{ color: '#ff4d4f' }}>{v}</Text> },
+                    { title: 'Credit (-)', dataIndex: 'credit', render: (v) => <Text style={{ color: '#52c41a' }}>{v}</Text> },
+                    { title: 'Running Bal', dataIndex: 'balance', render: (v) => <Text strong>{v}</Text> },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+        ]}
+      />
 
       {/* ───────────── VIEW INVOICE ───────────── */}
       <Drawer

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, Progress, Alert, InputNumber, List,
+  Typography, Space, Progress, Alert, InputNumber, List, message,
   Avatar, Divider, Drawer, Tabs, DatePicker,
 } from 'antd';
 import {
@@ -357,7 +357,7 @@ export default function Inventory() {
         ].map((s, i) => (
           <Col xs={12} sm={6} key={s.label}>
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}>
-              <Card style={{ borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, boxShadow: `0 4px 20px ${s.color}20`, textAlign: 'center' }} bodyStyle={{ padding: '16px 8px' }}>
+              <Card style={{ borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, boxShadow: `0 4px 20px ${s.color}20`, textAlign: 'center' }} styles={{ body: { padding: '16px 8px' } }}>
                 <Title level={2} style={{ margin: 0, color: s.color }}>{s.val}</Title>
                 <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>{s.label}</Text>
               </Card>
@@ -371,7 +371,7 @@ export default function Inventory() {
         <Col xs={24}>
           <Card title={<Text strong style={{ color: textColor }}>Stock Levels Overview</Text>}
             style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-            bodyStyle={{ padding: '12px 16px 16px' }}>
+            styles={{ body: { padding: '12px 16px 16px' } }}>
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={stockChartData} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#333' : '#f0f0f0'} />
@@ -393,7 +393,7 @@ export default function Inventory() {
             key: 'stock',
             label: <Space><ShoppingOutlined />Stock Inventory</Space>,
             children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div className="table-responsive" style={{ padding: '4px' }}>
                   <Table dataSource={inventory} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
                 </div>
@@ -404,7 +404,7 @@ export default function Inventory() {
             key: 'documents',
             label: <Space><FileTextOutlined />Stock Documents</Space>,
             children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 16 }}>
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
                   <Space>
                     <Select defaultValue="all" style={{ width: 150 }}>

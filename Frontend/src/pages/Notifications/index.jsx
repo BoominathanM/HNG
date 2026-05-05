@@ -33,7 +33,7 @@ export default function Notifications() {
         <Button size="small">Mark All Read</Button>
       </div>
 
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} bodyStyle={{ padding: 0 }}>
+      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
         <List
           dataSource={notifications}
           renderItem={(item, i) => (
