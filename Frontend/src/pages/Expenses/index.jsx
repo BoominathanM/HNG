@@ -13,7 +13,6 @@ const { Option } = Select;
 const EXPENSE_CATEGORIES = [
   { value: 'RAW_MATERIAL', label: 'Raw Material', color: '#B11E6A', icon: <ShoppingCartOutlined /> },
   { value: 'SHIPPING', label: 'Shipping / Transportation', color: '#1890ff', icon: <CarOutlined /> },
-  { value: 'SALARY', label: 'Staff Salary', color: '#52c41a', icon: <DollarOutlined /> },
   { value: 'UTILITY', label: 'Utilities (Rent/Elec)', color: '#fa8c16', icon: <AppstoreOutlined /> },
   { value: 'OTHER', label: 'Other Expenses', color: '#722ed1', icon: <PlusOutlined /> },
 ];

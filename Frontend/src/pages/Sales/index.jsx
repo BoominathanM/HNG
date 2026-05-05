@@ -83,7 +83,7 @@ const DISPLAY_UNIT_OPTIONS = [
   { value: 'ZIPLOCK_POUCH', label: 'Ziplock Pouch' },
   { value: 'STICKY_POUCH', label: 'Sticky Pouch' },
   { value: 'Rexine _BAG', label: 'Rexine  Bag' },
-  { value: 'TDDC_SLICE_BOX', label: 'TDDC Slice Box' },
+  { value: 'TDDC_SLICE_BOX', label: 'TDDC Size Box' },
   { value: 'PVK_SIZE_BOX', label: 'PVK Size Box' },
 ];
 
@@ -151,20 +151,20 @@ const CARE_KIT_PRODUCTS = {
 };
 
 const PERFORMANCE_TARGETS = [
-  { 
-    key: 'old_hotel', label: 'Old Hotel Sales', target: 500000, achieved: 320000, color: '#B11E6A', 
+  {
+    key: 'old_hotel', label: 'Old Hotel Sales', target: 500000, achieved: 320000, color: '#B11E6A',
     milestones: { q1: 'Gift Card', q2: 'Smart Watch', q3: 'Bonus ₹5k', full: 'Family Vacation' }
   },
-  { 
-    key: 'new_hotel', label: 'New Hotel Sales', target: 1000000, achieved: 450000, color: '#1890ff', 
+  {
+    key: 'new_hotel', label: 'New Hotel Sales', target: 1000000, achieved: 450000, color: '#1890ff',
     milestones: { q1: 'Dinner Coupon', q2: 'Wireless Buds', q3: 'Bonus ₹10k', full: 'iPhone 15 Pro' }
   },
-  { 
-    key: 'payment', label: 'Payment Target', target: 800000, achieved: 680000, color: '#52c41a', 
+  {
+    key: 'payment', label: 'Payment Target', target: 800000, achieved: 680000, color: '#52c41a',
     milestones: { q1: 'Cinema Tickets', q2: 'Shopping Voucher', q3: 'Bonus ₹7k', full: 'Luxury Weekend' }
   },
-  { 
-    key: 'software', label: 'Software Target (New)', target: 200000, achieved: 45000, color: '#722ed1', 
+  {
+    key: 'software', label: 'Software Target (New)', target: 200000, achieved: 45000, color: '#722ed1',
     milestones: { q1: 'Coffee Mug', q2: 'Power Bank', q3: 'Kindle', full: 'Tech Gadget Set' }
   },
 ];
@@ -443,31 +443,23 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             )}
           </Col>
 
-          {/* Qty, Rate, GST & Sticker */}
-          <Col flex="none" style={{ minWidth: 320 }}>
-            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST / STICKER</Text>
+          {/* Qty, Rate, & GST */}
+          <Col flex="none" style={{ minWidth: 260 }}>
+            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST</Text>
             <Row gutter={4}>
-              <Col span={5}>
+              <Col span={8}>
                 <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
                 </Form.Item>
               </Col>
-              <Col span={6}>
+              <Col span={8}>
                 <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={disabled} size="small" />
                 </Form.Item>
               </Col>
-              <Col span={6}>
-                <Form.Item {...rest} name={[name, 'gst']} initialValue={0} style={{ marginBottom: 0 }}>
+              <Col span={8}>
+                <Form.Item {...rest} name={[name, 'gst']} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="GST %" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
-                </Form.Item>
-              </Col>
-              <Col span={7}>
-                <Form.Item {...rest} name={[name, 'sticker']} initialValue="NO" style={{ marginBottom: 0 }}>
-                  <Select size="small" placeholder="Sticker">
-                    <Option value="YES">With Sticker</Option>
-                    <Option value="NO">No Sticker</Option>
-                  </Select>
                 </Form.Item>
               </Col>
             </Row>
@@ -537,6 +529,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 <SelectWithAdd defaultOptions={[]} placeholder="Select / Add product" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
+            <Col xs={24} sm={16}>
+              <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specifications</span>} style={{ marginBottom: 0 }}>
+                <Input.TextArea placeholder="Any other specific requirements..." autoSize={{ minRows: 1, maxRows: 4 }} size="small" />
+              </Form.Item>
+            </Col>
 
             {isKit && (
               <Col xs={24}>
@@ -563,13 +560,6 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 </div>
               </Col>
             )}
-
-            {/* Final Row: Other Specifications */}
-            <Col xs={24}>
-              <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specifications</span>} style={{ marginBottom: 0 }}>
-                <Input.TextArea placeholder="Any other specific requirements..." autoSize={{ minRows: 2, maxRows: 4 }} size="small" />
-              </Form.Item>
-            </Col>
           </Row>
         </div>
       )}
@@ -2345,7 +2335,7 @@ export default function Sales() {
                   </Row>
                 )}
               </Card>
-            {/* Consolidated Row: Billing, Status, Progress */}
+              {/* Consolidated Row: Billing, Status, Progress */}
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 {/* Billing & Address */}
                 <Col xs={24} lg={12}>
@@ -2517,8 +2507,8 @@ export default function Sales() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'rgba(114,46,209,0.06)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.12)' }}>
                           <GiftOutlined style={{ color: '#722ed1' }} />
                           <Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 600 }}>
-                            {Array.isArray(record.productType) 
-                              ? record.productType.map(pt => pt === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product').join(' & ') 
+                            {Array.isArray(record.productType)
+                              ? record.productType.map(pt => pt === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product').join(' & ')
                               : (record.productType === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product')}
                           </Text>
                           {record.displayUnit && (
@@ -2626,22 +2616,22 @@ export default function Sales() {
                   ) : (
                     <>
                       <ProductHeaders />
-                      <ProductFormList fieldName="products" showSpecs={isAddCustomer} />
+                      <ProductFormList fieldName="products" showSpecs={isAddLead || isAddCustomer} />
                     </>
                   )}
                 </Card>
               )}
 
 
-              {/* ── Delivery & Payment — add-customer only ────────────── */}
-              {isAddCustomer && (
+              {/* ── Delivery & Payment ────────────── */}
+              {(isAddLead || isAddCustomer) && (
                 <Card
                   style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={
                     <Space>
                       <div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} />
                       <CarOutlined style={{ color: '#fa8c16' }} />
-                      <span>Delivery & Payment</span>
+                      <span>Delivery & Payment Details</span>
                     </Space>
                   }
                 >
