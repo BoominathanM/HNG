@@ -12,6 +12,7 @@ import {
   BankOutlined, EnvironmentOutlined, TeamOutlined, CalendarOutlined,
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
+  WarningOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -94,17 +95,15 @@ const ALTERNATIVE_PERSON_OPTIONS = [
 ];
 
 const PACKING_MATERIAL_OPTIONS = [
-  { value: 'Box', label: 'Box' },
-  { value: 'Cover', label: 'Cover' },
-  { value: 'Frosted Paper', label: 'Frosted Paper' },
+  { value: 'Plastic Box', label: 'Plastic Box' },
+  { value: 'Paper Box', label: 'Paper Box' },
   { value: 'Pouch', label: 'Pouch' },
   { value: 'Wrapper', label: 'Wrapper' },
 ];
 
 const MATERIAL_CATEGORY_OPTIONS = [
-  { value: 'Plastic', label: 'Plastic' },
   { value: 'Eco Friendly', label: 'Eco Friendly' },
-  { value: 'Biodegradable', label: 'Biodegradable' },
+  { value: 'Plastic', label: 'Plastic' },
   { value: 'Wooden', label: 'Wooden' },
 ];
 
@@ -112,7 +111,7 @@ const PRODUCT_TYPE_OPTIONS = [
   { value: 'Soap', label: 'Soap' },
   { value: 'Paste', label: 'Paste' },
   { value: 'Brush', label: 'Brush' },
-  { value: 'Razor', label: 'Razor' },
+  { value: 'Raizer', label: 'Raizer' },
   { value: 'Gel', label: 'Gel' },
   { value: 'Face Kit Combo', label: 'Face Kit Combo' },
   { value: 'Body Kit Combo', label: 'Body Kit Combo' },
@@ -121,7 +120,7 @@ const PRODUCT_TYPE_OPTIONS = [
 const KIT_CATEGORIES = [
   { value: 'DENTAL_KIT', label: 'Dental Kit' },
   { value: 'SHAVING_KIT', label: 'Shaving Kit' },
-  { value: 'CARE_KIT', label: 'For Your Care Kit (Personal Vanity Kit)' },
+  { value: 'CARE_KIT', label: 'For Your Care Kit (PVK)' },
 ];
 
 const DENTAL_KIT_PRODUCTS = {
@@ -133,9 +132,18 @@ const DENTAL_KIT_PRODUCTS = {
 
 const SHAVING_KIT_PRODUCTS = {
   bases: ['Box', 'Cover', 'Frosted Paper'],
-  razors: ['Darco', 'Gillette'],
-  gels: ['Oxilife', 'Gillette'],
-  materialCategories: ['Plastic', 'Biodegradable'],
+  razors: [
+    { name: 'Darco (Plastic)', cat: 'Plastic' },
+    { name: 'Gillet (Plastic)', cat: 'Plastic' },
+    { name: 'Darco (Biodegradable)', cat: 'Biodegradable' },
+    { name: 'Gillet (Biodegradable)', cat: 'Biodegradable' },
+  ],
+  gels: [
+    { name: 'Oxilife (Plastic)', cat: 'Plastic' },
+    { name: 'Gillet (Plastic)', cat: 'Plastic' },
+    { name: 'Oxilife (Biodegradable)', cat: 'Biodegradable' },
+    { name: 'Gillet (Biodegradable)', cat: 'Biodegradable' },
+  ],
 };
 
 const CARE_KIT_PRODUCTS = {
@@ -163,9 +171,9 @@ const PERFORMANCE_TARGETS = [
 ];
 
 const REMINDERS_DATA = [
-  { key: 1, type: 'Delayed Payment', customer: 'Hotel Blue Star', amount: 25000, daysDelayed: 12, salesPerson: 'Priya' },
-  { key: 2, type: 'Follow-up', customer: 'Grand Regency', topic: 'Quotation Review', dueDate: '2024-05-05', salesPerson: 'Priya' },
-  { key: 3, type: 'Occupancy Alert', customer: 'Sea View Stay', rooms: 80, occupancy: '85%', action: 'Check next order', salesPerson: 'Priya' },
+  { key: 1, type: 'Delayed Payment', customer: 'Hotel Blue Star', amount: 25000, daysDelayed: 12, salesPerson: 'Priya', reminderDate: '2024-05-06', reminderTime: '10:00 AM' },
+  { key: 2, type: 'Follow-up', customer: 'Grand Regency', topic: 'Quotation Review', dueDate: '2024-05-05', salesPerson: 'Priya', reminderDate: '2024-05-05', reminderTime: '02:30 PM' },
+  { key: 3, type: 'Occupancy Alert', customer: 'Sea View Stay', rooms: 80, occupancy: '85%', action: 'Check next order', salesPerson: 'Priya', reminderDate: '2024-05-07', reminderTime: '11:00 AM' },
 ];
 
 const fmtDateTime = (v) =>
@@ -436,23 +444,31 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             )}
           </Col>
 
-          {/* Qty, Rate, & GST */}
-          <Col flex="none" style={{ minWidth: 260 }}>
-            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST</Text>
+          {/* Qty, Rate, GST & Sticker */}
+          <Col flex="none" style={{ minWidth: 320 }}>
+            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST / STICKER</Text>
             <Row gutter={4}>
-              <Col span={8}>
+              <Col span={5}>
                 <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col span={6}>
                 <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={disabled} size="small" />
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col span={6}>
                 <Form.Item {...rest} name={[name, 'gst']} style={{ marginBottom: 0 }}>
                   <InputNumber placeholder="GST %" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
+                </Form.Item>
+              </Col>
+              <Col span={7}>
+                <Form.Item {...rest} name={[name, 'sticker']} style={{ marginBottom: 0 }}>
+                  <Select size="small" placeholder="Sticker">
+                    <Option value="YES">With Sticker</Option>
+                    <Option value="NO">No Sticker</Option>
+                  </Select>
                 </Form.Item>
               </Col>
             </Row>
@@ -484,47 +500,46 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           </div>
 
           <Row gutter={[16, 16]}>
-            {/* Row 1 */}
-            <Col xs={24} sm={8}>
+            {/* Row 1 & 2 Optimized (4 per row) */}
+            <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'unit']} label={<span style={{ fontSize: 11 }}>Display Unit</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={8}>
+            <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={8}>
+            <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'sticker']} label={<span style={{ fontSize: 11 }}>Sticker</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Sticker?" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={8}>
+            <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
 
-            {/* Row 2 */}
-            <Col xs={24} sm={8}>
+            <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={8}>
+            <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={8}>
+            <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'productType']} label={<span style={{ fontSize: 11 }}>Product</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[]} placeholder="Select / Add product" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={16}>
-              <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specifications</span>} style={{ marginBottom: 0 }}>
-                <Input.TextArea placeholder="Any other specific requirements..." autoSize={{ minRows: 1, maxRows: 4 }} size="small" />
+            <Col xs={24} sm={6}>
+              <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specs</span>} style={{ marginBottom: 0 }}>
+                <Input placeholder="e.g. Special handle" size="small" />
               </Form.Item>
             </Col>
 
@@ -534,27 +549,26 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   <Text strong style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Kit Contents:</Text>
                   {kitType === 'DENTAL_KIT' && (
                     <Row gutter={8}>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'brush']} label={<span style={{ fontSize: 10 }}>Brush</span>} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small">{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'paste']} label={<span style={{ fontSize: 10 }}>Paste</span>} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small">{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} label={<span style={{ fontSize: 10 }}>Type</span>} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small">{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'brush']} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small">{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'paste']} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small">{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small">{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
                     </Row>
                   )}
                   {kitType === 'SHAVING_KIT' && (
                     <Row gutter={8}>
-                      <Col span={6}><Form.Item {...rest} name={[name, 'razor']} label={<span style={{ fontSize: 10 }}>Razor Brand</span>} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small">{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r} value={r}>{r}</Option>)}</Select></Form.Item></Col>
-                      <Col span={6}><Form.Item {...rest} name={[name, 'razorMaterial']} label={<span style={{ fontSize: 10 }}>Material</span>} style={{ marginBottom: 0 }}><Select placeholder="Material" size="small">{SHAVING_KIT_PRODUCTS.materialCategories.map(m => <Option key={m} value={m}>{m}</Option>)}</Select></Form.Item></Col>
-                      <Col span={6}><Form.Item {...rest} name={[name, 'gel']} label={<span style={{ fontSize: 10 }}>Gel Brand</span>} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small">{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g} value={g}>{g}</Option>)}</Select></Form.Item></Col>
-                      <Col span={6}><Form.Item {...rest} name={[name, 'gelMaterial']} label={<span style={{ fontSize: 10 }}>Material</span>} style={{ marginBottom: 0 }}><Select placeholder="Material" size="small">{SHAVING_KIT_PRODUCTS.materialCategories.map(m => <Option key={m} value={m}>{m}</Option>)}</Select></Form.Item></Col>
+                      <Col span={12}><Form.Item {...rest} name={[name, 'razor']} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small">{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r.name} value={r.name}>{r.name}</Option>)}</Select></Form.Item></Col>
+                      <Col span={12}><Form.Item {...rest} name={[name, 'gel']} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small">{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g.name} value={g.name}>{g.name}</Option>)}</Select></Form.Item></Col>
                     </Row>
                   )}
                   {kitType === 'CARE_KIT' && (
-                    <Form.Item {...rest} name={[name, 'careProducts']} label={<span style={{ fontSize: 10 }}>Select Products</span>} style={{ marginBottom: 0 }}>
+                    <Form.Item {...rest} name={[name, 'careProducts']} style={{ marginBottom: 0 }}>
                       <Select mode="multiple" placeholder="Select Products" size="small">{CARE_KIT_PRODUCTS.products.map(p => <Option key={p} value={p}>{p}</Option>)}</Select>
                     </Form.Item>
                   )}
                 </div>
               </Col>
             )}
+
           </Row>
         </div>
       )}
@@ -636,6 +650,7 @@ function SpecFormList({ form, disabled = false }) {
 }
 
 function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
+  const isDark = useSelector((s) => s.theme.isDark);
   const paymentTerms = Form.useWatch('paymentTerms');
   const is5050 = paymentTerms === '50_ADVANCE_50_AFTER';
 
@@ -710,6 +725,7 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
         </Col>
       )}
     </Row>
+
   );
 }
 
@@ -743,6 +759,12 @@ export default function Sales() {
   const [dateRange, setDateRange] = useState(null);
   const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
+
+  // Complaint state
+  const [complaintsData, setComplaintsData] = useState([]);
+  const [complaintModalOpen, setComplaintModalOpen] = useState(false);
+  const [complaintOrder, setComplaintOrder] = useState(null);
+  const [complaintForm] = Form.useForm();
 
   // Lead state
   const [editingLead, setEditingLead] = useState(null);
@@ -976,6 +998,32 @@ export default function Sales() {
       setViewMode('table');
       setActiveTab('orders');
     } catch (_) { }
+  };
+
+  // ─── Complaint handlers ───────────────────────────────────────────
+  const openComplaintModal = (order) => {
+    setComplaintOrder(order);
+    complaintForm.resetFields();
+    complaintForm.setFieldsValue({ raisedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) });
+    setComplaintModalOpen(true);
+  };
+
+  const submitComplaint = () => {
+    complaintForm.validateFields().then(vals => {
+      const newComplaint = {
+        key: Date.now(),
+        orderId: complaintOrder?.oid,
+        hotelName: complaintOrder?.hotelName,
+        salesPerson: complaintOrder?.salesPerson,
+        raisedAt: new Date().toISOString(),
+        ...vals,
+        status: 'Open',
+      };
+      setComplaintsData(prev => [...prev, newComplaint]);
+      message.success('Complaint raised successfully');
+      setComplaintModalOpen(false);
+      complaintForm.resetFields();
+    });
   };
 
   // ─── Detail view openers ──────────────────────────────────────────
@@ -1249,6 +1297,25 @@ export default function Sales() {
     },
   ];
 
+  const complaintColumns = [
+    { title: 'Complaint ID', dataIndex: 'key', render: (v) => <Text strong style={{ color: '#ff4d4f' }}>CMP-{v.toString().slice(-4)}</Text> },
+    { title: 'Order ID', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+    { title: 'Hotel / Company', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
+    { title: 'Description', dataIndex: 'description', ellipsis: true },
+    { title: 'Raised At', dataIndex: 'raisedAt', render: (v) => fmtDateTimeShort(v) },
+    { title: 'Sales Person', dataIndex: 'salesPerson' },
+    { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={v === 'Open' ? 'error' : 'success'}>{v}</Tag> },
+    {
+      title: 'Actions', key: 'actions',
+      render: (_, r) => (
+        <Space size={4}>
+          <Tooltip title="View Details"><Button size="small" icon={<EyeOutlined />} /></Tooltip>
+          <Tooltip title="Mark Resolved"><Button size="small" icon={<CheckOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }} /></Tooltip>
+        </Space>
+      ),
+    },
+  ];
+
   const filtered = (arr, keys = ['hotelName', 'location']) =>
     !searchText ? arr : arr.filter(item => keys.some(k => (item[k] || '').toLowerCase().includes(searchText.toLowerCase())));
 
@@ -1359,25 +1426,24 @@ export default function Sales() {
           </div>
 
           {/* Hero */}
-          <div style={{ background: 'linear-gradient(135deg, #0c2461 0%, #1e3799 50%, #4a69bd 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20, position: 'relative', overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', right: -30, top: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, position: 'relative' }}>
+          <div style={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 16, padding: '24px 28px', marginBottom: 20, border: '2px solid #B11E6A33', boxShadow: '0 4px 20px rgba(177,30,106,0.08)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
               <div>
-                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Quotation</Text>
-                <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{q.hotelName || 'Hotel'}</Title>
-                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, display: 'block', marginTop: 4 }}>{q.location} · {q.billingName}</Text>
+                <Text style={{ color: '#B11E6A', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block', fontWeight: 700 }}>Quotation</Text>
+                <Title level={3} style={{ color: textColor, margin: '4px 0 0', fontWeight: 700 }}>{q.hotelName || 'Hotel'}</Title>
+                <Text style={{ color: isDark ? '#aaa' : '#666', fontSize: 13, display: 'block', marginTop: 4 }}>{q.location} · {q.billingName}</Text>
                 <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  {q.contactPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined style={{ opacity: 0.6 }} />{q.contactPerson}</span>}
-                  {q.phone && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ opacity: 0.6 }} />{q.phone}</span>}
-                  {q.salesPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ opacity: 0.6 }} />{q.salesPerson}</span>}
+                  {q.contactPerson && <span style={{ color: '#B11E6A', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined />{q.contactPerson}</span>}
+                  {q.phone && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ color: '#B11E6A' }} />{q.phone}</span>}
+                  {q.salesPerson && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ color: '#B11E6A' }} />{q.salesPerson}</span>}
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{q.qid}</Tag>
+                <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{q.qid}</Tag>
                 <Tag color={STATUS_COLORS[q.status]} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{q.status}</Tag>
                 <Space>
-                  <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>{q.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
-                  <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>{q.date}</Tag>
+                  <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{q.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
+                  <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{q.date}</Tag>
                 </Space>
               </div>
             </div>
@@ -1514,22 +1580,21 @@ export default function Sales() {
           </div>
 
           {/* Hero */}
-          <div style={{ background: 'linear-gradient(135deg, #7d3f00 0%, #d46b08 50%, #ffa940 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20, position: 'relative', overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', right: -30, top: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, position: 'relative' }}>
+          <div style={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 16, padding: '24px 28px', marginBottom: 20, border: `2px solid #B11E6A33`, boxShadow: '0 4px 20px rgba(177,30,106,0.08)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
               <div>
-                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Negotiation</Text>
-                <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{n.hotelName || 'Hotel'}</Title>
-                <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, display: 'block', marginTop: 4 }}>{n.location} · {n.billingName}</Text>
+                <Text style={{ color: '#B11E6A', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block', fontWeight: 700 }}>Negotiation</Text>
+                <Title level={3} style={{ color: textColor, margin: '4px 0 0', fontWeight: 700 }}>{n.hotelName || 'Hotel'}</Title>
+                <Text style={{ color: isDark ? '#aaa' : '#666', fontSize: 13, display: 'block', marginTop: 4 }}>{n.location} · {n.billingName}</Text>
                 <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  {n.contactPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined style={{ opacity: 0.6 }} />{n.contactPerson}</span>}
-                  {n.phone && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ opacity: 0.6 }} />{n.phone}</span>}
-                  {n.salesPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ opacity: 0.6 }} />{n.salesPerson}</span>}
+                  {n.contactPerson && <span style={{ color: '#B11E6A', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined />{n.contactPerson}</span>}
+                  {n.phone && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ color: '#B11E6A' }} />{n.phone}</span>}
+                  {n.salesPerson && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ color: '#B11E6A' }} />{n.salesPerson}</span>}
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{n.nid}</Tag>
-                <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>from {n.quotationId}</Tag>
+                <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{n.nid}</Tag>
+                <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>from {n.quotationId}</Tag>
                 <Tag color={STATUS_COLORS[n.status] || 'orange'} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{n.status}</Tag>
               </div>
             </div>
@@ -1654,31 +1719,37 @@ export default function Sales() {
             <Space wrap>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(o)}>WhatsApp</Button>
               <Button icon={<FileTextOutlined />} style={{ borderRadius: 8 }}>Download Invoice</Button>
+              <Button
+                icon={<WarningOutlined />}
+                style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
+                onClick={() => openComplaintModal(o)}
+              >
+                Raise Complaint
+              </Button>
             </Space>
           </div>
 
           {/* Hero */}
-          <div style={{ background: 'linear-gradient(135deg, #0a3d0f 0%, #1a7a21 50%, #52c41a 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20, position: 'relative', overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', right: -30, top: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, position: 'relative' }}>
+          <div style={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 16, padding: '24px 28px', marginBottom: 20, border: `2px solid #B11E6A33`, boxShadow: '0 4px 20px rgba(177,30,106,0.08)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
               <div>
-                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Confirmed Order</Text>
-                <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{o.hotelName || 'Hotel'}</Title>
-                <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, display: 'block', marginTop: 4 }}>
+                <Text style={{ color: '#B11E6A', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block', fontWeight: 700 }}>Confirmed Order</Text>
+                <Title level={3} style={{ color: textColor, margin: '4px 0 0', fontWeight: 700 }}>{o.hotelName || 'Hotel'}</Title>
+                <Text style={{ color: isDark ? '#aaa' : '#666', fontSize: 13, display: 'block', marginTop: 4 }}>
                   {[o.location, o.city, o.state].filter(Boolean).join(' · ')}
                 </Text>
                 <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  {o.contactPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined style={{ opacity: 0.6 }} />{o.contactPerson}</span>}
-                  {o.phone && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ opacity: 0.6 }} />{o.phone}</span>}
-                  {o.salesPerson && <span style={{ color: '#fff', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ opacity: 0.6 }} />{o.salesPerson}</span>}
+                  {o.contactPerson && <span style={{ color: '#B11E6A', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined />{o.contactPerson}</span>}
+                  {o.phone && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ color: '#B11E6A' }} />{o.phone}</span>}
+                  {o.salesPerson && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ color: '#B11E6A' }} />{o.salesPerson}</span>}
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{o.oid}</Tag>
+                <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{o.oid}</Tag>
                 <Tag color={STATUS_COLORS[o.status] || 'blue'} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{o.status}</Tag>
                 <Space>
-                  <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>{o.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
-                  {o.expectedDelivery && <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>Delivery: {o.expectedDelivery}</Tag>}
+                  <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{o.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
+                  {o.expectedDelivery && <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>Delivery: {o.expectedDelivery}</Tag>}
                 </Space>
               </div>
             </div>
@@ -1846,11 +1917,11 @@ export default function Sales() {
             </Button>
           </div>
 
-          <div style={{ background: 'linear-gradient(135deg, #0c2461 0%, #1e3799 50%, #4a69bd 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>
+          <div style={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 16, padding: '24px 28px', marginBottom: 20, border: '2px solid #B11E6A33', boxShadow: '0 4px 20px rgba(177,30,106,0.08)' }}>
+            <Text style={{ color: '#B11E6A', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block', fontWeight: 700 }}>
               {editingQuotation ? 'Edit Quotation' : 'New Quotation'}
             </Text>
-            <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>
+            <Title level={3} style={{ color: textColor, margin: '4px 0 0', fontWeight: 700 }}>
               {editingQuotation ? editingQuotation.qid : (quotationFromLead?.hotelName || 'Draft Quotation')}
             </Title>
           </div>
@@ -1907,9 +1978,9 @@ export default function Sales() {
             </Button>
           </div>
 
-          <div style={{ background: 'linear-gradient(135deg, #7d3f00 0%, #d46b08 50%, #ffa940 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Negotiation</Text>
-            <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{editingNegotiation?.hotelName}</Title>
+          <div style={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 16, padding: '24px 28px', marginBottom: 20, border: '2px solid #B11E6A33', boxShadow: '0 4px 20px rgba(177,30,106,0.08)' }}>
+            <Text style={{ color: '#B11E6A', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block', fontWeight: 700 }}>Negotiation</Text>
+            <Title level={3} style={{ color: textColor, margin: '4px 0 0', fontWeight: 700 }}>{editingNegotiation?.hotelName}</Title>
           </div>
 
           <Form form={negotiationForm} layout="vertical">
@@ -1955,9 +2026,9 @@ export default function Sales() {
             </Button>
           </div>
 
-          <div style={{ background: 'linear-gradient(135deg, #0a3d0f 0%, #1a7a21 50%, #52c41a 100%)', borderRadius: 16, padding: '24px 28px', marginBottom: 20 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>Edit Order</Text>
-            <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700 }}>{editingOrder?.oid} — {editingOrder?.hotelName}</Title>
+          <div style={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 16, padding: '24px 28px', marginBottom: 20, border: '2px solid #B11E6A33', boxShadow: '0 4px 20px rgba(177,30,106,0.08)' }}>
+            <Text style={{ color: '#B11E6A', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block', fontWeight: 700 }}>Edit Order</Text>
+            <Title level={3} style={{ color: textColor, margin: '4px 0 0', fontWeight: 700 }}>{editingOrder?.oid} — {editingOrder?.hotelName}</Title>
           </div>
 
           <Form form={orderForm} layout="vertical">
@@ -2000,20 +2071,27 @@ export default function Sales() {
                   <Form.List name="splitDates">
                     {(fields, { add, remove }) => (
                       <div style={{ marginBottom: 12 }}>
-                        <Text type="secondary" style={{ fontSize: 11 }}>Partial Split Dates (+ for urgent)</Text>
+                        <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 6 }}>Partial Delivery Dates</Text>
                         {fields.map(({ key, name, ...rest }) => (
-                          <Row key={key} gutter={4} align="middle" style={{ marginTop: 4 }}>
-                            <Col flex="auto">
-                              <Form.Item {...rest} name={[name, 'date']} style={{ marginBottom: 0 }}>
-                                <DatePicker size="small" />
-                              </Form.Item>
-                            </Col>
-                            <Col flex="none">
-                              <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
-                            </Col>
-                          </Row>
+                          <div key={key} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 8, border: '1px solid #B11E6A22' }}>
+                            <Row gutter={[8, 0]} align="middle">
+                              <Col xs={24} sm={10}>
+                                <Form.Item {...rest} name={[name, 'date']} label="Delivery Date" style={{ marginBottom: 6 }}>
+                                  <DatePicker style={{ width: '100%' }} size="small" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={10}>
+                                <Form.Item {...rest} name={[name, 'note']} label="Note" style={{ marginBottom: 6 }}>
+                                  <Input size="small" placeholder="e.g. First batch 500 units" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={4} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 20 }}>
+                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                              </Col>
+                            </Row>
+                          </div>
                         ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ marginTop: 8 }}>Add Split Date</Button>
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ marginTop: 4, borderColor: '#B11E6A55', color: '#B11E6A' }}>Add Partial Delivery Date</Button>
                       </div>
                     )}
                   </Form.List>
@@ -2100,28 +2178,22 @@ export default function Sales() {
         </div>
 
         {/* Hero Banner */}
-        <div style={{
-          background: 'linear-gradient(135deg, #8a1252 0%, #B11E6A 45%, #D85C9E 100%)',
-          borderRadius: 16, padding: '24px 28px', marginBottom: 20, overflow: 'hidden', position: 'relative',
-        }}>
-          <div style={{ position: 'absolute', right: -30, top: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
-          <div style={{ position: 'absolute', right: 80, bottom: -50, width: 120, height: 120, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, position: 'relative' }}>
+        <div style={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 16, padding: '24px 28px', marginBottom: 20, border: '2px solid #B11E6A33', boxShadow: '0 4px 20px rgba(177,30,106,0.08)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
             <div>
-              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block' }}>
+              <Text style={{ color: '#B11E6A', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', display: 'block', fontWeight: 700 }}>
                 {isDetail ? (record.qid ? 'Quotation Profile' : record.customerId ? 'Customer Profile' : 'Lead Profile') : (editingLead ? 'Edit Record' : isAddLead ? 'New Lead' : 'New Customer')}
               </Text>
-              <Title level={3} style={{ color: '#fff', margin: '4px 0 0', fontWeight: 700, lineHeight: 1.2 }}>
+              <Title level={3} style={{ color: textColor, margin: '4px 0 0', fontWeight: 700, lineHeight: 1.2 }}>
                 {isDetail ? (record.hotelName || 'Hotel') : (editingLead ? `Edit ${editingLead.hotelName}` : isAddLead ? 'Add New Lead' : 'Add New Customer')}
               </Title>
               {isDetail && (
-                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, display: 'block', marginTop: 4 }}>
+                <Text style={{ color: isDark ? '#aaa' : '#666', fontSize: 13, display: 'block', marginTop: 4 }}>
                   {[record.location, record.billingName && record.billingName !== record.hotelName ? record.billingName : null].filter(Boolean).join(' · ')}
                 </Text>
               )}
               {!isDetail && (
-                <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, display: 'block', marginTop: 6 }}>
+                <Text style={{ color: isDark ? '#aaa' : '#666', fontSize: 13, display: 'block', marginTop: 6 }}>
                   {isAddLead ? 'Fill in the details to create a new sales lead' : 'Register a new customer in the system'}
                 </Text>
               )}
@@ -2130,9 +2202,9 @@ export default function Sales() {
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
               {isDetail && (
                 <Space>
-                  {record.qid && <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{record.qid}</Tag>}
-                  {record.leadId && <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{record.leadId}</Tag>}
-                  {record.customerId && <Tag style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, fontSize: 12 }}>{record.customerId}</Tag>}
+                  {record.qid && <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{record.qid}</Tag>}
+                  {record.leadId && <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{record.leadId}</Tag>}
+                  {record.customerId && <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{record.customerId}</Tag>}
                 </Space>
               )}
               {isDetail && record.status && (
@@ -2142,10 +2214,10 @@ export default function Sales() {
               )}
               {isDetail && (
                 <Space>
-                  <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>
+                  <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>
                     {record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}
                   </Tag>
-                  <Tag style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 12, fontSize: 12 }}>
+                  <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>
                     {record.billType === 'GST' ? 'GST Bill' : 'Non-GST'}
                   </Tag>
                 </Space>
@@ -2154,25 +2226,25 @@ export default function Sales() {
           </div>
 
           {isDetail && (record.phone || record.email || record.contactPerson || record.salesPerson) && (
-            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.15)', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #B11E6A22', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
               {record.contactPerson && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#fff', fontSize: 13 }}>
-                  <UserOutlined style={{ color: 'rgba(255,255,255,0.55)' }} />{record.contactPerson}
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#B11E6A', fontSize: 13 }}>
+                  <UserOutlined />{record.contactPerson}
                 </span>
               )}
               {record.phone && (
-                <a href={`tel:${record.phone}`} style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#fff', fontSize: 13, textDecoration: 'none' }}>
-                  <PhoneOutlined style={{ color: 'rgba(255,255,255,0.55)' }} />{record.phone}
+                <a href={`tel:${record.phone}`} style={{ display: 'flex', alignItems: 'center', gap: 6, color: isDark ? '#ccc' : '#555', fontSize: 13, textDecoration: 'none' }}>
+                  <PhoneOutlined style={{ color: '#B11E6A' }} />{record.phone}
                 </a>
               )}
               {record.email && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#fff', fontSize: 13 }}>
-                  <MailOutlined style={{ color: 'rgba(255,255,255,0.55)' }} />{record.email}
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: isDark ? '#ccc' : '#555', fontSize: 13 }}>
+                  <MailOutlined style={{ color: '#B11E6A' }} />{record.email}
                 </span>
               )}
               {record.salesPerson && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#fff', fontSize: 13 }}>
-                  <TeamOutlined style={{ color: 'rgba(255,255,255,0.55)' }} />{record.salesPerson}
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: isDark ? '#ccc' : '#555', fontSize: 13 }}>
+                  <TeamOutlined style={{ color: '#B11E6A' }} />{record.salesPerson}
                 </span>
               )}
             </div>
@@ -2183,15 +2255,15 @@ export default function Sales() {
         {isDetail && (
           <Row gutter={12} style={{ marginBottom: 20 }}>
             {[
-              { label: 'Total Value', value: `₹${totalValue.toLocaleString()}`, color: '#B11E6A', icon: <CreditCardOutlined /> },
-              { label: 'Products', value: `${record.products?.length || 0} items`, color: '#1890ff', icon: <ShoppingCartOutlined /> },
-              { label: 'Hotel Type', value: record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel', color: '#fa8c16', icon: <BankOutlined /> },
-              { label: 'Next Follow-up', value: record.followUpDate || 'Not set', color: '#52c41a', icon: <HistoryOutlined /> },
+              { label: 'Total Value', value: `₹${totalValue.toLocaleString()}`, icon: <CreditCardOutlined /> },
+              { label: 'Products', value: `${record.products?.length || 0} items`, icon: <ShoppingCartOutlined /> },
+              { label: 'Hotel Type', value: record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel', icon: <BankOutlined /> },
+              { label: 'Next Follow-up', value: record.followUpDate || 'Not set', icon: <HistoryOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
-                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} styles={{ body: { padding: '12px 14px' } }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
-                  <Text strong style={{ fontSize: 15, color: s.color, display: 'block' }}>{s.value}</Text>
+                <Card size="small" style={{ borderRadius: 12, border: '1px solid #B11E6A22', background: isDark ? '#1E1E2E' : '#fff' }} styles={{ body: { padding: '12px 14px' } }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#B11E6A', fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
+                  <Text strong style={{ fontSize: 15, color: '#B11E6A', display: 'block' }}>{s.value}</Text>
                 </Card>
               </Col>
             ))}
@@ -2307,24 +2379,82 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
 
+                    {/* Hotel Logo Upload */}
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Hotel Logo" name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
+                        <Upload beforeUpload={() => false} accept="image/*,.pdf,.svg,.ai" maxCount={1} listType="picture">
+                          <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Hotel Logo</Button>
+                        </Upload>
+                      </Form.Item>
+                    </Col>
+
                     {/* Priority settings moved here for cleaner flow */}
-                    <Col xs={24}>
+                    <Col xs={24} sm={12}>
                       <Form.Item label={`Priority Level (${watchedPriority || 0}%)`} name="priority">
                         <Slider min={0} max={100} />
                       </Form.Item>
                     </Col>
-                    {watchedPriority > 0 && (
-                      <Col xs={24}>
+                    <Col xs={24} sm={12}>
+                      {watchedPriority > 0 && (
                         <Form.Item label="Priority Note" name="mentionPriority" rules={[{ required: true }]}>
-                          <Input.TextArea placeholder="Why is this high priority?" rows={2} />
+                          <Input placeholder="Why is this high priority?" />
                         </Form.Item>
-                      </Col>
-                    )}
+                      )}
+                    </Col>
 
                     <Col xs={24} sm={12}>
                       <Form.Item label="Order Delivery Date" name="orderDeliveryDate">
                         <DatePicker style={{ width: '100%' }} />
                       </Form.Item>
+                    </Col>
+
+                    {/* Partial Dates Moved Here */}
+                    <Col xs={24}>
+                      <Divider style={{ margin: '16px 0 12px', fontSize: 12, color: '#B11E6A' }}>Partial Dates & Delivery Notes</Divider>
+                      <Form.List name="partialDates">
+                        {(fields, { add, remove }) => (
+                          <>
+                            {fields.map(({ key, name, ...rest }) => (
+                              <div key={key} style={{ 
+                                marginBottom: 12, 
+                                padding: '10px 14px', 
+                                background: isDark ? 'rgba(255,255,255,0.02)' : '#fafafa', 
+                                borderRadius: 10, 
+                                border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` 
+                              }}>
+                                <Row gutter={12} align="middle">
+                                  <Col xs={24} sm={8}>
+                                    <Form.Item 
+                                      {...rest} 
+                                      name={[name, 'date']} 
+                                      label={<span style={{ fontSize: 11, fontWeight: 600 }}>Date</span>}
+                                      style={{ marginBottom: 0 }}
+                                    >
+                                      <DatePicker style={{ width: '100%' }} size="small" />
+                                    </Form.Item>
+                                  </Col>
+                                  <Col xs={24} sm={14}>
+                                    <Form.Item 
+                                      {...rest} 
+                                      name={[name, 'note']} 
+                                      label={<span style={{ fontSize: 11, fontWeight: 600 }}>Note</span>}
+                                      style={{ marginBottom: 0 }}
+                                    >
+                                      <Input size="small" placeholder="e.g. Batch 1 - 500 units" />
+                                    </Form.Item>
+                                  </Col>
+                                  <Col xs={24} sm={2} style={{ textAlign: 'right' }}>
+                                    <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} style={{ marginTop: 20 }} />
+                                  </Col>
+                                </Row>
+                              </div>
+                            ))}
+                            <Button type="dashed" onClick={() => add()} icon={<PlusOutlined />} block size="small" style={{ borderRadius: 8, color: '#B11E6A', borderColor: '#B11E6A55' }}>
+                              Add Partial Date
+                            </Button>
+                          </>
+                        )}
+                      </Form.List>
                     </Col>
 
                   </Row>
@@ -2711,6 +2841,87 @@ export default function Sales() {
                 </Card>
               )}
 
+              {/* ── Orders & Payment History — customer detail only ───────── */}
+              {isDetail && record.customerId && (() => {
+                const hotelOrders = ordersData.filter(o => o.hotelName === record.hotelName);
+                const totalOrders = hotelOrders.length;
+                const totalPaid = hotelOrders.reduce((s, o) => s + (o.advance || 0), 0);
+                const totalAmount = hotelOrders.reduce((s, o) => s + (o.totalAmount || 0), 0);
+                return (
+                  <Card
+                    style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#B11E6A' }} /><span>Order & Payment History</span></Space>}
+                  >
+                    <Row gutter={12} style={{ marginBottom: 16 }}>
+                      {[
+                        { label: 'Total Orders', value: totalOrders },
+                        { label: 'Total Order Value', value: `₹${totalAmount.toLocaleString()}` },
+                        { label: 'Total Amount Paid', value: `₹${totalPaid.toLocaleString()}` },
+                        { label: 'Balance Due', value: `₹${(totalAmount - totalPaid).toLocaleString()}` },
+                      ].map((s, i) => (
+                        <Col xs={12} sm={6} key={i}>
+                          <div style={{ padding: '12px 14px', background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(177,30,106,0.04)', borderRadius: 10, border: '1px solid #B11E6A22', textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{s.label}</Text>
+                            <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>{s.value}</Text>
+                          </div>
+                        </Col>
+                      ))}
+                    </Row>
+                    {hotelOrders.length > 0 ? (
+                      <Table
+                        dataSource={hotelOrders}
+                        size="small"
+                        pagination={false}
+                        columns={[
+                          { title: 'Order ID', dataIndex: 'oid', render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                          { title: 'Date', dataIndex: 'date', render: v => v || '—' },
+                          { title: 'Total', dataIndex: 'totalAmount', render: v => <Text strong>₹{(v || 0).toLocaleString()}</Text> },
+                          { title: 'Advance Paid', dataIndex: 'advance', render: v => <Text style={{ color: '#52c41a' }}>₹{(v || 0).toLocaleString()}</Text> },
+                          { title: 'Balance', key: 'balance', render: (_, r) => <Text style={{ color: '#fa8c16' }}>₹{((r.totalAmount || 0) - (r.advance || 0)).toLocaleString()}</Text> },
+                          { title: 'Status', dataIndex: 'status', render: v => <Tag color={STATUS_COLORS[v] || 'blue'} style={{ borderRadius: 12 }}>{v}</Tag> },
+                          {
+                            title: 'Action', key: 'actions', render: (_, r) => (
+                              <Button size="small" icon={<WarningOutlined />} style={{ color: '#ff4d4f', borderColor: '#ff4d4f55', fontSize: 11 }} onClick={() => openComplaintModal(r)}>
+                                Complaint
+                              </Button>
+                            )
+                          },
+                        ]}
+                      />
+                    ) : (
+                      <Text type="secondary" style={{ display: 'block', textAlign: 'center', padding: 20 }}>No orders yet for this customer.</Text>
+                    )}
+                  </Card>
+                );
+              })()}
+
+              {/* ── Complaints tab — detail only ─────────────────────── */}
+              {isDetail && (() => {
+                const hotelComplaints = complaintsData.filter(c => c.hotelName === record.hotelName);
+                return (
+                  <Card
+                    style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><ExclamationCircleOutlined style={{ color: '#ff4d4f' }} /><span>Complaints</span><Tag color="red" style={{ borderRadius: 20 }}>{hotelComplaints.length}</Tag></Space>}
+                  >
+                    {hotelComplaints.length > 0 ? (
+                      <Table
+                        dataSource={hotelComplaints}
+                        size="small"
+                        pagination={false}
+                        columns={[
+                          { title: 'Order ID', dataIndex: 'orderId', render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                          { title: 'Description', dataIndex: 'description', ellipsis: true },
+                          { title: 'Raised At', dataIndex: 'raisedAt', render: v => fmtDateTimeShort(v) },
+                          { title: 'Status', dataIndex: 'status', render: v => <Tag color={v === 'Open' ? 'red' : 'green'} style={{ borderRadius: 12 }}>{v}</Tag> },
+                        ]}
+                      />
+                    ) : (
+                      <Text type="secondary" style={{ display: 'block', textAlign: 'center', padding: 16 }}>No complaints raised.</Text>
+                    )}
+                  </Card>
+                );
+              })()}
+
               {/* ── Follow-up History — detail only ──────────────────── */}
               {isDetail && (
                 <Card
@@ -2845,22 +3056,80 @@ export default function Sales() {
         </Space>
       </div>
 
-      {/* Flow progress bar */}
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, marginBottom: 16, boxShadow: '0 2px 12px rgba(177,30,106,0.05)' }} styles={{ body: { padding: '14px 24px' } }}>
-        <Steps size="small"
-          current={['performance', 'leads', 'reminders', 'quotations', 'orders', 'customers'].indexOf(activeTab === 'negotiations' ? 'quotations' : activeTab)}
-          onChange={(i) => setActiveTab(['performance', 'leads', 'reminders', 'quotations', 'orders', 'customers'][i])}
-          style={{ cursor: 'pointer' }}
-          items={[
-            { title: 'Performance', description: 'Targets' },
-            { title: 'Leads', description: `${leadsData.length} total` },
-            { title: 'Reminders', description: `${REMINDERS_DATA.length} total` },
-            { title: 'Quotations & Negotiations', description: `${quotationsData.length + negotiationsData.length} total` },
-            { title: 'Orders', description: `${ordersData.length} total` },
-            { title: 'Parties', description: `${customersData.length} total` },
-          ]}
-        />
-      </Card>
+
+
+
+      {/* Individual Overall Performance Summary */}
+      <div style={{ marginBottom: 16 }}>
+        {(() => {
+          const totalTarget = PERFORMANCE_TARGETS.reduce((s, t) => s + t.target, 0);
+          const totalAchieved = PERFORMANCE_TARGETS.reduce((s, t) => s + t.achieved, 0);
+          const totalPercent = (totalAchieved / totalTarget) * 100;
+
+          const milestones = [
+            { percent: 25, label: '1/4', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q1).join(' + ') },
+            { percent: 50, label: '1/2', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q2).join(' + ') },
+            { percent: 75, label: '3/4', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q3).join(' + ') },
+            { percent: 100, label: 'Full', reward: PERFORMANCE_TARGETS.map(t => t.milestones.full).join(' + ') },
+          ];
+
+          return (
+            <Card style={{ borderRadius: 16, border: '1px solid #B11E6A22', background: isDark ? '#1E1E2E' : '#fff', boxShadow: '0 4px 20px rgba(177,30,106,0.06)', padding: '10px 20px', margin: '0 0 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Individual Overall Performance</Text>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+                    <Title level={2} style={{ margin: 0, color: '#B11E6A' }}>₹{totalAchieved.toLocaleString()}</Title>
+                    <Text type="secondary">of ₹{totalTarget.toLocaleString()}</Text>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <Title level={3} style={{ margin: 0, color: '#B11E6A' }}>{totalPercent.toFixed(1)}%</Title>
+                </div>
+              </div>
+
+
+
+
+              <div style={{ position: 'relative', padding: '0 0 95px', width: '100%' }}>
+                <div style={{ padding: '15px 0' }}>
+                  <Progress
+                    percent={Math.round(totalPercent)}
+                    strokeColor="#B11E6A"
+                    trailColor={isDark ? 'rgba(255,255,255,0.05)' : '#f0f0f0'}
+                    strokeWidth={10}
+                    showInfo={false}
+                    status="active"
+                  />
+                </div>
+                {milestones.map((m) => {
+                  const isReached = totalPercent >= m.percent;
+                  return (
+                    <div key={m.percent} style={{ position: 'absolute', left: `${m.percent}%`, top: 22, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', width: 160 }}>
+                      <div style={{ width: 2, height: 20, background: isReached ? '#B11E6A' : (isDark ? '#444' : '#ddd'), borderRadius: 1, marginBottom: 4 }} />
+                      <div style={{ padding: '2px 10px', borderRadius: 10, background: isReached ? '#B11E6A' : (isDark ? '#222' : '#f5f5f5'), color: isReached ? '#fff' : '#888', fontSize: 9, fontWeight: 700, boxShadow: isReached ? '0 2px 8px rgba(177,30,106,0.2)' : 'none', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                        {isReached ? <CheckOutlined style={{ fontSize: 9 }} /> : null}
+                        {m.label} REACHED
+                      </div>
+                      <div style={{ marginTop: 6, textAlign: 'center', width: '100%' }}>
+                        <Tooltip title={m.reward}>
+                          <Tag color={isReached ? 'magenta' : 'default'} style={{ margin: '0 0 4px', fontSize: 9, borderRadius: 4, maxWidth: '95%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <GiftOutlined style={{ marginRight: 3 }} />
+                            {isReached ? 'CLAIMED' : 'LOCKED'}
+                          </Tag>
+                        </Tooltip>
+                        <div style={{ fontSize: 9, color: isReached ? '#B11E6A' : '#aaa', lineHeight: 1.2, height: 32, overflow: 'hidden', padding: '0 4px' }}>
+                          {m.reward}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          );
+        })()}
+      </div>
 
       <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
         <Tabs activeKey={activeTab} onChange={setActiveTab} style={{ padding: '0 16px' }}
@@ -2891,87 +3160,32 @@ export default function Sales() {
               label: 'Performance',
               children: (
                 <div style={{ padding: '16px 8px' }}>
-                  <Title level={4} style={{ marginBottom: 20 }}>Target Progression</Title>
-                  <Row gutter={[16, 16]}>
-                    {(() => {
-                      const totalTarget = PERFORMANCE_TARGETS.reduce((s, t) => s + t.target, 0);
-                      const totalAchieved = PERFORMANCE_TARGETS.reduce((s, t) => s + t.achieved, 0);
-                      const totalPercent = (totalAchieved / totalTarget) * 100;
+                  <Title level={4} style={{ marginBottom: 16 }}>Individual Target Progression</Title>
 
-                      const milestones = [
-                        { percent: 25, label: '1/4', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q1).join(' + ') },
-                        { percent: 50, label: '1/2', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q2).join(' + ') },
-                        { percent: 75, label: '3/4', reward: PERFORMANCE_TARGETS.map(t => t.milestones.q3).join(' + ') },
-                        { percent: 100, label: 'Full', reward: PERFORMANCE_TARGETS.map(t => t.milestones.full).join(' + ') },
-                      ];
-
+                  {/* Per-target stats cards */}
+                  <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+                    {PERFORMANCE_TARGETS.map((t, i) => {
+                      const pct = Math.round((t.achieved / t.target) * 100);
                       return (
-                        <Col span={24}>
-                          <Card style={{ borderRadius: 16, border: 'none', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', boxShadow: '0 4px 20px rgba(177,30,106,0.06)', padding: '10px 20px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
-                              <div>
-                                <Text type="secondary" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Combined Team Performance</Text>
-                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-                                  <Title level={2} style={{ margin: 0, color: '#B11E6A' }}>₹{totalAchieved.toLocaleString()}</Title>
-                                  <Text type="secondary">of ₹{totalTarget.toLocaleString()}</Text>
-                                </div>
-                              </div>
-                              <div style={{ textAlign: 'right' }}>
-                                <Title level={3} style={{ margin: 0, color: '#B11E6A' }}>{totalPercent.toFixed(1)}%</Title>
-                              </div>
-                            </div>
-
-                            <div style={{ position: 'relative', padding: '20px 0 60px' }}>
-                              <Progress
-                                percent={Math.round(totalPercent)}
-                                strokeColor={{ '0%': '#B11E6A', '100%': '#D85C9E' }}
-                                trailColor={isDark ? 'rgba(255,255,255,0.05)' : '#f0f0f0'}
-                                strokeWidth={14}
-                                showInfo={false}
-                                status="active"
-                              />
-                              {milestones.map((m) => {
-                                const isReached = totalPercent >= m.percent;
-                                return (
-                                  <div key={m.percent} style={{ position: 'absolute', left: `${m.percent}%`, top: 12, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', width: 140 }}>
-                                    <div style={{ width: 4, height: 26, background: isReached ? '#B11E6A' : (isDark ? '#444' : '#ddd'), borderRadius: 2, marginBottom: 4 }} />
-                                    <div style={{ padding: '4px 10px', borderRadius: 12, background: isReached ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : (isDark ? '#222' : '#f5f5f5'), color: isReached ? '#fff' : '#888', fontSize: 10, fontWeight: 700, boxShadow: isReached ? '0 2px 8px rgba(177,30,106,0.3)' : 'none', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
-                                      {isReached ? <CheckOutlined style={{ fontSize: 10 }} /> : null}
-                                      {m.label} REACHED
-                                    </div>
-                                    <div style={{ marginTop: 8, textAlign: 'center', width: '100%' }}>
-                                      <Tooltip title={m.reward}>
-                                        <Tag color={isReached ? 'magenta' : 'default'} style={{ margin: 0, fontSize: 9, borderRadius: 4, maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                          <GiftOutlined style={{ marginRight: 3 }} />
-                                          {isReached ? 'CLAIMED' : 'LOCKED'}
-                                        </Tag>
-                                      </Tooltip>
-                                      <div style={{ fontSize: 9, color: isReached ? '#B11E6A' : '#aaa', marginTop: 4, lineHeight: 1.2, height: 24, overflow: 'hidden' }}>
-                                        {m.reward}
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-
-                            <Divider style={{ margin: '10px 0 20px' }} />
-                            <Row gutter={16}>
-                              {PERFORMANCE_TARGETS.map(t => (
-                                <Col xs={12} sm={6} key={t.key}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Text style={{ fontSize: 11, color: '#888' }}>{t.label}</Text>
-                                    <Text strong style={{ fontSize: 11 }}>{Math.round((t.achieved / t.target) * 100)}%</Text>
-                                  </div>
-                                  <Progress percent={Math.round((t.achieved / t.target) * 100)} size="small" strokeColor={t.color} showInfo={false} />
-                                </Col>
-                              ))}
-                            </Row>
-                          </Card>
+                        <Col xs={24} sm={12} lg={6} key={t.key}>
+                          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}>
+                            <Card
+                              style={{ borderRadius: 14, border: `1px solid #B11E6A22`, background: isDark ? '#1E1E2E' : '#fff', boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                              styles={{ body: { padding: '16px 18px' } }}
+                            >
+                              <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>{t.label}</Text>
+                              <Text strong style={{ fontSize: 22, color: '#B11E6A', display: 'block', lineHeight: 1.2 }}>₹{t.achieved.toLocaleString()}</Text>
+                              <Text type="secondary" style={{ fontSize: 12 }}>of ₹{t.target.toLocaleString()}</Text>
+                              <Progress percent={pct} size="small" strokeColor="#B11E6A" trailColor={isDark ? '#333' : '#f0f0f0'} showInfo={false} style={{ marginTop: 10, marginBottom: 4 }} />
+                              <Text style={{ fontSize: 11, color: '#B11E6A', fontWeight: 600 }}>{pct}% achieved</Text>
+                            </Card>
+                          </motion.div>
                         </Col>
                       );
-                    })()}
+                    })}
                   </Row>
+
+
                 </div>
               ),
             },
@@ -3004,10 +3218,18 @@ export default function Sales() {
                       { title: 'Party', dataIndex: 'customer', key: 'customer' },
                       {
                         title: 'Details', key: 'details', render: (_, r) => (
-                          <Text>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days)` : r.topic || `${r.occupancy} occupancy`}</Text>
+                          <Text>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days overdue)` : r.topic || `${r.occupancy} occupancy`}</Text>
                         )
                       },
-                      { title: 'Due/Action', key: 'action', render: (_, r) => <Text>{r.dueDate || r.action}</Text> },
+                      {
+                        title: 'Reminder Date & Time', key: 'reminderDateTime', render: (_, r) => (
+                          <Space direction="vertical" size={0}>
+                            <Text strong style={{ fontSize: 12, color: '#B11E6A' }}>{r.reminderDate || r.dueDate || '—'}</Text>
+                            <Text type="secondary" style={{ fontSize: 11 }}>{r.reminderTime || '—'}</Text>
+                          </Space>
+                        )
+                      },
+                      { title: 'Action', key: 'action', render: (_, r) => <Text style={{ fontSize: 12 }}>{r.dueDate ? 'Review Quotation' : r.action || 'Follow Up'}</Text> },
                       { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson' },
                     ]}
                     pagination={{ pageSize: 8, size: 'small' }}
@@ -3053,6 +3275,21 @@ export default function Sales() {
               ),
             },
             {
+              key: 'complaints',
+              label: 'Complaints',
+              children: (
+                <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <Table
+                    dataSource={filtered(complaintsData)}
+                    columns={complaintColumns}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    rowKey="key"
+                  />
+                </div>
+              ),
+            },
+            {
               key: 'customers',
               label: 'Parties',
               children: (
@@ -3072,6 +3309,55 @@ export default function Sales() {
           ]}
         />
       </Card>
+
+      {/* ── Raise Complaint Modal ─────────────────────────────────────────────── */}
+      <Modal
+        title={
+          <Space>
+            <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+            <span>Raise Complaint — {complaintOrder?.oid}</span>
+          </Space>
+        }
+        open={complaintModalOpen}
+        onCancel={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}
+        width={Math.min(560, window.innerWidth - 32)}
+        footer={[
+          <Button key="cancel" onClick={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}>Cancel</Button>,
+          <Button key="submit" type="primary" style={{ background: '#ff4d4f', border: 'none' }} onClick={submitComplaint}>Submit Complaint</Button>,
+        ]}
+      >
+        <Form form={complaintForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Raised Date" name="raisedDate">
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Raised Time" name="raisedTime">
+                <Input type="time" />
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              <Form.Item label="Complaint Description" name="description" rules={[{ required: true, message: 'Please describe the complaint' }]}>
+                <Input.TextArea rows={3} placeholder="Describe the issue in detail..." />
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              <Form.Item
+                label="Attach File (Optional)"
+                name="files"
+                valuePropName="fileList"
+                getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
+              >
+                <Upload beforeUpload={() => false} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
+                  <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Evidence</Button>
+                </Upload>
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
 
     </div>
   );

@@ -107,7 +107,9 @@ export default function Dashboard() {
           { title: 'Dispatch Ready', value: '34', icon: <CarOutlined />, color: '#C94F8A', change: -3 },
           { title: 'Active Clients', value: '187', icon: <UserOutlined />, color: '#D85C9E', change: 5 },
           { title: 'Total Tasks', value: '142', icon: <CheckCircleOutlined />, color: '#6b1240', change: 8 },
-          { title: 'Today\'s Tasks', value: '28', icon: <ClockCircleOutlined />, color: '#8a1652', change: 4 },
+          { title: 'Active Complaints', value: '12', icon: <WarningOutlined />, color: '#ff4d4f', change: 2 },
+          { title: 'Upcoming Reminders', value: '25', icon: <ClockCircleOutlined />, color: '#fa8c16', change: 5 },
+          { title: "Today's Tasks", value: '28', icon: <ClockCircleOutlined />, color: '#8a1652', change: 4 },
           { title: 'Pending Tasks', value: '15', icon: <WarningOutlined />, color: '#C94F8A', change: -2 },
           { title: 'Completed Tasks', value: '99', icon: <CheckCircleOutlined />, color: '#D85C9E', change: 6 },
         ].map((s, i) => (

@@ -82,6 +82,11 @@ export default function Settings() {
   const [editingUser, setEditingUser] = useState(null);
   const [userForm] = Form.useForm();
   const watchedDept = Form.useWatch('department', userForm);
+  const watchedOldHotel = Form.useWatch('targetOldHotel', userForm) || 0;
+  const watchedNewHotel = Form.useWatch('targetNewHotel', userForm) || 0;
+  const watchedPayment = Form.useWatch('targetPayment', userForm) || 0;
+  const watchedSoftware = Form.useWatch('targetSoftware', userForm) || 0;
+  const computedOverallTarget = watchedOldHotel + watchedNewHotel + watchedPayment + watchedSoftware;
 
   // Logo
   const [logoUrl, setLogoUrl] = useState('/hng logo new.png');
@@ -113,7 +118,10 @@ export default function Settings() {
     setEditingUser(user);
     userForm.setFieldsValue({
       ...user,
-      targetAmount: user.targets?.amount,
+      targetOldHotel: user.targets?.oldHotel,
+      targetNewHotel: user.targets?.newHotel,
+      targetPayment: user.targets?.payment,
+      targetSoftware: user.targets?.software,
       targetPeople: user.targets?.people,
       reward14: user.targets?.rewards?.q1,
       reward12: user.targets?.rewards?.q2,
@@ -132,7 +140,11 @@ export default function Settings() {
         role: vals.role, status: vals.status || 'Active',
         department: vals.department,
         targets: {
-          amount: vals.targetAmount,
+          oldHotel: vals.targetOldHotel,
+          newHotel: vals.targetNewHotel,
+          payment: vals.targetPayment,
+          software: vals.targetSoftware,
+          overall: (vals.targetOldHotel || 0) + (vals.targetNewHotel || 0) + (vals.targetPayment || 0) + (vals.targetSoftware || 0),
           people: vals.targetPeople,
           rewards: {
             q1: vals.reward14,
@@ -380,18 +392,39 @@ export default function Settings() {
                           <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 12 }}>Performance Targets & Rewards</Text>
                           <Row gutter={16}>
                             <Col xs={24} sm={12}>
-                              <Form.Item label="Target Amount (Annual/Monthly)" name="targetAmount">
-                                <InputNumber prefix="₹" style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="1,000,000" />
+                              <Form.Item label="Old Hotel Sales Target (₹)" name="targetOldHotel">
+                                <InputNumber prefix="₹" style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="500,000" min={0} />
                               </Form.Item>
                             </Col>
-                            {watchedDept === 'Sales' && (
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="Target People (Leads/Parties)" name="targetPeople">
-                                  <InputNumber style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="50" />
-                                </Form.Item>
-                              </Col>
-                            )}
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="New Hotel Sales Target (₹)" name="targetNewHotel">
+                                <InputNumber prefix="₹" style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="1,000,000" min={0} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="Payment Target (₹)" name="targetPayment">
+                                <InputNumber prefix="₹" style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="800,000" min={0} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="Software Target — New (₹)" name="targetSoftware">
+                                <InputNumber prefix="₹" style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="200,000" min={0} />
+                              </Form.Item>
+                            </Col>
                           </Row>
+
+                          {/* Overall computed target */}
+                          <div style={{ background: '#B11E6A12', borderRadius: 10, padding: '12px 16px', marginBottom: 16, border: '1px solid #B11E6A33', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>Overall Target (Auto-Computed)</Text>
+                            <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>₹{computedOverallTarget.toLocaleString()}</Text>
+                          </div>
+
+                          {watchedDept === 'Sales' && (
+                            <Form.Item label="Target People (Leads/Parties)" name="targetPeople" style={{ marginBottom: 12 }}>
+                              <InputNumber style={{ width: '100%', height: 40, borderRadius: 8 }} placeholder="50" min={0} />
+                            </Form.Item>
+                          )}
+
                           <Divider style={{ margin: '8px 0 16px' }} />
                           <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 8 }}>Price Rewards based on Target Completion milestones:</Text>
                           <Row gutter={12}>
