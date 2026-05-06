@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal,
   Form, Row, Col, Typography, Drawer, Steps, Divider, Badge,
-  InputNumber, Tooltip, Checkbox, message, Slider, Upload, Progress, DatePicker,
+  InputNumber, Tooltip, Checkbox, message, Slider, Upload, Progress, DatePicker, Descriptions,
 } from 'antd';
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
@@ -761,7 +761,10 @@ export default function Sales() {
   const [selectedRecord, setSelectedRecord] = useState(null);
 
   // Complaint state
-  const [complaintsData, setComplaintsData] = useState([]);
+  const [complaintsData, setComplaintsData] = useState([
+    { key: 1, orderId: 'ORD-2401', hotelName: 'Hotel Blue Star', description: 'Delay in delivery', raisedAt: '2024-05-01T10:00:00Z', salesPerson: 'Priya', status: 'Open' },
+    { key: 2, orderId: 'ORD-2402', hotelName: 'Marriott Mumbai', description: 'Missing items in package', raisedAt: '2024-05-03T14:30:00Z', salesPerson: 'Rahul', status: 'Resolved' },
+  ]);
   const [complaintModalOpen, setComplaintModalOpen] = useState(false);
   const [complaintOrder, setComplaintOrder] = useState(null);
   const [complaintForm] = Form.useForm();
@@ -1250,6 +1253,11 @@ export default function Sales() {
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
           </Tooltip>
+          <Tooltip title="Move to Negotiation">
+            <Button size="small" style={{ background: '#722ed1', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => moveToNegotiation(r)}>
+              → Negotiation
+            </Button>
+          </Tooltip>
           <Tooltip title="Convert to Order">
             <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => startOrderFromQuotation(r)}>
               → Order
@@ -1477,15 +1485,20 @@ export default function Sales() {
               {/* Customer info */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1e3799', borderRadius: 2, display: 'inline-block' }} /><BankOutlined style={{ color: '#1e3799' }} /><span>Customer Information</span></Space>}>
-                <Row gutter={[16, 12]}>
-                  <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Hotel / Company</Text><Text strong style={{ display: 'block', fontSize: 15, marginTop: 2 }}>{q.hotelName}</Text></Col>
-                  <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Billing Name</Text><Text strong style={{ display: 'block', fontSize: 14, marginTop: 2 }}>{q.billingName || '—'}</Text></Col>
-                  <Col xs={24} sm={8}><Text type="secondary" style={{ fontSize: 11 }}>Location</Text><Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{q.location}</Text></Col>
-                  <Col xs={24} sm={8}><Text type="secondary" style={{ fontSize: 11 }}>Contact Person</Text><Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{q.contactPerson || '—'}</Text></Col>
-                  <Col xs={24} sm={8}><Text type="secondary" style={{ fontSize: 11 }}>Phone</Text><a href={`tel:${q.phone}`} style={{ display: 'block', fontSize: 13, fontWeight: 600, marginTop: 2, color: '#1890ff', textDecoration: 'none' }}>{q.phone || '—'}</a></Col>
-                  {q.billType === 'GST' && <><Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>GSTIN</Text><Text strong style={{ display: 'block', fontSize: 13, fontFamily: 'monospace', marginTop: 2 }}>{q.gstNumber}</Text></Col><Col xs={24} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>GST Rate</Text><Text strong style={{ display: 'block', fontSize: 14, color: '#B11E6A', marginTop: 2 }}>{q.gstPercent ? `${q.gstPercent}%` : '—'}</Text></Col></>}
-                  <Col xs={24} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Sales Person</Text><Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{q.salesPerson}</Text></Col>
-                </Row>
+                <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 2 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }}>
+                  <Descriptions.Item label="Hotel / Company">{q.hotelName}</Descriptions.Item>
+                  <Descriptions.Item label="Billing Name">{q.billingName || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Location">{q.location}</Descriptions.Item>
+                  <Descriptions.Item label="Contact Person">{q.contactPerson || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Phone"><a href={`tel:${q.phone}`}>{q.phone || '—'}</a></Descriptions.Item>
+                  <Descriptions.Item label="Sales Person">{q.salesPerson}</Descriptions.Item>
+                  {q.billType === 'GST' && (
+                    <>
+                      <Descriptions.Item label="GSTIN"><Text fontFamily="monospace">{q.gstNumber || '—'}</Text></Descriptions.Item>
+                      <Descriptions.Item label="GST Rate"><Text style={{ color: '#B11E6A', margin: 0 }}>{q.gstPercent ? `${q.gstPercent}%` : '—'}</Text></Descriptions.Item>
+                    </>
+                  )}
+                </Descriptions>
               </Card>
 
               {/* Products */}
@@ -1755,24 +1768,18 @@ export default function Sales() {
             </div>
           </div>
 
-          {/* Order status steps */}
-          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} styles={{ body: { padding: '16px 24px' } }}>
-            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>ORDER STATUS</Text>
-            <Steps current={orderCurrentStep} items={ORDER_STEPS} />
-          </Card>
-
           {/* Stats */}
           <Row gutter={12} style={{ marginBottom: 20 }}>
             {[
-              { label: 'Order Value', value: `₹${oTotal.toLocaleString()}`, color: '#52c41a', icon: <CreditCardOutlined /> },
-              { label: 'Advance Paid', value: `₹${(o.advance || 0).toLocaleString()}`, color: '#B11E6A', icon: <CheckOutlined /> },
-              { label: 'Balance Due', value: `₹${balance.toLocaleString()}`, color: '#fa8c16', icon: <CalendarOutlined /> },
-              { label: 'Expected Delivery', value: o.expectedDelivery || '—', color: '#1890ff', icon: <CarOutlined /> },
+              { label: 'Order Value', value: `₹${oTotal.toLocaleString()}`, icon: <CreditCardOutlined /> },
+              { label: 'Advance Paid', value: `₹${(o.advance || 0).toLocaleString()}`, icon: <CheckOutlined /> },
+              { label: 'Balance Due', value: `₹${balance.toLocaleString()}`, icon: <CalendarOutlined /> },
+              { label: 'Expected Delivery', value: o.expectedDelivery || '—', icon: <CarOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
-                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: isDark ? '#1E1E2E' : `${s.color}08` }} styles={{ body: { padding: '12px 14px' } }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: s.color, fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
-                  <Text strong style={{ fontSize: 14, color: s.color, display: 'block' }}>{s.value}</Text>
+                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
+                  <Text strong style={{ fontSize: 14, color: textColor, display: 'block' }}>{s.value}</Text>
                 </Card>
               </Col>
             ))}
@@ -1864,32 +1871,20 @@ export default function Sales() {
               </Card>
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><BankOutlined style={{ color: '#1890ff' }} /><span>Billing Details</span></Space>}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 11 }}>Billing Name</Text>
-                    <Text strong style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{o.billingName || o.hotelName}</Text>
-                  </div>
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 11 }}>Bill Type</Text>
-                    <div style={{ marginTop: 4 }}>
-                      <Tag color={o.billType === 'GST' ? 'volcano' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
-                        {o.billType === 'GST' ? 'GST Invoice' : 'Non-GST'}
-                      </Tag>
-                    </div>
-                  </div>
+                <Descriptions bordered size="small" column={1} labelStyle={{ fontSize: 12, width: '35%' }} contentStyle={{ fontSize: 13, fontWeight: 500 }}>
+                  <Descriptions.Item label="Billing Name">{o.billingName || o.hotelName}</Descriptions.Item>
+                  <Descriptions.Item label="Bill Type">
+                    <Tag color={o.billType === 'GST' ? 'volcano' : 'default'} style={{ borderRadius: 12, margin: 0 }}>
+                      {o.billType === 'GST' ? 'GST Invoice' : 'Non-GST'}
+                    </Tag>
+                  </Descriptions.Item>
                   {o.billType === 'GST' && (
                     <>
-                      <div>
-                        <Text type="secondary" style={{ fontSize: 11 }}>GSTIN</Text>
-                        <Text strong style={{ display: 'block', fontSize: 13, fontFamily: 'monospace', marginTop: 2 }}>{o.gstNumber}</Text>
-                      </div>
-                      <div>
-                        <Text type="secondary" style={{ fontSize: 11 }}>GST Rate</Text>
-                        <Text strong style={{ display: 'block', fontSize: 15, color: '#B11E6A', marginTop: 2 }}>{o.gstPercent ? `${o.gstPercent}%` : '—'}</Text>
-                      </div>
+                      <Descriptions.Item label="GSTIN"><Text fontFamily="monospace">{o.gstNumber || '—'}</Text></Descriptions.Item>
+                      <Descriptions.Item label="GST Rate"><Text style={{ color: '#B11E6A', margin: 0 }}>{o.gstPercent ? `${o.gstPercent}%` : '—'}</Text></Descriptions.Item>
                     </>
                   )}
-                </div>
+                </Descriptions>
               </Card>
               <Card size="small" style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
                 <Text type="secondary" style={{ fontSize: 11 }}>LINKED TO</Text>
@@ -1899,6 +1894,43 @@ export default function Sales() {
               </Card>
             </Col>
           </Row>
+
+          <Modal
+            title={
+              <Space>
+                <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+                <span>Raise Complaint — {complaintOrder?.oid}</span>
+              </Space>
+            }
+            open={complaintModalOpen}
+            onCancel={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}
+            width={Math.min(560, window.innerWidth - 32)}
+            footer={[
+              <Button key="cancel" onClick={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}>Cancel</Button>,
+              <Button key="submit" type="primary" style={{ background: '#ff4d4f', border: 'none' }} onClick={submitComplaint}>Submit Complaint</Button>,
+            ]}
+          >
+            <Form form={complaintForm} layout="vertical" style={{ marginTop: 16 }}>
+              <Row gutter={16}>
+                <Col xs={24} sm={12}>
+                  <Form.Item label="Raised Date" name="raisedDate">
+                    <DatePicker style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Form.Item label="Raised Time" name="raisedTime">
+                    <Input type="time" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24}>
+                  <Form.Item label="Complaint Description" name="description" rules={[{ required: true, message: 'Please describe the complaint' }]}>
+                    <Input.TextArea rows={4} placeholder="E.g., Missing items in the last delivery" />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Form>
+          </Modal>
+
         </motion.div>
       );
     }
@@ -2285,23 +2317,21 @@ export default function Sales() {
               >
                 {isDetail ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, padding: '14px 16px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` }}>
-                      <Row gutter={[16, 12]}>
-                        <Col xs={24} sm={12}><InfoRow label="Hotel / Company Name" value={record.hotelName} /></Col>
-                        <Col xs={24} sm={12}><InfoRow label="Billing Name" value={record.billingName} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="No. of Rooms" value={record.rowsInHotel} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="Occupancy" value={record.generalOccupancy} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="Hotel Type" value={record.hotelType} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="Contact Person" value={record.contactPerson} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="POC Designation" value={record.pocDesignation} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="Phone" value={record.phone} /></Col>
-                        <Col xs={24} sm={12}><InfoRow label="Alternative Contact (Role)" value={record.alternativeRole} /></Col>
-                        <Col xs={24} sm={12}><InfoRow label="Alternative Phone" value={record.alternativePhone} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="Email" value={record.email} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="Sales Person" value={record.salesPerson} /></Col>
-                        <Col xs={24} sm={8}><InfoRow label="Location" value={record.location} /></Col>
-                      </Row>
-                    </div>
+                    <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ background: isDark ? 'transparent' : '#fff' }}>
+                      <Descriptions.Item label="Hotel / Company" span={1}>{record.hotelName}</Descriptions.Item>
+                      <Descriptions.Item label="Billing Name" span={2}>{record.billingName || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="No. of Rooms">{record.rowsInHotel}</Descriptions.Item>
+                      <Descriptions.Item label="Occupancy">{record.generalOccupancy}</Descriptions.Item>
+                      <Descriptions.Item label="Hotel Type">{record.hotelType}</Descriptions.Item>
+                      <Descriptions.Item label="Contact Person">{record.contactPerson || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="POC Designation">{record.pocDesignation || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Phone">{record.phone || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Alternative Role">{record.alternativeRole || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Alternative Phone" span={2}>{record.alternativePhone || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Email">{record.email || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Sales Person">{record.salesPerson}</Descriptions.Item>
+                      <Descriptions.Item label="Location">{record.location}</Descriptions.Item>
+                    </Descriptions>
                   </div>
                 ) : (
                   <Row gutter={16}>
@@ -3275,21 +3305,6 @@ export default function Sales() {
               ),
             },
             {
-              key: 'complaints',
-              label: 'Complaints',
-              children: (
-                <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-                  <Table
-                    dataSource={filtered(complaintsData)}
-                    columns={complaintColumns}
-                    pagination={{ pageSize: 8, size: 'small' }}
-                    size="small"
-                    rowKey="key"
-                  />
-                </div>
-              ),
-            },
-            {
               key: 'customers',
               label: 'Parties',
               children: (
@@ -3302,6 +3317,21 @@ export default function Sales() {
                     rowKey="key"
                     onRow={(record) => ({ onClick: () => openDetailNextScreen(record) })}
                     style={{ cursor: 'pointer' }}
+                  />
+                </div>
+              ),
+            },
+            {
+              key: 'complaints',
+              label: 'Complaints',
+              children: (
+                <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <Table
+                    dataSource={filtered(complaintsData)}
+                    columns={complaintColumns}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    rowKey="key"
                   />
                 </div>
               ),

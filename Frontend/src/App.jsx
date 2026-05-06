@@ -13,6 +13,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Sales from './pages/Sales';
 import Operations from './pages/Operations';
+import OperationDetail from './pages/Operations/OperationDetail';
 import Tasks from './pages/Tasks';
 import Dispatch from './pages/Dispatch';
 import DispatchDetail from './pages/Dispatch/DispatchDetail';
@@ -49,6 +50,7 @@ function ThemedApp() {
               <Route index element={<Dashboard />} />
               <Route path="/sales" element={<Sales />} />
               <Route path="/operations" element={<Operations />} />
+              <Route path="/operations/:id" element={<OperationDetail />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/dispatch" element={<Dispatch />} />
               <Route path="/dispatch/:id" element={<DispatchDetail />} />

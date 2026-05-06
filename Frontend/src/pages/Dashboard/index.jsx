@@ -113,7 +113,7 @@ export default function Dashboard() {
           { title: 'Pending Tasks', value: '15', icon: <WarningOutlined />, color: '#C94F8A', change: -2 },
           { title: 'Completed Tasks', value: '99', icon: <CheckCircleOutlined />, color: '#D85C9E', change: 6 },
         ].map((s, i) => (
-          <Col xs={12} sm={12} lg={6} key={s.title}>
+          <Col xs={12} sm={12} md={8} lg={4} xl={4} style={{ flex: '1 1 18%', maxWidth: '20%' }} key={s.title}>
             <motion.div {...fadeIn(i * 0.08)}>
               <StatCard {...s} />
             </motion.div>
