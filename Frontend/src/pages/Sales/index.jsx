@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import dayjs from 'dayjs';
 import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal,
   Form, Row, Col, Typography, Drawer, Steps, Divider, Badge,
@@ -1007,19 +1008,29 @@ export default function Sales() {
   const openComplaintModal = (order) => {
     setComplaintOrder(order);
     complaintForm.resetFields();
-    complaintForm.setFieldsValue({ raisedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) });
+    complaintForm.setFieldsValue({
+      raisedDate: dayjs(),
+      raisedTime: dayjs().format('HH:mm')
+    });
     setComplaintModalOpen(true);
   };
 
   const submitComplaint = () => {
     complaintForm.validateFields().then(vals => {
+      const { raisedDate, raisedTime, ...rest } = vals;
+      let finalRaisedAt = dayjs().toISOString();
+      if (raisedDate && raisedTime) {
+        const [h, m] = raisedTime.split(':').map(Number);
+        finalRaisedAt = dayjs(raisedDate).hour(h).minute(m).second(0).toISOString();
+      }
+
       const newComplaint = {
         key: Date.now(),
         orderId: complaintOrder?.oid,
         hotelName: complaintOrder?.hotelName,
         salesPerson: complaintOrder?.salesPerson,
-        raisedAt: new Date().toISOString(),
-        ...vals,
+        raisedAt: finalRaisedAt,
+        ...rest,
         status: 'Open',
       };
       setComplaintsData(prev => [...prev, newComplaint]);
@@ -1895,6 +1906,8 @@ export default function Sales() {
             </Col>
           </Row>
 
+          {/* Raise Complaint Modal is now handled at the end of the file or via a helper if needed, 
+              but for now let's keep it here but fixed with upload option and auto-fetch logic */}
           <Modal
             title={
               <Space>
@@ -1925,6 +1938,18 @@ export default function Sales() {
                 <Col xs={24}>
                   <Form.Item label="Complaint Description" name="description" rules={[{ required: true, message: 'Please describe the complaint' }]}>
                     <Input.TextArea rows={4} placeholder="E.g., Missing items in the last delivery" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24}>
+                  <Form.Item
+                    label="Attach Evidence (Optional)"
+                    name="files"
+                    valuePropName="fileList"
+                    getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
+                  >
+                    <Upload beforeUpload={() => false} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
+                      <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Files</Button>
+                    </Upload>
                   </Form.Item>
                 </Col>
               </Row>
@@ -3054,6 +3079,53 @@ export default function Sales() {
             )}
           </Row>
         </Form>
+        <Modal
+          title={
+            <Space>
+              <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+              <span>Raise Complaint — {complaintOrder?.oid}</span>
+            </Space>
+          }
+          open={complaintModalOpen}
+          onCancel={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}
+          width={Math.min(560, window.innerWidth - 32)}
+          footer={[
+            <Button key="cancel" onClick={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}>Cancel</Button>,
+            <Button key="submit" type="primary" style={{ background: '#ff4d4f', border: 'none' }} onClick={submitComplaint}>Submit Complaint</Button>,
+          ]}
+        >
+          <Form form={complaintForm} layout="vertical" style={{ marginTop: 16 }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Raised Date" name="raisedDate">
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Raised Time" name="raisedTime">
+                  <Input type="time" />
+                </Form.Item>
+              </Col>
+              <Col xs={24}>
+                <Form.Item label="Complaint Description" name="description" rules={[{ required: true, message: 'Please describe the complaint' }]}>
+                  <Input.TextArea rows={4} placeholder="E.g., Missing items in the last delivery" />
+                </Form.Item>
+              </Col>
+              <Col xs={24}>
+                <Form.Item
+                  label="Attach Evidence (Optional)"
+                  name="files"
+                  valuePropName="fileList"
+                  getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
+                >
+                  <Upload beforeUpload={() => false} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
+                    <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Files</Button>
+                  </Upload>
+                </Form.Item>
+              </Col>
+            </Row>
+          </Form>
+        </Modal>
       </motion.div>
     );
   }
@@ -3370,18 +3442,18 @@ export default function Sales() {
             </Col>
             <Col xs={24}>
               <Form.Item label="Complaint Description" name="description" rules={[{ required: true, message: 'Please describe the complaint' }]}>
-                <Input.TextArea rows={3} placeholder="Describe the issue in detail..." />
+                <Input.TextArea rows={4} placeholder="E.g., Missing items in the last delivery" />
               </Form.Item>
             </Col>
             <Col xs={24}>
               <Form.Item
-                label="Attach File (Optional)"
+                label="Attach Evidence (Optional)"
                 name="files"
                 valuePropName="fileList"
                 getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
               >
                 <Upload beforeUpload={() => false} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
-                  <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Evidence</Button>
+                  <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Files</Button>
                 </Upload>
               </Form.Item>
             </Col>
