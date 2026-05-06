@@ -1,5 +1,5 @@
-import React from 'react';
-import { Card, List, Tag, Badge, Button, Typography, Space } from 'antd';
+import React, { useState } from 'react';
+import { Card, List, Tag, Badge, Button, Typography, Space, Tabs } from 'antd';
 import { BellOutlined, DollarOutlined, WarningOutlined, CarOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -20,6 +20,12 @@ export default function Notifications() {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
+  const [activeTab, setActiveTab] = useState('all');
+
+  const filteredNotifications = activeTab === 'all' 
+    ? notifications 
+    : notifications.filter(n => n.type === activeTab || (activeTab === 'dispatch' && n.type === 'task'));
+
   const unread = notifications.filter((n) => !n.read).length;
 
   return (
@@ -33,48 +39,65 @@ export default function Notifications() {
         <Button size="small">Mark All Read</Button>
       </div>
 
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '8px 0' } }}>
+        <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          centered
+          items={[
+            { key: 'all', label: 'All Notifications' },
+            { key: 'stock', label: 'Stock Alerts' },
+            { key: 'payment', label: 'Payment Updates' },
+            { key: 'dispatch', label: 'Dispatch / Tasks' },
+          ]}
+          style={{ padding: '0 20px' }}
+        />
         <List
-          dataSource={notifications}
-          renderItem={(item, i) => (
-            <motion.div initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.06 }}>
-              <List.Item
-                style={{
-                  padding: '16px 20px',
-                  borderBottom: `1px solid ${isDark ? '#333' : '#f5f5f5'}`,
-                  background: !item.read ? `${item.color}08` : 'transparent',
-                  cursor: 'pointer',
-                  transition: 'background 0.2s',
-                }}
-              >
-                <List.Item.Meta
-                  avatar={
-                    <div style={{
-                      width: 44, height: 44, borderRadius: 12,
-                      background: `${item.color}18`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 20, color: item.color,
-                    }}>
-                      {item.icon}
-                    </div>
-                  }
-                  title={
-                    <Space size={8}>
-                      <Text strong style={{ color: textColor }}>{item.title}</Text>
-                      {!item.read && <Badge dot style={{ background: '#B11E6A' }} />}
-                    </Space>
-                  }
-                  description={
-                    <div>
-                      <Text style={{ color: isDark ? '#aaa' : '#555', fontSize: 13 }}>{item.message}</Text>
-                      <br />
-                      <Text style={{ color: '#999', fontSize: 11 }}>{item.time}</Text>
-                    </div>
-                  }
-                />
-              </List.Item>
-            </motion.div>
-          )}
+          dataSource={filteredNotifications}
+          renderItem={(item, i) => {
+            // In a real app, we'd filter based on active tab.
+            // For this UI demo, we'll show based on some logic if needed,
+            // but the user just asked for tabs.
+            return (
+              <motion.div initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.06 }}>
+                <List.Item
+                  style={{
+                    padding: '16px 20px',
+                    borderBottom: `1px solid ${isDark ? '#333' : '#f5f5f5'}`,
+                    background: !item.read ? `${item.color}08` : 'transparent',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                  }}
+                >
+                  <List.Item.Meta
+                    avatar={
+                      <div style={{
+                        width: 44, height: 44, borderRadius: 12,
+                        background: `${item.color}18`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 20, color: item.color,
+                      }}>
+                        {item.icon}
+                      </div>
+                    }
+                    title={
+                      <Space size={8}>
+                        <Text strong style={{ color: textColor }}>{item.title}</Text>
+                        {!item.read && <Badge dot style={{ background: '#B11E6A' }} />}
+                      </Space>
+                    }
+                    description={
+                      <div>
+                        <Text style={{ color: isDark ? '#aaa' : '#555', fontSize: 13 }}>{item.message}</Text>
+                        <br />
+                        <Text style={{ color: '#999', fontSize: 11 }}>{item.time}</Text>
+                      </div>
+                    }
+                  />
+                </List.Item>
+              </motion.div>
+            );
+          }}
         />
       </Card>
     </div>

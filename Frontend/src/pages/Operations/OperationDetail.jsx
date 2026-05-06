@@ -189,10 +189,10 @@ export default function OperationDetail() {
               </Descriptions.Item>
               <Descriptions.Item label="Assigned Employee">{order.assignedEmployee}</Descriptions.Item>
               <Descriptions.Item label="Client Approval">{order.clientApproval}</Descriptions.Item>
-              <Descriptions.Item label="Inventory Stock">{order.inventoryStock.toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Order Received">{order.orderReceivedStock.toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Default Calculation">{order.items.reduce((sum, item) => sum + item.qty, 0).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Printer Sent">{order.printerSentTotal.toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Inventory Stock">{(order.inventoryStock ?? 0).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Order Received">{(order.orderReceivedStock ?? 0).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Default Calculation">{(order.items.reduce((sum, item) => sum + item.qty, 0) ?? 0).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Printer Sent">{(order.printerSentTotal ?? 0).toLocaleString()}</Descriptions.Item>
               <Descriptions.Item label="Printer Verification">
                 <Tag color={order.printerVerified ? 'success' : 'warning'}>
                   {order.printerVerified ? 'Verified' : 'Pending'}
@@ -260,9 +260,9 @@ export default function OperationDetail() {
                                 { title: 'Product Name', dataIndex: 'product', key: 'product' },
                                 { title: 'Type', dataIndex: 'logoType', key: 'logoType', render: (val) => <Tag color="purple">{val}</Tag> },
                                 { title: 'Material', dataIndex: 'material', key: 'material' },
-                                { title: 'Req. Qty', dataIndex: 'qty', key: 'qty', align: 'right', render: (val) => <Text strong>{val.toLocaleString()}</Text> },
-                                { title: 'Inventory Stock', key: 'inv', align: 'right', render: (_, record) => <Text style={{ color: '#389e0d' }}>{Math.floor(record.qty * 1.2).toLocaleString()}</Text> },
-                                { title: 'Order Stack', key: 'stack', align: 'right', render: (_, record) => <Text type="secondary">{Math.floor(record.qty * 0.8).toLocaleString()}</Text> },
+                                { title: 'Req. Qty', dataIndex: 'qty', key: 'qty', align: 'right', render: (val) => <Text strong>{(val ?? 0).toLocaleString()}</Text> },
+                                { title: 'Inventory Stock', key: 'inv', align: 'right', render: (_, record) => <Text style={{ color: '#389e0d' }}>{(Math.floor(record.qty * 1.2) ?? 0).toLocaleString()}</Text> },
+                                { title: 'Order Stack', key: 'stack', align: 'right', render: (_, record) => <Text type="secondary">{(Math.floor(record.qty * 0.8) ?? 0).toLocaleString()}</Text> },
                               ]}
                               pagination={false}
                               size="small"
@@ -280,9 +280,9 @@ export default function OperationDetail() {
                                   <Table.Summary fixed>
                                     <Table.Summary.Row style={{ background: mutedBg }}>
                                       <Table.Summary.Cell index={0} colSpan={3}><Text strong>Total Verification</Text></Table.Summary.Cell>
-                                      <Table.Summary.Cell index={1} align="right"><Text strong>{totalQty.toLocaleString()}</Text></Table.Summary.Cell>
-                                      <Table.Summary.Cell index={2} align="right"><Text strong style={{ color: '#389e0d' }}>{totalInv.toLocaleString()}</Text></Table.Summary.Cell>
-                                      <Table.Summary.Cell index={3} align="right"><Text strong>{totalStack.toLocaleString()}</Text></Table.Summary.Cell>
+                                      <Table.Summary.Cell index={1} align="right"><Text strong>{(totalQty ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                                      <Table.Summary.Cell index={2} align="right"><Text strong style={{ color: '#389e0d' }}>{(totalInv ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                                      <Table.Summary.Cell index={3} align="right"><Text strong>{(totalStack ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                                     </Table.Summary.Row>
                                   </Table.Summary>
                                 );

@@ -7,6 +7,7 @@ import { SnackbarProvider } from 'notistack';
 import { store } from './store';
 import AppLayout from './components/layout/AppLayout';
 import { lightTheme, darkTheme } from './styles/theme';
+import ErrorBoundary from './components/common/ErrorBoundary';
 import './styles/global.css';
 
 import Login from './pages/Login';
@@ -73,7 +74,9 @@ function ThemedApp() {
 export default function App() {
   return (
     <Provider store={store}>
-      <ThemedApp />
+      <ErrorBoundary>
+        <ThemedApp />
+      </ErrorBoundary>
     </Provider>
   );
 }

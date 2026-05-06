@@ -337,6 +337,7 @@ export const getCheckStateMap = () =>
   Object.fromEntries(operationOrders.map((order) => [order.id, { ...order.readiness }]));
 
 export const getProgressFromChecks = (checks) => {
+  if (!checks) return 0;
   const progressKeys = [
     'designRequired',
     'pdfReady',
@@ -350,13 +351,17 @@ export const getProgressFromChecks = (checks) => {
   return Math.round((done / progressKeys.length) * 100);
 };
 
-export const canAssignTaskFromChecks = (checks) =>
-  checks.pdfReady &&
-  checks.designSent &&
-  checks.clientApproved &&
-  checks.printingStarted &&
-  checks.stockReceived &&
-  checks.operationApproved;
+export const canAssignTaskFromChecks = (checks) => {
+  if (!checks) return false;
+  return (
+    checks.pdfReady &&
+    checks.designSent &&
+    checks.clientApproved &&
+    checks.printingStarted &&
+    checks.stockReceived &&
+    checks.operationApproved
+  );
+};
 
 export const designerCredentials = {
   username: 'designops@healnglow.com',

@@ -154,7 +154,7 @@ export default function Settings() {
           }
         },
         perms: vals.perms,
-        avatar: vals.name[0].toUpperCase(), 
+        avatar: (vals.name?.[0] || 'U').toUpperCase(), 
         color: role?.color || '#B11E6A',
       };
 

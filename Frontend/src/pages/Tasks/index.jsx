@@ -465,7 +465,7 @@ export default function Tasks() {
                   <Descriptions.Item label="Order ID"><Text strong style={{ color: '#B11E6A' }}>{selectedTask.orderId}</Text></Descriptions.Item>
                   <Descriptions.Item label="Hotel / Client"><Text strong>{selectedTask.client}</Text></Descriptions.Item>
                   <Descriptions.Item label="Product">{selectedTask.product}</Descriptions.Item>
-                  <Descriptions.Item label="Quantity">{selectedTask.qty.toLocaleString()} units</Descriptions.Item>
+                  <Descriptions.Item label="Quantity">{(selectedTask.qty ?? 0).toLocaleString()} units</Descriptions.Item>
                   <Descriptions.Item label="Sales Person">{selectedTask.salesPerson}</Descriptions.Item>
                   <Descriptions.Item label="Payment">
                     {selectedTask.paymentStatus
@@ -494,7 +494,7 @@ export default function Tasks() {
                     size="small"
                     columns={[
                       { title: 'Phase', dataIndex: 'phase', render: (v) => <Text strong>Phase {v}</Text> },
-                      { title: 'Qty', dataIndex: 'qty', render: (v) => v.toLocaleString() },
+                      { title: 'Qty', dataIndex: 'qty', render: (v) => (v ?? 0).toLocaleString() },
                       { title: 'Status', dataIndex: 'status', render: (s) => <Tag color={s === 'Delivered' ? 'success' : 'processing'}>{s}</Tag> },
                       { title: 'Date', dataIndex: 'date', render: (d) => d || '—' },
                     ]}
@@ -543,7 +543,7 @@ export default function Tasks() {
               <Descriptions.Item label="Order ID"><Text strong style={{ color: '#B11E6A' }}>{emergencyTask.orderId}</Text></Descriptions.Item>
               <Descriptions.Item label="Client">{emergencyTask.client}</Descriptions.Item>
               <Descriptions.Item label="Product">{emergencyTask.product}</Descriptions.Item>
-              <Descriptions.Item label="Qty">{emergencyTask.qty.toLocaleString()} units</Descriptions.Item>
+              <Descriptions.Item label="Qty">{(emergencyTask.qty ?? 0).toLocaleString()} units</Descriptions.Item>
               <Descriptions.Item label="Payment Status"><Tag color="warning">{emergencyTask.paymentStatus}</Tag></Descriptions.Item>
               <Descriptions.Item label="Sales Person">{emergencyTask.salesPerson}</Descriptions.Item>
             </Descriptions>

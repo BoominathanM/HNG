@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import dayjs from 'dayjs';
-import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker } from 'antd';
-import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload } from 'antd';
+import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
@@ -248,6 +248,11 @@ export default function Expenses() {
               formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
               parser={value => value.replace(/\₹\s?|(,*)/g, '')}
             />
+          </Form.Item>
+          <Form.Item label="Upload Proof / Receipt" name="proof">
+            <Upload maxCount={1} listType="picture" beforeUpload={() => false}>
+              <Button icon={<UploadOutlined />} style={{ width: '100%', borderRadius: 8 }}>Select File</Button>
+            </Upload>
           </Form.Item>
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <Button onClick={() => setIsModalOpen(false)} style={{ flex: 1 }}>Cancel</Button>

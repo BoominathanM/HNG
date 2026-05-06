@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, Progress, Alert, InputNumber, List, message,
-  Avatar, Divider, Drawer, Tabs, DatePicker,
+  Avatar, Divider, Drawer, Tabs, DatePicker, Upload, Switch,
 } from 'antd';
 import {
   PlusOutlined, WarningOutlined, CalculatorOutlined, SearchOutlined, CheckOutlined,
   DownloadOutlined, ShoppingOutlined, LeftOutlined, CloseOutlined,
   UserOutlined, InfoCircleOutlined, MinusOutlined, FileTextOutlined,
+  TeamOutlined, ContactsOutlined, EyeOutlined, EditOutlined, UploadOutlined, DollarOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -53,6 +54,15 @@ export default function Inventory() {
   const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
   const sectionBg = isDark ? '#16161e' : '#fafafa';
 
+  const [suppliers, setSuppliers] = useState(suppliersList);
+  const [customers, setCustomers] = useState(customersList);
+  const [viewSupplier, setViewSupplier] = useState(null);
+  const [viewCustomer, setViewCustomer] = useState(null);
+  const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
+  const [purchaseForm] = Form.useForm();
+
   /* ── Add Item modal (no sub-modals, keep as modal) ── */
   const [addItemModal, setAddItemModal] = useState(false);
   const [addItemForm] = Form.useForm();
@@ -74,6 +84,21 @@ export default function Inventory() {
   const [customerSearch, setCustomerSearch] = useState('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [customerForm] = Form.useForm();
+
+  const [categories, setCategories] = useState(['Chemicals', 'Ready Stock']);
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  const onCategoryChange = (event) => {
+    setNewCategoryName(event.target.value);
+  };
+
+  const addCategory = (e) => {
+    e.preventDefault();
+    if (newCategoryName.trim() && !categories.includes(newCategoryName.trim())) {
+      setCategories([...categories, newCategoryName.trim()]);
+      setNewCategoryName('');
+    }
+  };
 
   const lowStock = inventory.filter((i) => i.status === 'Low' || i.status === 'Out');
 
@@ -115,9 +140,11 @@ export default function Inventory() {
       email: vals.sup_email || '',
       address: vals.sup_address || '',
     };
+    setSuppliers([...suppliers, newSupplier]);
     setSelectedSupplier(newSupplier);
     supplierForm.resetFields();
     setShowAddSupplier(false);
+    setShowAddSupplierModal(false);
   };
 
   const handleSaveCustomer = () => {
@@ -129,9 +156,11 @@ export default function Inventory() {
       email: vals.cust_email || '',
       address: vals.cust_address || '',
     };
+    setCustomers([...customers, newCustomer]);
     setSelectedCustomer(newCustomer);
     customerForm.resetFields();
     setShowAddCustomer(false);
+    setShowAddCustomerModal(false);
   };
 
   /* ── Style helpers ── */
@@ -283,7 +312,7 @@ export default function Inventory() {
         <div style={{ minWidth: 120 }}>
           <Progress percent={Math.min(100, Math.round((r.current / r.max) * 100))} size="small"
             strokeColor={r.status === 'OK' ? '#B11E6A' : r.status === 'Low' ? '#C94F8A' : '#8a1652'} showInfo={false} />
-          <Text style={{ fontSize: 11, color: '#999' }}>{r.current.toLocaleString()} / {r.max.toLocaleString()} {r.unit}</Text>
+          <Text style={{ fontSize: 11, color: '#999' }}>{(r.current ?? 0).toLocaleString()} / {(r.max ?? 0).toLocaleString()} {r.unit}</Text>
         </div>
       ),
     },
@@ -401,6 +430,167 @@ export default function Inventory() {
             )
           },
           {
+            key: 'suppliers',
+            label: <Space><TeamOutlined />Suppliers</Space>,
+            children: (
+              <div className="fade-in">
+                {viewSupplier ? (
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                      <Button icon={<LeftOutlined />} onClick={() => setViewSupplier(null)}>Back to Suppliers</Button>
+                      <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewSupplier.name} - Purchase History</Title>
+                    </div>
+                    <Table 
+                      size="small"
+                      dataSource={[
+                        { key: 1, date: '2024-05-01', item: 'Soap Base (White)', qty: '100 Kg', price: '₹85/Kg', total: '₹8,500', status: 'Received' },
+                        { key: 2, date: '2024-04-15', item: 'Shampoo Concentrate', qty: '50 Ltr', price: '₹220/Ltr', total: '₹11,000', status: 'Received' },
+                      ]}
+                      columns={[
+                        { title: 'Date', dataIndex: 'date', key: 'date' },
+                        { title: 'Material', dataIndex: 'item', key: 'item' },
+                        { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
+                        { title: 'Unit Price', dataIndex: 'price', key: 'price' },
+                        { title: 'Total Amount', dataIndex: 'total', key: 'total', render: (v) => <Text strong>{v}</Text> },
+                        { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="green">{v}</Tag> },
+                      ]}
+                    />
+                  </Card>
+                ) : (
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+                      <Title level={5} style={{ margin: 0 }}>Supplier Management</Title>
+                      <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddSupplierModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Supplier</Button>
+                    </div>
+                    <Table 
+                      size="small"
+                      dataSource={suppliers}
+                      columns={[
+                        { title: 'Supplier Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
+                        { title: 'Phone', dataIndex: 'phone', key: 'phone' },
+                        { title: 'Email', dataIndex: 'email', key: 'email' },
+                        { title: 'Address', dataIndex: 'address', key: 'address' },
+                        {
+                          title: 'Action', key: 'action',
+                          render: (_, r) => (
+                            <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewSupplier(r)} style={{ color: '#B11E6A' }}>View History</Button>
+                          )
+                        }
+                      ]}
+                    />
+                  </Card>
+                )}
+              </div>
+            )
+          },
+          {
+            key: 'customers',
+            label: <Space><ContactsOutlined />Customers / Vendors</Space>,
+            children: (
+              <div className="fade-in">
+                {viewCustomer ? (
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                      <Button icon={<LeftOutlined />} onClick={() => setViewCustomer(null)}>Back to Customers</Button>
+                      <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewCustomer.name} - Sales History</Title>
+                    </div>
+                    <Table 
+                      size="small"
+                      dataSource={[
+                        { key: 1, date: '2024-05-02', item: 'Dental Kit Boxes', qty: '50 Pcs', price: '₹15/Pc', total: '₹750', status: 'Dispatched' },
+                        { key: 2, date: '2024-04-20', item: 'Custom Stickers', qty: '1000 Pcs', price: '₹2/Pc', total: '₹2,000', status: 'Delivered' },
+                      ]}
+                      columns={[
+                        { title: 'Date', dataIndex: 'date', key: 'date' },
+                        { title: 'Material', dataIndex: 'item', key: 'item' },
+                        { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
+                        { title: 'Unit Price', dataIndex: 'price', key: 'price' },
+                        { title: 'Total Amount', dataIndex: 'total', key: 'total', render: (v) => <Text strong>{v}</Text> },
+                        { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="blue">{v}</Tag> },
+                      ]}
+                    />
+                  </Card>
+                ) : (
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+                      <Title level={5} style={{ margin: 0 }}>Customer / Vendor Management</Title>
+                      <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddCustomerModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Customer</Button>
+                    </div>
+                    <Table 
+                      size="small"
+                      dataSource={customers}
+                      columns={[
+                        { title: 'Customer Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
+                        { title: 'Phone', dataIndex: 'phone', key: 'phone' },
+                        { title: 'Email', dataIndex: 'email', key: 'email' },
+                        { title: 'Address', dataIndex: 'address', key: 'address' },
+                        {
+                          title: 'Action', key: 'action',
+                          render: (_, r) => (
+                            <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewCustomer(r)} style={{ color: '#B11E6A' }}>View History</Button>
+                          )
+                        }
+                      ]}
+                    />
+                  </Card>
+                )}
+              </div>
+            )
+          },
+          {
+            key: 'purchases',
+            label: <Space><DollarOutlined />Purchase Expenses</Space>,
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
+                  <Title level={5} style={{ margin: 0 }}>Product Purchase Management</Title>
+                  <Space>
+                    <DatePicker.RangePicker style={{ width: 280 }} />
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddPurchaseModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Purchase</Button>
+                    <Button icon={<DownloadOutlined />}>Export</Button>
+                  </Space>
+                </div>
+                <Table 
+                  size="small"
+                  dataSource={[
+                    { key: 1, date: '2024-05-01', item: 'Soap Base (White)', qty: '100 Kg', entity: 'ChemCo India', amount: '₹8,500', status: 'Paid', invoice: 'INV-101' },
+                    { key: 4, date: '2024-05-04', item: 'Shampoo Concentrate', qty: '200 Ltr', entity: 'BioLife Ltd', amount: '₹44,000', status: 'Unpaid', invoice: 'INV-104' },
+                  ]}
+                  columns={[
+                    { title: 'Purchase Date', dataIndex: 'date', key: 'date', render: (v) => <Text strong>{v}</Text> },
+                    { title: 'Product', dataIndex: 'item', key: 'item' },
+                    { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
+                    { title: 'Amount', dataIndex: 'amount', key: 'amount', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                    { title: 'Supplier', dataIndex: 'entity', key: 'entity', render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                    { 
+                      title: 'Payment', dataIndex: 'status', key: 'payment_status',
+                      render: (v) => (
+                        <Space size={4}>
+                          <Switch size="small" checked={v === 'Paid'} onChange={() => message.success('Status updated')} />
+                          <Tag color={v === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 12 }}>{v}</Tag>
+                        </Space>
+                      )
+                    },
+                    { 
+                      title: 'Invoice', dataIndex: 'invoice', key: 'invoice',
+                      render: (v) => <Button type="link" size="small" icon={<FileTextOutlined />}>{v}</Button>
+                    },
+                    { 
+                      title: 'Actions', key: 'actions',
+                      render: () => (
+                        <Space>
+                          <Button size="small" type="text" icon={<EyeOutlined />} />
+                          <Button size="small" type="text" icon={<EditOutlined />} />
+                          <Button size="small" type="text" icon={<UploadOutlined />} title="Upload Invoice" />
+                        </Space>
+                      )
+                    },
+                  ]}
+                />
+              </Card>
+            )
+          },
+          {
             key: 'documents',
             label: <Space><FileTextOutlined />Stock Documents</Space>,
             children: (
@@ -459,7 +649,37 @@ export default function Inventory() {
         <Form form={addItemForm} layout="vertical" style={{ marginTop: 16 }}>
           <Row gutter={16}>
             <Col xs={24} sm={12}><Form.Item label="Item Name" name="name" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} sm={12}><Form.Item label="Category" name="category"><Select><Option value="Chemicals">Chemicals</Option><Option value="ready stock">ready stock</Option><Option value="addable option">addable option</Option></Select></Form.Item></Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Category" name="category">
+                <Select
+                  placeholder="Select category"
+                  dropdownRender={(menu) => (
+                    <>
+                      {menu}
+                      <Divider style={{ margin: '8px 0' }} />
+                      <Space style={{ padding: '0 8px 4px' }}>
+                        <Input
+                          placeholder="New category..."
+                          value={newCategoryName}
+                          onChange={onCategoryChange}
+                          onKeyDown={(e) => e.stopPropagation()}
+                          style={{ borderRadius: 6 }}
+                        />
+                        <Button 
+                          type="text" 
+                          icon={<PlusOutlined />} 
+                          onClick={addCategory}
+                          style={{ color: '#B11E6A', fontWeight: 600 }}
+                        >
+                          Add
+                        </Button>
+                      </Space>
+                    </>
+                  )}
+                  options={categories.map((item) => ({ label: item, value: item }))}
+                />
+              </Form.Item>
+            </Col>
             <Col xs={24} sm={8}><Form.Item label="Unit" name="unit"><Select><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option><Option value="ml">ml</Option><Option value="gram">gram</Option></Select></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
@@ -608,9 +828,23 @@ export default function Inventory() {
                     </Form.Item>
                   </Col>
                 </Row>
-                <Form.Item label={<Text style={{ fontSize: 13 }}>Comment</Text>} name="comment" style={{ marginBottom: 0 }}>
+                <Form.Item label={<Text style={{ fontSize: 13 }}>Comment</Text>} name="comment" style={{ marginBottom: 12 }}>
                   <Input.TextArea rows={2} placeholder="Optional note..." style={{ borderRadius: 8 }} />
                 </Form.Item>
+                <Row gutter={12}>
+                  <Col span={14}>
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Upload Invoice</Text>} name="invoice" style={{ marginBottom: 0 }}>
+                      <Upload maxCount={1} beforeUpload={() => false}>
+                        <Button icon={<UploadOutlined />} style={{ width: '100%', borderRadius: 8 }}>Invoice File</Button>
+                      </Upload>
+                    </Form.Item>
+                  </Col>
+                  <Col span={10}>
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Payment Status</Text>} name="is_paid" valuePropName="checked" style={{ marginBottom: 0 }}>
+                      <Switch checkedChildren="Paid" unCheckedChildren="Unpaid" defaultChecked />
+                    </Form.Item>
+                  </Col>
+                </Row>
               </Form>
             </div>
           </div>
@@ -855,6 +1089,172 @@ export default function Inventory() {
 
         </div>
       </Drawer>
+
+      {/* Add Supplier Modal (for Suppliers Tab) */}
+      <Modal
+        title={<Text strong style={{ fontSize: 16 }}>Add New Supplier</Text>}
+        open={showAddSupplierModal}
+        onCancel={() => { setShowAddSupplierModal(false); supplierForm.resetFields(); }}
+        footer={null}
+        width={520}
+        centered
+      >
+        <Form form={supplierForm} layout="vertical" onFinish={handleSaveSupplier} style={{ marginTop: 16 }}>
+          <Row gutter={10}>
+            <Col span={14}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="sup_name" rules={[{ required: true }]} style={{ marginBottom: 12 }}>
+                <Input placeholder="Supplier name" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="sup_phone" style={{ marginBottom: 12 }}>
+                <Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={10}>
+            <Col span={14}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="sup_email" style={{ marginBottom: 12 }}>
+                <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="sup_tax" style={{ marginBottom: 12 }}>
+                <Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="sup_address" style={{ marginBottom: 12 }}>
+            <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
+          </Form.Item>
+          <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="sup_bank" style={{ marginBottom: 12 }}>
+            <Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} />
+          </Form.Item>
+          <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="sup_notes" style={{ marginBottom: 12 }}>
+            <Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} />
+          </Form.Item>
+          <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+            <Button onClick={() => setShowAddSupplierModal(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
+            <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Save Supplier</Button>
+          </div>
+        </Form>
+      </Modal>
+
+      {/* Add Customer Modal (for Customers Tab) */}
+      <Modal
+        title={<Text strong style={{ fontSize: 16 }}>Add New Customer / Vendor</Text>}
+        open={showAddCustomerModal}
+        onCancel={() => { setShowAddCustomerModal(false); customerForm.resetFields(); }}
+        footer={null}
+        width={520}
+        centered
+      >
+        <Form form={customerForm} layout="vertical" onFinish={handleSaveCustomer} style={{ marginTop: 16 }}>
+          <Row gutter={10}>
+            <Col span={14}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="cust_name" rules={[{ required: true }]} style={{ marginBottom: 12 }}>
+                <Input placeholder="Customer / Hotel name" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="cust_phone" style={{ marginBottom: 12 }}>
+                <Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={10}>
+            <Col span={14}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="cust_email" style={{ marginBottom: 12 }}>
+                <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="cust_tax" style={{ marginBottom: 12 }}>
+                <Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="cust_address" style={{ marginBottom: 12 }}>
+            <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
+          </Form.Item>
+          <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="cust_bank" style={{ marginBottom: 12 }}>
+            <Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} />
+          </Form.Item>
+          <Row gutter={10}>
+            <Col span={14}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="cust_notes" style={{ marginBottom: 12 }}>
+                <Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Discount (%)</Text>} name="cust_discount" style={{ marginBottom: 12 }}>
+                <InputNumber min={0} max={100} placeholder="0" style={{ width: '100%', borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+            <Button onClick={() => setShowAddCustomerModal(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
+            <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Save Customer</Button>
+          </div>
+        </Form>
+      </Modal>
+      {/* Add Purchase Expense Modal */}
+      <Modal
+        title={<Text strong style={{ fontSize: 16 }}>Add New Purchase Expense</Text>}
+        open={showAddPurchaseModal}
+        onCancel={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); }}
+        footer={null}
+        width={540}
+        centered
+      >
+        <Form form={purchaseForm} layout="vertical" style={{ marginTop: 16 }}>
+           <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Select Product" name="product" rules={[{ required: true }]}>
+                <Select placeholder="Select item">
+                  {inventory.map(i => <Option key={i.code} value={i.name}>{i.name}</Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Supplier" name="supplier" rules={[{ required: true }]}>
+                <Select placeholder="Select supplier">
+                  {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item label="Quantity" name="qty" rules={[{ required: true }]}>
+                <Input placeholder="0" suffix="Unit" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="Total Amount" name="amount" rules={[{ required: true }]}>
+                <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="Date" name="date" rules={[{ required: true }]}>
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="Upload Invoice / Receipt" name="invoice">
+            <Upload maxCount={1} beforeUpload={() => false}>
+              <Button icon={<UploadOutlined />} style={{ width: '100%' }}>Select Invoice File</Button>
+            </Upload>
+          </Form.Item>
+          <Form.Item label="Payment Status" name="status" valuePropName="checked">
+            <Switch checkedChildren="Paid" unCheckedChildren="Unpaid" defaultChecked />
+          </Form.Item>
+          <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+            <Button onClick={() => setShowAddPurchaseModal(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
+            <Button type="primary" onClick={() => { message.success('Purchase recorded'); setShowAddPurchaseModal(false); }} style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Record Purchase</Button>
+          </div>
+        </Form>
+      </Modal>
     </div>
   );
 }
