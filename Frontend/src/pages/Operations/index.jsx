@@ -5,6 +5,7 @@ import {
   Card,
   Col,
   Descriptions,
+  Divider,
   Form,
   Input,
   message,
@@ -35,9 +36,11 @@ import {
   PrinterOutlined,
   SafetyOutlined,
   SearchOutlined,
+  SyncOutlined,
   TagsOutlined,
   TeamOutlined,
   ToolOutlined,
+  TruckOutlined,
   UploadOutlined,
   UserSwitchOutlined,
 } from '@ant-design/icons';
@@ -79,6 +82,16 @@ const flowNextActions = {
   4: { label: 'Assign Task', tab: 'tasks' },
 };
 
+const statusIcons = {
+  Sent: <MessageOutlined />,
+  'Design Confirmation': <CheckCircleOutlined />,
+  'In Process': <SyncOutlined />,
+  Dispatch: <TruckOutlined />,
+  Received: <InboxOutlined />,
+  'Pending Approval': <SafetyOutlined />,
+  'Design Change': <ToolOutlined />,
+};
+
 export default function Operations() {
   const navigate = useNavigate();
   const isDark = useSelector((state) => state.theme.isDark);
@@ -93,8 +106,16 @@ export default function Operations() {
   const [requestForm] = Form.useForm();
   const [assignForm] = Form.useForm();
   const [verifyForm] = Form.useForm();
+  const [correctionForm] = Form.useForm();
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [corrections, setCorrections] = useState([]);
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [dispatchForm] = Form.useForm();
+  const [receiveForm] = Form.useForm();
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
+  const mutedBg = isDark ? '#161622' : '#faf8fb';
   const textColor = isDark ? '#ececf1' : '#1a1a2e';
 
   const filteredOrders = useMemo(
@@ -147,11 +168,17 @@ export default function Operations() {
 
   const orderColumns = [
     {
-      title: 'Order',
+      title: 'Order ID',
       dataIndex: 'id',
       render: (value) => <Text strong style={{ color: '#B11E6A' }}>{value}</Text>,
     },
-    { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
+    { title: 'Hotel Name', dataIndex: 'hotelLogo' },
+    {
+      title: 'Order Delivery Date',
+      dataIndex: 'createdAt',
+      render: (value) => new Date(value).toLocaleDateString('en-IN', { dateStyle: 'medium' }),
+      responsive: ['md'],
+    },
     {
       title: 'Pipeline Stage',
       key: 'flowStage',
@@ -176,12 +203,6 @@ export default function Operations() {
       },
     },
     { title: 'Assigned To', dataIndex: 'assignedEmployee', responsive: ['lg'] },
-    { title: 'Order Type', dataIndex: 'orderType', responsive: ['md'] },
-    {
-      title: 'Sticker / Box / Ziplock',
-      dataIndex: 'specsSummary',
-      render: (value) => <Text style={{ fontSize: 12 }}>{value}</Text>,
-    },
     {
       title: 'Process',
       key: 'progress',
@@ -203,6 +224,7 @@ export default function Operations() {
         <Space direction="vertical" size={2}>
           <Tag color={designColor[record.designStatus] || 'default'}>{record.designStatus}</Tag>
           <Tag color={statusPill[record.stockStatus] || 'default'}>{record.stockStatus}</Tag>
+          {record.printerVerified && <Tag color="success">Material Verified</Tag>}
         </Space>
       ),
     },
@@ -222,16 +244,6 @@ export default function Operations() {
     },
   ];
 
-  const employeeColumns = [
-    { title: 'Employee', dataIndex: 'name', render: (value) => <Text strong>{value}</Text> },
-    { title: 'Role', dataIndex: 'role' },
-    { title: 'Current Task', dataIndex: 'activeTask' },
-    {
-      title: 'Availability',
-      dataIndex: 'availability',
-      render: (value) => <Tag color={statusPill[value] || 'default'}>{value}</Tag>,
-    },
-  ];
 
   const designColumns = [
     {
@@ -277,10 +289,38 @@ export default function Operations() {
           >
             Print
           </Button>
+          <Button
+            size="small"
+            icon={<ToolOutlined />}
+            onClick={() => {
+              setSelectedQueueItem(record);
+              setCorrections(record.correction ? [record.correction] : []);
+              setCorrectionOpen(true);
+            }}
+          >
+            Correction
+          </Button>
         </Space>
       ),
     },
   ];
+
+  const renderDesignTable = (type) => (
+    <Card
+      title={<Text strong style={{ color: textColor }}>{type} Designing Queue</Text>}
+      style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+      styles={{ body: { padding: 0 } }}
+    >
+      <div className="table-responsive" style={{ padding: 4 }}>
+        <Table 
+          dataSource={designQueue.filter(item => item.type === type)} 
+          columns={designColumns} 
+          pagination={false} 
+          size="small" 
+        />
+      </div>
+    </Card>
+  );
 
   const queueColumns = (label) => [
     {
@@ -302,46 +342,114 @@ export default function Operations() {
       render: (value) => <Tag color={designColor[value] || 'default'}>{value}</Tag>,
     },
     {
-      title: 'Sent',
-      dataIndex: 'sent',
-      render: (value, record) => (
-        <Space direction="vertical" size={0}>
-          <Text style={{ fontSize: 12 }}>{value.toLocaleString()}</Text>
-          <Tag color={record.verified ? 'success' : 'warning'}>
-            {record.verified ? 'Verified' : 'Verification Pending'}
-          </Tag>
-        </Space>
+      title: 'Dispatch Info',
+      key: 'dispatchInfo',
+      render: (_, record) => (
+        record.dispatchDate ? (
+          <Space direction="vertical" size={0}>
+            <Text style={{ fontSize: 11 }}>{record.dispatchDate}</Text>
+            <Text type="secondary" style={{ fontSize: 10 }}>{record.dispatchTime}</Text>
+          </Space>
+        ) : <Text type="secondary" style={{ fontSize: 11 }}>-</Text>
+      ),
+    },
+    {
+      title: 'Arrival Info',
+      key: 'arrivalInfo',
+      render: (_, record) => (
+        record.arrivalDate ? (
+          <Space direction="vertical" size={0}>
+            <Text style={{ fontSize: 11 }}>{record.arrivalDate}</Text>
+            <Tag color="green" style={{ fontSize: 10 }}>Received</Tag>
+          </Space>
+        ) : <Text type="secondary" style={{ fontSize: 11 }}>-</Text>
       ),
     },
     {
       title: 'Actions',
       key: 'actions',
-      render: (_, record) => (
-        <Space>
-          <Button
-            size="small"
-            icon={<UserSwitchOutlined />}
-            onClick={() => {
-              setSelectedQueueItem(record);
-              assignForm.setFieldsValue({ orderId: record.orderId, product: record.product });
-              setAssignOpen(true);
-            }}
-          >
-            Assign
-          </Button>
-          <Button
-            size="small"
-            icon={<SafetyOutlined />}
-            onClick={() => {
-              setSelectedQueueItem(record);
-              verifyForm.setFieldsValue({ orderId: record.orderId, sentQty: record.sent, verifiedQty: record.sent });
-              setVerifyOpen(true);
-            }}
-          >
-            Verify
-          </Button>
-        </Space>
-      ),
+      render: (_, record) => {
+        const isApproved = record.status === 'Approved' || record.workStarted;
+        const isDispatched = !!record.dispatchDate;
+        const isReceived = !!record.arrivalDate;
+        const isVerified = record.materialVerified;
+
+        return (
+          <Space wrap>
+            {!isApproved && (
+              <Button
+                size="small"
+                icon={<CheckCircleOutlined />}
+                style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
+                onClick={() => {
+                  record.workStarted = true;
+                  message.success(`${record.orderId} team started work`);
+                }}
+              >
+                Approve
+              </Button>
+            )}
+            {isApproved && !isDispatched && (
+              <>
+                <Button
+                  size="small"
+                  icon={<PrinterOutlined />}
+                  onClick={() => message.info(`Printing triggered for ${record.orderId}`)}
+                >
+                  Print
+                </Button>
+                <Button
+                  size="small"
+                  icon={<MessageOutlined />}
+                  style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff' }}
+                  onClick={() => {
+                    setSelectedQueueItem(record);
+                    dispatchForm.setFieldsValue({
+                      orderId: record.orderId,
+                      dispatchDate: new Date().toLocaleDateString('en-IN'),
+                      dispatchTime: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+                    });
+                    setDispatchOpen(true);
+                  }}
+                >
+                  Dispatch
+                </Button>
+              </>
+            )}
+            {isDispatched && !isReceived && (
+              <Button
+                size="small"
+                icon={<InboxOutlined />}
+                style={{ background: '#faad14', borderColor: '#faad14', color: '#fff' }}
+                onClick={() => {
+                  setSelectedQueueItem(record);
+                  receiveForm.setFieldsValue({
+                    orderId: record.orderId,
+                    arrivalDate: new Date().toLocaleDateString('en-IN')
+                  });
+                  setReceiveOpen(true);
+                }}
+              >
+                Receive
+              </Button>
+            )}
+            {isReceived && !isVerified && (
+              <Button
+                size="small"
+                icon={<SafetyOutlined />}
+                style={{ background: '#eb2f96', borderColor: '#eb2f96', color: '#fff' }}
+                onClick={() => {
+                  record.materialVerified = true;
+                  message.success(`${record.type} Material Verified and Stock Updated`);
+                }}
+              >
+                Verify Arrived Material
+              </Button>
+            )}
+            {isVerified && <Tag color="success" icon={<CheckCircleOutlined />}>Completed</Tag>}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -357,17 +465,9 @@ export default function Operations() {
       <Card
         title={<Text strong style={{ color: textColor }}>{label}</Text>}
         extra={
-          <Space>
-            <Button icon={<PlusOutlined />} onClick={() => openRequestModal(type)}>
-              New {type} Request
-            </Button>
-            <Button icon={<UserSwitchOutlined />} onClick={() => setAssignOpen(true)}>
-              Assigning
-            </Button>
-            <Button icon={<SafetyOutlined />} onClick={() => setVerifyOpen(true)}>
-              Verifying
-            </Button>
-          </Space>
+          <Button icon={<PlusOutlined />} onClick={() => openRequestModal(type)}>
+            New {type} Request
+          </Button>
         }
         style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
         styles={{ body: { padding: 0 } }}
@@ -385,16 +485,49 @@ export default function Operations() {
       if (countByStatus[row.status] !== undefined) countByStatus[row.status] += 1;
     });
     return (
-      <Row gutter={[10, 10]} style={{ marginBottom: 16 }}>
-        {queueStatuses.map((status) => (
-          <Col xs={12} md={8} xl={3} key={status}>
-            <Card style={{ borderRadius: 12, border: '1px solid #B11E6A18', background: cardBg }}>
-              <Title level={5} style={{ margin: 0, color: '#B11E6A' }}>{countByStatus[status]}</Title>
-              <Text style={{ fontSize: 11 }}>{status}</Text>
+      <div style={{ marginBottom: 24, overflowX: 'auto', padding: '4px 0' }}>
+        <div style={{ display: 'flex', gap: 12, minWidth: 900 }}>
+          {queueStatuses.map((status) => (
+            <Card
+              key={status}
+              size="small"
+              style={{
+                flex: 1,
+                borderRadius: 12,
+                border: 'none',
+                background: cardBg,
+                boxShadow: '0 2px 10px rgba(177,30,106,0.05)',
+                minWidth: 120,
+              }}
+              styles={{ body: { padding: '12px 8px' } }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ 
+                  width: 32, 
+                  height: 32, 
+                  borderRadius: 8, 
+                  background: `${designColor[status] || '#B11E6A'}15`,
+                  color: designColor[status] || '#B11E6A',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 16
+                }}>
+                  {statusIcons[status] || <TagsOutlined />}
+                </div>
+                <div>
+                  <Title level={4} style={{ margin: 0, lineHeight: 1, color: textColor }}>
+                    {countByStatus[status]}
+                  </Title>
+                  <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
+                    {status}
+                  </Text>
+                </div>
+              </div>
             </Card>
-          </Col>
-        ))}
-      </Row>
+          ))}
+        </div>
+      </div>
     );
   };
 
@@ -450,16 +583,16 @@ export default function Operations() {
                   styles={{ body: { padding: 0 } }}
                 >
                   <div className="table-responsive" style={{ padding: 4 }}>
-                    <Table dataSource={filteredOrders} columns={orderColumns} pagination={{ pageSize: 6, size: 'small' }} size="small" />
-                  </div>
-                </Card>
-                <Card
-                  title={<Space><TeamOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Employee List And Availability</Text></Space>}
-                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                  styles={{ body: { padding: 0 } }}
-                >
-                  <div className="table-responsive" style={{ padding: 4 }}>
-                    <Table dataSource={operationEmployees} columns={employeeColumns} pagination={false} size="small" />
+                    <Table 
+                      dataSource={filteredOrders} 
+                      columns={orderColumns} 
+                      pagination={{ pageSize: 6, size: 'small' }} 
+                      size="small" 
+                      onRow={(record) => ({
+                        onClick: () => navigate(`/operations/${record.id}`),
+                        style: { cursor: 'pointer' }
+                      })}
+                    />
                   </div>
                 </Card>
               </Space>
@@ -471,61 +604,27 @@ export default function Operations() {
             children: (
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 {renderQueueSummary(designQueue)}
-                <Row gutter={[16, 16]}>
-                  <Col xs={24} md={10}>
-                    <Card
-                      title={<Space><KeyOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Designer Credentials</Text></Space>}
-                      style={{ borderRadius: 14, border: '1px solid #B11E6A22', background: cardBg, height: '100%' }}
-                    >
-                      <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                        <Descriptions size="small" column={1} bordered>
-                          <Descriptions.Item label={<Space><LockOutlined />Login</Space>}>{designerCredentials.username}</Descriptions.Item>
-                          <Descriptions.Item label="Password">{'•'.repeat(12)} (ask ops lead)</Descriptions.Item>
-                          <Descriptions.Item label="Access">{designerCredentials.portal}</Descriptions.Item>
-                        </Descriptions>
-                        <Button
-                          icon={<CopyOutlined />}
-                          size="small"
-                          onClick={() => {
-                            navigator.clipboard.writeText(`Login: ${designerCredentials.username}\nPassword: ${designerCredentials.password}`);
-                            message.success('Credentials copied');
-                          }}
-                        >
-                          Copy Credentials
-                        </Button>
-                      </Space>
-                    </Card>
-                  </Col>
-                  <Col xs={24} md={14}>
-                    <Card
-                      title={<Text strong style={{ color: textColor }}>Design Workflow</Text>}
-                      style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }}
-                    >
-                      <Steps
-                        direction="vertical"
-                        size="small"
-                        items={[
-                          { title: 'Receive product specs from order' },
-                          { title: 'Send specs and logo PDF to design team' },
-                          { title: 'Design team creates sticker / box / ziplock artwork' },
-                          { title: 'Send design to client via WhatsApp and sales person' },
-                          { title: 'Client approves or requests correction' },
-                          { title: 'Start printing / manufacturing after approval' },
-                          { title: 'Printer delivers stock to operations for verification' },
-                        ]}
-                      />
-                    </Card>
-                  </Col>
-                </Row>
-                <Card
-                  title={<Text strong style={{ color: textColor }}>Designing Queue</Text>}
-                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                  styles={{ body: { padding: 0 } }}
-                >
-                  <div className="table-responsive" style={{ padding: 4 }}>
-                    <Table dataSource={designQueue} columns={designColumns} pagination={false} size="small" />
-                  </div>
-                </Card>
+                <Tabs
+                  type="card"
+                  style={{ marginTop: 8 }}
+                  items={[
+                    {
+                      key: 'sticker_designs',
+                      label: <Space><TagsOutlined />Sticker</Space>,
+                      children: renderDesignTable('Sticker'),
+                    },
+                    {
+                      key: 'box_designs',
+                      label: <Space><BoxPlotOutlined />Box</Space>,
+                      children: renderDesignTable('Box'),
+                    },
+                    {
+                      key: 'ziplock_designs',
+                      label: <Space><InboxOutlined />Frosted Ziplock</Space>,
+                      children: renderDesignTable('Frosted Ziplock'),
+                    },
+                  ]}
+                />
               </Space>
             ),
           },
@@ -680,6 +779,137 @@ export default function Operations() {
           <Form.Item label="Verification Note" name="note">
             <Input.TextArea rows={3} placeholder="Sticker / box / ziplock received and checked by operations" />
           </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title={`Design Correction: ${selectedQueueItem?.orderId}`}
+        open={correctionOpen}
+        onCancel={() => setCorrectionOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setCorrectionOpen(false)}>Cancel</Button>,
+          <Button 
+            key="save" 
+            type="primary" 
+            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+            onClick={() => {
+              message.success('Corrections updated');
+              setCorrectionOpen(false);
+            }}
+          >
+            Update Corrections
+          </Button>,
+        ]}
+        width={700}
+      >
+        <div style={{ marginBottom: 24, padding: 16, background: mutedBg, borderRadius: 12, textAlign: 'center', border: '1px dashed #B11E6A44' }}>
+          <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+            <FileImageOutlined style={{ fontSize: 48, color: '#B11E6A44' }} />
+            <Text type="secondary" style={{ marginTop: 8 }}>Design Preview Placeholder</Text>
+            <Text style={{ fontSize: 11, color: '#999' }}>Mark areas on the design to specify corrections</Text>
+          </div>
+        </div>
+
+        <Divider orientation="left">Marked Areas & Corrections</Divider>
+        
+        <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 16 }}>
+          {corrections.map((item, index) => (
+            <Card 
+              key={index} 
+              size="small" 
+              style={{ marginBottom: 8, borderRadius: 8, border: '1px solid #B11E6A22' }}
+              extra={<Button type="text" danger size="small" onClick={() => setCorrections(corrections.filter((_, i) => i !== index))}>Remove Area</Button>}
+            >
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Tag color="magenta">Area {index + 1}</Tag>
+                <Text>{item}</Text>
+              </Space>
+            </Card>
+          ))}
+          {corrections.length === 0 && <Text type="secondary">No corrections marked yet.</Text>}
+        </div>
+
+        <Form layout="vertical" onFinish={(values) => {
+          if (values.newCorrection) {
+            setCorrections([...corrections, values.newCorrection]);
+            correctionForm.resetFields();
+          }
+        }} form={correctionForm}>
+          <Form.Item label="Add New Correction / Mark Area" name="newCorrection">
+            <Input.TextArea 
+              rows={2} 
+              placeholder="Describe the change needed (e.g., 'Increase logo size', 'Change font to Roboto')" 
+            />
+          </Form.Item>
+          <Button type="dashed" block icon={<PlusOutlined />} onClick={() => correctionForm.submit()}>
+            Add Correction Area
+          </Button>
+        </Form>
+      </Modal>
+      <Modal
+        title={`Dispatch Material: ${selectedQueueItem?.orderId}`}
+        open={dispatchOpen}
+        onCancel={() => setDispatchOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setDispatchOpen(false)}>Cancel</Button>,
+          <Button 
+            key="dispatch" 
+            type="primary" 
+            style={{ background: 'linear-gradient(135deg,#1677ff,#4096ff)', border: 'none' }}
+            onClick={() => {
+              const vals = dispatchForm.getFieldsValue();
+              selectedQueueItem.dispatchDate = vals.dispatchDate;
+              selectedQueueItem.dispatchTime = vals.dispatchTime;
+              message.success(`Dispatched to Operations at ${vals.dispatchTime}`);
+              setDispatchOpen(false);
+            }}
+          >
+            Confirm Dispatch
+          </Button>,
+        ]}
+      >
+        <Form form={dispatchForm} layout="vertical">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="Dispatch Date" name="dispatchDate">
+                <Input readOnly />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Dispatch Time" name="dispatchTime">
+                <Input readOnly />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Text type="secondary" style={{ fontSize: 12 }}>* Notifying operation team about the dispatch...</Text>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`Receive Material: ${selectedQueueItem?.orderId}`}
+        open={receiveOpen}
+        onCancel={() => setReceiveOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setReceiveOpen(false)}>Cancel</Button>,
+          <Button 
+            key="receive" 
+            type="primary" 
+            style={{ background: 'linear-gradient(135deg,#faad14,#ffc53d)', border: 'none' }}
+            onClick={() => {
+              const vals = receiveForm.getFieldsValue();
+              selectedQueueItem.arrivalDate = vals.arrivalDate;
+              message.success(`Stock Received with Arrival Date: ${vals.arrivalDate}`);
+              setReceiveOpen(false);
+            }}
+          >
+            Mark as Received
+          </Button>,
+        ]}
+      >
+        <Form form={receiveForm} layout="vertical">
+          <Form.Item label="Arrival Date" name="arrivalDate">
+            <Input placeholder="DD/MM/YYYY" />
+          </Form.Item>
+          <Text type="secondary" style={{ fontSize: 12 }}>* Stock will be updated with "Received" status.</Text>
         </Form>
       </Modal>
     </div>

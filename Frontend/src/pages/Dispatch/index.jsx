@@ -188,9 +188,6 @@ export default function Dispatch() {
         <Space onClick={(e) => e.stopPropagation()}>
           <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/dispatch/${r.id}`)} />
           <Button size="small" icon={<PrinterOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => openPrintModal(r)} />
-          {r.status === 'Ready to Dispatch' && (
-            <Button size="small" type="primary" icon={<CarOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Dispatch</Button>
-          )}
         </Space>
       ),
     },

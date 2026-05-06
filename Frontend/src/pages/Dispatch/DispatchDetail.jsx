@@ -54,6 +54,8 @@ export default function DispatchDetail() {
   const [aiForm] = Form.useForm();
   const [aiParsing, setAiParsing] = useState(false);
   const [aiParsed, setAiParsed] = useState(null);
+  const [notifyState, setNotifyState] = useState(false);
+  const [counts, setCounts] = useState({ sticker: 0, box: 0, ziplock: 0 });
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -65,7 +67,17 @@ export default function DispatchDetail() {
       setAiParsed(MOCK_PARSED);
       aiForm.setFieldsValue(MOCK_PARSED);
       setAiParsing(false);
+      // Simulate verification logic
+      setNotifyState(true);
+      message.success('AI Verified: All 3 receipts match box counts. Notify checkbox updated.');
     }, 1800);
+  };
+
+  const handleConfirmDispatch = () => {
+    message.loading('Confirming dispatch and sending notifications...', 1.5).then(() => {
+      message.success(`Receipt sent to Sales (${order.salesPerson}) and Customer (${order.client}) via WhatsApp!`);
+      navigate('/dispatch');
+    });
   };
 
   if (!order) {
@@ -225,6 +237,7 @@ export default function DispatchDetail() {
                     </Form.Item>
                   </Col>
                 </Row>
+
               </Form>
 
               {/* AI Receipt Parser */}
@@ -243,40 +256,26 @@ export default function DispatchDetail() {
                     ),
                     children: (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        <Row gutter={8} align="middle">
-                          <Col flex="auto">
-                            <Upload beforeUpload={() => false} accept=".jpg,.jpeg,.png,.pdf" maxCount={1}>
-                              <Button icon={<UploadOutlined />} block>Upload Lorry Receipt (Image / PDF)</Button>
-                            </Upload>
-                          </Col>
-                          <Col>
-                            <Button type="primary" icon={<ThunderboltOutlined />}
-                              loading={aiParsing}
-                              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                              onClick={handleAIParse}>
-                              {aiParsing ? 'Parsing…' : 'Parse with AI'}
-                            </Button>
-                          </Col>
-                        </Row>
+                        <div style={{ display: 'flex', justifyContent: 'center' }}>
+                          <Button type="primary" icon={<ThunderboltOutlined />}
+                            loading={aiParsing}
+                            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                            onClick={handleAIParse}>
+                            {aiParsing ? 'Verifying Counts…' : 'AI Verify All Uploaded Receipts'}
+                          </Button>
+                        </div>
 
                         {aiParsed && (
-                          <div>
+                          <div style={{ marginTop: 4, padding: 12, background: isDark ? '#161622' : '#f9f9f9', borderRadius: 8 }}>
                             <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600, display: 'block', marginBottom: 8 }}>
-                              <CheckCircleOutlined /> Parsed successfully — edit if needed
+                              <CheckCircleOutlined /> AI Verification Results
                             </Text>
-                            <Form form={aiForm} layout="vertical" size="small">
-                              <Row gutter={[8, 0]}>
-                                <Col xs={12} sm={8}><Form.Item label="LR Number" name="lrNumber"><Input /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="Date" name="date"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="Transport Name" name="transportName"><Input /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="From City" name="fromCity"><Input /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="To City" name="toCity"><Input /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="Weight" name="weight"><Input suffix="Kg" /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="Packages" name="packages"><Input type="number" /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="Freight" name="freight"><Input /></Form.Item></Col>
-                                <Col xs={12} sm={8}><Form.Item label="Expected Delivery" name="deliveryDate"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
-                              </Row>
-                            </Form>
+                            <Descriptions size="small" column={3} bordered>
+                              <Descriptions.Item label="Sticker Box Count">10</Descriptions.Item>
+                              <Descriptions.Item label="Box Count">15</Descriptions.Item>
+                              <Descriptions.Item label="Ziplock Count">5</Descriptions.Item>
+                              <Descriptions.Item label="Total Parsed" span={3}><Text strong>30 / 30 Boxes</Text></Descriptions.Item>
+                            </Descriptions>
                           </div>
                         )}
                       </div>
@@ -286,21 +285,28 @@ export default function DispatchDetail() {
               />
 
               {/* Action buttons */}
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <Button icon={<PrinterOutlined />} onClick={() => navigate('/dispatch')}>
-                  Print Label
-                </Button>
-                <Button icon={<SaveOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>
-                  Save as Draft
-                </Button>
-                <Button
-                  type="primary"
-                  icon={<CarOutlined />}
-                  disabled={order.payment !== 'Confirmed'}
-                  style={{ background: order.payment === 'Confirmed' ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
-                >
-                  Confirm Dispatch
-                </Button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Space>
+                  <Text style={{ fontSize: 12 }}>Auto-Notify Status:</Text>
+                  <Tag color={notifyState ? 'success' : 'default'}>{notifyState ? 'READY' : 'WAITING'}</Tag>
+                  <input type="checkbox" checked={notifyState} onChange={(e) => setNotifyState(e.target.checked)} />
+                </Space>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Button icon={<PrinterOutlined />} onClick={() => navigate('/dispatch')}>
+                    Print Label
+                  </Button>
+                  <Button icon={<SaveOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>
+                    Save as Draft
+                  </Button>
+                  <Button
+                    type="primary"
+                    disabled={order.payment !== 'Confirmed'}
+                    style={{ background: order.payment === 'Confirmed' ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
+                    onClick={handleConfirmDispatch}
+                  >
+                    Confirm Dispatch
+                  </Button>
+                </div>
               </div>
             </Card>
           </motion.div>

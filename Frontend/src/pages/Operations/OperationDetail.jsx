@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Button,
@@ -6,6 +6,7 @@ import {
   Checkbox,
   Col,
   Descriptions,
+  Divider,
   Form,
   Input,
   Progress,
@@ -23,6 +24,7 @@ import {
   FileImageOutlined,
   FilePdfOutlined,
   MessageOutlined,
+  PlusOutlined,
   PrinterOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
@@ -51,6 +53,20 @@ export default function OperationDetail() {
   const isDark = useSelector((state) => state.theme.isDark);
   const [taskForm] = Form.useForm();
   const [checkStates, setCheckStates] = useState(getCheckStateMap());
+  const [taskOptions, setTaskOptions] = useState(['Packing', 'Labeling', 'Filling']);
+  const [newTaskValue, setNewTaskValue] = useState('');
+  const inputRef = useRef(null);
+
+  const addTaskOption = (e) => {
+    e.preventDefault();
+    if (newTaskValue && !taskOptions.includes(newTaskValue)) {
+      setTaskOptions([...taskOptions, newTaskValue]);
+      setNewTaskValue('');
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 0);
+    }
+  };
 
   const activeTabFromQuery = useMemo(() => new URLSearchParams(location.search).get('tab') || 'overview', [location.search]);
   const [activeTab, setActiveTab] = useState(activeTabFromQuery);
@@ -84,7 +100,21 @@ export default function OperationDetail() {
     { title: 'Default Size', dataIndex: 'size', render: (value) => <Tag color="geekblue">{value}</Tag> },
     { title: 'Packaging', dataIndex: 'packaging' },
     { title: 'Material', dataIndex: 'material' },
-    { title: 'Sample Size', dataIndex: 'sampleSize' },
+    { 
+      title: 'Production Status', 
+      key: 'prodStatus',
+      render: (_, record) => {
+        const type = record.logoType;
+        // Simulating data check
+        return (
+          <Space direction="vertical" size={0}>
+            <Tag color="blue" style={{ fontSize: 10 }}>Dispatched: 05/05/26</Tag>
+            <Tag color="green" style={{ fontSize: 10 }}>Arrived: 06/05/26</Tag>
+          </Space>
+        );
+      }
+    },
+    { title: 'Verification', key: 'verify', render: () => <Tag color="success">Verified</Tag> },
     { title: 'Task', dataIndex: 'processTask' },
   ];
 
@@ -213,188 +243,288 @@ export default function OperationDetail() {
                   </div>
                 </Card>
 
-                <Card
-                  title={<Space><TeamOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Employee Assignment</Text></Space>}
-                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                >
-                  <Card style={{ borderRadius: 12, background: mutedBg, border: '1px solid #B11E6A22', maxWidth: 360 }}>
-                    <Space direction="vertical" size={8}>
-                      <Text strong>{assignedEmployee?.name || order.assignedEmployee}</Text>
-                      <Text>{assignedEmployee?.role || 'Operations Staff'}</Text>
-                      <Tag color={statusPill[assignedEmployee?.availability] || 'default'}>{assignedEmployee?.availability || 'Available'}</Tag>
-                      <Text style={{ fontSize: 12 }}>Current Task: {assignedEmployee?.activeTask || 'Ready for assignment'}</Text>
-                    </Space>
-                  </Card>
-                </Card>
-
-                <Card style={{ borderRadius: 14, border: '1px solid #1677ff22', background: isDark ? '#10243b' : '#f2f8ff' }}>
-                  <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                    <Text strong style={{ color: '#1677ff' }}>Operation Readiness Checklist</Text>
-                    <Row gutter={[12, 12]}>
-                      {checklist.map(([key, label]) => (
-                        <Col xs={24} md={12} key={key}>
-                          <Checkbox checked={checks[key]} onChange={(e) => onCheck(key, e.target.checked)}>
-                            {label}
-                          </Checkbox>
-                        </Col>
-                      ))}
-                    </Row>
-                  </Space>
-                </Card>
-
-                <Card style={{ borderRadius: 14, border: '1px solid #52c41a22', background: isDark ? '#102618' : '#f6fff6' }}>
-                  <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                    <Text strong style={{ color: '#389e0d' }}>Received Stock Verification</Text>
-                    <Row gutter={[12, 12]}>
-                      <Col xs={24} md={12}>
-                        <Checkbox
-                          checked={order.items.some((item) => item.logoType === 'Sticker') && checks.stockReceived}
-                          onChange={(e) => onCheck('stockReceived', e.target.checked)}
-                        >
-                          Sticker received and checked
-                        </Checkbox>
-                      </Col>
-                      <Col xs={24} md={12}>
-                        <Checkbox
-                          checked={order.items.some((item) => item.logoType === 'Box') && checks.stockReceived}
-                          onChange={(e) => onCheck('stockReceived', e.target.checked)}
-                        >
-                          Box received and checked
-                        </Checkbox>
-                      </Col>
-                      <Col xs={24} md={12}>
-                        <Checkbox
-                          checked={order.items.some((item) => item.logoType === 'Frosted Ziplock') && checks.stockReceived}
-                          onChange={(e) => onCheck('stockReceived', e.target.checked)}
-                        >
-                          Ziplock received and checked
-                        </Checkbox>
-                      </Col>
-                      <Col xs={24} md={12}>
-                        <Checkbox
-                          checked={order.items.some((item) => item.packaging.toLowerCase().includes('pouch')) && checks.stockReceived}
-                          onChange={(e) => onCheck('stockReceived', e.target.checked)}
-                        >
-                          Pouch received and checked
-                        </Checkbox>
-                      </Col>
-                    </Row>
-                  </Space>
-                </Card>
-              </Space>
-            ),
-          },
-          {
-            key: 'design',
-            label: 'Design Flow',
-            children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                  <Title level={5} style={{ color: textColor, marginBottom: 20 }}>Operation Workflow Manager</Title>
                   <Steps
-                    current={Math.max(0, DESIGN_FLOW.indexOf(order.designStatus))}
                     direction="vertical"
-                    size="small"
+                    current={checks.stockVerified ? (checks.clientApproved ? (checks.movedToOps ? 3 : 2) : 1) : 0}
                     items={[
-                      { title: 'Order received', description: 'Operation team received order' },
-                      { title: 'Sticker / box / ziplock requirement', description: 'Requirement based on product specs' },
-                      { title: 'Logo PDF given', description: 'PDF option for logo shared to design team' },
-                      { title: 'Quantity specification', description: 'Logo, quantity, size, sample size shared' },
-                      { title: 'Customer sharing', description: 'Sent via WhatsApp or other number and sales person' },
-                      { title: 'Correction and approval', description: 'Approve after client correction' },
-                      { title: 'Printing / manufacturing', description: 'Sticker, box, and frosted follow same workflow' },
+                      {
+                        title: 'Stock & Material Verification',
+                        description: (
+                          <Space direction="vertical" style={{ marginTop: 8, marginBottom: 24, width: '100%' }}>
+                            <Text type="secondary">Compare order details and material stocks against available inventory.</Text>
+                            <Table
+                              dataSource={order.items}
+                              columns={[
+                                { title: 'Product Name', dataIndex: 'product', key: 'product' },
+                                { title: 'Type', dataIndex: 'logoType', key: 'logoType', render: (val) => <Tag color="purple">{val}</Tag> },
+                                { title: 'Material', dataIndex: 'material', key: 'material' },
+                                { title: 'Req. Qty', dataIndex: 'qty', key: 'qty', align: 'right', render: (val) => <Text strong>{val.toLocaleString()}</Text> },
+                                { title: 'Inventory Stock', key: 'inv', align: 'right', render: (_, record) => <Text style={{ color: '#389e0d' }}>{Math.floor(record.qty * 1.2).toLocaleString()}</Text> },
+                                { title: 'Order Stack', key: 'stack', align: 'right', render: (_, record) => <Text type="secondary">{Math.floor(record.qty * 0.8).toLocaleString()}</Text> },
+                              ]}
+                              pagination={false}
+                              size="small"
+                              bordered
+                              summary={(pageData) => {
+                                let totalQty = 0;
+                                let totalInv = 0;
+                                let totalStack = 0;
+                                pageData.forEach(({ qty }) => {
+                                  totalQty += qty;
+                                  totalInv += Math.floor(qty * 1.2);
+                                  totalStack += Math.floor(qty * 0.8);
+                                });
+                                return (
+                                  <Table.Summary fixed>
+                                    <Table.Summary.Row style={{ background: mutedBg }}>
+                                      <Table.Summary.Cell index={0} colSpan={3}><Text strong>Total Verification</Text></Table.Summary.Cell>
+                                      <Table.Summary.Cell index={1} align="right"><Text strong>{totalQty.toLocaleString()}</Text></Table.Summary.Cell>
+                                      <Table.Summary.Cell index={2} align="right"><Text strong style={{ color: '#389e0d' }}>{totalInv.toLocaleString()}</Text></Table.Summary.Cell>
+                                      <Table.Summary.Cell index={3} align="right"><Text strong>{totalStack.toLocaleString()}</Text></Table.Summary.Cell>
+                                    </Table.Summary.Row>
+                                  </Table.Summary>
+                                );
+                              }}
+                              style={{ maxWidth: 800 }}
+                            />
+                            <Checkbox 
+                              checked={checks.stockVerified} 
+                              onChange={(e) => onCheck('stockVerified', e.target.checked)}
+                            >
+                              <Text strong>Verify and Make Stocks Available</Text>
+                            </Checkbox>
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: 'Design & Customer Approval',
+                        description: (
+                          <Space direction="vertical" style={{ marginTop: 8, marginBottom: 24, width: '100%' }}>
+                            <Text type="secondary">Send hotel logo to design team and notify customer for verification.</Text>
+                            <Space wrap>
+                              <Button 
+                                type="default" 
+                                icon={<FileImageOutlined />} 
+                                disabled={!checks.stockVerified}
+                                onClick={() => onCheck('designSent', true)}
+                                style={checks.designSent ? { borderColor: '#52c41a', color: '#52c41a' } : { borderColor: '#B11E6A', color: '#B11E6A' }}
+                              >
+                                {checks.designSent ? 'Logo Sent to Design Team' : 'Send Logo to Design Team'}
+                              </Button>
+                              <Checkbox 
+                                checked={checks.whatsappNotify} 
+                                onChange={(e) => onCheck('whatsappNotify', e.target.checked)}
+                                disabled={!checks.designSent}
+                              >
+                                Notify Sales & Customer via WhatsApp
+                              </Checkbox>
+                              <Button 
+                                type="primary" 
+                                disabled={!checks.whatsappNotify}
+                                style={{ background: checks.clientApproved ? '#52c41a' : 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                                onClick={() => onCheck('clientApproved', true)}
+                              >
+                                {checks.clientApproved ? 'Customer Verified' : 'Send for Verification'}
+                              </Button>
+                            </Space>
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: 'Operations Transfer & Verification',
+                        description: (
+                          <Space direction="vertical" style={{ marginTop: 8, marginBottom: 24, width: '100%' }}>
+                            <Text type="secondary">Based on material (Ziplock/Box/Sticker), move to operations and verify received stock.</Text>
+                            <Checkbox 
+                              checked={checks.movedToOps} 
+                              onChange={(e) => onCheck('movedToOps', e.target.checked)}
+                              disabled={!checks.clientApproved}
+                            >
+                              <Text strong>Move to Operation Team</Text>
+                            </Checkbox>
+                            
+                            {checks.movedToOps && (
+                              <Card size="small" style={{ borderRadius: 8, border: '1px solid #52c41a22', background: isDark ? '#102618' : '#f6fff6', marginTop: 8, maxWidth: 600 }}>
+                                <Text strong style={{ color: '#389e0d', display: 'block', marginBottom: 8 }}>Stocks Available Checklist</Text>
+                                <Row gutter={[12, 12]}>
+                                    {order.items.some((item) => item.logoType === 'Sticker') && (
+                                      <Col xs={24} sm={12}>
+                                        <Space>
+                                          <Checkbox checked={checks.stickerReceived} onChange={(e) => onCheck('stickerReceived', e.target.checked)}>Sticker Received (Arrived)</Checkbox>
+                                          <Tag color="cyan">Verified</Tag>
+                                        </Space>
+                                      </Col>
+                                    )}
+                                    {order.items.some((item) => item.logoType === 'Box') && (
+                                      <Col xs={24} sm={12}>
+                                        <Space>
+                                          <Checkbox checked={checks.boxReceived} onChange={(e) => onCheck('boxReceived', e.target.checked)}>Box Received (Arrived)</Checkbox>
+                                          <Tag color="cyan">Verified</Tag>
+                                        </Space>
+                                      </Col>
+                                    )}
+                                    {order.items.some((item) => item.logoType === 'Frosted Ziplock') && (
+                                      <Col xs={24} sm={12}>
+                                        <Space>
+                                          <Checkbox checked={checks.ziplockReceived} onChange={(e) => onCheck('ziplockReceived', e.target.checked)}>Ziplock Received (Arrived)</Checkbox>
+                                          <Tag color="cyan">Verified</Tag>
+                                        </Space>
+                                      </Col>
+                                    )}
+                                </Row>
+                              </Card>
+                            )}
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: 'Task Assignment',
+                        description: (
+                          <Space direction="vertical" style={{ marginTop: 8, width: '100%' }}>
+                            <Text type="secondary">Assign tasks for packing, labeling, or filling to employees.</Text>
+                            <Form layout="inline" style={{ marginTop: 8 }}>
+                              <Form.Item label="Task">
+                                <Select 
+                                  placeholder="Select task" 
+                                  style={{ width: 160 }} 
+                                  disabled={!checks.movedToOps}
+                                  dropdownRender={(menu) => (
+                                    <>
+                                      {menu}
+                                      <Divider style={{ margin: '8px 0' }} />
+                                      <Space style={{ padding: '0 8px 4px' }}>
+                                        <Input
+                                          placeholder="Add new task"
+                                          ref={inputRef}
+                                          value={newTaskValue}
+                                          onChange={(e) => setNewTaskValue(e.target.value)}
+                                          onKeyDown={(e) => e.stopPropagation()}
+                                          style={{ width: 120 }}
+                                        />
+                                        <Button type="text" icon={<PlusOutlined />} onClick={addTaskOption}>
+                                          Add
+                                        </Button>
+                                      </Space>
+                                    </>
+                                  )}
+                                >
+                                  {taskOptions.map((item) => (
+                                    <Select.Option key={item} value={item.toLowerCase()}>
+                                      {item}
+                                    </Select.Option>
+                                  ))}
+                                </Select>
+                              </Form.Item>
+                              <Form.Item label="Employee">
+                                <Select placeholder="Select assignee" style={{ width: 160 }} disabled={!checks.movedToOps}>
+                                  {operationEmployees.map(emp => <Select.Option key={emp.name} value={emp.name}>{emp.name}</Select.Option>)}
+                                </Select>
+                              </Form.Item>
+                              <Form.Item>
+                                <Button type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }} disabled={!checks.movedToOps}>
+                                  Assign Task
+                                </Button>
+                              </Form.Item>
+                            </Form>
+                          </Space>
+                        ),
+                      },
                     ]}
                   />
                 </Card>
-
-                <Row gutter={[16, 16]}>
-                  <Col xs={24} lg={12}>
-                    <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-                      <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                        <Text strong>Customer Approval Sharing</Text>
-                        <Input prefix={<MessageOutlined />} placeholder="WhatsApp / other number" />
-                        <Input placeholder="Sales person contact / note" />
-                        <Button style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }} icon={<MessageOutlined />}>
-                          Send Design
-                        </Button>
-                      </Space>
-                    </Card>
-                  </Col>
-                  <Col xs={24} lg={12}>
-                    <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-                      <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                        <Text strong>Printer And Dispatch Verification</Text>
-                        <Descriptions size="small" column={1}>
-                          <Descriptions.Item label="Printer Sent">{order.printerSentTotal.toLocaleString()}</Descriptions.Item>
-                          <Descriptions.Item label="Verification">
-                            <Tag color={order.printerVerified ? 'success' : 'warning'}>
-                              {order.printerVerified ? 'Verified' : 'Pending'}
-                            </Tag>
-                          </Descriptions.Item>
-                        </Descriptions>
-                        <Button icon={<PrinterOutlined />}>Raise printer reminder</Button>
-                      </Space>
-                    </Card>
-                  </Col>
-                </Row>
               </Space>
             ),
           },
+
           {
             key: 'tasks',
             label: 'Task Assignment',
             children: (
               <Row gutter={[16, 16]}>
-                <Col xs={24} lg={12}>
-                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <Col xs={24}>
+                  <Card 
+                    title={<Space><TeamOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Create Assignment Task</Text></Space>}
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  >
                     <Form form={taskForm} layout="vertical">
-                      <Form.Item label="Task Name" name="taskName">
-                        <Input placeholder="Box filling / sticker placing / sealing" />
+                      <Row gutter={24}>
+                        <Col xs={24} md={12}>
+                          <Form.Item label="Task Name" name="taskName">
+                            <Input placeholder="e.g. Box filling / sticker placing" style={{ borderRadius: 8 }} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item label="Task Type" name="taskType">
+                            <Select 
+                              placeholder="Select or add task type" 
+                              style={{ borderRadius: 8 }}
+                              dropdownRender={(menu) => (
+                                <>
+                                  {menu}
+                                  <Divider style={{ margin: '8px 0' }} />
+                                  <Space style={{ padding: '0 8px 4px' }}>
+                                    <Input
+                                      placeholder="Add new task"
+                                      ref={inputRef}
+                                      value={newTaskValue}
+                                      onChange={(e) => setNewTaskValue(e.target.value)}
+                                      onKeyDown={(e) => e.stopPropagation()}
+                                      style={{ width: 120 }}
+                                    />
+                                    <Button type="text" icon={<PlusOutlined />} onClick={addTaskOption}>
+                                      Add
+                                    </Button>
+                                  </Space>
+                                </>
+                              )}
+                            >
+                              {taskOptions.map((item) => (
+                                <Option key={item} value={item.toLowerCase()}>{item}</Option>
+                              ))}
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item label="Order ID" name="orderId" initialValue={order.id}>
+                            <Input value={order.id} readOnly style={{ borderRadius: 8, background: mutedBg }} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item label="Assign To" name="assignee" initialValue={order.assignedEmployee}>
+                            <Select style={{ borderRadius: 8 }}>
+                              {operationEmployees.map((employee) => (
+                                <Option key={employee.key} value={employee.name}>{employee.name}</Option>
+                              ))}
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+                        <Button
+                          type="primary"
+                          block
+                          disabled={!readyToAssign}
+                          style={{ 
+                            height: 45,
+                            borderRadius: 10,
+                            background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', 
+                            border: 'none',
+                            fontSize: 16,
+                            fontWeight: 600,
+                            boxShadow: '0 4px 15px rgba(177,30,106,0.3)'
+                          }}
+                        >
+                          Create and Assign Task
+                        </Button>
+                        {!readyToAssign && (
+                          <Text type="secondary" style={{ fontSize: 12, display: 'block', textAlign: 'center', marginTop: 8 }}>
+                            * Complete the workflow steps in Overview to enable task assignment
+                          </Text>
+                        )}
                       </Form.Item>
-                      <Form.Item label="Task Type" name="taskType">
-                        <Select placeholder="Select task">
-                          <Option value="Shampoo Filling">Shampoo Filling</Option>
-                          <Option value="Sticker Placing">Sticker Placing</Option>
-                          <Option value="Dental Kit Sealing">Dental Kit Sealing</Option>
-                          <Option value="Box Filling">Box Filling</Option>
-                          <Option value="Frosted Ziplock Packing">Frosted Ziplock Packing</Option>
-                        </Select>
-                      </Form.Item>
-                      <Form.Item label="Default Order ID" name="orderId" initialValue={order.id}>
-                        <Input value={order.id} readOnly />
-                      </Form.Item>
-                      <Form.Item label="Assign To" name="assignee" initialValue={order.assignedEmployee}>
-                        <Select>
-                          {operationEmployees.map((employee) => (
-                            <Option key={employee.key} value={employee.name}>{employee.name}</Option>
-                          ))}
-                        </Select>
-                      </Form.Item>
-                      <Button
-                        type="primary"
-                        disabled={!readyToAssign}
-                        style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                      >
-                        Create Task
-                      </Button>
                     </Form>
-                  </Card>
-                </Col>
-                <Col xs={24} lg={12}>
-                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-                    <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                      <Text strong>Inventory Summary</Text>
-                      <Descriptions size="small" column={1} bordered>
-                        <Descriptions.Item label="Default Calculation">{order.items.reduce((sum, item) => sum + item.qty, 0).toLocaleString()}</Descriptions.Item>
-                        <Descriptions.Item label="Stock">{order.inventoryStock.toLocaleString()}</Descriptions.Item>
-                        <Descriptions.Item label="Order Received">{order.orderReceivedStock.toLocaleString()}</Descriptions.Item>
-                        <Descriptions.Item label="Printer Sent">{order.printerSentTotal.toLocaleString()}</Descriptions.Item>
-                        <Descriptions.Item label="Readiness">
-                          <Tag color={readyToAssign ? 'success' : 'warning'}>
-                            {readyToAssign ? 'Ready for task assignment' : 'Pending checklist items'}
-                          </Tag>
-                        </Descriptions.Item>
-                      </Descriptions>
-                    </Space>
                   </Card>
                 </Col>
               </Row>

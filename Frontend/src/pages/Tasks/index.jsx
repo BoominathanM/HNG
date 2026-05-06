@@ -6,6 +6,7 @@ import {
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
+  FileImageOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -149,13 +150,21 @@ export default function Tasks() {
         </Button>
       ),
     },
+    {
+      title: 'Logo',
+      key: 'logo',
+      render: (_, r) => (
+        <div style={{ width: 32, height: 32, borderRadius: 6, background: '#B11E6A10', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <FileImageOutlined style={{ color: '#B11E6A' }} />
+        </div>
+      )
+    },
     { title: 'Type', dataIndex: 'type', render: (v) => <Tag color={typeColor[v]} style={{ borderRadius: 20 }}>{v}</Tag> },
     { title: 'Title', dataIndex: 'title' },
     {
       title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'],
       render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
     },
-    { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'] },
     {
       title: 'Assignee', dataIndex: 'assignee', responsive: ['md'],
       render: (v) => <Space><Avatar size={24} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>,
