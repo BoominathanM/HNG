@@ -407,15 +407,15 @@ export default function Inventory() {
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
                   <Space>
-                    <Select defaultValue="all" style={{ width: 150 }}>
+                    <Select defaultValue="all" style={{ width: 180 }}>
                       <Option value="all">All Movements</Option>
-                      <Option value="incoming">Incoming (Stock Add)</Option>
-                      <Option value="outgoing">Outgoing (Sales)</Option>
+                      <Option value="incoming">Incoming Stocks</Option>
+                      <Option value="outgoing">Outgoing Stocks</Option>
                       <Option value="adjustment">Stock Taken (Adj)</Option>
                     </Select>
                     <DatePicker.RangePicker style={{ width: 280 }} />
                   </Space>
-                  <Button icon={<DownloadOutlined />}>Download Report</Button>
+                  <Button icon={<DownloadOutlined />} type="primary" style={{ background: '#B11E6A', border: 'none' }}>Download Report</Button>
                 </div>
                 <Table 
                   size="small"
@@ -423,14 +423,15 @@ export default function Inventory() {
                     { key: 1, date: '2024-05-01', type: 'Incoming', item: 'Soap Base (White)', qty: '+100 Kg', entity: 'ChemCo India', person: 'Admin' },
                     { key: 2, date: '2024-05-02', type: 'Outgoing', item: 'Dental Kit Boxes', qty: '-50 Pcs', entity: 'Marriott Mumbai', person: 'Priya' },
                     { key: 3, date: '2024-05-03', type: 'Stock Taken', item: 'Shampoo Bottles', qty: '-2 Pcs', entity: 'Internal Audit', person: 'Admin' },
+                    { key: 4, date: '2024-05-04', type: 'Incoming', item: 'Shampoo Concentrate', qty: '+200 Ltr', entity: 'BioLife Ltd', person: 'Admin' },
                   ]}
                   columns={[
-                    { title: 'Date', dataIndex: 'date', key: 'date' },
-                    { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t === 'Incoming' ? 'success' : t === 'Outgoing' ? 'processing' : 'warning'}>{t}</Tag> },
-                    { title: 'Item', dataIndex: 'item', key: 'item' },
-                    { title: 'Qty', dataIndex: 'qty', key: 'qty', render: (q) => <Text strong style={{ color: q.startsWith('+') ? '#52c41a' : '#ff4d4f' }}>{q}</Text> },
-                    { title: 'Source/Dest', dataIndex: 'entity', key: 'entity' },
-                    { title: 'By', dataIndex: 'person', key: 'person' },
+                    { title: 'Arrival/Departure Date', dataIndex: 'date', key: 'date', render: (v) => <Text strong>{v}</Text> },
+                    { title: 'Movement Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t === 'Incoming' ? 'success' : t === 'Outgoing' ? 'processing' : 'warning'} style={{ borderRadius: 12 }}>{t}</Tag> },
+                    { title: 'Stock Item', dataIndex: 'item', key: 'item' },
+                    { title: 'Quantity', dataIndex: 'qty', key: 'qty', render: (q) => <Text strong style={{ color: q.startsWith('+') ? '#52c41a' : '#ff4d4f' }}>{q}</Text> },
+                    { title: 'Supplier / Customer Name', dataIndex: 'entity', key: 'entity', render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                    { title: 'Handled By', dataIndex: 'person', key: 'person' },
                   ]}
                 />
               </Card>
@@ -599,7 +600,7 @@ export default function Inventory() {
                   </Col>
                   <Col span={8}>
                     <Form.Item
-                      label={<Text style={{ fontSize: 13 }}>Document Date</Text>}
+                      label={<Text style={{ fontSize: 13 }}>Arrival Date</Text>}
                       name="date"
                       style={{ marginBottom: 12 }}
                     >
@@ -775,7 +776,7 @@ export default function Inventory() {
                   </Col>
                   <Col span={8}>
                     <Form.Item
-                      label={<Text style={{ fontSize: 13 }}>Document Date</Text>}
+                      label={<Text style={{ fontSize: 13 }}>Departure Date</Text>}
                       name="date"
                       style={{ marginBottom: 12 }}
                     >
