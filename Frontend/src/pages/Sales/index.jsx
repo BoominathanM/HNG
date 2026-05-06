@@ -178,9 +178,9 @@ const REMINDERS_DATA = [
 ];
 
 const fmtDateTime = (v) =>
-  v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+  v ? dayjs(v).toDate().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 const fmtDateTimeShort = (v) =>
-  v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  v ? dayjs(v).toDate().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 
 // ─── Sample data ──────────────────────────────────────────────────────
 const INIT_LEADS = [
@@ -304,6 +304,38 @@ const INIT_NEGOTIATIONS = [
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────
+function prepareFormValues(data) {
+  if (!data) return data;
+  const processed = { ...data };
+  const dateFields = [
+    'followUpDate', 'orderDeliveryDate', 'quotationDate',
+    'paymentReminderDate', 'date', 'expectedDelivery',
+    'raisedDate', 'quotationDate'
+  ];
+
+  dateFields.forEach(field => {
+    if (processed[field] && typeof processed[field] === 'string') {
+      processed[field] = dayjs(processed[field]);
+    }
+  });
+
+  if (processed.partialDates && Array.isArray(processed.partialDates)) {
+    processed.partialDates = processed.partialDates.map(pd => ({
+      ...pd,
+      date: pd.date && typeof pd.date === 'string' ? dayjs(pd.date) : pd.date
+    }));
+  }
+
+  if (processed.splitDates && Array.isArray(processed.splitDates)) {
+    processed.splitDates = processed.splitDates.map(sd => ({
+      ...sd,
+      date: sd.date && typeof sd.date === 'string' ? dayjs(sd.date) : sd.date
+    }));
+  }
+
+  return processed;
+}
+
 function calcTotal(products = []) {
   return products.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
 }
@@ -808,7 +840,7 @@ export default function Sales() {
     setEditingLead(null);
     setSelectedRecord(record);
     leadForm.resetFields();
-    leadForm.setFieldsValue(record);
+    leadForm.setFieldsValue(prepareFormValues(record));
     setViewMode('detail');
   };
 
@@ -818,7 +850,7 @@ export default function Sales() {
     setSelectedRecord(lead);
     leadForm.resetFields();
     const defaults = lead ? { ...lead } : newLeadDefaults;
-    leadForm.setFieldsValue(defaults);
+    leadForm.setFieldsValue(prepareFormValues(defaults));
     setViewMode(lead?.customerId ? 'add-customer' : 'add-lead');
   };
 
@@ -898,7 +930,7 @@ export default function Sales() {
     setEditingQuotation(null);
     setQuotationFromLead(lead);
     quotationForm.resetFields();
-    quotationForm.setFieldsValue({ ...lead });
+    quotationForm.setFieldsValue(prepareFormValues(lead));
     setViewMode('quotation-form');
   };
 
@@ -1051,7 +1083,7 @@ export default function Sales() {
   const editExistingQuotation = (q) => {
     setEditingQuotation(q);
     quotationForm.resetFields();
-    quotationForm.setFieldsValue({ ...q });
+    quotationForm.setFieldsValue(prepareFormValues(q));
     setViewMode('quotation-form');
   };
 
@@ -1084,7 +1116,7 @@ export default function Sales() {
   const editNegotiation = (n) => {
     setEditingNegotiation(n);
     negotiationForm.resetFields();
-    negotiationForm.setFieldsValue({ ...n, negotiationNote: '' });
+    negotiationForm.setFieldsValue({ ...prepareFormValues(n), negotiationNote: '' });
     setViewMode('negotiation-form');
   };
 
