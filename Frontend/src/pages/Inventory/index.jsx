@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, Progress, Alert, InputNumber, List, message,
-  Avatar, Divider, Drawer, Tabs, DatePicker, Upload, Switch,
+  Avatar, Divider, Drawer, Tabs, DatePicker, Upload, Switch, Descriptions
 } from 'antd';
 import {
   PlusOutlined, WarningOutlined, CalculatorOutlined, SearchOutlined, CheckOutlined,
@@ -40,11 +40,11 @@ const suppliersList = [
   { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA' },
 ];
 
-const customersList = [
-  { id: 1, name: 'Marriott Mumbai', phone: '+91 22 6651 1234', email: 'purchase@marriott.in', address: 'Mumbai, MH' },
-  { id: 2, name: 'Taj Hotels Delhi', phone: '+91 11 6600 7777', email: 'orders@tajhotels.in', address: 'Delhi, DL' },
-  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in', address: 'Kolkata, WB' },
-  { id: 4, name: 'Hyatt Chennai', phone: '+91 44 6150 1234', email: 'procurement@hyatt.in', address: 'Chennai, TN' },
+const vendorsList = [
+  { id: 1, name: 'Marriott Mumbai', phone: '+91 22 6651 1234', email: 'purchase@marriott.in', address: 'Mumbai, MH', whatsapp: '912266511234' },
+  { id: 2, name: 'Taj Hotels Delhi', phone: '+91 11 6600 7777', email: 'orders@tajhotels.in', address: 'Delhi, DL', whatsapp: '911166007777' },
+  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in', address: 'Kolkata, WB', whatsapp: '913322889999' },
+  { id: 4, name: 'Hyatt Chennai', phone: '+91 44 6150 1234', email: 'procurement@hyatt.in', address: 'Chennai, TN', whatsapp: '914461501234' },
 ];
 
 export default function Inventory() {
@@ -55,13 +55,14 @@ export default function Inventory() {
   const sectionBg = isDark ? '#16161e' : '#fafafa';
 
   const [suppliers, setSuppliers] = useState(suppliersList);
-  const [customers, setCustomers] = useState(customersList);
+  const [vendors, setVendors] = useState(vendorsList);
   const [viewSupplier, setViewSupplier] = useState(null);
-  const [viewCustomer, setViewCustomer] = useState(null);
+  const [viewVendor, setViewVendor] = useState(null);
   const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
-  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [showAddVendorModal, setShowAddVendorModal] = useState(false);
   const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
   const [purchaseForm] = Form.useForm();
+  const [viewBillDetail, setViewBillDetail] = useState(null);
 
   /* ── Add Item modal (no sub-modals, keep as modal) ── */
   const [addItemModal, setAddItemModal] = useState(false);
@@ -80,10 +81,10 @@ export default function Inventory() {
   const [issueOpen, setIssueOpen] = useState(false);
   const [issueForm] = Form.useForm();
   const [activeIssueItem, setActiveIssueItem] = useState(null);
-  const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [showAddCustomer, setShowAddCustomer] = useState(false);
-  const [customerForm] = Form.useForm();
+  const [selectedVendor, setSelectedVendor] = useState(null);
+  const [vendorSearch, setVendorSearch] = useState('');
+  const [showAddVendor, setShowAddVendor] = useState(false);
+  const [vendorForm] = Form.useForm();
 
   const [categories, setCategories] = useState(['Chemicals', 'Ready Stock']);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -102,13 +103,18 @@ export default function Inventory() {
 
   const lowStock = inventory.filter((i) => i.status === 'Low' || i.status === 'Out');
 
+  const [supplierFilter, setSupplierFilter] = useState('all');
+  const [vendorFilter, setVendorFilter] = useState('all');
+  const [supplierDateRange, setSupplierDateRange] = useState(null);
+  const [vendorDateRange, setVendorDateRange] = useState(null);
+
   const filteredSuppliers = suppliersList.filter((s) =>
     s.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
     s.phone.includes(supplierSearch)
   );
-  const filteredCustomers = customersList.filter((c) =>
-    c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
-    c.phone.includes(customerSearch)
+  const filteredVendors = vendorsList.filter((c) =>
+    c.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
+    c.phone.includes(vendorSearch)
   );
 
   const openReceive = (r) => {
@@ -123,11 +129,11 @@ export default function Inventory() {
 
   const openIssue = (r) => {
     setActiveIssueItem(r);
-    setSelectedCustomer(null);
-    setCustomerSearch('');
-    setShowAddCustomer(false);
+    setSelectedVendor(null);
+    setVendorSearch('');
+    setShowAddVendor(false);
     issueForm.resetFields();
-    customerForm.resetFields();
+    vendorForm.resetFields();
     setIssueOpen(true);
   };
 
@@ -147,20 +153,20 @@ export default function Inventory() {
     setShowAddSupplierModal(false);
   };
 
-  const handleSaveCustomer = () => {
-    const vals = customerForm.getFieldsValue();
-    const newCustomer = {
+  const handleSaveVendor = () => {
+    const vals = vendorForm.getFieldsValue();
+    const newVendor = {
       id: Date.now(),
-      name: vals.cust_name || 'New Customer',
+      name: vals.cust_name || 'New Vendor',
       phone: vals.cust_phone || '',
       email: vals.cust_email || '',
       address: vals.cust_address || '',
     };
-    setCustomers([...customers, newCustomer]);
-    setSelectedCustomer(newCustomer);
-    customerForm.resetFields();
-    setShowAddCustomer(false);
-    setShowAddCustomerModal(false);
+    setVendors([...vendors, newVendor]);
+    setSelectedVendor(newVendor);
+    vendorForm.resetFields();
+    setShowAddVendor(false);
+    setShowAddVendorModal(false);
   };
 
   /* ── Style helpers ── */
@@ -317,8 +323,16 @@ export default function Inventory() {
       ),
     },
     { title: 'Min Req', dataIndex: 'min', responsive: ['lg'], render: (v, r) => `${v} ${r.unit}` },
+    {
+      title: 'Low Stock Alert', key: 'alert',
+      render: (_, r) => r.current <= r.min ? (
+        <Tag icon={<WarningOutlined />} color="error" style={{ borderRadius: 12 }}>Low Stock</Tag>
+      ) : (
+        <Tag color="success" style={{ borderRadius: 12 }}>Healthy</Tag>
+      )
+    },
     { title: 'Price', dataIndex: 'price', responsive: ['md'] },
-    { title: 'Seller', dataIndex: 'seller', responsive: ['lg'] },
+    { title: 'Vendor', dataIndex: 'seller', responsive: ['lg'] },
     { title: 'Purchased', dataIndex: 'purchasedDate', responsive: ['lg'] },
     {
       title: 'Status', dataIndex: 'status',
@@ -440,31 +454,112 @@ export default function Inventory() {
                       <Button icon={<LeftOutlined />} onClick={() => setViewSupplier(null)}>Back to Suppliers</Button>
                       <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewSupplier.name} - Purchase History</Title>
                     </div>
-                    <Table 
+                    <Table
                       size="small"
                       dataSource={[
-                        { key: 1, date: '2024-05-01', item: 'Soap Base (White)', qty: '100 Kg', price: '₹85/Kg', total: '₹8,500', status: 'Received' },
-                        { key: 2, date: '2024-04-15', item: 'Shampoo Concentrate', qty: '50 Ltr', price: '₹220/Ltr', total: '₹11,000', status: 'Received' },
+                        {
+                          key: 1,
+                          date: '2024-05-01',
+                          bill_no: 'BILL-1001',
+                          inv_no: 'INV-A101',
+                          items: [
+                            { name: 'Soap Base (White)', qty: '100 Kg', price: '₹85/Kg', total: '₹8,500' },
+                            { name: 'Glycerin', qty: '10 Kg', price: '₹120/Kg', total: '₹1,200' }
+                          ],
+                          status: 'Received'
+                        },
+                        {
+                          key: 2,
+                          date: '2024-04-15',
+                          bill_no: 'BILL-982',
+                          inv_no: 'INV-B452',
+                          items: [
+                            { name: 'Shampoo Concentrate', qty: '50 Ltr', price: '₹220/Ltr', total: '₹11,000' }
+                          ],
+                          status: 'Received'
+                        },
                       ]}
                       columns={[
                         { title: 'Date', dataIndex: 'date', key: 'date' },
-                        { title: 'Material', dataIndex: 'item', key: 'item' },
-                        { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
-                        { title: 'Unit Price', dataIndex: 'price', key: 'price' },
-                        { title: 'Total Amount', dataIndex: 'total', key: 'total', render: (v) => <Text strong>{v}</Text> },
+                        { title: 'Bill No', dataIndex: 'bill_no', key: 'bill_no', render: v => <Text strong>{v}</Text> },
+                        { title: 'Invoice No', dataIndex: 'inv_no', key: 'inv_no', render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
+                        {
+                          title: 'Materials & Quantities',
+                          key: 'items',
+                          render: (_, record) => (
+                            <List
+                              size="small"
+                              dataSource={record.items}
+                              renderItem={item => (
+                                <List.Item style={{ padding: '4px 0', border: 'none' }}>
+                                  <Space split={<Divider type="vertical" />}>
+                                    <Text strong>{item.name}</Text>
+                                    <Text>{item.qty}</Text>
+                                    <Text type="secondary">{item.price}</Text>
+                                  </Space>
+                                </List.Item>
+                              )}
+                            />
+                          )
+                        },
+                        {
+                          title: 'Total Amount',
+                          key: 'total',
+                          render: (_, r) => {
+                            const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0);
+                            return <Text strong>₹{total.toLocaleString()}</Text>;
+                          }
+                        },
                         { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="green">{v}</Tag> },
+                        {
+                          title: 'Actions',
+                          key: 'actions',
+                          render: (_, record) => (
+                            <Button
+                              size="small"
+                              type="primary"
+                              icon={<FileTextOutlined />}
+                              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
+                              onClick={() => setViewBillDetail(record)}
+                            >
+                              AI Details
+                            </Button>
+                          )
+                        },
                       ]}
                     />
                   </Card>
                 ) : (
                   <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
                       <Title level={5} style={{ margin: 0 }}>Supplier Management</Title>
-                      <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddSupplierModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Supplier</Button>
+                      <Space wrap>
+                        <Input
+                          prefix={<SearchOutlined />}
+                          placeholder="Search supplier..."
+                          value={supplierSearch}
+                          onChange={e => setSupplierSearch(e.target.value)}
+                          style={{ width: 200 }}
+                        />
+                        <DatePicker.RangePicker
+                          value={supplierDateRange}
+                          onChange={setSupplierDateRange}
+                          style={{ width: 260 }}
+                        />
+                        <Select value={supplierFilter} onChange={setSupplierFilter} style={{ width: 140 }}>
+                          <Option value="all">All Time</Option>
+                          <Option value="this_week">This Week</Option>
+                          <Option value="this_month">This Month</Option>
+                          <Option value="last_3_months">Last 3 Months</Option>
+                          <Option value="last_6_months">Last 6 Months</Option>
+                          <Option value="last_year">Last Year</Option>
+                        </Select>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddSupplierModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Supplier</Button>
+                      </Space>
                     </div>
-                    <Table 
+                    <Table
                       size="small"
-                      dataSource={suppliers}
+                      dataSource={filteredSuppliers}
                       columns={[
                         { title: 'Supplier Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
                         { title: 'Phone', dataIndex: 'phone', key: 'phone' },
@@ -484,50 +579,131 @@ export default function Inventory() {
             )
           },
           {
-            key: 'customers',
-            label: <Space><ContactsOutlined />Customers / Vendors</Space>,
+            key: 'vendors',
+            label: <Space><ContactsOutlined />Vendors</Space>,
             children: (
               <div className="fade-in">
-                {viewCustomer ? (
+                {viewVendor ? (
                   <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                      <Button icon={<LeftOutlined />} onClick={() => setViewCustomer(null)}>Back to Customers</Button>
-                      <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewCustomer.name} - Sales History</Title>
+                      <Button icon={<LeftOutlined />} onClick={() => setViewVendor(null)}>Back to Vendors</Button>
+                      <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewVendor.name} - Detailed History</Title>
                     </div>
-                    <Table 
+                    <Table
                       size="small"
                       dataSource={[
-                        { key: 1, date: '2024-05-02', item: 'Dental Kit Boxes', qty: '50 Pcs', price: '₹15/Pc', total: '₹750', status: 'Dispatched' },
-                        { key: 2, date: '2024-04-20', item: 'Custom Stickers', qty: '1000 Pcs', price: '₹2/Pc', total: '₹2,000', status: 'Delivered' },
+                        {
+                          key: 1,
+                          date: '2024-05-02',
+                          bill_no: 'SAL-2001',
+                          inv_no: 'INV-X99',
+                          items: [
+                            { name: 'Dental Kit Boxes', qty: '50 Pcs', price: '₹15/Pc', total: '₹750' },
+                            { name: 'Soap Bars', qty: '20 Pcs', price: '₹10/Pc', total: '₹200' }
+                          ],
+                          status: 'Dispatched'
+                        },
+                        {
+                          key: 2,
+                          date: '2024-04-20',
+                          bill_no: 'SAL-1980',
+                          inv_no: 'INV-X85',
+                          items: [
+                            { name: 'Custom Stickers', qty: '1000 Pcs', price: '₹2/Pc', total: '₹2,000' }
+                          ],
+                          status: 'Delivered'
+                        },
                       ]}
                       columns={[
                         { title: 'Date', dataIndex: 'date', key: 'date' },
-                        { title: 'Material', dataIndex: 'item', key: 'item' },
-                        { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
-                        { title: 'Unit Price', dataIndex: 'price', key: 'price' },
-                        { title: 'Total Amount', dataIndex: 'total', key: 'total', render: (v) => <Text strong>{v}</Text> },
+                        { title: 'Bill No', dataIndex: 'bill_no', key: 'bill_no', render: v => <Text strong>{v}</Text> },
+                        { title: 'Invoice No', dataIndex: 'inv_no', key: 'inv_no', render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
+                        {
+                          title: 'Products & Quantities',
+                          key: 'items',
+                          render: (_, record) => (
+                            <List
+                              size="small"
+                              dataSource={record.items}
+                              renderItem={item => (
+                                <List.Item style={{ padding: '4px 0', border: 'none' }}>
+                                  <Space split={<Divider type="vertical" />}>
+                                    <Text strong>{item.name}</Text>
+                                    <Text>{item.qty}</Text>
+                                    <Text type="secondary">{item.price}</Text>
+                                  </Space>
+                                </List.Item>
+                              )}
+                            />
+                          )
+                        },
+                        {
+                          title: 'Total Amount',
+                          key: 'total',
+                          render: (_, r) => {
+                            const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0);
+                            return <Text strong>₹{total.toLocaleString()}</Text>;
+                          }
+                        },
                         { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="blue">{v}</Tag> },
+                        {
+                          title: 'Actions',
+                          key: 'actions',
+                          render: (_, record) => (
+                            <Button
+                              size="small"
+                              type="primary"
+                              icon={<FileTextOutlined />}
+                              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
+                              onClick={() => setViewBillDetail(record)}
+                            >
+                              AI Details
+                            </Button>
+                          )
+                        },
                       ]}
                     />
                   </Card>
                 ) : (
                   <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                      <Title level={5} style={{ margin: 0 }}>Customer / Vendor Management</Title>
-                      <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddCustomerModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Customer</Button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                      <Title level={5} style={{ margin: 0 }}>Vendor Management</Title>
+                      <Space wrap>
+                        <Input
+                          prefix={<SearchOutlined />}
+                          placeholder="Search vendor..."
+                          value={vendorSearch}
+                          onChange={e => setVendorSearch(e.target.value)}
+                          style={{ width: 200 }}
+                        />
+                        <DatePicker.RangePicker
+                          value={vendorDateRange}
+                          onChange={setVendorDateRange}
+                          style={{ width: 260 }}
+                        />
+                        <Select value={vendorFilter} onChange={setVendorFilter} style={{ width: 140 }}>
+                          <Option value="all">All Time</Option>
+                          <Option value="this_week">This Week</Option>
+                          <Option value="this_month">This Month</Option>
+                          <Option value="last_3_months">Last 3 Months</Option>
+                          <Option value="last_6_months">Last 6 Months</Option>
+                          <Option value="last_year">Last Year</Option>
+                        </Select>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddVendorModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Vendor</Button>
+                      </Space>
                     </div>
-                    <Table 
+                    <Table
                       size="small"
-                      dataSource={customers}
+                      dataSource={filteredVendors}
                       columns={[
-                        { title: 'Customer Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
+                        { title: 'Vendor Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
                         { title: 'Phone', dataIndex: 'phone', key: 'phone' },
                         { title: 'Email', dataIndex: 'email', key: 'email' },
                         { title: 'Address', dataIndex: 'address', key: 'address' },
                         {
                           title: 'Action', key: 'action',
                           render: (_, r) => (
-                            <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewCustomer(r)} style={{ color: '#B11E6A' }}>View History</Button>
+                            <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewVendor(r)} style={{ color: '#B11E6A' }}>View Details</Button>
                           )
                         }
                       ]}
@@ -539,18 +715,18 @@ export default function Inventory() {
           },
           {
             key: 'purchases',
-            label: <Space><DollarOutlined />Purchase Expenses</Space>,
+            label: <Space><DollarOutlined />Inventory Purchase</Space>,
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
-                  <Title level={5} style={{ margin: 0 }}>Product Purchase Management</Title>
+                  <Title level={5} style={{ margin: 0 }}>Inventory Purchase Management</Title>
                   <Space>
                     <DatePicker.RangePicker style={{ width: 280 }} />
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddPurchaseModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Purchase</Button>
                     <Button icon={<DownloadOutlined />}>Export</Button>
                   </Space>
                 </div>
-                <Table 
+                <Table
                   size="small"
                   dataSource={[
                     { key: 1, date: '2024-05-01', item: 'Soap Base (White)', qty: '100 Kg', entity: 'ChemCo India', amount: '₹8,500', status: 'Paid', invoice: 'INV-101' },
@@ -562,7 +738,7 @@ export default function Inventory() {
                     { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
                     { title: 'Amount', dataIndex: 'amount', key: 'amount', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
                     { title: 'Supplier', dataIndex: 'entity', key: 'entity', render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                    { 
+                    {
                       title: 'Payment', dataIndex: 'status', key: 'payment_status',
                       render: (v) => (
                         <Space size={4}>
@@ -571,11 +747,11 @@ export default function Inventory() {
                         </Space>
                       )
                     },
-                    { 
+                    {
                       title: 'Invoice', dataIndex: 'invoice', key: 'invoice',
                       render: (v) => <Button type="link" size="small" icon={<FileTextOutlined />}>{v}</Button>
                     },
-                    { 
+                    {
                       title: 'Actions', key: 'actions',
                       render: () => (
                         <Space>
@@ -607,7 +783,7 @@ export default function Inventory() {
                   </Space>
                   <Button icon={<DownloadOutlined />} type="primary" style={{ background: '#B11E6A', border: 'none' }}>Download Report</Button>
                 </div>
-                <Table 
+                <Table
                   size="small"
                   dataSource={[
                     { key: 1, date: '2024-05-01', type: 'Incoming', item: 'Soap Base (White)', qty: '+100 Kg', entity: 'ChemCo India', person: 'Admin' },
@@ -665,9 +841,9 @@ export default function Inventory() {
                           onKeyDown={(e) => e.stopPropagation()}
                           style={{ borderRadius: 6 }}
                         />
-                        <Button 
-                          type="text" 
-                          icon={<PlusOutlined />} 
+                        <Button
+                          type="text"
+                          icon={<PlusOutlined />}
                           onClick={addCategory}
                           style={{ color: '#B11E6A', fontWeight: 600 }}
                         >
@@ -683,7 +859,7 @@ export default function Inventory() {
             <Col xs={24} sm={8}><Form.Item label="Unit" name="unit"><Select><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option><Option value="ml">ml</Option><Option value="gram">gram</Option></Select></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
-            
+
             <Col xs={24} sm={12}>
               <Form.Item label="Purchase Price" name="purchase_price">
                 <Input prefix="₹" addonAfter={
@@ -911,7 +1087,7 @@ export default function Inventory() {
       ═══════════════════════════════════════ */}
       <Drawer
         open={issueOpen}
-        onClose={() => { setIssueOpen(false); setSelectedCustomer(null); setShowAddCustomer(false); issueForm.resetFields(); customerForm.resetFields(); }}
+        onClose={() => { setIssueOpen(false); setSelectedVendor(null); setShowAddVendor(false); issueForm.resetFields(); vendorForm.resetFields(); }}
         width={Math.min(520, window.innerWidth)}
         closable={false}
         styles={{ body: { padding: 0, background: isDark ? '#13131f' : '#f4f5f9' }, header: { display: 'none' } }}
@@ -919,7 +1095,7 @@ export default function Inventory() {
           <Button
             type="primary" block
             style={saveBtn('linear-gradient(135deg,#8a1652,#B11E6A)')}
-            onClick={() => { setIssueOpen(false); setSelectedCustomer(null); setShowAddCustomer(false); issueForm.resetFields(); customerForm.resetFields(); }}
+            onClick={() => { setIssueOpen(false); setSelectedVendor(null); setShowAddVendor(false); issueForm.resetFields(); vendorForm.resetFields(); }}
           >
             CONFIRM SELL STOCK
           </Button>
@@ -1025,26 +1201,26 @@ export default function Inventory() {
             </div>
           </div>
 
-          {/* Section 3: Customer — fully inline */}
+          {/* Section 3: Vendor — fully inline */}
           {renderEntitySelector({
-            label: 'Customer',
+            label: 'Vendor',
             icon: <UserOutlined style={{ color: '#8a1652' }} />,
-            search: customerSearch,
-            setSearch: setCustomerSearch,
-            filtered: filteredCustomers,
-            selected: selectedCustomer,
-            setSelected: setSelectedCustomer,
-            showAdd: showAddCustomer,
-            setShowAdd: setShowAddCustomer,
-            addForm: customerForm,
+            search: vendorSearch,
+            setSearch: setVendorSearch,
+            filtered: filteredVendors,
+            selected: selectedVendor,
+            setSelected: setSelectedVendor,
+            showAdd: showAddVendor,
+            setShowAdd: setShowAddVendor,
+            addForm: vendorForm,
             gradient: 'linear-gradient(135deg,#8a1652,#B11E6A)',
-            onSave: handleSaveCustomer,
+            onSave: handleSaveVendor,
             addFormFields: (
               <>
                 <Row gutter={10}>
                   <Col span={14}>
                     <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="cust_name" rules={[{ required: true }]} style={{ marginBottom: 10 }}>
-                      <Input placeholder="Customer / Hotel name" style={{ borderRadius: 8, height: 40 }} />
+                      <Input placeholder="Vendor name" style={{ borderRadius: 8, height: 40 }} />
                     </Form.Item>
                   </Col>
                   <Col span={10}>
@@ -1140,20 +1316,20 @@ export default function Inventory() {
         </Form>
       </Modal>
 
-      {/* Add Customer Modal (for Customers Tab) */}
+      {/* Add Vendor Modal (for Vendors Tab) */}
       <Modal
-        title={<Text strong style={{ fontSize: 16 }}>Add New Customer / Vendor</Text>}
-        open={showAddCustomerModal}
-        onCancel={() => { setShowAddCustomerModal(false); customerForm.resetFields(); }}
+        title={<Text strong style={{ fontSize: 16 }}>Add New Vendor</Text>}
+        open={showAddVendorModal}
+        onCancel={() => { setShowAddVendorModal(false); vendorForm.resetFields(); }}
         footer={null}
         width={520}
         centered
       >
-        <Form form={customerForm} layout="vertical" onFinish={handleSaveCustomer} style={{ marginTop: 16 }}>
+        <Form form={vendorForm} layout="vertical" onFinish={handleSaveVendor} style={{ marginTop: 16 }}>
           <Row gutter={10}>
             <Col span={14}>
               <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="cust_name" rules={[{ required: true }]} style={{ marginBottom: 12 }}>
-                <Input placeholder="Customer / Hotel name" style={{ borderRadius: 8, height: 40 }} />
+                <Input placeholder="Vendor name" style={{ borderRadius: 8, height: 40 }} />
               </Form.Item>
             </Col>
             <Col span={10}>
@@ -1193,8 +1369,8 @@ export default function Inventory() {
             </Col>
           </Row>
           <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
-            <Button onClick={() => setShowAddCustomerModal(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
-            <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Save Customer</Button>
+            <Button onClick={() => setShowAddVendorModal(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
+            <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Save Vendor</Button>
           </div>
         </Form>
       </Modal>
@@ -1208,7 +1384,7 @@ export default function Inventory() {
         centered
       >
         <Form form={purchaseForm} layout="vertical" style={{ marginTop: 16 }}>
-           <Row gutter={12}>
+          <Row gutter={12}>
             <Col span={12}>
               <Form.Item label="Select Product" name="product" rules={[{ required: true }]}>
                 <Select placeholder="Select item">
@@ -1241,10 +1417,29 @@ export default function Inventory() {
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item label="Upload Invoice / Receipt" name="invoice">
-            <Upload maxCount={1} beforeUpload={() => false}>
-              <Button icon={<UploadOutlined />} style={{ width: '100%' }}>Select Invoice File</Button>
-            </Upload>
+          <Form.Item label="Invoice Details" name="invoice">
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Upload maxCount={1} beforeUpload={() => false}>
+                <Button icon={<UploadOutlined />} style={{ width: '100%' }}>Upload Invoice File</Button>
+              </Upload>
+              <Button
+                block
+                icon={<EyeOutlined />}
+                onClick={() => {
+                  message.loading('AI Scanning invoice...', 2).then(() => {
+                    purchaseForm.setFieldsValue({
+                      amount: 12500,
+                      qty: 150,
+                      date: dayjs()
+                    });
+                    message.success('AI successfully fetched details from invoice!');
+                  });
+                }}
+                style={{ borderColor: '#B11E6A', color: '#B11E6A' }}
+              >
+                Scan Invoice with AI
+              </Button>
+            </Space>
           </Form.Item>
           <Form.Item label="Payment Status" name="status" valuePropName="checked">
             <Switch checkedChildren="Paid" unCheckedChildren="Unpaid" defaultChecked />
@@ -1254,6 +1449,142 @@ export default function Inventory() {
             <Button type="primary" onClick={() => { message.success('Purchase recorded'); setShowAddPurchaseModal(false); }} style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Record Purchase</Button>
           </div>
         </Form>
+      </Modal>
+      <Modal
+        title={
+          <Space>
+            <div style={{ width: 40, height: 40, borderRadius: 8, background: 'rgba(177,30,106,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#B11E6A' }}>
+              <FileTextOutlined style={{ fontSize: 20 }} />
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 16 }}>AI Converted Bill Details</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>Extracted from original document via AI Scanning</Text>
+            </div>
+          </Space>
+        }
+        open={!!viewBillDetail}
+        onCancel={() => setViewBillDetail(null)}
+        footer={[
+          <Button key="close" onClick={() => setViewBillDetail(null)}>Close</Button>,
+          <Button key="print" type="primary" icon={<DownloadOutlined />} style={{ background: '#B11E6A', border: 'none' }}>Download AI Summary</Button>
+        ]}
+        width={900}
+        centered
+      >
+        {viewBillDetail && (
+          <Row gutter={24}>
+            <Col span={12}>
+              <Divider orientation="left" style={{ marginTop: 0 }}>Extracted Metadata</Divider>
+              <Descriptions bordered column={1} size="small">
+                <Descriptions.Item label="Bill Number"><Text strong>{viewBillDetail.bill_no}</Text></Descriptions.Item>
+                <Descriptions.Item label="Invoice Date">{viewBillDetail.date}</Descriptions.Item>
+                <Descriptions.Item label="Vendor/Supplier">{viewSupplier?.name || viewVendor?.name}</Descriptions.Item>
+                <Descriptions.Item label="Tax Amount">₹{(parseInt(viewBillDetail.items[0].total.replace(/[₹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
+                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
+              </Descriptions>
+
+              <Divider orientation="left">AI Extracted Items</Divider>
+              <Table
+                size="small"
+                pagination={false}
+                dataSource={viewBillDetail.items}
+                columns={[
+                  { title: 'Item', dataIndex: 'name', key: 'name' },
+                  { title: 'Qty', dataIndex: 'qty', key: 'qty' },
+                  { title: 'Price', dataIndex: 'price', key: 'price' },
+                  { title: 'Total', dataIndex: 'total', key: 'total', render: v => <Text strong>{v}</Text> }
+                ]}
+              />
+            </Col>
+            <Col span={12}>
+              <Divider orientation="left" style={{ marginTop: 0 }}>Original Document Preview</Divider>
+              <Card
+                styles={{ body: { padding: 8 } }}
+                style={{ background: '#f5f5f5', textAlign: 'center', minHeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}
+              >
+                <div style={{ padding: 20 }}>
+                  <ShoppingOutlined style={{ fontSize: 64, color: '#ccc', marginBottom: 16 }} />
+                  <br />
+                  <Text type="secondary">Preview of {viewBillDetail.inv_no}.pdf</Text>
+                  <br />
+                  <Button type="link" icon={<EyeOutlined />}>View Full Image</Button>
+                </div>
+              </Card>
+              <div style={{ marginTop: 12, textAlign: 'center' }}>
+                <Tag color="green">AI Confidence Score: 98.4%</Tag>
+              </div>
+            </Col>
+          </Row>
+        )}
+      </Modal>
+      <Modal
+        title={
+          <Space>
+            <div style={{ width: 40, height: 40, borderRadius: 8, background: 'rgba(177,30,106,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#B11E6A' }}>
+              <FileTextOutlined style={{ fontSize: 20 }} />
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 16 }}>AI Converted Bill Details</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>Extracted from original document via AI Scanning</Text>
+            </div>
+          </Space>
+        }
+        open={!!viewBillDetail}
+        onCancel={() => setViewBillDetail(null)}
+        footer={[
+          <Button key="close" onClick={() => setViewBillDetail(null)}>Close</Button>,
+          <Button key="print" type="primary" icon={<DownloadOutlined />} style={{ background: '#B11E6A', border: 'none' }}>Download AI Summary</Button>
+        ]}
+        width={900}
+        centered
+      >
+        {viewBillDetail && (
+          <Row gutter={24}>
+            <Col span={12}>
+              <Divider orientation="left" style={{ marginTop: 0 }}>Extracted Metadata</Divider>
+              <Descriptions bordered column={1} size="small">
+                <Descriptions.Item label="Bill Number"><Text strong>{viewBillDetail.bill_no}</Text></Descriptions.Item>
+                <Descriptions.Item label="Invoice Date">{viewBillDetail.date}</Descriptions.Item>
+                <Descriptions.Item label="Vendor/Supplier">{viewSupplier?.name || viewVendor?.name}</Descriptions.Item>
+                <Descriptions.Item label="Tax Amount">₹{(parseInt(viewBillDetail.items[0].total.replace(/[₹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
+                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
+              </Descriptions>
+
+              <Divider orientation="left">AI Extracted Items</Divider>
+              <Table
+                size="small"
+                pagination={false}
+                dataSource={viewBillDetail.items}
+                columns={[
+                  { title: 'Item', dataIndex: 'name', key: 'name' },
+                  { title: 'Qty', dataIndex: 'qty', key: 'qty' },
+                  { title: 'Price', dataIndex: 'price', key: 'price' },
+                  { title: 'Total', dataIndex: 'total', key: 'total', render: v => <Text strong>{v}</Text> }
+                ]}
+              />
+            </Col>
+            <Col span={12}>
+              <Divider orientation="left" style={{ marginTop: 0 }}>Original Document Preview</Divider>
+              <Card
+                styles={{ body: { padding: 8 } }}
+                style={{ background: '#f5f5f5', textAlign: 'center', minHeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}
+              >
+                <div style={{ padding: 20 }}>
+                  <ShoppingOutlined style={{ fontSize: 64, color: '#ccc', marginBottom: 16 }} />
+                  <br />
+                  <Text type="secondary">Preview of {viewBillDetail.inv_no}.pdf</Text>
+                  <br />
+                  <Button type="link" icon={<EyeOutlined />}>View Full Image</Button>
+                </div>
+              </Card>
+              <div style={{ marginTop: 12, textAlign: 'center' }}>
+                <Tag color="green">AI Confidence Score: 98.4%</Tag>
+              </div>
+            </Col>
+          </Row>
+        )}
       </Modal>
     </div>
   );

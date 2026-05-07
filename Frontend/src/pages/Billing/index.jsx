@@ -319,7 +319,7 @@ export default function Billing() {
                 />
               </Card>
             ),
-          },
+          }
         ]}
       />
 

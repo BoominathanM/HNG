@@ -25,6 +25,8 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import Notifications from './pages/Notifications';
 import Expenses from './pages/Expenses';
+import Purchase from './pages/Purchase';
+import Financial from './pages/Financial';
 
 function PrivateRoute() {
   const isAuthenticated = useSelector((s) => s.auth.isAuthenticated);
@@ -57,7 +59,9 @@ function ThemedApp() {
               <Route path="/dispatch/:id" element={<DispatchDetail />} />
               <Route path="/staff" element={<Staff />} />
               <Route path="/inventory" element={<Inventory />} />
+              <Route path="/purchase" element={<Purchase />} />
               <Route path="/billing" element={<Billing />} />
+              <Route path="/financial" element={<Financial />} />
               <Route path="/expenses" element={<Expenses />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/settings" element={<Settings />} />
