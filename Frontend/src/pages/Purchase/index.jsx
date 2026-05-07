@@ -6,7 +6,7 @@ import {
 import {
   PlusOutlined, DownloadOutlined, ShoppingOutlined, SearchOutlined,
   UploadOutlined, EyeOutlined, EditOutlined, FileTextOutlined, WarningOutlined, InfoCircleOutlined, WhatsAppOutlined,
-  TeamOutlined, ContactsOutlined, DollarOutlined, LeftOutlined, CheckOutlined, UserOutlined
+  TeamOutlined, ContactsOutlined, DollarOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -74,6 +74,12 @@ export default function Purchase() {
   const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [purchaseForm] = Form.useForm();
+
+  const [showUpdateStatusModal, setShowUpdateStatusModal] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [updateType, setUpdateType] = useState('supplier'); // 'supplier' or 'vendor'
+  const [statusForm] = Form.useForm();
+  const [currentStatus, setCurrentStatus] = useState('');
 
   const filteredSuppliers = suppliers.filter((s) =>
     s.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
@@ -249,15 +255,30 @@ export default function Purchase() {
                                 title: 'Actions',
                                 key: 'actions',
                                 render: (_, record) => (
-                                  <Button
-                                    size="small"
-                                    type="primary"
-                                    icon={<FileTextOutlined />}
-                                    style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
-                                    onClick={() => setViewBillDetail(record)}
-                                  >
-                                    AI Details
-                                  </Button>
+                                  <Space>
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      icon={<FileTextOutlined />}
+                                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
+                                      onClick={() => setViewBillDetail(record)}
+                                    >
+                                      AI Details
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      icon={<CheckOutlined />}
+                                      onClick={() => {
+                                        setSelectedOrder(record);
+                                        setUpdateType('supplier');
+                                        setCurrentStatus(record.status);
+                                        statusForm.setFieldsValue({ status: record.status });
+                                        setShowUpdateStatusModal(true);
+                                      }}
+                                    >
+                                      Update
+                                    </Button>
+                                  </Space>
                                 )
                               },
                             ]}
@@ -384,15 +405,30 @@ export default function Purchase() {
                                 title: 'Actions',
                                 key: 'actions',
                                 render: (_, record) => (
-                                  <Button
-                                    size="small"
-                                    type="primary"
-                                    icon={<FileTextOutlined />}
-                                    style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
-                                    onClick={() => setViewBillDetail(record)}
-                                  >
-                                    AI Details
-                                  </Button>
+                                  <Space>
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      icon={<FileTextOutlined />}
+                                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
+                                      onClick={() => setViewBillDetail(record)}
+                                    >
+                                      AI Details
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      icon={<CheckOutlined />}
+                                      onClick={() => {
+                                        setSelectedOrder(record);
+                                        setUpdateType('vendor');
+                                        setCurrentStatus(record.status);
+                                        statusForm.setFieldsValue({ status: record.status });
+                                        setShowUpdateStatusModal(true);
+                                      }}
+                                    >
+                                      Update
+                                    </Button>
+                                  </Space>
                                 )
                               },
                             ]}
@@ -986,6 +1022,118 @@ export default function Purchase() {
             </Col>
           </Row>
         )}
+      </Modal>
+
+      {/* Update Status Modal */}
+      <Modal
+        title={
+          <Space>
+            <div style={{ width: 40, height: 40, borderRadius: 8, background: 'rgba(177,30,106,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#B11E6A' }}>
+              <SafetyCertificateOutlined style={{ fontSize: 20 }} />
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 16 }}>Update Order Status</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>{selectedOrder?.bill_no} - {updateType === 'supplier' ? 'Purchase' : 'Sales'}</Text>
+            </div>
+          </Space>
+        }
+        open={showUpdateStatusModal}
+        onCancel={() => { setShowUpdateStatusModal(false); statusForm.resetFields(); }}
+        footer={null}
+        width={450}
+        centered
+      >
+        <Form
+          form={statusForm}
+          layout="vertical"
+          style={{ marginTop: 20 }}
+          onValuesChange={(changed) => {
+            if (changed.status) setCurrentStatus(changed.status);
+          }}
+          onFinish={() => {
+            message.success('Status updated successfully with proofs');
+            setShowUpdateStatusModal(false);
+            statusForm.resetFields();
+          }}
+        >
+          <Form.Item label="Order Status" name="status" rules={[{ required: true }]}>
+            <Select style={{ height: 40 }}>
+              {updateType === 'supplier' ? (
+                <>
+                  <Option value="Ordered">Ordered</Option>
+                  <Option value="In Transit">In Transit</Option>
+                  <Option value="Received">Received</Option>
+                </>
+              ) : (
+                <>
+                  <Option value="Processing">Processing</Option>
+                  <Option value="Dispatched">Dispatched</Option>
+                  <Option value="Delivered">Delivered</Option>
+                </>
+              )}
+            </Select>
+          </Form.Item>
+
+          {updateType === 'vendor' && currentStatus === 'Dispatched' && (
+            <Form.Item
+              label="Bill of Transport (LR/Bilty)"
+              name="transport_proof"
+              rules={[{ required: true, message: 'Please upload transport bill' }]}
+              extra="Upload PDF or Image of transport bill"
+            >
+              <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
+                <p className="ant-upload-drag-icon">
+                  <FileTextOutlined style={{ color: '#B11E6A' }} />
+                </p>
+                <p className="ant-upload-text">Click or drag transport bill to upload</p>
+              </Upload.Dragger>
+            </Form.Item>
+          )}
+
+          {updateType === 'vendor' && currentStatus === 'Delivered' && (
+            <Form.Item
+              label="Delivery Proof (Signed Acknowledgment)"
+              name="delivery_proof"
+              rules={[{ required: true, message: 'Please upload delivery proof' }]}
+              extra="Upload photo of signed delivery note"
+            >
+              <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
+                <p className="ant-upload-drag-icon">
+                  <CameraOutlined style={{ color: '#B11E6A' }} />
+                </p>
+                <p className="ant-upload-text">Upload Signed Delivery Note</p>
+              </Upload.Dragger>
+            </Form.Item>
+          )}
+
+          {updateType === 'supplier' && currentStatus === 'Received' && (
+            <Form.Item
+              label="Photo of Received Goods"
+              name="received_photo"
+              rules={[{ required: true, message: 'Please upload photo of goods' }]}
+              extra="Capture or upload photo of the received items"
+            >
+              <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
+                <p className="ant-upload-drag-icon">
+                  <CameraOutlined style={{ color: '#B11E6A' }} />
+                </p>
+                <p className="ant-upload-text">Capture/Upload Photo of Goods</p>
+              </Upload.Dragger>
+            </Form.Item>
+          )}
+
+          <Form.Item label="Remarks/Notes" name="remarks">
+            <Input.TextArea rows={3} placeholder="Add any additional details..." style={{ borderRadius: 8 }} />
+          </Form.Item>
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 24 }}>
+            <Button onClick={() => setShowUpdateStatusModal(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
+            <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>
+              Update Status & Save Proofs
+            </Button>
+          </div>
+        </Form>
       </Modal>
     </div>
   );

@@ -8,12 +8,14 @@ import {
   PlusOutlined, WarningOutlined, CalculatorOutlined, SearchOutlined, CheckOutlined,
   DownloadOutlined, ShoppingOutlined, LeftOutlined, CloseOutlined,
   UserOutlined, InfoCircleOutlined, MinusOutlined, FileTextOutlined,
-  EyeOutlined, UploadOutlined,
+  EyeOutlined, UploadOutlined, SafetyCertificateOutlined, HistoryOutlined,
+  ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, SwapOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -57,6 +59,10 @@ export default function Inventory() {
   const [suppliers, setSuppliers] = useState(suppliersList);
   const [vendors, setVendors] = useState(vendorsList);
   const [viewBillDetail, setViewBillDetail] = useState(null);
+  const [inventoryList, setInventoryList] = useState(inventory);
+  const [pendingAdjustments, setPendingAdjustments] = useState([
+    { key: 101, date: dayjs().format('YYYY-MM-DD'), type: 'Addition', item: 'Soap Base (White)', qty: 50, unit: 'Kg', entity: 'Manual Adj', person: 'Priya', status: 'Pending' }
+  ]);
 
   /* ── Add Item modal (no sub-modals, keep as modal) ── */
   const [addItemModal, setAddItemModal] = useState(false);
@@ -157,7 +163,45 @@ export default function Inventory() {
     setSelectedVendor(newVendor);
     vendorForm.resetFields();
     setShowAddVendor(false);
-    setShowAddVendor(false);
+  };
+
+  const requestAdjustment = (item, type, qty, entity = 'Internal') => {
+    const newAdj = {
+      key: Date.now(),
+      date: dayjs().format('YYYY-MM-DD'),
+      type: type, // 'Addition' or 'Deduction'
+      item: item.name,
+      qty: qty,
+      unit: item.unit,
+      entity: entity,
+      person: 'Staff',
+      status: 'Pending'
+    };
+    setPendingAdjustments([newAdj, ...pendingAdjustments]);
+    message.success(`Adjustment request for ${item.name} sent to Operation Head`);
+  };
+
+  const handleApproveAdjustment = (adj) => {
+    const updatedList = inventoryList.map(item => {
+      if (item.name === adj.item) {
+        const change = adj.type === 'Addition' ? adj.qty : -adj.qty;
+        const newCurrent = item.current + change;
+        return {
+          ...item,
+          current: newCurrent,
+          status: newCurrent <= 0 ? 'Out' : newCurrent <= item.min ? 'Low' : 'OK'
+        };
+      }
+      return item;
+    });
+    setInventoryList(updatedList);
+    setPendingAdjustments(pendingAdjustments.map(a => a.key === adj.key ? { ...a, status: 'Approved' } : a));
+    message.success('Stock adjustment approved and applied');
+  };
+
+  const handleRejectAdjustment = (adj) => {
+    setPendingAdjustments(pendingAdjustments.map(a => a.key === adj.key ? { ...a, status: 'Rejected' } : a));
+    message.error('Adjustment request rejected');
   };
 
   /* ── Style helpers ── */
@@ -343,9 +387,9 @@ export default function Inventory() {
       render: (_, r) => (
         <Space size={4} wrap>
           <div style={{ display: 'flex', alignItems: 'center', background: isDark ? '#2a2a3e' : '#f0f0f0', borderRadius: 6, padding: '2px', border: `1px solid ${borderColor}` }}>
-            <Button size="small" type="text" icon={<MinusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); message.info('Manual decrement'); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+            <Button size="small" type="text" icon={<MinusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); requestAdjustment(r, 'Deduction', 1); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
-            <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); message.info('Manual increment'); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+            <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); requestAdjustment(r, 'Addition', 1); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
           <Button
             size="small" type="primary"
@@ -429,8 +473,55 @@ export default function Inventory() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div className="table-responsive" style={{ padding: '4px' }}>
-                  <Table dataSource={inventory} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+                  <Table dataSource={inventoryList} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
                 </div>
+              </Card>
+            )
+          },
+          {
+            key: 'approvals',
+            label: <Space><SafetyCertificateOutlined /> Approvals <Tag color="orange" style={{ borderRadius: 10, marginLeft: 4 }}>{pendingAdjustments.filter(a => a.status === 'Pending').length}</Tag></Space>,
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                <div style={{ marginBottom: 16 }}>
+                  <Title level={5} style={{ margin: 0, color: textColor }}>Operation Head Approval Center</Title>
+                  <Text type="secondary">Review and approve manual stock adjustments (+ / -)</Text>
+                </div>
+                <Table
+                  size="small"
+                  dataSource={pendingAdjustments}
+                  columns={[
+                    { title: 'Date', dataIndex: 'date', key: 'date' },
+                    { title: 'Item', dataIndex: 'item', key: 'item', render: (v) => <Text strong>{v}</Text> },
+                    {
+                      title: 'Type', dataIndex: 'type', key: 'type',
+                      render: (t) => (
+                        <Tag color={t === 'Addition' ? 'success' : 'error'} icon={t === 'Addition' ? <PlusOutlined /> : <MinusOutlined />} style={{ borderRadius: 12 }}>
+                          {t}
+                        </Tag>
+                      )
+                    },
+                    { title: 'Qty', dataIndex: 'qty', key: 'qty', render: (q, r) => <Text strong>{q} {r.unit}</Text> },
+                    { title: 'Requested By', dataIndex: 'person', key: 'person' },
+                    {
+                      title: 'Status', dataIndex: 'status', key: 'status',
+                      render: (s) => (
+                        <Tag color={s === 'Pending' ? 'orange' : s === 'Approved' ? 'success' : 'error'} icon={s === 'Pending' ? <ClockCircleOutlined /> : s === 'Approved' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}>
+                          {s}
+                        </Tag>
+                      )
+                    },
+                    {
+                      title: 'Action', key: 'action',
+                      render: (_, record) => record.status === 'Pending' ? (
+                        <Space>
+                          <Button size="small" type="primary" ghost icon={<CheckOutlined />} onClick={() => handleApproveAdjustment(record)}>Approve</Button>
+                          <Button size="small" danger ghost icon={<CloseOutlined />} onClick={() => handleRejectAdjustment(record)}>Reject</Button>
+                        </Space>
+                      ) : null
+                    }
+                  ]}
+                />
               </Card>
             )
           },
@@ -574,9 +665,16 @@ export default function Inventory() {
           <Button
             type="primary" block
             style={saveBtn('linear-gradient(135deg,#B11E6A,#D85C9E)')}
-            onClick={() => { setReceiveOpen(false); setSelectedSupplier(null); setShowAddSupplier(false); receiveForm.resetFields(); supplierForm.resetFields(); }}
+            onClick={() => {
+              const vals = receiveForm.getFieldsValue();
+              requestAdjustment(activeItem, 'Addition', vals.qty || 0, selectedSupplier?.name || 'Manual Add');
+              setReceiveOpen(false);
+              setSelectedSupplier(null);
+              setShowAddSupplier(false);
+              receiveForm.resetFields();
+            }}
           >
-            CONFIRM ADD STOCK
+            REQUEST APPROVAL FOR ADD STOCK
           </Button>
         }
         footerStyle={{ padding: '12px 16px', background: cardBg, borderTop: `1px solid ${borderColor}` }}
@@ -763,9 +861,16 @@ export default function Inventory() {
           <Button
             type="primary" block
             style={saveBtn('linear-gradient(135deg,#8a1652,#B11E6A)')}
-            onClick={() => { setIssueOpen(false); setSelectedVendor(null); setShowAddVendor(false); issueForm.resetFields(); vendorForm.resetFields(); }}
+            onClick={() => {
+              const vals = issueForm.getFieldsValue();
+              requestAdjustment(activeIssueItem, 'Deduction', vals.qty || 0, selectedVendor?.name || 'Manual Sell');
+              setIssueOpen(false);
+              setSelectedVendor(null);
+              setShowAddVendor(false);
+              issueForm.resetFields();
+            }}
           >
-            CONFIRM SELL STOCK
+            REQUEST APPROVAL FOR SELL STOCK
           </Button>
         }
         footerStyle={{ padding: '12px 16px', background: cardBg, borderTop: `1px solid ${borderColor}` }}
