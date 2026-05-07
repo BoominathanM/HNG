@@ -50,6 +50,7 @@ const STATUS_COLORS = {
   'Quotation (Sent)': '#B11E6A',
   'Quotation (Not Sent)': '#d9d9d9',
   Negotiation: '#fa8c16',
+  Invoiced: '#722ed1',
   Rejected: '#ff4d4f',
 };
 
@@ -196,7 +197,7 @@ const INIT_LEADS = [
     ],
     forwardingCharge: true, deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'ON_DISPATCH',
     priority: 0, rowsInHotel: 50, generalOccupancy: 1000,
-    alternativePerson: ['Managers'], alternativePhone: '+91 94000 00001',
+    alternativePerson: ['Managers'], alternativeName: 'John Doe', alternativePhone: '+91 94000 00001',
   },
 ];
 
@@ -258,7 +259,7 @@ const INIT_CUSTOMERS = [
     salesPerson: 'Priya', source: 'Google',
     city: 'Coimbatore', state: 'Tamil Nadu', pincode: '641001',
     detailedAddress: '12, Avinashi Road, Near Gandhipuram Bus Stand, Coimbatore - 641001',
-    alternativePerson: ['Managers', 'Finance'], alternativePhone: '+91 94000 00001',
+    alternativePerson: ['Managers', 'Finance'], alternativeName: 'Jane Smith', alternativePhone: '+91 94000 00001',
     rowsInHotel: 120, generalOccupancy: 3600,
     productType: 'PERSONALIZED_KIT', displayUnit: 'ZIPLOCK_POUCH',
     products: SHARED_PRODUCTS,
@@ -988,6 +989,40 @@ export default function Sales() {
     }
   };
 
+  const convertToInvoice = (q) => {
+    const newOrder = {
+      key: Date.now(),
+      oid: `ORD-${2400 + ordersData.length + 1}`,
+      invId: `INV-${3000 + ordersData.length + 1}`,
+      quotationId: q.qid,
+      negotiationId: q.nid,
+      status: 'Payment Pending',
+      date: new Date().toISOString().split('T')[0],
+      totalAmount: q.totalAmount || calcTotal(q.products),
+      createdAt: new Date().toISOString(),
+      salesPerson: q.salesPerson || 'Current User',
+      hotelName: q.hotelName, billingName: q.billingName, location: q.location,
+      detailedAddress: q.detailedAddress, city: q.city, state: q.state, pincode: q.pincode,
+      billType: q.billType, paymentTerms: q.paymentTerms,
+      products: q.products, advance: 0,
+    };
+    setOrdersData(prev => [...prev, newOrder]);
+    if (q.qid) {
+      setQuotationsData(prev => prev.map(qt => qt.key === q.key ? { ...qt, status: 'Invoiced' } : qt));
+    }
+    if (q.nid) {
+      setNegotiationsData(prev => prev.map(n => n.key === q.key ? { ...n, status: 'Invoiced' } : n));
+    }
+    message.success('Converted to Invoice successfully! Order is now pending payment.');
+    setActiveTab('orders');
+    setViewMode('table');
+  };
+
+  const recordPayment = (order) => {
+    setOrdersData(prev => prev.map(o => o.key === order.key ? { ...o, status: 'In Production', advance: o.totalAmount } : o));
+    message.success('Payment recorded and Order is now in production!');
+  };
+
   const startOrderFromQuotation = (q) => {
     const newOrder = {
       key: Date.now(),
@@ -1252,9 +1287,9 @@ export default function Sales() {
       render: (_, r) => (
         <Space size={4}>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedRecord(r); setViewMode('negotiation-detail'); }} /></Tooltip>
-          <Tooltip title="Convert to Order">
-            <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertNegotiationToOrder(r)}>
-              → Order
+          <Tooltip title="Convert to Invoice">
+            <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertToInvoice(r)}>
+              → Invoice
             </Button>
           </Tooltip>
         </Space>
@@ -1301,9 +1336,9 @@ export default function Sales() {
               → Negotiation
             </Button>
           </Tooltip>
-          <Tooltip title="Convert to Order">
-            <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => startOrderFromQuotation(r)}>
-              → Order
+          <Tooltip title="Convert to Invoice">
+            <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertToInvoice(r)}>
+              → Invoice
             </Button>
           </Tooltip>
         </Space>
@@ -1343,6 +1378,13 @@ export default function Sales() {
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
           </Tooltip>
+          {r.status === 'Payment Pending' && (
+            <Tooltip title="Record Payment">
+              <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => recordPayment(r)}>
+                Record Payment
+              </Button>
+            </Tooltip>
+          )}
         </Space>
       ),
     },
@@ -1593,12 +1635,8 @@ export default function Sales() {
                 <Space direction="vertical" style={{ width: '100%' }} size={10}>
                   <Button icon={<EditOutlined />} block size="large" style={{ borderRadius: 10, height: 44 }} onClick={() => editExistingQuotation(q)}>Edit Products / Rates</Button>
                   <Button icon={<WhatsAppOutlined />} block size="large" style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => sendViaWhatsApp(q)}>Send via WhatsApp</Button>
-                  {(q.flowStep || 0) < 2 && (
-                    <Button block size="large" style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => moveToNegotiation(q)}>Move to Negotiation</Button>
-                  )}
-                  {(q.flowStep || 0) >= 2 && (
-                    <Button block size="large" style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => startOrderFromQuotation(q)}>Convert to Order</Button>
-                  )}
+                  <Button block size="large" style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => moveToNegotiation(q)}>Move to Negotiation</Button>
+                  <Button block size="large" style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => convertToInvoice(q)}>Convert to Invoice</Button>
                 </Space>
               </Card>
               {q.customerId && (
@@ -1738,7 +1776,7 @@ export default function Sales() {
                 <Space direction="vertical" style={{ width: '100%' }} size={10}>
                   <Button icon={<EditOutlined />} block size="large" style={{ background: '#fa8c16', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => editNegotiation(n)}>Submit Counter Offer</Button>
                   <Button icon={<WhatsAppOutlined />} block size="large" style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => sendViaWhatsApp(n)}>Send via WhatsApp</Button>
-                  <Button block size="large" style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => convertNegotiationToOrder(n)}>Convert to Order</Button>
+                  <Button block size="large" style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => convertToInvoice(n)}>Convert to Invoice</Button>
                 </Space>
               </Card>
               <Card size="small" style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
@@ -2380,11 +2418,11 @@ export default function Sales() {
                       <Descriptions.Item label="No. of Rooms">{record.rowsInHotel}</Descriptions.Item>
                       <Descriptions.Item label="Occupancy">{record.generalOccupancy}</Descriptions.Item>
                       <Descriptions.Item label="Hotel Type">{record.hotelType}</Descriptions.Item>
-                      <Descriptions.Item label="Contact Person">{record.contactPerson || '—'}</Descriptions.Item>
                       <Descriptions.Item label="POC Designation">{record.pocDesignation || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Phone">{record.phone || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Alternative Name">{record.alternativeName || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Alternative Role">{record.alternativeRole || '—'}</Descriptions.Item>
-                      <Descriptions.Item label="Alternative Phone" span={2}>{record.alternativePhone || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Alternative Number" span={1}>{record.alternativePhone || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Email">{record.email || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Sales Person">{record.salesPerson}</Descriptions.Item>
                       <Descriptions.Item label="Location">{record.location}</Descriptions.Item>
@@ -2392,27 +2430,44 @@ export default function Sales() {
                   </div>
                 ) : (
                   <Row gutter={16}>
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
                         <Input placeholder="e.g. Hotel Blue Star" prefix={<BankOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={6}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="No. of Rooms" name="rowsInHotel" rules={[{ required: true }]}>
                         <InputNumber placeholder="50" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={6}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="General Occupancy" name="generalOccupancy" rules={[{ required: true }]}>
                         <InputNumber placeholder="1000" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
+
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Hotel Logo" name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
+                        <Upload beforeUpload={() => false} accept="image/*,.pdf,.svg,.ai" maxCount={1} listType="picture">
+                          <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Logo</Button>
+                        </Upload>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
+                        <Select placeholder="Select hotel type">
+                          <Option value="OLD">Old Hotel</Option>
+                          <Option value="NEW">New Hotel</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Billing Name" name="billingName">
                         <Input placeholder="e.g. HOTEL BLUESTAR" />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
+
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Contact Person" name="contactPerson">
                         <Input placeholder="Reception / Manager" prefix={<UserOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
@@ -2427,24 +2482,26 @@ export default function Sales() {
                         <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
+
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Email" name="email">
-                        <Input placeholder="optional" prefix={<MailOutlined style={{ color: '#ccc' }} />} />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="Alternative Contact" name="alternativeRole" rules={[{ required: true, message: 'Alternative contact is required' }]}>
+                      <Form.Item label="Alternative Role" name="alternativeRole" rules={[{ required: true, message: 'Alternative contact role is required' }]}>
                         <SelectWithAdd defaultOptions={ALTERNATIVE_PERSON_OPTIONS} placeholder="Select / Add Role" />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Alternative Phone" name="alternativePhone" rules={[{ required: true, message: 'Alternative phone is required' }]}>
-                        <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
+                      <Form.Item label="Alternative Name" name="alternativeName">
+                        <Input placeholder="Full Name" prefix={<UserOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Sales Person" name="salesPerson">
-                        <Input placeholder="Sales person name" prefix={<TeamOutlined style={{ color: '#ccc' }} />} />
+                      <Form.Item label="Alternative Number" name="alternativePhone" rules={[{ required: true, message: 'Alternative phone is required' }]}>
+                        <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
+                      </Form.Item>
+                    </Col>
+
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Email" name="email">
+                        <Input placeholder="optional" prefix={<MailOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -2453,35 +2510,22 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
+                      <Form.Item label="Sales Person" name="salesPerson">
+                        <Input placeholder="Sales person name" prefix={<TeamOutlined style={{ color: '#ccc' }} />} />
+                      </Form.Item>
+                    </Col>
+
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Source" name="source">
                         <SelectWithAdd defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }]} placeholder="Select source" />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
-                        <Select placeholder="Select hotel type">
-                          <Option value="OLD">Old Hotel</Option>
-                          <Option value="NEW">New Hotel</Option>
-                        </Select>
-                      </Form.Item>
-                    </Col>
-
-                    {/* Hotel Logo Upload */}
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Hotel Logo" name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
-                        <Upload beforeUpload={() => false} accept="image/*,.pdf,.svg,.ai" maxCount={1} listType="picture">
-                          <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Hotel Logo</Button>
-                        </Upload>
-                      </Form.Item>
-                    </Col>
-
-                    {/* Priority settings moved here for cleaner flow */}
-                    <Col xs={24} sm={12}>
                       <Form.Item label={`Priority Level (${watchedPriority || 0}%)`} name="priority">
                         <Slider min={0} max={100} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
                       {watchedPriority > 0 && (
                         <Form.Item label="Priority Note" name="mentionPriority" rules={[{ required: true }]}>
                           <Input placeholder="Why is this high priority?" />
@@ -2489,7 +2533,7 @@ export default function Sales() {
                       )}
                     </Col>
 
-                    <Col xs={24} sm={12}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Order Delivery Date" name="orderDeliveryDate">
                         <DatePicker style={{ width: '100%' }} />
                       </Form.Item>
