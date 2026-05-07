@@ -172,6 +172,13 @@ const PERFORMANCE_TARGETS = [
   },
 ];
 
+const SALES_PERSONS = [
+  { value: 'Priya', label: 'Priya (Sales)' },
+  { value: 'Rahul', label: 'Rahul (Sales)' },
+  { value: 'Lakshmi', label: 'Lakshmi (Sales)' },
+  { value: 'Suresh', label: 'Suresh (Sales)' },
+];
+
 const REMINDERS_DATA = [
   { key: 1, type: 'Delayed Payment', customer: 'Hotel Blue Star', amount: 25000, daysDelayed: 12, salesPerson: 'Priya', reminderDate: '2024-05-06', reminderTime: '10:00 AM' },
   { key: 2, type: 'Follow-up', customer: 'Grand Regency', topic: 'Quotation Review', dueDate: '2024-05-05', salesPerson: 'Priya', reminderDate: '2024-05-05', reminderTime: '02:30 PM' },
@@ -1217,7 +1224,7 @@ export default function Sales() {
       render: (v) => <Text strong style={{ color: textColor }}>{v}</Text>,
     },
     { title: 'Source', dataIndex: 'source', render: (v) => v || '—' },
-    { title: 'Sales Person', dataIndex: 'salesPerson', render: (v) => v || '—' },
+    { title: 'Assigned To', dataIndex: 'salesPerson', render: (v) => v || '—' },
     { title: 'Follow Up Name', dataIndex: 'followUpName', render: (v) => v || '—' },
     {
       title: 'Follow Up Date/Time', dataIndex: 'followUpDate',
@@ -1259,7 +1266,7 @@ export default function Sales() {
     { title: 'Hotel / Company', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
     { title: 'Location', dataIndex: 'location' },
     { title: 'Phone', dataIndex: 'phone' },
-    { title: 'Sales Person', dataIndex: 'salesPerson' },
+    { title: 'Assigned To', dataIndex: 'salesPerson' },
     { title: 'Created At', dataIndex: 'createdAt', render: (v) => fmtDateTimeShort(v) },
     {
       title: 'Actions', key: 'actions',
@@ -1279,7 +1286,7 @@ export default function Sales() {
   const negotiationColumns = [
     { title: 'Hotel', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
     { title: 'Location', dataIndex: 'location' },
-    { title: 'Sales Person', dataIndex: 'salesPerson' },
+    { title: 'Assigned To', dataIndex: 'salesPerson' },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v] || 'orange'}>{v}</Tag> },
     { title: 'Created At', dataIndex: 'createdAt', render: (v) => fmtDateTimeShort(v) },
     {
@@ -1320,7 +1327,7 @@ export default function Sales() {
       title: 'Created At', dataIndex: 'createdAt', responsive: ['md'],
       render: (v) => fmtDateTime(v),
     },
-    { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
+    { title: 'Assigned To', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -1364,7 +1371,7 @@ export default function Sales() {
       title: 'Created At', dataIndex: 'createdAt', responsive: ['md'],
       render: (v) => fmtDateTime(v),
     },
-    { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
+    { title: 'Assigned To', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -1576,7 +1583,7 @@ export default function Sales() {
                   <Descriptions.Item label="Location">{q.location}</Descriptions.Item>
                   <Descriptions.Item label="Contact Person">{q.contactPerson || '—'}</Descriptions.Item>
                   <Descriptions.Item label="Phone"><a href={`tel:${q.phone}`}>{q.phone || '—'}</a></Descriptions.Item>
-                  <Descriptions.Item label="Sales Person">{q.salesPerson}</Descriptions.Item>
+                  <Descriptions.Item label="Assigned To">{q.salesPerson}</Descriptions.Item>
                   {q.billType === 'GST' && (
                     <>
                       <Descriptions.Item label="GSTIN"><Text fontFamily="monospace">{q.gstNumber || '—'}</Text></Descriptions.Item>
@@ -2424,7 +2431,7 @@ export default function Sales() {
                       <Descriptions.Item label="Alternative Role">{record.alternativeRole || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Alternative Number" span={1}>{record.alternativePhone || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Email">{record.email || '—'}</Descriptions.Item>
-                      <Descriptions.Item label="Sales Person">{record.salesPerson}</Descriptions.Item>
+                      <Descriptions.Item label="Assigned To">{record.salesPerson}</Descriptions.Item>
                       <Descriptions.Item label="Location">{record.location}</Descriptions.Item>
                     </Descriptions>
                   </div>
@@ -2510,8 +2517,8 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Sales Person" name="salesPerson">
-                        <Input placeholder="Sales person name" prefix={<TeamOutlined style={{ color: '#ccc' }} />} />
+                      <Form.Item label="Assign Lead To" name="salesPerson" rules={[{ required: true, message: 'Please assign this lead' }]}>
+                        <SelectWithAdd defaultOptions={SALES_PERSONS} placeholder="Select / Add Sales Person" />
                       </Form.Item>
                     </Col>
 
