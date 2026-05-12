@@ -9,7 +9,8 @@ import {
   TeamOutlined, ContactsOutlined, DollarOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined,
   ThunderboltOutlined, RobotOutlined
 } from '@ant-design/icons';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { addRaisedRequest, raiseOrder } from '../../store/slices/purchaseSlice';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
@@ -49,6 +50,9 @@ const INVENTORY_DATA = [
 
 export default function Purchase() {
   const isDark = useSelector((s) => s.theme.isDark);
+  const dispatch = useDispatch();
+  const raisedRequests = useSelector((s) => s.purchase.raisedRequests);
+  const purchaseOrders = useSelector((s) => s.purchase.purchaseOrders);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
@@ -75,6 +79,12 @@ export default function Purchase() {
   const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [purchaseForm] = Form.useForm();
+
+  const [showRequestOrderModal, setShowRequestOrderModal] = useState(false);
+  const [selectedApprovedRequest, setSelectedApprovedRequest] = useState(null);
+  const [requestOrderForm] = Form.useForm();
+  const [requestOrderScanLoading, setRequestOrderScanLoading] = useState(false);
+  const [requestOrderScannedFile, setRequestOrderScannedFile] = useState(null);
 
   const [showUpdateStatusModal, setShowUpdateStatusModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -175,10 +185,53 @@ export default function Purchase() {
   };
 
   const handleRaiseRequest = (values) => {
-    message.success(`Purchase request for ${values.product} raised successfully`);
+    const newRequest = {
+      key: Date.now(),
+      item: values.product,
+      supplier: values.supplier,
+      qty: values.qty,
+      unit: values.unit || (selectedProduct?.unit || ''),
+      payment_terms: values.payment_terms,
+      date: dayjs().format('YYYY-MM-DD'),
+    };
+    dispatch(addRaisedRequest(newRequest));
+    message.success(`Purchase request for ${values.product} raised — pending financial approval`);
     setShowAddPurchaseModal(false);
     purchaseForm.resetFields();
     setSelectedProduct(null);
+  };
+
+  const handleRequestOrder = (values) => {
+    dispatch(raiseOrder({
+      requestKey: selectedApprovedRequest.key,
+      bill_no: values.bill_no,
+      inv_no: values.inv_no || '',
+      price: values.unit_price,
+      amount: values.total_amount,
+      orderDate: values.order_date ? values.order_date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
+    }));
+    message.success(`Order for ${selectedApprovedRequest.item} submitted to Financial for payment`);
+    setShowRequestOrderModal(false);
+    requestOrderForm.resetFields();
+    setSelectedApprovedRequest(null);
+    setRequestOrderScannedFile(null);
+  };
+
+  const handleRequestOrderAIScan = () => {
+    if (!requestOrderScannedFile) { message.warning('Please upload an invoice first'); return; }
+    setRequestOrderScanLoading(true);
+    setTimeout(() => {
+      const suggestedPrice = selectedApprovedRequest ? Math.floor(Math.random() * 100 + 50) : 85;
+      requestOrderForm.setFieldsValue({
+        bill_no: 'PUR-' + Math.floor(Math.random() * 9000 + 1000),
+        inv_no: 'INV-' + Math.floor(Math.random() * 9000 + 1000),
+        unit_price: suggestedPrice,
+        total_amount: selectedApprovedRequest ? suggestedPrice * selectedApprovedRequest.qty : 9500,
+        order_date: dayjs(),
+      });
+      setRequestOrderScanLoading(false);
+      message.success('AI extracted invoice details successfully!');
+    }, 2200);
   };
 
   const handleSupplierAIScan = () => {
@@ -275,6 +328,16 @@ export default function Purchase() {
                             )
                           },
                           {
+                            title: 'Request Status',
+                            key: 'req_status',
+                            render: (_, r) => {
+                              const req = raisedRequests.find(req => req.item === r.name);
+                              if (!req) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
+                              return <Tag color={colorMap[req.status]} style={{ borderRadius: 12 }}>{req.status}</Tag>;
+                            }
+                          },
+                          {
                             title: 'Action',
                             key: 'action',
                             render: (_, r) => (
@@ -292,6 +355,61 @@ export default function Purchase() {
                                 Raise Request
                               </Button>
                             )
+                          }
+                        ]}
+                      />
+                    </div>
+                  )
+                },
+                {
+                  key: 'purchase_requests',
+                  label: <Space><ShoppingOutlined />Purchase Requests</Space>,
+                  children: (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ marginBottom: 16 }}>
+                        <Title level={5} style={{ margin: 0, color: textColor }}>Purchase Requests</Title>
+                        <Text type="secondary">Requests raised from Stock Status — pending financial approval. Raise an order once approved.</Text>
+                      </div>
+                      <Table
+                        size="small"
+                        dataSource={raisedRequests}
+                        pagination={{ pageSize: 8 }}
+                        locale={{ emptyText: 'No purchase requests raised yet. Go to Stock Status tab to raise a request.' }}
+                        columns={[
+                          { title: 'Date', dataIndex: 'date', key: 'date' },
+                          { title: 'Item', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
+                          { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                          { title: 'Qty', key: 'qty', render: (_, r) => `${r.qty} ${r.unit}` },
+                          { title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', render: v => <Text style={{ fontSize: 11 }}>{v}</Text> },
+                          {
+                            title: 'Status', dataIndex: 'status', key: 'status',
+                            render: v => {
+                              const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
+                              return <Tag color={colorMap[v]} style={{ borderRadius: 12 }}>{v}</Tag>;
+                            }
+                          },
+                          {
+                            title: 'Action', key: 'action',
+                            render: (_, r) => {
+                              const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === r.key);
+                              if (r.status === 'Rejected') return <Tag color="error" style={{ borderRadius: 12 }}>Rejected</Tag>;
+                              if (orderAlreadyRaised) return <Tag color="success" style={{ borderRadius: 12 }}>Order Sent</Tag>;
+                              return (
+                                <Button
+                                  size="small"
+                                  type="primary"
+                                  icon={<ShoppingOutlined />}
+                                  disabled={r.status !== 'Approved'}
+                                  onClick={() => { setSelectedApprovedRequest(r); setShowRequestOrderModal(true); }}
+                                  style={{
+                                    background: r.status === 'Approved' ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined,
+                                    border: 'none',
+                                  }}
+                                >
+                                  {r.status === 'Approved' ? 'Request Order' : 'Awaiting Approval'}
+                                </Button>
+                              );
+                            }
                           }
                         ]}
                       />
@@ -688,144 +806,246 @@ export default function Purchase() {
         </Col>
       </Row>
 
+      {/* Raise Purchase Request Modal */}
       <Modal
-        title={<Text strong style={{ fontSize: 16 }}>Raise Purchase Order Request</Text>}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <ShoppingOutlined style={{ color: '#fff', fontSize: 18 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Raise Purchase Request</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Select supplier → Ask quotation → Raise request</div>
+            </div>
+          </div>
+        }
         open={showAddPurchaseModal}
         onCancel={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); }}
         footer={null}
-        width={700}
+        width={560}
         centered
       >
-        <Form form={purchaseForm} layout="vertical" onFinish={handleRaiseRequest} style={{ marginTop: 16 }}>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="Product" name="product" rules={[{ required: true }]}>
-                <Input disabled />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Supplier" name="supplier" rules={[{ required: true }]}>
-                <Select placeholder="Select supplier">
-                  <Option value="ChemCo India">ChemCo India</Option>
-                  <Option value="BioLife Ltd">BioLife Ltd</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
+        <Form form={purchaseForm} layout="vertical" onFinish={handleRaiseRequest} style={{ marginTop: 4 }}>
 
+          {/* Step 1 — Product & Supplier */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <Text style={{ fontSize: 11, fontWeight: 600, color: '#B11E6A', letterSpacing: 1, display: 'block', marginBottom: 12 }}>STEP 1 — PRODUCT & SUPPLIER</Text>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="Product" name="product" rules={[{ required: true }]} style={{ marginBottom: 0 }}>
+                  <Input disabled style={{ borderRadius: 8, background: isDark ? '#1e2235' : '#fff' }} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Supplier" name="supplier" rules={[{ required: true, message: 'Select a supplier' }]} style={{ marginBottom: 0 }}>
+                  <Select placeholder="Select supplier" style={{ borderRadius: 8 }}>
+                    {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+
+          {/* Stock Status */}
           {selectedProduct && (
-            <div style={{ padding: '12px 16px', background: selectedProduct.current <= selectedProduct.min ? '#fffbe6' : '#e6f7ff', border: `1px solid ${selectedProduct.current <= selectedProduct.min ? '#ffe58f' : '#91d5ff'}`, marginBottom: 20, borderRadius: 8, display: 'flex', gap: 12 }}>
-              <div style={{ color: selectedProduct.current <= selectedProduct.min ? '#856404' : '#0050b3', fontSize: 18 }}><InfoCircleOutlined /></div>
-              <Descriptions size="small" column={3} title="Stock Status">
-                <Descriptions.Item label="Current Stock"><Text strong>{selectedProduct.current} {selectedProduct.unit}</Text></Descriptions.Item>
-                <Descriptions.Item label="Min. Required"><Text type="danger">{selectedProduct.min} {selectedProduct.unit}</Text></Descriptions.Item>
-                <Descriptions.Item label="Gap"><Text strong style={{ color: '#ff4d4f' }}>{selectedProduct.min - selectedProduct.current} {selectedProduct.unit}</Text></Descriptions.Item>
-              </Descriptions>
+            <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 16, border: `1px solid ${selectedProduct.current <= selectedProduct.min ? '#ffe58f' : '#91d5ff'}` }}>
+              <div style={{ background: selectedProduct.current <= selectedProduct.min ? '#fffbe6' : '#e6f7ff', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <InfoCircleOutlined style={{ color: selectedProduct.current <= selectedProduct.min ? '#d48806' : '#0050b3', fontSize: 13 }} />
+                <Text style={{ fontSize: 12, fontWeight: 600, color: selectedProduct.current <= selectedProduct.min ? '#ad6800' : '#003a8c' }}>Stock Status</Text>
+                <Tag color={selectedProduct.current <= selectedProduct.min ? 'warning' : 'processing'} style={{ marginLeft: 'auto', borderRadius: 10, fontSize: 11 }}>
+                  {selectedProduct.current <= selectedProduct.min ? 'Low Stock' : 'Healthy'}
+                </Tag>
+              </div>
+              <div style={{ display: 'flex', padding: '12px 14px', gap: 0 }}>
+                {[
+                  { label: 'Current Stock', value: `${selectedProduct.current} ${selectedProduct.unit}`, color: selectedProduct.current <= selectedProduct.min ? '#ff4d4f' : '#52c41a' },
+                  { label: 'Min. Required', value: `${selectedProduct.min} ${selectedProduct.unit}`, color: '#fa8c16' },
+                  { label: 'Shortfall', value: selectedProduct.current < selectedProduct.min ? `${selectedProduct.min - selectedProduct.current} ${selectedProduct.unit}` : 'None', color: selectedProduct.current < selectedProduct.min ? '#ff4d4f' : '#52c41a' },
+                ].map((stat, i) => (
+                  <div key={i} style={{ flex: 1, textAlign: 'center', borderRight: i < 2 ? `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` : 'none', padding: '0 8px' }}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>{stat.label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: stat.color }}>{stat.value}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
-          <Divider orientation="left" style={{ margin: '12px 0' }}>Order Details</Divider>
+          {/* Step 2 — Order Details */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <Text style={{ fontSize: 11, fontWeight: 600, color: '#B11E6A', letterSpacing: 1, display: 'block', marginBottom: 12 }}>STEP 2 — QUANTITY & TERMS</Text>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Select payment terms' }]} style={{ marginBottom: 0 }}>
+                  <Select placeholder="Select payment terms">
+                    <Option value="100% Payment">100% Payment</Option>
+                    <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                    <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={7}>
+                <Form.Item label="Quantity" name="qty" rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                  <InputNumber style={{ width: '100%', borderRadius: 8 }} placeholder="0" min={1} />
+                </Form.Item>
+              </Col>
+              <Col span={5}>
+                <Form.Item label="Unit" name="unit" style={{ marginBottom: 0 }}>
+                  <Input disabled style={{ borderRadius: 8, textAlign: 'center' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
 
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true }]}>
-                <Select placeholder="Select payment terms">
-                  <Option value="100% Payment">100% Payment</Option>
-                  <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
-                  <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item label="Quantity" name="qty" rules={[{ required: true }]}>
-                <InputNumber style={{ width: '100%' }} placeholder="0" />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item label="Unit" name="unit">
-                <Input disabled />
-              </Form.Item>
-            </Col>
-          </Row>
+          {/* Step 3 — Ask Quotation via WhatsApp */}
+          <Button
+            block
+            icon={<WhatsAppOutlined />}
+            onClick={() => {
+              const values = purchaseForm.getFieldsValue();
+              if (!values.product || !values.supplier) { message.warning('Please select product and supplier first'); return; }
+              const msg = `Hello, I would like to request a quotation for:\n\n*Product:* ${values.product}\n*Quantity:* ${values.qty || 'N/A'} ${values.unit || ''}\n*Payment Terms:* ${values.payment_terms || 'TBD'}\n\nPlease advise on pricing and availability.`;
+              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+            }}
+            style={{ height: 42, borderRadius: 10, borderColor: '#25D366', color: '#25D366', fontWeight: 600, marginBottom: 12, fontSize: 13 }}
+          >
+            Ask Quotation via WhatsApp
+          </Button>
 
-          <Row gutter={12}>
-            <Col span={8}>
-              <Form.Item label="Bill No" name="bill_no" rules={[{ required: true }]}>
-                <Input placeholder="PUR-XXXX" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="Invoice No" name="inv_no">
-                <Input placeholder="INV-XXXX" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="Order Date" name="date" rules={[{ required: true }]} initialValue={dayjs()}>
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
+          {/* Info note */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '10px 12px', background: isDark ? '#1a1f2e' : '#f0f7ff', border: `1px solid ${isDark ? '#2a3a5e' : '#bae0ff'}`, borderRadius: 8, marginBottom: 16, fontSize: 11, color: isDark ? '#7cb8f0' : '#0958d9' }}>
+            <InfoCircleOutlined style={{ marginTop: 1, flexShrink: 0 }} />
+            <span>After Finance approves this request, go to <strong>Purchase Requests</strong> tab to fill in bill no, price & invoice and submit the order.</span>
+          </div>
 
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item label="Unit Price" name="price" rules={[{ required: true }]}>
-                <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Total Amount" name="amount" rules={[{ required: true }]}>
-                <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item label="Invoice Attachment" name="invoice">
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Upload maxCount={1} beforeUpload={() => false}>
-                <Button icon={<UploadOutlined />} style={{ width: '100%' }}>Upload Invoice File</Button>
-              </Upload>
-              <Button
-                block
-                icon={<EyeOutlined />}
-                onClick={() => {
-                  message.loading('AI Scanning invoice...', 2).then(() => {
-                    purchaseForm.setFieldsValue({
-                      amount: 12500,
-                      qty: 150,
-                      price: 83.33,
-                      date: dayjs(),
-                      bill_no: 'PUR-' + Math.floor(Math.random() * 9000 + 1000)
-                    });
-                    message.success('AI extracted details successfully!');
-                  });
-                }}
-                style={{ borderColor: '#B11E6A', color: '#B11E6A' }}
-              >
-                Scan Invoice with AI
-              </Button>
-            </Space>
-          </Form.Item>
-
-          <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
-            <Button
-              icon={<WhatsAppOutlined />}
-              onClick={() => {
-                const values = purchaseForm.getFieldsValue();
-                if (!values.product || !values.supplier) {
-                  message.warning('Please select product and supplier first');
-                  return;
-                }
-                const msg = `Hello, I would like to request a quotation for: ${values.product}. Quantity: ${values.qty || 'N/A'}. Payment Terms: ${values.payment_terms || 'TBD'}. Please advise.`;
-                window.open(`https://wa.me/919876543210?text=${encodeURIComponent(msg)}`, '_blank');
-              }}
-              style={{ flex: 1, height: 40, borderRadius: 8, borderColor: '#25D366', color: '#25D366' }}
-            >
-              Ask Quotation
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button onClick={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); }} style={{ flex: 1, height: 42, borderRadius: 10 }}>Cancel</Button>
+            <Button type="primary" htmlType="submit" style={{ flex: 2, height: 42, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}>
+              Raise Request
             </Button>
-            <Button onClick={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); }} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
-            <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}>Raise Request</Button>
           </div>
         </Form>
+      </Modal>
+
+      {/* Request Order Modal — order details filled after financial approval */}
+      <Modal
+        title={
+          <Space>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <ShoppingOutlined style={{ color: '#fff', fontSize: 16 }} />
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 15 }}>Request Order</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 11 }}>Fill in order details to submit to Financial for payment</Text>
+            </div>
+          </Space>
+        }
+        open={showRequestOrderModal}
+        onCancel={() => { setShowRequestOrderModal(false); requestOrderForm.resetFields(); setSelectedApprovedRequest(null); setRequestOrderScannedFile(null); }}
+        footer={null}
+        width={600}
+        centered
+      >
+        {selectedApprovedRequest && (
+          <>
+            {/* Request summary */}
+            <div style={{ padding: '12px 16px', background: isDark ? '#0d2010' : '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, marginTop: 16, marginBottom: 20 }}>
+              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>APPROVED REQUEST SUMMARY</Text>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>ITEM</Text>
+                  <div><Text strong>{selectedApprovedRequest.item}</Text></div>
+                </Col>
+                <Col span={12}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>SUPPLIER</Text>
+                  <div><Text strong style={{ color: '#B11E6A' }}>{selectedApprovedRequest.supplier}</Text></div>
+                </Col>
+                <Col span={12} style={{ marginTop: 8 }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>QUANTITY</Text>
+                  <div><Text strong>{selectedApprovedRequest.qty} {selectedApprovedRequest.unit}</Text></div>
+                </Col>
+                <Col span={12} style={{ marginTop: 8 }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>PAYMENT TERMS</Text>
+                  <div><Text strong style={{ fontSize: 11 }}>{selectedApprovedRequest.payment_terms}</Text></div>
+                </Col>
+              </Row>
+            </div>
+
+            {/* AI Scan Invoice */}
+            <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <RobotOutlined style={{ color: '#fff', fontSize: 15 }} />
+                </div>
+                <div>
+                  <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Supplier Invoice with AI</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa' }}>Upload the supplier's invoice to auto-fill order details below</Text>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Upload
+                  maxCount={1}
+                  beforeUpload={(file) => { setRequestOrderScannedFile(file); return false; }}
+                  onRemove={() => setRequestOrderScannedFile(null)}
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  style={{ flex: 1 }}
+                >
+                  <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                    {requestOrderScannedFile ? requestOrderScannedFile.name : 'Upload Invoice'}
+                  </Button>
+                </Upload>
+                <Button
+                  icon={<ThunderboltOutlined />}
+                  loading={requestOrderScanLoading}
+                  onClick={handleRequestOrderAIScan}
+                  style={{ borderRadius: 8, background: requestOrderScannedFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: requestOrderScannedFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
+                >
+                  {requestOrderScanLoading ? 'Scanning...' : 'Scan with AI'}
+                </Button>
+              </div>
+            </div>
+
+            <Form form={requestOrderForm} layout="vertical" onFinish={handleRequestOrder}>
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Form.Item label="Bill No" name="bill_no" rules={[{ required: true, message: 'Bill number is required' }]}>
+                    <Input placeholder="PUR-XXXX" style={{ borderRadius: 8 }} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="Invoice No" name="inv_no">
+                    <Input placeholder="INV-XXXX" style={{ borderRadius: 8 }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={12}>
+                <Col span={8}>
+                  <Form.Item label="Order Date" name="order_date" rules={[{ required: true, message: 'Select order date' }]} initialValue={dayjs()}>
+                    <DatePicker style={{ width: '100%', borderRadius: 8 }} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="Unit Price (₹)" name="unit_price" rules={[{ required: true, message: 'Enter unit price' }]}>
+                    <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" min={0} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true, message: 'Enter total amount' }]}>
+                    <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" min={0} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <Button onClick={() => { setShowRequestOrderModal(false); requestOrderForm.resetFields(); setSelectedApprovedRequest(null); setRequestOrderScannedFile(null); }} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
+                <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}>
+                  Submit to Financial
+                </Button>
+              </div>
+            </Form>
+          </>
+        )}
       </Modal>
 
       {/* Add Supplier Modal */}

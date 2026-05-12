@@ -3,10 +3,11 @@ import {
   Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, List, Divider, Modal, Descriptions, Upload, InputNumber, Form
 } from 'antd';
 import {
-  WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, WalletOutlined,
-  ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, InfoCircleOutlined, UploadOutlined, DollarCircleOutlined
+  WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, CloseCircleOutlined, WalletOutlined,
+  ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, InfoCircleOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined
 } from '@ant-design/icons';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { updateRequestStatus, updateOrderPaymentStatus } from '../../store/slices/purchaseSlice';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 
@@ -15,6 +16,9 @@ const { Option } = Select;
 
 export default function Financial() {
   const isDark = useSelector((s) => s.theme.isDark);
+  const dispatch = useDispatch();
+  const raisedRequests = useSelector((s) => s.purchase.raisedRequests);
+  const purchaseOrders = useSelector((s) => s.purchase.purchaseOrders);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
@@ -22,36 +26,6 @@ export default function Financial() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedForPayment, setSelectedForPayment] = useState(null);
   const [paymentForm] = Form.useForm();
-
-  // State for Purchase Requests
-  const [purchaseRequests, setPurchaseRequests] = useState([
-    { 
-      key: 1, 
-      item: 'Soap Base (Transparent)', 
-      qty: 100, 
-      unit: 'Kg', 
-      date: '2024-05-07', 
-      status: 'Unpaid', 
-      amount: 8500,
-      bill_no: 'PUR-8821',
-      inv_no: 'INV-CHEM-101',
-      payment_terms: '50% Advance, 50% on Dispatch',
-      stock_context: { current: 45, min: 100, category: 'Raw Materials' }
-    },
-    { 
-      key: 2, 
-      item: 'Shampoo Bottles (Flip 30ml)', 
-      qty: 500, 
-      unit: 'Pcs', 
-      date: '2024-05-07', 
-      status: 'Unpaid', 
-      amount: 2250,
-      bill_no: 'PUR-8825',
-      inv_no: 'INV-BIO-452',
-      payment_terms: '100% Payment',
-      stock_context: { current: 120, min: 500, category: 'Packaging' }
-    },
-  ]);
 
   const [expenseRequests, setExpenseRequests] = useState([
     { key: 1, date: '2024-05-06', category: 'SHIPPING', desc: 'Logistics to Bangalore', amount: 5500, status: 'Unpaid', vendor: 'DTDC', bill_no: 'EXP-101' },
@@ -69,14 +43,20 @@ export default function Financial() {
     const finalStatus = values.status === 'Partial Paid' && remaining > 0 ? 'Partial Paid' : 'Paid';
 
     message.success(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`);
-    
-    const updateList = selectedForPayment.bill_no.startsWith('EXP') ? setExpenseRequests : setPurchaseRequests;
-    updateList(prev => prev.map(r => r.key === selectedForPayment.key ? { 
-      ...r, 
-      status: finalStatus, 
-      paid_amount: (r.paid_amount || 0) + paidAmt,
-      payment_proof: 'uploaded' 
-    } : r));
+
+    if (selectedForPayment.bill_no?.startsWith('EXP')) {
+      setExpenseRequests(prev => prev.map(r => r.key === selectedForPayment.key ? {
+        ...r,
+        status: finalStatus,
+        paid_amount: (r.paid_amount || 0) + paidAmt,
+      } : r));
+    } else {
+      dispatch(updateOrderPaymentStatus({
+        key: selectedForPayment.key,
+        status: finalStatus,
+        paid_amount: (selectedForPayment.paid_amount || 0) + paidAmt,
+      }));
+    }
     setShowPaymentModal(false);
     setSelectedForPayment(null);
     paymentForm.resetFields();
@@ -88,27 +68,29 @@ export default function Financial() {
     return 'error';
   };
 
+  const pendingRequests = raisedRequests.filter(r => r.status === 'Pending').length;
   const stats = [
-    { label: 'Pending Payments', value: purchaseRequests.filter(r => r.status !== 'Paid').length + expenseRequests.filter(r => r.status !== 'Paid').length, color: '#B11E6A', icon: <ClockCircleOutlined /> },
-    { label: 'Unpaid Purchases', value: purchaseRequests.filter(r => r.status === 'Unpaid').length, color: '#1890ff', icon: <ShopOutlined /> },
+    { label: 'Pending Approvals', value: pendingRequests, color: '#B11E6A', icon: <ClockCircleOutlined /> },
+    { label: 'Unpaid Orders', value: purchaseOrders.filter(r => r.status === 'Unpaid').length, color: '#1890ff', icon: <ShopOutlined /> },
     { label: 'Unpaid Expenses', value: expenseRequests.filter(r => r.status === 'Unpaid').length, color: '#fa8c16', icon: <WalletOutlined /> },
     { label: 'Total Paid (MTD)', value: '₹1,24,500', color: '#52c41a', icon: <ArrowUpOutlined /> },
   ];
 
   const purchaseColumns = [
-    { title: 'Date', dataIndex: 'date', key: 'date' },
+    { title: 'Order Date', dataIndex: 'date', key: 'date' },
     { title: 'Bill / Inv No', key: 'nos', render: (_, r) => (
       <Space direction="vertical" size={0}>
         <Text size="small" type="secondary">{r.bill_no}</Text>
         <Text size="small" style={{ color: '#B11E6A', fontSize: 11 }}>{r.inv_no}</Text>
       </Space>
     )},
-    { title: 'Item Name', dataIndex: 'item', key: 'item', render: (v) => <Text strong>{v}</Text> },
-    { title: 'Amount', dataIndex: 'amount', key: 'amount', render: (v) => <Text strong style={{ color: '#B11E6A' }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Item', dataIndex: 'item', key: 'item', render: (v) => <Text strong>{v}</Text> },
+    { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+    { title: 'Amount', dataIndex: 'amount', key: 'amount', render: (v) => <Text strong style={{ color: '#B11E6A' }}>₹{v?.toLocaleString()}</Text> },
     { title: 'Payment Terms', dataIndex: 'payment_terms', key: 'terms', render: (v) => <Text style={{ fontSize: 11 }}>{v}</Text> },
-    { 
-      title: 'Status', 
-      dataIndex: 'status', 
+    {
+      title: 'Status',
+      dataIndex: 'status',
       key: 'status',
       render: (v) => <Tag color={getStatusColor(v)}>{v}</Tag>
     },
@@ -118,7 +100,9 @@ export default function Financial() {
       render: (_, r) => (
         <Space>
           <Button size="small" icon={<EyeOutlined />} onClick={() => setViewRequest(r)}>Details</Button>
-          <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none' }}>Pay</Button>
+          {r.status !== 'Paid' && (
+            <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none' }}>Pay</Button>
+          )}
         </Space>
       )
     }
@@ -167,14 +151,87 @@ export default function Financial() {
         styles={{ body: { padding: '8px 16px 16px' } }}
       >
         <Tabs
-          defaultActiveKey="purchase"
+          defaultActiveKey="purchase_requests"
           items={[
+            {
+              key: 'purchase_requests',
+              label: <Space><AuditOutlined /> Purchase Requests</Space>,
+              children: (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ marginBottom: 16 }}>
+                    <Title level={5} style={{ margin: 0, color: textColor }}>Purchase Requests — Approve / Reject</Title>
+                    <Text type="secondary">Review requests raised by the procurement team and approve or reject them</Text>
+                  </div>
+                  <Table
+                    size="small"
+                    dataSource={raisedRequests}
+                    pagination={{ pageSize: 8 }}
+                    locale={{ emptyText: 'No purchase requests yet. Requests raised from the Purchase module will appear here.' }}
+                    columns={[
+                      { title: 'Date', dataIndex: 'date', key: 'date' },
+                      { title: 'Item', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
+                      { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                      { title: 'Qty', key: 'qty', render: (_, r) => `${r.qty} ${r.unit}` },
+                      { title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', render: v => <Text style={{ fontSize: 11 }}>{v}</Text> },
+                      {
+                        title: 'Status', dataIndex: 'status', key: 'status',
+                        render: v => {
+                          const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
+                          return <Tag color={colorMap[v]} style={{ borderRadius: 12 }}>{v}</Tag>;
+                        }
+                      },
+                      {
+                        title: 'Actions', key: 'actions',
+                        render: (_, r) => r.status === 'Pending' ? (
+                          <Space>
+                            <Button
+                              size="small"
+                              type="primary"
+                              icon={<CheckCircleOutlined />}
+                              onClick={() => {
+                                dispatch(updateRequestStatus({ key: r.key, status: 'Approved' }));
+                                message.success(`Request for ${r.item} approved`);
+                              }}
+                              style={{ background: '#52c41a', border: 'none' }}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="small"
+                              danger
+                              icon={<CloseCircleOutlined />}
+                              onClick={() => {
+                                dispatch(updateRequestStatus({ key: r.key, status: 'Rejected' }));
+                                message.warning(`Request for ${r.item} rejected`);
+                              }}
+                            >
+                              Reject
+                            </Button>
+                          </Space>
+                        ) : (
+                          <Tag color={r.status === 'Approved' ? 'success' : 'error'} style={{ borderRadius: 12 }}>{r.status}</Tag>
+                        )
+                      }
+                    ]}
+                  />
+                </div>
+              )
+            },
             {
               key: 'purchase',
               label: <Space><ShopOutlined /> Purchase Payments</Space>,
               children: (
                 <div style={{ marginTop: 12 }}>
-                  <Table size="small" dataSource={purchaseRequests} columns={purchaseColumns} pagination={{ pageSize: 8 }} />
+                  <div style={{ marginBottom: 12 }}>
+                    <Text type="secondary">Purchase orders raised after approval — process payments here</Text>
+                  </div>
+                  <Table
+                    size="small"
+                    dataSource={purchaseOrders}
+                    columns={purchaseColumns}
+                    pagination={{ pageSize: 8 }}
+                    locale={{ emptyText: 'No purchase orders yet. Approve a request and raise an order from the Purchase module.' }}
+                  />
                 </div>
               )
             },
