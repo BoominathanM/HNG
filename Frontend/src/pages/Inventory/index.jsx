@@ -61,8 +61,12 @@ export default function Inventory() {
   const [viewBillDetail, setViewBillDetail] = useState(null);
   const [inventoryList, setInventoryList] = useState(inventory);
   const [pendingAdjustments, setPendingAdjustments] = useState([
-    { key: 101, date: dayjs().format('YYYY-MM-DD'), type: 'Addition', item: 'Soap Base (White)', qty: 50, unit: 'Kg', entity: 'Manual Adj', person: 'Priya', status: 'Pending' }
+    { key: 101, date: dayjs().format('YYYY-MM-DD'), type: 'Addition', item: 'Soap Base (White)', qty: 50, unit: 'Kg', entity: 'Manual Adj', person: 'Priya', status: 'Pending', notes: '' }
   ]);
+
+  /* ── Manual adjustment modal (+ / - buttons) ── */
+  const [adjustModal, setAdjustModal] = useState({ open: false, item: null, type: null });
+  const [adjustForm] = Form.useForm();
 
   /* ── Add Item modal (no sub-modals, keep as modal) ── */
   const [addItemModal, setAddItemModal] = useState(false);
@@ -165,7 +169,7 @@ export default function Inventory() {
     setShowAddVendor(false);
   };
 
-  const requestAdjustment = (item, type, qty, entity = 'Internal') => {
+  const requestAdjustment = (item, type, qty, entity = 'Internal', notes = '') => {
     const newAdj = {
       key: Date.now(),
       date: dayjs().format('YYYY-MM-DD'),
@@ -175,7 +179,8 @@ export default function Inventory() {
       unit: item.unit,
       entity: entity,
       person: 'Staff',
-      status: 'Pending'
+      status: 'Pending',
+      notes: notes,
     };
     setPendingAdjustments([newAdj, ...pendingAdjustments]);
     message.success(`Adjustment request for ${item.name} sent to Operation Head`);
@@ -387,9 +392,9 @@ export default function Inventory() {
       render: (_, r) => (
         <Space size={4} wrap>
           <div style={{ display: 'flex', alignItems: 'center', background: isDark ? '#2a2a3e' : '#f0f0f0', borderRadius: 6, padding: '2px', border: `1px solid ${borderColor}` }}>
-            <Button size="small" type="text" icon={<MinusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); requestAdjustment(r, 'Deduction', 1); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+            <Button size="small" type="text" icon={<MinusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Deduction' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
-            <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); requestAdjustment(r, 'Addition', 1); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+            <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
           <Button
             size="small" type="primary"
@@ -502,6 +507,7 @@ export default function Inventory() {
                       )
                     },
                     { title: 'Qty', dataIndex: 'qty', key: 'qty', render: (q, r) => <Text strong>{q} {r.unit}</Text> },
+                    { title: 'Notes', dataIndex: 'notes', key: 'notes', render: (v) => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>—</Text> },
                     { title: 'Requested By', dataIndex: 'person', key: 'person' },
                     {
                       title: 'Status', dataIndex: 'status', key: 'status',
@@ -545,13 +551,14 @@ export default function Inventory() {
                 <Table
                   size="small"
                   dataSource={[
-                    { key: 1, date: '2024-05-01', type: 'Incoming', item: 'Soap Base (White)', qty: '+100 Kg', entity: 'ChemCo India', person: 'Admin' },
-                    { key: 2, date: '2024-05-02', type: 'Outgoing', item: 'Dental Kit Boxes', qty: '-50 Pcs', entity: 'Marriott Mumbai', person: 'Priya' },
-                    { key: 3, date: '2024-05-03', type: 'Stock Taken', item: 'Shampoo Bottles', qty: '-2 Pcs', entity: 'Internal Audit', person: 'Admin' },
-                    { key: 4, date: '2024-05-04', type: 'Incoming', item: 'Shampoo Concentrate', qty: '+200 Ltr', entity: 'BioLife Ltd', person: 'Admin' },
+                    { key: 1, date: '2024-05-01', invoiceNumber: 'INV-2024-001', type: 'Incoming', item: 'Soap Base (White)', qty: '+100 Kg', entity: 'ChemCo India', person: 'Admin' },
+                    { key: 2, date: '2024-05-02', invoiceNumber: 'INV-2024-002', type: 'Outgoing', item: 'Dental Kit Boxes', qty: '-50 Pcs', entity: 'Marriott Mumbai', person: 'Priya' },
+                    { key: 3, date: '2024-05-03', invoiceNumber: 'INV-2024-003', type: 'Stock Taken', item: 'Shampoo Bottles', qty: '-2 Pcs', entity: 'Internal Audit', person: 'Admin' },
+                    { key: 4, date: '2024-05-04', invoiceNumber: 'INV-2024-004', type: 'Incoming', item: 'Shampoo Concentrate', qty: '+200 Ltr', entity: 'BioLife Ltd', person: 'Admin' },
                   ]}
                   columns={[
                     { title: 'Arrival/Departure Date', dataIndex: 'date', key: 'date', render: (v) => <Text strong>{v}</Text> },
+                    { title: 'Invoice Number', dataIndex: 'invoiceNumber', key: 'invoiceNumber', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v || '—'}</Text> },
                     { title: 'Movement Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t === 'Incoming' ? 'success' : t === 'Outgoing' ? 'processing' : 'warning'} style={{ borderRadius: 12 }}>{t}</Tag> },
                     { title: 'Stock Item', dataIndex: 'item', key: 'item' },
                     { title: 'Quantity', dataIndex: 'qty', key: 'qty', render: (q) => <Text strong style={{ color: q.startsWith('+') ? '#52c41a' : '#ff4d4f' }}>{q}</Text> },
@@ -564,6 +571,87 @@ export default function Inventory() {
           }
         ]}
       />
+
+      {/* ═══════════════════════════════════════
+          MANUAL ADJUSTMENT MODAL (+ / - buttons)
+      ═══════════════════════════════════════ */}
+      <Modal
+        title={
+          <Space>
+            {adjustModal.type === 'Addition'
+              ? <PlusOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+              : <MinusOutlined style={{ color: '#ff4d4f', fontSize: 16 }} />}
+            <span style={{ fontSize: 15, fontWeight: 700 }}>
+              {adjustModal.type === 'Addition' ? 'Add Stock' : 'Reduce Stock'}
+              {adjustModal.item ? ` — ${adjustModal.item.name}` : ''}
+            </span>
+          </Space>
+        }
+        open={adjustModal.open}
+        onCancel={() => { setAdjustModal({ open: false, item: null, type: null }); adjustForm.resetFields(); }}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button onClick={() => { setAdjustModal({ open: false, item: null, type: null }); adjustForm.resetFields(); }}>
+              Cancel
+            </Button>
+            <Button
+              type="primary"
+              style={{
+                background: adjustModal.type === 'Addition'
+                  ? 'linear-gradient(135deg,#B11E6A,#D85C9E)'
+                  : 'linear-gradient(135deg,#8a1652,#B11E6A)',
+                border: 'none',
+              }}
+              onClick={() => {
+                adjustForm.validateFields().then((vals) => {
+                  requestAdjustment(adjustModal.item, adjustModal.type, vals.count, 'Manual Adj', vals.notes || '');
+                  setAdjustModal({ open: false, item: null, type: null });
+                  adjustForm.resetFields();
+                });
+              }}
+            >
+              OK
+            </Button>
+          </div>
+        }
+        width={420}
+        centered
+        styles={{ body: { paddingTop: 8 } }}
+      >
+        <Form form={adjustForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item
+            label={
+              <Text style={{ fontWeight: 600 }}>
+                {adjustModal.type === 'Addition' ? 'Add Count' : 'Minus Count'}
+              </Text>
+            }
+            name="count"
+            rules={[
+              { required: true, message: 'Enter count' },
+              { type: 'number', min: 1, message: 'Must be at least 1' },
+            ]}
+            style={{ marginBottom: 16 }}
+          >
+            <InputNumber
+              min={1}
+              style={{ width: '100%', borderRadius: 8 }}
+              placeholder={`Enter quantity to ${adjustModal.type === 'Addition' ? 'add' : 'reduce'}`}
+              addonAfter={adjustModal.item?.unit}
+            />
+          </Form.Item>
+          <Form.Item
+            label={<Text style={{ fontWeight: 600 }}>Notes / Description</Text>}
+            name="notes"
+            style={{ marginBottom: 0 }}
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder="Reason for this adjustment..."
+              style={{ borderRadius: 8 }}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       {/* ═══════════════════════════════════════
           ADD ITEM MODAL (simple, no sub-modals)
