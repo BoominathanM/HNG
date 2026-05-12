@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch
@@ -103,6 +103,52 @@ export default function Purchase() {
   const [supplierScannedFile, setSupplierScannedFile] = useState(null);
   const [vendorScannedFile, setVendorScannedFile] = useState(null);
   const [inventoryPurchaseScannedFile, setInventoryPurchaseScannedFile] = useState(null);
+
+  /* ── Camera capture (shared across all scan sections) ── */
+  const [showCameraModal, setShowCameraModal] = useState(false);
+  const [cameraStream, setCameraStream] = useState(null);
+  const [cameraSetFile, setCameraSetFile] = useState(null);
+  const cameraVideoRef = useRef(null);
+
+  const openCameraCapture = async (setFileFn) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      message.warning('Camera not available on this device or browser.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      setCameraStream(stream);
+      setCameraSetFile(() => setFileFn);
+      setShowCameraModal(true);
+    } catch {
+      message.error('Camera access denied. Please allow camera permissions and try again.');
+    }
+  };
+
+  const capturePhoto = () => {
+    const video = cameraVideoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      if (cameraSetFile) cameraSetFile(file);
+      message.success('Document captured successfully');
+      closeCameraCapture();
+    }, 'image/jpeg', 0.92);
+  };
+
+  const closeCameraCapture = () => {
+    if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); setCameraStream(null); }
+    if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
+    setShowCameraModal(false);
+    setCameraSetFile(null);
+  };
 
   const filteredSuppliers = suppliers.filter((s) =>
     s.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
@@ -981,7 +1027,7 @@ export default function Purchase() {
                 </div>
                 <div>
                   <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Supplier Invoice with AI</Text>
-                  <Text style={{ fontSize: 11, color: '#aaa' }}>Upload the supplier's invoice to auto-fill order details below</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill order details below</Text>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -992,10 +1038,9 @@ export default function Purchase() {
                   accept=".pdf,.jpg,.jpeg,.png"
                   style={{ flex: 1 }}
                 >
-                  <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
-                    {requestOrderScannedFile ? requestOrderScannedFile.name : 'Upload Invoice'}
-                  </Button>
+                  <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload</Button>
                 </Upload>
+                <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setRequestOrderScannedFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', whiteSpace: 'nowrap' }}>Scan</Button>
                 <Button
                   icon={<ThunderboltOutlined />}
                   loading={requestOrderScanLoading}
@@ -1005,6 +1050,11 @@ export default function Purchase() {
                   {requestOrderScanLoading ? 'Scanning...' : 'Scan with AI'}
                 </Button>
               </div>
+              {requestOrderScannedFile && (
+                <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{requestOrderScannedFile.name}</Text>
+                </div>
+              )}
             </div>
 
             <Form form={requestOrderForm} layout="vertical" onFinish={handleRequestOrder}>
@@ -1065,7 +1115,7 @@ export default function Purchase() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a business card, GST certificate, or invoice — AI will auto-fill the fields below</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1076,10 +1126,9 @@ export default function Purchase() {
               accept=".pdf,.jpg,.jpeg,.png"
               style={{ flex: 1 }}
             >
-              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
-                {supplierScannedFile ? supplierScannedFile.name : 'Upload Document'}
-              </Button>
+              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload</Button>
             </Upload>
+            <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setSupplierScannedFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', whiteSpace: 'nowrap' }}>Scan</Button>
             <Button
               icon={<ThunderboltOutlined />}
               loading={supplierScanLoading}
@@ -1089,6 +1138,11 @@ export default function Purchase() {
               {supplierScanLoading ? 'Scanning...' : 'Scan with AI'}
             </Button>
           </div>
+          {supplierScannedFile && (
+            <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{supplierScannedFile.name}</Text>
+            </div>
+          )}
         </div>
 
         <Form form={supplierForm} layout="vertical" onFinish={handleSaveSupplier}>
@@ -1149,7 +1203,7 @@ export default function Purchase() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a business card, GST certificate, or invoice — AI will auto-fill the fields below</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1160,10 +1214,9 @@ export default function Purchase() {
               accept=".pdf,.jpg,.jpeg,.png"
               style={{ flex: 1 }}
             >
-              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
-                {vendorScannedFile ? vendorScannedFile.name : 'Upload Document'}
-              </Button>
+              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload</Button>
             </Upload>
+            <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setVendorScannedFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', whiteSpace: 'nowrap' }}>Scan</Button>
             <Button
               icon={<ThunderboltOutlined />}
               loading={vendorScanLoading}
@@ -1173,6 +1226,11 @@ export default function Purchase() {
               {vendorScanLoading ? 'Scanning...' : 'Scan with AI'}
             </Button>
           </div>
+          {vendorScannedFile && (
+            <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{vendorScannedFile.name}</Text>
+            </div>
+          )}
         </div>
 
         <Form form={vendorForm} layout="vertical" onFinish={handleSaveVendor}>
@@ -1242,7 +1300,7 @@ export default function Purchase() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload an invoice or receipt — AI will auto-fill quantity, amount & date</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill quantity, amount & date</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1253,10 +1311,9 @@ export default function Purchase() {
               accept=".pdf,.jpg,.jpeg,.png"
               style={{ flex: 1 }}
             >
-              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
-                {inventoryPurchaseScannedFile ? inventoryPurchaseScannedFile.name : 'Upload Invoice'}
-              </Button>
+              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload</Button>
             </Upload>
+            <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setInventoryPurchaseScannedFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', whiteSpace: 'nowrap' }}>Scan</Button>
             <Button
               icon={<ThunderboltOutlined />}
               loading={inventoryPurchaseScanLoading}
@@ -1266,6 +1323,11 @@ export default function Purchase() {
               {inventoryPurchaseScanLoading ? 'Scanning...' : 'Scan with AI'}
             </Button>
           </div>
+          {inventoryPurchaseScannedFile && (
+            <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{inventoryPurchaseScannedFile.name}</Text>
+            </div>
+          )}
         </div>
 
         <Form form={inventoryPurchaseForm} layout="vertical">
@@ -1492,6 +1554,58 @@ export default function Purchase() {
             </Button>
           </div>
         </Form>
+      </Modal>
+
+      {/* Shared Camera Capture Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <CameraOutlined style={{ color: '#fff', fontSize: 17 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>Scan Document</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Point camera at the document and tap Capture</div>
+            </div>
+          </div>
+        }
+        open={showCameraModal}
+        onCancel={closeCameraCapture}
+        footer={null}
+        width={480}
+        centered
+        destroyOnClose
+        afterOpenChange={(open) => {
+          if (open && cameraStream && cameraVideoRef.current) {
+            cameraVideoRef.current.srcObject = cameraStream;
+            cameraVideoRef.current.play().catch(() => {});
+          }
+        }}
+      >
+        <div style={{ background: '#000', borderRadius: 12, overflow: 'hidden', marginBottom: 16, position: 'relative', minHeight: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <video
+            ref={cameraVideoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{ width: '100%', display: 'block', maxHeight: 380, objectFit: 'cover' }}
+          />
+          <div style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(0,0,0,0.55)', borderRadius: 20, padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ff4d4f', display: 'inline-block', animation: 'pulse 1.2s infinite' }} />
+            <Text style={{ color: '#fff', fontSize: 11 }}>Live</Text>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button onClick={closeCameraCapture} style={{ flex: 1, height: 42, borderRadius: 10 }}>Cancel</Button>
+          <Button
+            type="primary"
+            icon={<CameraOutlined />}
+            onClick={capturePhoto}
+            style={{ flex: 2, height: 42, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
+          >
+            Capture Photo
+          </Button>
+        </div>
       </Modal>
     </div>
   );
