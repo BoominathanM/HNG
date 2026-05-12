@@ -4,8 +4,8 @@ const purchaseSlice = createSlice({
   name: 'purchase',
   initialState: {
     raisedRequests: [
-      { key: 1001, item: 'Soap Base (Transparent)', supplier: 'BioLife Ltd', qty: 110, unit: 'Kg', payment_terms: '50% Advance, 50% on Dispatch', date: '2024-05-07', status: 'Pending' },
-      { key: 1002, item: 'Shampoo Bottles (Flip 30ml)', supplier: 'PlastiPack', qty: 800, unit: 'Pcs', payment_terms: '100% Payment', date: '2024-05-08', status: 'Approved' },
+      { key: 1001, item: 'Soap Base (Transparent)', supplier: 'BioLife Ltd', qty: 110, unit: 'Kg', payment_terms: '50% Advance, 50% on Dispatch', date: '2024-05-07', status: 'Pending', quotation_file: 'quotation_biolife_soap_base.pdf' },
+      { key: 1002, item: 'Shampoo Bottles (Flip 30ml)', supplier: 'PlastiPack', qty: 800, unit: 'Pcs', payment_terms: '100% Payment', date: '2024-05-08', status: 'Approved', quotation_file: 'quotation_plastipack_bottles.pdf' },
       { key: 1003, item: 'Shampoo Concentrate', supplier: 'ChemCo India', qty: 100, unit: 'Ltr', payment_terms: '50% Advance, 50% After Delivery (Max 15 days)', date: '2024-05-06', status: 'Rejected' },
       { key: 1004, item: 'Amber Bottles 100ml', supplier: 'PlastiPack', qty: 600, unit: 'Pcs', payment_terms: '100% Payment', date: '2024-05-09', status: 'Approved' },
     ],

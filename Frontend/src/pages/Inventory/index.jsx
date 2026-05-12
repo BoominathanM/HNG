@@ -521,7 +521,7 @@ export default function Inventory() {
                       title: 'Action', key: 'action',
                       render: (_, record) => record.status === 'Pending' ? (
                         <Space>
-                          <Button size="small" type="primary" ghost icon={<CheckOutlined />} onClick={() => handleApproveAdjustment(record)}>Approve</Button>
+                          <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => handleApproveAdjustment(record)} style={{ background: '#52c41a', border: 'none', color: '#fff' }}>Approve</Button>
                           <Button size="small" danger ghost icon={<CloseOutlined />} onClick={() => handleRejectAdjustment(record)}>Reject</Button>
                         </Space>
                       ) : null

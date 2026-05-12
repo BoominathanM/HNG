@@ -62,8 +62,6 @@ export default function Purchase() {
   const [viewVendor, setViewVendor] = useState(null);
   const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
-  const [showAddInventoryPurchaseModal, setShowAddInventoryPurchaseModal] = useState(false);
-  const [inventoryPurchaseForm] = Form.useForm();
   const [viewBillDetail, setViewBillDetail] = useState(null);
 
   const [supplierSearch, setSupplierSearch] = useState('');
@@ -100,10 +98,20 @@ export default function Purchase() {
   /* ── AI scan state ── */
   const [supplierScanLoading, setSupplierScanLoading] = useState(false);
   const [vendorScanLoading, setVendorScanLoading] = useState(false);
-  const [inventoryPurchaseScanLoading, setInventoryPurchaseScanLoading] = useState(false);
   const [supplierScannedFile, setSupplierScannedFile] = useState(null);
   const [vendorScannedFile, setVendorScannedFile] = useState(null);
-  const [inventoryPurchaseScannedFile, setInventoryPurchaseScannedFile] = useState(null);
+
+  /* ── Raise Request modal (separate from Ask Quotation) ── */
+  const [showRaiseRequestModal, setShowRaiseRequestModal] = useState(false);
+  const [raiseRequestProduct, setRaiseRequestProduct] = useState(null);
+  const [raiseRequestSupplier, setRaiseRequestSupplier] = useState(null);
+  const [raiseRequestFile, setRaiseRequestFile] = useState(null);
+  const [raiseRequestScanLoading, setRaiseRequestScanLoading] = useState(false);
+  const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
+  const [raiseRequestForm] = Form.useForm();
+
+  /* ── Request Order payment terms watch ── */
+  const [requestOrderPaymentTerms, setRequestOrderPaymentTerms] = useState('');
 
   /* ── Camera capture (shared across all scan sections) ── */
   const [showCameraModal, setShowCameraModal] = useState(false);
@@ -319,18 +327,84 @@ export default function Purchase() {
     }, 2200);
   };
 
-  const handleInventoryPurchaseAIScan = () => {
-    if (!inventoryPurchaseScannedFile) { message.warning('Please upload an invoice first'); return; }
-    setInventoryPurchaseScanLoading(true);
+  const handleQuotationAI = () => {
+    if (!quotationFile) { message.warning('Please upload a quotation file first'); return; }
+    setQuotationScanLoading(true);
     setTimeout(() => {
-      inventoryPurchaseForm.setFieldsValue({
-        amount: 12500,
-        qty: 150,
-        date: dayjs(),
-      });
-      setInventoryPurchaseScanLoading(false);
-      message.success('AI extracted invoice details successfully!');
+      const vals = purchaseForm.getFieldsValue();
+      if (!vals.product || !vals.supplier) {
+        setQuotationScanLoading(false);
+        message.warning('Please select product and supplier first');
+        return;
+      }
+      const newRequest = {
+        key: Date.now(),
+        item: vals.product,
+        supplier: vals.supplier,
+        qty: vals.qty || 0,
+        unit: vals.unit || (selectedProduct?.unit || ''),
+        payment_terms: 'From Quotation',
+        date: dayjs().format('YYYY-MM-DD'),
+        quotation_file: quotationFile.name,
+      };
+      dispatch(addRaisedRequest(newRequest));
+      setQuotationScanLoading(false);
+      message.success('Quotation scanned by AI and sent to Financial Quotation Requests!');
+      setShowAddPurchaseModal(false);
+      purchaseForm.resetFields();
+      setSelectedProduct(null);
+      setSelectedSupplier(null);
+      setQuotationFile(null);
     }, 2200);
+  };
+
+  const handleOpenRaiseRequest = (product) => {
+    setRaiseRequestProduct(product);
+    setRaiseRequestSupplier(null);
+    setRaiseRequestFile(null);
+    setRaiseRequestPaymentTerms('');
+    const suggestQty = product.min > product.current ? (product.min - product.current) * 2 : product.min;
+    raiseRequestForm.resetFields();
+    raiseRequestForm.setFieldsValue({ product: product.name, qty: suggestQty, unit: product.unit });
+    setShowRaiseRequestModal(true);
+  };
+
+  const handleRaiseRequestAIScan = () => {
+    if (!raiseRequestFile) { message.warning('Please upload the quotation file first'); return; }
+    setRaiseRequestScanLoading(true);
+    setTimeout(() => {
+      const suggestQty = raiseRequestProduct
+        ? (raiseRequestProduct.min > raiseRequestProduct.current ? (raiseRequestProduct.min - raiseRequestProduct.current) * 2 : raiseRequestProduct.min)
+        : 0;
+      raiseRequestForm.setFieldsValue({ payment_terms: '100% Payment', qty: suggestQty });
+      setRaiseRequestPaymentTerms('100% Payment');
+      setRaiseRequestScanLoading(false);
+      message.success('AI extracted details from the quotation file!');
+    }, 2000);
+  };
+
+  const handleRaiseRequestSubmit = () => {
+    raiseRequestForm.validateFields().then((values) => {
+      if (!raiseRequestFile) { message.warning('Please upload a quotation file to raise a request'); return; }
+      const newRequest = {
+        key: Date.now(),
+        item: values.product,
+        supplier: values.supplier,
+        qty: values.qty || 0,
+        unit: values.unit || (raiseRequestProduct?.unit || ''),
+        payment_terms: values.payment_terms || 'From Quotation',
+        date: dayjs().format('YYYY-MM-DD'),
+        quotation_file: raiseRequestFile.name,
+      };
+      dispatch(addRaisedRequest(newRequest));
+      message.success(`Request for ${values.product} sent to Financial Quotation Requests!`);
+      setShowRaiseRequestModal(false);
+      raiseRequestForm.resetFields();
+      setRaiseRequestProduct(null);
+      setRaiseRequestSupplier(null);
+      setRaiseRequestFile(null);
+      setRaiseRequestPaymentTerms('');
+    });
   };
 
   return (
@@ -389,19 +463,25 @@ export default function Purchase() {
                             title: 'Action',
                             key: 'action',
                             render: (_, r) => (
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<PlusOutlined />}
-                                style={{
-                                  background: r.current <= r.min ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0',
-                                  border: 'none',
-                                  color: r.current <= r.min ? '#fff' : '#888'
-                                }}
-                                onClick={() => handleOpenRequest(r)}
-                              >
-                                Quotation Request & Approval
-                              </Button>
+                              <Space size={6}>
+                                <Button
+                                  size="small"
+                                  icon={<WhatsAppOutlined />}
+                                  onClick={() => handleOpenRequest(r)}
+                                  style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
+                                >
+                                  Ask Quotation
+                                </Button>
+                                <Button
+                                  size="small"
+                                  type="primary"
+                                  icon={<UploadOutlined />}
+                                  onClick={() => handleOpenRaiseRequest(r)}
+                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                                >
+                                  Raise Request
+                                </Button>
+                              </Space>
                             )
                           }
                         ]}
@@ -769,7 +849,6 @@ export default function Purchase() {
                         <Title level={5} style={{ margin: 0, color: textColor }}>Inventory Purchase Management</Title>
                         <Space>
                           <DatePicker.RangePicker style={{ width: 280 }} />
-                          <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddInventoryPurchaseModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Purchase</Button>
                           <Button icon={<DownloadOutlined />}>Export</Button>
                         </Space>
                       </div>
@@ -854,30 +933,29 @@ export default function Purchase() {
         </Col>
       </Row>
 
-      {/* Raise Purchase Request Modal */}
+      {/* Ask Quotation Modal — WhatsApp only */}
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <ShoppingOutlined style={{ color: '#fff', fontSize: 18 }} />
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#25D366,#128C7E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <WhatsAppOutlined style={{ color: '#fff', fontSize: 20 }} />
             </div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Raise Purchase Request</div>
-              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Select supplier → Ask quotation → Raise request</div>
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Ask Quotation</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Send quotation request to supplier via WhatsApp</div>
             </div>
           </div>
         }
         open={showAddPurchaseModal}
         onCancel={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); setSelectedSupplier(null); }}
         footer={null}
-        width={560}
+        width={520}
         centered
       >
-        <Form form={purchaseForm} layout="vertical" onFinish={handleRaiseRequest} style={{ marginTop: 4 }}>
+        <Form form={purchaseForm} layout="vertical" style={{ marginTop: 4 }}>
 
-          {/* Step 1 — Product & Supplier */}
+          {/* Product & Supplier */}
           <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-            <Text style={{ fontSize: 11, fontWeight: 600, color: '#B11E6A', letterSpacing: 1, display: 'block', marginBottom: 12 }}>STEP 1 — PRODUCT & SUPPLIER</Text>
             <Row gutter={12}>
               <Col span={12}>
                 <Form.Item label="Product" name="product" rules={[{ required: true }]} style={{ marginBottom: 0 }}>
@@ -898,22 +976,22 @@ export default function Purchase() {
             </Row>
           </div>
 
-          {/* Supplier Details */}
+          {/* Supplier Contact */}
           {selectedSupplier && (
-            <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 16, border: `1px solid #B11E6A33` }}>
-              <div style={{ background: 'linear-gradient(135deg,#B11E6A18,#D85C9E10)', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <UserOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
-                <Text style={{ fontSize: 12, fontWeight: 600, color: '#B11E6A' }}>Supplier Contact Details</Text>
+            <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 16, border: `1px solid #25D36633` }}>
+              <div style={{ background: 'linear-gradient(135deg,#25D36618,#128C7E10)', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <WhatsAppOutlined style={{ color: '#25D366', fontSize: 13 }} />
+                <Text style={{ fontSize: 12, fontWeight: 600, color: '#25D366' }}>Supplier Contact</Text>
               </div>
-              <div style={{ display: 'flex', padding: '10px 14px', gap: 0, background: isDark ? '#120b0e' : '#fffafc' }}>
+              <div style={{ display: 'flex', padding: '10px 14px', gap: 0, background: isDark ? '#0a1a10' : '#f6fff8' }}>
                 {[
-                  { label: 'Phone / WhatsApp', value: selectedSupplier.phone, icon: <WhatsAppOutlined style={{ color: '#25D366', fontSize: 11, marginRight: 3 }} /> },
-                  { label: 'Email', value: selectedSupplier.email, icon: null },
-                  { label: 'Address', value: selectedSupplier.address, icon: null },
+                  { label: 'Phone / WhatsApp', value: selectedSupplier.phone },
+                  { label: 'Email', value: selectedSupplier.email },
+                  { label: 'Address', value: selectedSupplier.address },
                 ].map((item, i) => (
-                  <div key={i} style={{ flex: 1, borderRight: i < 2 ? `1px solid ${isDark ? '#2a2d40' : '#f0e0ea'}` : 'none', padding: '0 10px', paddingLeft: i === 0 ? 0 : 10 }}>
+                  <div key={i} style={{ flex: 1, borderRight: i < 2 ? `1px solid ${isDark ? '#1a3a20' : '#d9f7e3'}` : 'none', padding: '0 10px', paddingLeft: i === 0 ? 0 : 10 }}>
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>{item.label}</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, wordBreak: 'break-word' }}>{item.icon}{item.value}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, wordBreak: 'break-word' }}>{item.value}</div>
                   </div>
                 ))}
               </div>
@@ -945,25 +1023,15 @@ export default function Purchase() {
             </div>
           )}
 
-          {/* Step 2 — Order Details */}
+          {/* Quantity */}
           <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-            <Text style={{ fontSize: 11, fontWeight: 600, color: '#B11E6A', letterSpacing: 1, display: 'block', marginBottom: 12 }}>STEP 2 — QUANTITY & TERMS</Text>
             <Row gutter={12}>
-              <Col span={12}>
-                <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Select payment terms' }]} style={{ marginBottom: 0 }}>
-                  <Select placeholder="Select payment terms">
-                    <Option value="100% Payment">100% Payment</Option>
-                    <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
-                    <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
-                  </Select>
-                </Form.Item>
-              </Col>
-              <Col span={7}>
-                <Form.Item label="Quantity" name="qty" rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+              <Col span={16}>
+                <Form.Item label="Quantity to Request" name="qty" rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                   <InputNumber style={{ width: '100%', borderRadius: 8 }} placeholder="0" min={1} />
                 </Form.Item>
               </Col>
-              <Col span={5}>
+              <Col span={8}>
                 <Form.Item label="Unit" name="unit" style={{ marginBottom: 0 }}>
                   <Input disabled style={{ borderRadius: 8, textAlign: 'center' }} />
                 </Form.Item>
@@ -971,33 +1039,181 @@ export default function Purchase() {
             </Row>
           </div>
 
-          {/* Step 3 — Ask Quotation via WhatsApp */}
-          <Button
-            block
-            icon={<WhatsAppOutlined />}
-            onClick={() => {
-              const values = purchaseForm.getFieldsValue();
-              if (!values.product || !values.supplier) { message.warning('Please select product and supplier first'); return; }
-              const msg = `Hello, I would like to request a quotation for:\n\n*Product:* ${values.product}\n*Quantity:* ${values.qty || 'N/A'} ${values.unit || ''}\n*Payment Terms:* ${values.payment_terms || 'TBD'}\n\nPlease advise on pricing and availability.`;
-              const phone = selectedSupplier ? selectedSupplier.phone.replace(/\D/g, '') : '';
-              window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-            }}
-            style={{ height: 42, borderRadius: 10, borderColor: '#25D366', color: '#25D366', fontWeight: 600, marginBottom: 12, fontSize: 13 }}
-          >
-            Ask Quotation via WhatsApp
-          </Button>
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button onClick={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); setSelectedSupplier(null); }} style={{ flex: 1, height: 44, borderRadius: 10 }}>Cancel</Button>
+            <Button
+              block
+              icon={<WhatsAppOutlined />}
+              onClick={() => {
+                const values = purchaseForm.getFieldsValue();
+                if (!values.supplier) { message.warning('Please select a supplier first'); return; }
+                const msg = `Hello, I would like to request a quotation for:\n\n*Product:* ${values.product}\n*Quantity:* ${values.qty || 'N/A'} ${values.unit || ''}\n\nPlease advise on pricing and availability.`;
+                const phone = selectedSupplier ? selectedSupplier.phone.replace(/\D/g, '') : '';
+                window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                setShowAddPurchaseModal(false);
+                purchaseForm.resetFields();
+                setSelectedProduct(null);
+                setSelectedSupplier(null);
+              }}
+              style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#25D366,#128C7E)', border: 'none', color: '#fff', fontWeight: 700, fontSize: 14 }}
+            >
+              Send via WhatsApp
+            </Button>
+          </div>
+        </Form>
+      </Modal>
 
-          {/* Info note */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '10px 12px', background: isDark ? '#1a1f2e' : '#f0f7ff', border: `1px solid ${isDark ? '#2a3a5e' : '#bae0ff'}`, borderRadius: 8, marginBottom: 16, fontSize: 11, color: isDark ? '#7cb8f0' : '#0958d9' }}>
-            <InfoCircleOutlined style={{ marginTop: 1, flexShrink: 0 }} />
-            <span>After Finance approves this request, go to <strong>Purchase Requests</strong> tab to fill in bill no, price & invoice and submit the order.</span>
+      {/* Raise Request Modal — upload quotation doc + AI + send to Financial */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <UploadOutlined style={{ color: '#fff', fontSize: 18 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Raise Request</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Upload received quotation → AI extracts details → Send to Financial</div>
+            </div>
+          </div>
+        }
+        open={showRaiseRequestModal}
+        onCancel={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestPaymentTerms(''); }}
+        footer={null}
+        width={560}
+        centered
+      >
+        <Form form={raiseRequestForm} layout="vertical" style={{ marginTop: 4 }}>
+
+          {/* Product info banner */}
+          {raiseRequestProduct && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 10, background: isDark ? '#1a0f14' : '#fff8fb', border: '1px solid #B11E6A33', marginBottom: 16 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <ShoppingOutlined style={{ color: '#fff', fontSize: 16 }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{raiseRequestProduct.name}</Text>
+                <Space size={12} style={{ marginTop: 2 }}>
+                  <Text style={{ fontSize: 11, color: raiseRequestProduct.current <= raiseRequestProduct.min ? '#ff4d4f' : '#52c41a' }}>
+                    Stock: {raiseRequestProduct.current} {raiseRequestProduct.unit}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#fa8c16' }}>Min: {raiseRequestProduct.min} {raiseRequestProduct.unit}</Text>
+                  <Tag color={raiseRequestProduct.current <= raiseRequestProduct.min ? 'error' : 'success'} style={{ borderRadius: 10, fontSize: 10, margin: 0 }}>
+                    {raiseRequestProduct.current <= raiseRequestProduct.min ? 'Low Stock' : 'Healthy'}
+                  </Tag>
+                </Space>
+              </div>
+              <Form.Item name="product" hidden><Input /></Form.Item>
+              <Form.Item name="unit" hidden><Input /></Form.Item>
+            </div>
+          )}
+
+          {/* Supplier */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <Form.Item label="Supplier" name="supplier" rules={[{ required: true, message: 'Select a supplier' }]} style={{ marginBottom: 0 }}>
+              <Select
+                placeholder="Select supplier"
+                style={{ borderRadius: 8 }}
+                onChange={(val) => setRaiseRequestSupplier(suppliers.find(s => s.name === val) || null)}
+              >
+                {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
+              </Select>
+            </Form.Item>
+            {raiseRequestSupplier && (
+              <div style={{ marginTop: 10, display: 'flex', gap: 0 }}>
+                {[
+                  { label: 'Phone', value: raiseRequestSupplier.phone },
+                  { label: 'Email', value: raiseRequestSupplier.email },
+                  { label: 'Address', value: raiseRequestSupplier.address },
+                ].map((item, i) => (
+                  <div key={i} style={{ flex: 1, borderRight: i < 2 ? `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` : 'none', padding: '0 10px', paddingLeft: i === 0 ? 0 : 10 }}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>{item.label}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, wordBreak: 'break-word' }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Upload Quotation File + AI Scan */}
+          <div style={{ marginBottom: 16, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <RobotOutlined style={{ color: '#fff', fontSize: 15 }} />
+              </div>
+              <div>
+                <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Upload Received Quotation</Text>
+                <Text style={{ fontSize: 11, color: '#aaa' }}>Upload quotation file — AI will auto-fill payment terms & quantity</Text>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Upload
+                maxCount={1}
+                beforeUpload={(file) => { setRaiseRequestFile(file); return false; }}
+                onRemove={() => setRaiseRequestFile(null)}
+                accept=".pdf,.jpg,.jpeg,.png"
+                style={{ flex: 1 }}
+              >
+                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                  {raiseRequestFile ? raiseRequestFile.name : 'Upload Quotation File'}
+                </Button>
+              </Upload>
+              <Button
+                icon={<ThunderboltOutlined />}
+                loading={raiseRequestScanLoading}
+                onClick={handleRaiseRequestAIScan}
+                style={{ borderRadius: 8, background: raiseRequestFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: raiseRequestFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
+              >
+                {raiseRequestScanLoading ? 'Scanning...' : 'Scan with AI'}
+              </Button>
+            </div>
+            {raiseRequestFile && (
+              <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{raiseRequestFile.name}</Text>
+              </div>
+            )}
+          </div>
+
+          {/* Payment Terms + Quantity */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Select payment terms' }]} style={{ marginBottom: 12 }}>
+              <Select
+                placeholder="Select or AI will fill from quotation"
+                onChange={(val) => setRaiseRequestPaymentTerms(val)}
+              >
+                <Option value="100% Payment">100% Payment</Option>
+                <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
+              </Select>
+            </Form.Item>
+            <Row gutter={12}>
+              <Col span={16}>
+                <Form.Item label="Quantity" name="qty" rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                  <InputNumber style={{ width: '100%', borderRadius: 8 }} placeholder="0" min={1} />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item label="Unit" name="unit_display" style={{ marginBottom: 0 }}>
+                  <Input value={raiseRequestProduct?.unit} disabled style={{ borderRadius: 8, textAlign: 'center' }} />
+                </Form.Item>
+              </Col>
+            </Row>
           </div>
 
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); }} style={{ flex: 1, height: 42, borderRadius: 10 }}>Cancel</Button>
-            <Button type="primary" htmlType="submit" style={{ flex: 2, height: 42, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}>
-              Raise Request
+            <Button
+              onClick={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestPaymentTerms(''); }}
+              style={{ flex: 1, height: 44, borderRadius: 10 }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="primary"
+              onClick={handleRaiseRequestSubmit}
+              style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
+            >
+              Raise Request to Financial
             </Button>
           </div>
         </Form>
@@ -1114,7 +1330,14 @@ export default function Purchase() {
               )}
             </div>
 
-            <Form form={requestOrderForm} layout="vertical" onFinish={handleRequestOrder}>
+            <Form
+              form={requestOrderForm}
+              layout="vertical"
+              onFinish={handleRequestOrder}
+              onValuesChange={(changed) => {
+                if (changed.payment_terms !== undefined) setRequestOrderPaymentTerms(changed.payment_terms);
+              }}
+            >
               <Row gutter={12}>
                 <Col span={12}>
                   <Form.Item label="Bill No" name="bill_no" rules={[{ required: true, message: 'Bill number is required' }]}>
@@ -1127,6 +1350,29 @@ export default function Purchase() {
                   </Form.Item>
                 </Col>
               </Row>
+              <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Select payment terms' }]}>
+                <Select
+                  placeholder="Select payment terms"
+                  onChange={(val) => setRequestOrderPaymentTerms(val)}
+                >
+                  <Option value="100% Payment">100% Payment</Option>
+                  <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                  <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
+                </Select>
+              </Form.Item>
+              {(requestOrderPaymentTerms === '50% Advance, 50% on Dispatch' || requestOrderPaymentTerms === '50% Advance, 50% After Delivery (Max 15 days)') && (
+                <Form.Item
+                  label={<span style={{ color: '#B11E6A', fontWeight: 600 }}>Second Payment Reminder Date</span>}
+                  name="reminder_date"
+                  rules={[{ required: true, message: 'Select a reminder date for the second payment' }]}
+                >
+                  <DatePicker
+                    style={{ width: '100%', borderRadius: 8 }}
+                    placeholder="Pick reminder date for 2nd payment"
+                    disabledDate={(d) => d && d.isBefore(dayjs(), 'day')}
+                  />
+                </Form.Item>
+              )}
               <Row gutter={12}>
                 <Col span={8}>
                   <Form.Item label="Order Date" name="order_date" rules={[{ required: true, message: 'Select order date' }]} initialValue={dayjs()}>
@@ -1145,7 +1391,7 @@ export default function Purchase() {
                 </Col>
               </Row>
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <Button onClick={() => { setShowRequestOrderModal(false); requestOrderForm.resetFields(); setSelectedApprovedRequest(null); setRequestOrderScannedFile(null); }} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
+                <Button onClick={() => { setShowRequestOrderModal(false); requestOrderForm.resetFields(); setSelectedApprovedRequest(null); setRequestOrderScannedFile(null); setRequestOrderPaymentTerms(''); }} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
                 <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}>
                   Submit to Financial
                 </Button>
@@ -1340,96 +1586,6 @@ export default function Purchase() {
         </Form>
       </Modal>
 
-      {/* Add Inventory Purchase Modal */}
-      <Modal
-        title={<Text strong style={{ fontSize: 16 }}>Add New Purchase Expense</Text>}
-        open={showAddInventoryPurchaseModal}
-        onCancel={() => { setShowAddInventoryPurchaseModal(false); inventoryPurchaseForm.resetFields(); setInventoryPurchaseScannedFile(null); }}
-        footer={null}
-        width={540}
-        centered
-      >
-        {/* AI Scan Invoice Section — same design as Supplier / Vendor modals */}
-        <div style={{ marginTop: 16, marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <RobotOutlined style={{ color: '#fff', fontSize: 15 }} />
-            </div>
-            <div>
-              <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill quantity, amount & date</Text>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Upload
-              maxCount={1}
-              beforeUpload={(file) => { setInventoryPurchaseScannedFile(file); return false; }}
-              onRemove={() => setInventoryPurchaseScannedFile(null)}
-              accept=".pdf,.jpg,.jpeg,.png"
-              style={{ flex: 1 }}
-            >
-              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload</Button>
-            </Upload>
-            <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setInventoryPurchaseScannedFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', whiteSpace: 'nowrap' }}>Scan</Button>
-            <Button
-              icon={<ThunderboltOutlined />}
-              loading={inventoryPurchaseScanLoading}
-              onClick={handleInventoryPurchaseAIScan}
-              style={{ borderRadius: 8, background: inventoryPurchaseScannedFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: inventoryPurchaseScannedFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
-            >
-              {inventoryPurchaseScanLoading ? 'Scanning...' : 'Scan with AI'}
-            </Button>
-          </div>
-          {inventoryPurchaseScannedFile && (
-            <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{inventoryPurchaseScannedFile.name}</Text>
-            </div>
-          )}
-        </div>
-
-        <Form form={inventoryPurchaseForm} layout="vertical">
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item label="Select Product" name="product" rules={[{ required: true }]}>
-                <Select placeholder="Select item">
-                  {inventory.map(i => <Option key={i.code} value={i.name}>{i.name}</Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Supplier" name="supplier" rules={[{ required: true }]}>
-                <Select placeholder="Select supplier">
-                  {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={8}>
-              <Form.Item label="Quantity" name="qty" rules={[{ required: true }]}>
-                <Input placeholder="0" suffix="Unit" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="Total Amount" name="amount" rules={[{ required: true }]}>
-                <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="Date" name="date" rules={[{ required: true }]}>
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Payment Status" name="status" valuePropName="checked">
-            <Switch checkedChildren="Paid" unCheckedChildren="Unpaid" defaultChecked />
-          </Form.Item>
-          <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
-            <Button onClick={() => setShowAddInventoryPurchaseModal(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
-            <Button type="primary" onClick={() => { message.success('Purchase recorded'); setShowAddInventoryPurchaseModal(false); }} style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Record Purchase</Button>
-          </div>
-        </Form>
-      </Modal>
 
       {/* AI Bill Detail Modal */}
       <Modal

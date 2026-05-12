@@ -4,7 +4,7 @@ import {
 } from 'antd';
 import {
   WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, CloseCircleOutlined, WalletOutlined,
-  ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, InfoCircleOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined
+  ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, InfoCircleOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined, FileTextOutlined
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
 import { updateRequestStatus, updateOrderPaymentStatus } from '../../store/slices/purchaseSlice';
@@ -23,6 +23,7 @@ export default function Financial() {
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
   const [viewRequest, setViewRequest] = useState(null);
+  const [viewQuotationFile, setViewQuotationFile] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedForPayment, setSelectedForPayment] = useState(null);
   const [paymentForm] = Form.useForm();
@@ -155,18 +156,18 @@ export default function Financial() {
           items={[
             {
               key: 'purchase_requests',
-              label: <Space><AuditOutlined /> Purchase Requests</Space>,
+              label: <Space><AuditOutlined /> Quotation Requests</Space>,
               children: (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ marginBottom: 16 }}>
-                    <Title level={5} style={{ margin: 0, color: textColor }}>Purchase Requests — Approve / Reject</Title>
-                    <Text type="secondary">Review requests raised by the procurement team and approve or reject them</Text>
+                    <Title level={5} style={{ margin: 0, color: textColor }}>Quotation Requests — Approve / Reject</Title>
+                    <Text type="secondary">Review quotation requests raised by the procurement team and approve or reject them</Text>
                   </div>
                   <Table
                     size="small"
                     dataSource={raisedRequests}
                     pagination={{ pageSize: 8 }}
-                    locale={{ emptyText: 'No purchase requests yet. Requests raised from the Purchase module will appear here.' }}
+                    locale={{ emptyText: 'No quotation requests yet. Requests raised from the Purchase module will appear here.' }}
                     columns={[
                       { title: 'Date', dataIndex: 'date', key: 'date' },
                       { title: 'Item', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
@@ -182,34 +183,48 @@ export default function Financial() {
                       },
                       {
                         title: 'Actions', key: 'actions',
-                        render: (_, r) => r.status === 'Pending' ? (
+                        render: (_, r) => (
                           <Space>
-                            <Button
-                              size="small"
-                              type="primary"
-                              icon={<CheckCircleOutlined />}
-                              onClick={() => {
-                                dispatch(updateRequestStatus({ key: r.key, status: 'Approved' }));
-                                message.success(`Request for ${r.item} approved`);
-                              }}
-                              style={{ background: '#52c41a', border: 'none' }}
-                            >
-                              Approve
-                            </Button>
-                            <Button
-                              size="small"
-                              danger
-                              icon={<CloseCircleOutlined />}
-                              onClick={() => {
-                                dispatch(updateRequestStatus({ key: r.key, status: 'Rejected' }));
-                                message.warning(`Request for ${r.item} rejected`);
-                              }}
-                            >
-                              Reject
-                            </Button>
+                            {r.quotation_file && (
+                              <Button
+                                size="small"
+                                icon={<FileTextOutlined />}
+                                onClick={() => setViewQuotationFile(r)}
+                                style={{ borderColor: '#B11E6A', color: '#B11E6A' }}
+                              >
+                                View File
+                              </Button>
+                            )}
+                            {r.status === 'Pending' ? (
+                              <>
+                                <Button
+                                  size="small"
+                                  type="primary"
+                                  icon={<CheckCircleOutlined />}
+                                  onClick={() => {
+                                    dispatch(updateRequestStatus({ key: r.key, status: 'Approved' }));
+                                    message.success(`Request for ${r.item} approved`);
+                                  }}
+                                  style={{ background: '#52c41a', border: 'none', color: '#fff' }}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="small"
+                                  danger
+                                  icon={<CloseCircleOutlined />}
+                                  onClick={() => {
+                                    dispatch(updateRequestStatus({ key: r.key, status: 'Rejected' }));
+                                    message.warning(`Request for ${r.item} rejected`);
+                                  }}
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            ) : (
+                              <Tag color={r.status === 'Approved' ? 'success' : 'error'} style={{ borderRadius: 12 }}>{r.status}</Tag>
+                            )}
                           </Space>
-                        ) : (
-                          <Tag color={r.status === 'Approved' ? 'success' : 'error'} style={{ borderRadius: 12 }}>{r.status}</Tag>
                         )
                       }
                     ]}
@@ -316,6 +331,67 @@ export default function Financial() {
               </Button>
             </div>
           </Form>
+        )}
+      </Modal>
+
+      {/* Quotation File View Modal */}
+      <Modal
+        title={
+          <Space>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <FileTextOutlined style={{ color: '#fff', fontSize: 16 }} />
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 15, display: 'block' }}>Uploaded Quotation File</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>File attached with purchase request</Text>
+            </div>
+          </Space>
+        }
+        open={!!viewQuotationFile}
+        onCancel={() => setViewQuotationFile(null)}
+        footer={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button style={{ flex: 1 }} onClick={() => setViewQuotationFile(null)}>Close</Button>
+            <Button
+              type="primary"
+              icon={<UploadOutlined />}
+              style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
+              onClick={() => { message.success('File downloaded'); }}
+            >
+              Download File
+            </Button>
+          </div>
+        }
+        width={500}
+        centered
+      >
+        {viewQuotationFile && (
+          <div style={{ marginTop: 16 }}>
+            {/* File banner */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A12,#D85C9E08)', border: '1.5px solid #B11E6A33', marginBottom: 16 }}>
+              <div style={{ width: 48, height: 48, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <FileTextOutlined style={{ color: '#fff', fontSize: 22 }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text strong style={{ color: '#B11E6A', fontSize: 13, display: 'block', wordBreak: 'break-all' }}>{viewQuotationFile.quotation_file}</Text>
+                <Text type="secondary" style={{ fontSize: 11 }}>Uploaded via AI Quotation Scanner</Text>
+              </div>
+            </div>
+
+            {/* Request summary */}
+            <Descriptions bordered size="small" column={2}>
+              <Descriptions.Item label="Item" span={2}><Text strong>{viewQuotationFile.item}</Text></Descriptions.Item>
+              <Descriptions.Item label="Supplier"><Text style={{ color: '#B11E6A', fontWeight: 600 }}>{viewQuotationFile.supplier}</Text></Descriptions.Item>
+              <Descriptions.Item label="Qty"><Text strong>{viewQuotationFile.qty} {viewQuotationFile.unit}</Text></Descriptions.Item>
+              <Descriptions.Item label="Payment Terms" span={2}><Text style={{ fontSize: 11 }}>{viewQuotationFile.payment_terms}</Text></Descriptions.Item>
+              <Descriptions.Item label="Date">{viewQuotationFile.date}</Descriptions.Item>
+              <Descriptions.Item label="Status">
+                <Tag color={viewQuotationFile.status === 'Approved' ? 'success' : viewQuotationFile.status === 'Rejected' ? 'error' : 'processing'} style={{ borderRadius: 10 }}>
+                  {viewQuotationFile.status}
+                </Tag>
+              </Descriptions.Item>
+            </Descriptions>
+          </div>
         )}
       </Modal>
 
