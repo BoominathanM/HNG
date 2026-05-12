@@ -8,6 +8,7 @@ import {
   CheckCircleOutlined, LeftOutlined, CloseOutlined, UserOutlined,
   SearchOutlined, DeleteOutlined, CalendarOutlined, MinusOutlined,
   ShopOutlined, EnvironmentOutlined, BankOutlined, WhatsAppOutlined,
+  FileDoneOutlined, EditOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -17,7 +18,7 @@ import dayjs from 'dayjs';
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const invoices = [
+const initialInvoices = [
   { key: 1, inv: 'INV-2401', client: 'Marriott Mumbai', order: 'ORD-2402', date: '2024-01-18 10:30 AM', amount: 38500, gst: 6930, total: 45430, advance: 19250, balance: 26180, type: 'GST', status: 'Partially Paid' },
   { key: 2, inv: 'INV-2402', client: 'Taj Hotels Delhi', order: 'ORD-2403', date: '2024-01-17 02:45 PM', amount: 120000, gst: 21600, total: 141600, advance: 60000, balance: 81600, type: 'GST', status: 'Pending' },
   { key: 3, inv: 'INV-2403', client: 'ITC Grand Kolkata', order: 'ORD-2404', date: '2024-01-16 11:15 AM', amount: 250000, gst: 0, total: 250000, advance: 250000, balance: 0, type: 'Non-GST', status: 'Paid' },
@@ -27,6 +28,17 @@ const invoices = [
 ];
 
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
+
+const initialQuotations = [
+  { key: 1, quot: 'QT-2401', client: 'Marriott Mumbai', order: 'ORD-2402', date: '2024-01-18 10:30 AM', amount: 38500, gst: 6930, total: 45430, advance: 19250, balance: 26180, type: 'GST', status: 'In Process' },
+  { key: 2, quot: 'QT-2402', client: 'Taj Hotels Delhi', order: 'ORD-2403', date: '2024-01-17 02:45 PM', amount: 120000, gst: 21600, total: 141600, advance: 0, balance: 141600, type: 'GST', status: 'Unpaid' },
+  { key: 3, quot: 'QT-2403', client: 'ITC Grand Kolkata', order: 'ORD-2404', date: '2024-01-16 11:15 AM', amount: 250000, gst: 0, total: 250000, advance: 250000, balance: 0, type: 'Non-GST', status: 'Paid' },
+  { key: 4, quot: 'QT-2404', client: 'The Grand Hotel', order: 'ORD-2401', date: '2024-01-10 09:20 AM', amount: 42000, gst: 7560, total: 49560, advance: 21000, balance: 28560, type: 'GST', status: 'Partially Paid' },
+  { key: 5, quot: 'QT-2405', client: 'Client Demo', order: 'ORD-2389', date: '2023-11-20 04:30 PM', amount: 25000, gst: 4500, total: 29500, advance: 0, balance: 29500, type: 'GST', status: 'Unpaid' },
+  { key: 6, quot: 'QT-2406', client: 'Hotel Blue Star', order: 'ORD-2406', date: '2024-01-15 12:00 PM', amount: 50000, gst: 9000, total: 59000, advance: 10000, balance: 49000, type: 'GST', status: 'In Process' },
+];
+
+const quotStatusColor = { 'In Process': '#7c3aed', Paid: '#6b1240', 'Partially Paid': '#B11E6A', Unpaid: '#C94F8A' };
 
 const partiesList = [
   { key: 1, name: '3R GREEN CORPORATION', phone: '7417157859', type: 'Supplier', balance: 0 },
@@ -60,6 +72,11 @@ export default function Billing() {
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
   const sectionBg = isDark ? '#16161e' : '#fafafa';
   const inputBg = isDark ? '#1a1a2a' : '#fff';
+
+  // Data state (mutable)
+  const [invoiceList, setInvoiceList] = useState(initialInvoices);
+  const [quotationList, setQuotationList] = useState(initialQuotations);
+  const [activeTab, setActiveTab] = useState('quotation-in-process');
 
   // View invoice
   const [viewModal, setViewModal] = useState(false);
@@ -98,6 +115,20 @@ export default function Billing() {
   const [gstPercent, setGstPercent] = useState(18);
   const [noteText, setNoteText] = useState('');
   const [advanceAmt, setAdvanceAmt] = useState(0);
+
+  // Record Payment In
+  const [recordPayOpen, setRecordPayOpen] = useState(false);
+  const [recordPayInv, setRecordPayInv] = useState(null);
+  const [payParty, setPayParty] = useState(null);
+  const [payAmount, setPayAmount] = useState(0);
+  const [payMode, setPayMode] = useState('Cash');
+  const [payBankAccount, setPayBankAccount] = useState(null);
+  const [payNote, setPayNote] = useState('');
+  const [payNoteVisible, setPayNoteVisible] = useState(false);
+  const [payDiscountVisible, setPayDiscountVisible] = useState(false);
+  const [payDiscount, setPayDiscount] = useState(0);
+  const [paymentRefNum] = useState('176');
+  const [payLinkedInvoices, setPayLinkedInvoices] = useState([]);
 
   const filteredParties = partiesList.filter(p =>
     p.name.toLowerCase().includes(partySearch.toLowerCase()) ||
@@ -169,6 +200,49 @@ export default function Billing() {
     setShowItemSearch(false);
   };
 
+  const bankAccounts = ['HDFC Bank - ****1234', 'SBI Bank - ****5678', 'Axis Bank - ****9012'];
+
+  const openRecordPay = (inv) => {
+    const party = partiesList.find(p => p.name === inv.client) || { name: inv.client, balance: inv.balance };
+    setRecordPayInv(inv);
+    setPayParty(party);
+    setPayAmount(inv.balance);
+    setPayLinkedInvoices([inv]);
+    setPayMode('Cash');
+    setPayBankAccount(null);
+    setPayDiscount(0);
+    setPayNote('');
+    setPayNoteVisible(false);
+    setPayDiscountVisible(false);
+    setRecordPayOpen(true);
+  };
+
+  const handleSavePayment = () => {
+    message.success(`Payment of ₹${payAmount.toLocaleString()} recorded successfully`);
+    setRecordPayOpen(false);
+  };
+
+  const handleConvertToInvoice = (quot) => {
+    const newInv = {
+      key: Date.now(),
+      inv: `INV-${quot.quot.replace('QT-', '')}`,
+      client: quot.client,
+      order: quot.order,
+      date: quot.date,
+      amount: quot.amount,
+      gst: quot.gst,
+      total: quot.total,
+      advance: quot.advance,
+      balance: quot.balance,
+      type: quot.type,
+      status: quot.balance === 0 ? 'Paid' : quot.advance > 0 ? 'Partially Paid' : 'Pending',
+    };
+    setInvoiceList(prev => [...prev, newInv]);
+    setQuotationList(prev => prev.filter(q => q.key !== quot.key));
+    setActiveTab('invoices');
+    message.success(`${quot.quot} converted to ${newInv.inv} and moved to Invoices`);
+  };
+
   // Style helpers
   const sectionCard = {
     borderRadius: 14,
@@ -210,28 +284,28 @@ export default function Billing() {
   };
 
   const columns = [
-    { title: 'Invoice', dataIndex: 'inv', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Billing Date', dataIndex: 'date', render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Client', dataIndex: 'client' },
-    { title: 'Order', dataIndex: 'order', responsive: ['md'], render: (v) => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Type', dataIndex: 'type', responsive: ['lg'], render: (v) => <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
-    { title: 'Total', dataIndex: 'total', render: (v) => <Text strong>₹{v.toLocaleString()}</Text> },
-    { title: 'Advance', dataIndex: 'advance', responsive: ['md'], render: (v) => <Text style={{ color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Balance', dataIndex: 'balance', render: (v) => <Text style={{ color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Status', dataIndex: 'status', render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag> },
+    { title: 'Invoice', dataIndex: 'inv', width: 110, fixed: 'left', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+    { title: 'Billing Date', dataIndex: 'date', width: 160, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Client', dataIndex: 'client', width: 160 },
+    { title: 'Order', dataIndex: 'order', width: 110, render: (v) => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
+    { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
+    { title: 'Total', dataIndex: 'total', width: 110, render: (v) => <Text strong>₹{v.toLocaleString()}</Text> },
+    { title: 'Advance', dataIndex: 'advance', width: 110, render: (v) => <Text style={{ color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Balance', dataIndex: 'balance', width: 110, render: (v) => <Text style={{ color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Status', dataIndex: 'status', width: 120, render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag> },
     {
-      title: 'Actions', key: 'actions',
+      title: 'Actions', key: 'actions', width: 300, fixed: 'right',
       render: (_, r) => (
-        <Space>
-          <Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewModal(true); }} />
+        <Space wrap>
+          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewModal(true); }} /></Tooltip>
           <Tooltip title="Share on WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Invoice shared on WhatsApp')} />
           </Tooltip>
-          <Button size="small" icon={<PrinterOutlined />} />
-          <Button size="small" icon={<DownloadOutlined />} />
+          <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} /></Tooltip>
+          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} /></Tooltip>
           {r.balance > 0 && (
             <>
-              <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Pay</Button>
+              <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none' }} onClick={() => openRecordPay(r)}>Record Manually</Button>
               <Button size="small" icon={<CalendarOutlined />} onClick={() => message.success('Reminder sent to client')} style={{ color: '#fa8c16' }}>Reminder</Button>
             </>
           )}
@@ -240,9 +314,45 @@ export default function Billing() {
     },
   ];
 
-  const totalRevenue = invoices.reduce((s, i) => s + i.total, 0);
-  const totalPaid = invoices.filter((i) => i.status === 'Paid').reduce((s, i) => s + i.total, 0);
-  const totalPending = invoices.reduce((s, i) => s + i.balance, 0);
+  const makeQuotationColumns = (showConvert) => [
+    { title: 'Quotation #', dataIndex: 'quot', width: 120, fixed: 'left', render: (v) => <Text strong style={{ color: '#7c3aed' }}>{v}</Text> },
+    { title: 'Date', dataIndex: 'date', width: 160, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Client', dataIndex: 'client', width: 160 },
+    { title: 'Order', dataIndex: 'order', width: 110, render: (v) => <Text style={{ color: '#7c3aed' }}>{v}</Text> },
+    { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, background: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44' }}>{v}</Tag> },
+    { title: 'Total', dataIndex: 'total', width: 110, render: (v) => <Text strong>₹{v.toLocaleString()}</Text> },
+    { title: 'Advance', dataIndex: 'advance', width: 110, render: (v) => <Text style={{ color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Balance', dataIndex: 'balance', width: 110, render: (v) => <Text style={{ color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Status', dataIndex: 'status', width: 120, render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, background: `${quotStatusColor[v]}22`, color: quotStatusColor[v], border: `1px solid ${quotStatusColor[v]}44` }}>{v}</Tag> },
+    {
+      title: 'Actions', key: 'actions', width: showConvert ? 320 : 180, fixed: 'right',
+      render: (_, r) => (
+        <Space wrap>
+          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewModal(true); }} /></Tooltip>
+          <Tooltip title="Share on WhatsApp">
+            <Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Quotation shared on WhatsApp')} />
+          </Tooltip>
+          <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} /></Tooltip>
+          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} /></Tooltip>
+          {showConvert && (
+            <Button
+              size="small"
+              type="primary"
+              icon={<FileDoneOutlined />}
+              style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none' }}
+              onClick={() => handleConvertToInvoice(r)}
+            >
+              Convert to Invoice
+            </Button>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
+  const totalRevenue = invoiceList.reduce((s, i) => s + i.total, 0);
+  const totalPaid = invoiceList.filter((i) => i.status === 'Paid').reduce((s, i) => s + i.total, 0);
+  const totalPending = invoiceList.reduce((s, i) => s + i.balance, 0);
 
   return (
     <div className="page-container fade-in">
@@ -275,15 +385,60 @@ export default function Billing() {
 
       {/* Table */}
       <Tabs
-        defaultActiveKey="invoices"
+        activeKey={activeTab}
+        onChange={setActiveTab}
         items={[
+          {
+            key: 'quotation-in-process',
+            label: 'Quotation in Process',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(124,58,237,0.06)' }} styles={{ body: { padding: 0 } }}>
+                <div style={{ overflowX: 'auto', width: '100%' }}>
+                  <Table dataSource={quotationList.filter(q => q.status === 'In Process')} columns={makeQuotationColumns(true)} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1300 }} />
+                </div>
+              </Card>
+            ),
+          },
+          {
+            key: 'paid-quotation',
+            label: 'Paid Quotation',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(107,18,64,0.06)' }} styles={{ body: { padding: 0 } }}>
+                <div style={{ overflowX: 'auto', width: '100%' }}>
+                  <Table dataSource={quotationList.filter(q => q.status === 'Paid')} columns={makeQuotationColumns(false)} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1200 }} />
+                </div>
+              </Card>
+            ),
+          },
+          {
+            key: 'partially-paid-quotation',
+            label: 'Partially Paid Quotation',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                <div style={{ overflowX: 'auto', width: '100%' }}>
+                  <Table dataSource={quotationList.filter(q => q.status === 'Partially Paid')} columns={makeQuotationColumns(false)} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1200 }} />
+                </div>
+              </Card>
+            ),
+          },
+          {
+            key: 'unpaid-quotations',
+            label: 'Unpaid Quotations',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(201,79,138,0.06)' }} styles={{ body: { padding: 0 } }}>
+                <div style={{ overflowX: 'auto', width: '100%' }}>
+                  <Table dataSource={quotationList.filter(q => q.status === 'Unpaid')} columns={makeQuotationColumns(false)} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1200 }} />
+                </div>
+              </Card>
+            ),
+          },
           {
             key: 'invoices',
             label: 'Invoices',
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
-                <div className="table-responsive" style={{ padding: '4px' }}>
-                  <Table dataSource={invoices} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+                <div style={{ overflowX: 'auto', width: '100%' }}>
+                  <Table dataSource={invoiceList} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1300 }} />
                 </div>
               </Card>
             ),
@@ -940,6 +1095,220 @@ export default function Billing() {
             </div>
           </div>
 
+        </div>
+      </Drawer>
+
+      {/* ───────────── RECORD PAYMENT IN DRAWER ───────────── */}
+      <Drawer
+        open={recordPayOpen}
+        onClose={() => setRecordPayOpen(false)}
+        width={Math.min(520, window.innerWidth)}
+        closable={false}
+        styles={{
+          body: { padding: 0, background: isDark ? '#f0f0f5' : '#f5f5f8', display: 'flex', flexDirection: 'column' },
+          header: { display: 'none' },
+          footer: { padding: 0, border: 'none' },
+        }}
+        footer={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', background: '#fff', borderTop: '1px solid #e8e8e8' }}>
+            <div>
+              <Text style={{ fontSize: 13, color: '#666' }}>New Party Balance</Text>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 16, fontWeight: 700, color: '#e53935' }}>
+                  ₹{((payParty?.balance || 0) + (payAmount || 0) - (payDiscount || 0)).toLocaleString()}
+                </Text>
+                <span style={{ color: '#e53935', fontWeight: 700 }}>↑</span>
+              </div>
+            </div>
+            <Button
+              type="primary"
+              onClick={handleSavePayment}
+              style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', height: 48, paddingInline: 40, borderRadius: 10, fontSize: 16, fontWeight: 700 }}
+            >
+              Save
+            </Button>
+          </div>
+        }
+      >
+        {/* ── Sticky header ── */}
+        <div style={{ background: '#fff', borderBottom: '1px solid #e8e8e8', padding: '14px 16px', position: 'sticky', top: 0, zIndex: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Button type="text" icon={<LeftOutlined style={{ color: '#3730a3' }} />} onClick={() => setRecordPayOpen(false)} style={{ padding: 0, height: 'auto' }} />
+            <Text style={{ fontSize: 18, fontWeight: 700, color: '#1a1a2e', flex: 1 }}>Record Payment In</Text>
+          </div>
+        </div>
+
+        <div style={{ overflowY: 'auto', flex: 1 }}>
+          {/* ── Payment ref header ── */}
+          <div style={{ background: '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #ebebeb' }}>
+            <div>
+              <Text style={{ color: '#3730a3', fontWeight: 600, fontSize: 14 }}>Received Payment #{paymentRefNum}</Text>
+              <div>
+                <Text style={{ color: '#888', fontSize: 13 }}>{dayjs().format('D MMM YYYY')}</Text>
+              </div>
+            </div>
+            <Button size="small" icon={<EditOutlined />} style={{ borderRadius: 20, color: '#555', borderColor: '#ccc', fontSize: 13 }}>EDIT</Button>
+          </div>
+
+          {/* ── Party Name ── */}
+          <div style={{ background: '#fff', padding: '16px', borderBottom: '1px solid #ebebeb' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ fontSize: 12, fontWeight: 700, color: '#333', letterSpacing: 0.5 }}>
+                PARTY NAME <span style={{ color: '#e53935' }}>*</span>
+              </Text>
+              <Text style={{ fontSize: 13, color: '#555' }}>
+                Current Balance:{' '}
+                <span style={{ color: '#e53935', fontWeight: 700 }}>₹{(payParty?.balance || 0).toLocaleString()}</span>
+                <span style={{ color: '#e53935', fontWeight: 700 }}> ↑</span>
+              </Text>
+            </div>
+            <Select
+              value={payParty?.name}
+              onChange={(val) => setPayParty(partiesList.find(p => p.name === val) || { name: val, balance: 0 })}
+              style={{ width: '100%', height: 50 }}
+              suffixIcon={<span style={{ color: '#aaa' }}>▼</span>}
+              placeholder="Select Party"
+            >
+              {partiesList.map(p => (
+                <Option key={p.key} value={p.name}>
+                  <Space><UserOutlined style={{ color: '#aaa' }} />{p.name}</Space>
+                </Option>
+              ))}
+            </Select>
+          </div>
+
+          {/* ── Amount ── */}
+          <div style={{ background: '#fff', padding: '16px', borderBottom: '1px solid #ebebeb' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ fontSize: 12, fontWeight: 700, color: '#333', letterSpacing: 0.5 }}>
+                AMOUNT <span style={{ color: '#e53935' }}>*</span>
+              </Text>
+            </div>
+            <InputNumber
+              prefix={<Text style={{ color: '#555', fontSize: 16, marginRight: 4 }}>₹</Text>}
+              value={payAmount}
+              onChange={(v) => setPayAmount(v || 0)}
+              min={0}
+              style={{ width: '100%', height: 50, borderRadius: 8, fontSize: 18 }}
+              controls={false}
+            />
+            {!payDiscountVisible ? (
+              <div style={{ marginTop: 8, textAlign: 'right' }}>
+                <Text
+                  style={{ color: '#3730a3', fontSize: 13, cursor: 'pointer', fontWeight: 500 }}
+                  onClick={() => setPayDiscountVisible(true)}
+                >
+                  + Add Payment In Discount
+                </Text>
+              </div>
+            ) : (
+              <div style={{ marginTop: 10 }}>
+                <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>Discount Amount</Text>
+                <InputNumber
+                  prefix="₹"
+                  value={payDiscount}
+                  onChange={(v) => setPayDiscount(v || 0)}
+                  min={0}
+                  max={payAmount}
+                  style={{ width: '100%', borderRadius: 8 }}
+                  controls={false}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* ── Invoice ── */}
+          <div style={{ background: '#fff', padding: '16px', borderBottom: '1px solid #ebebeb' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 14, fontWeight: 600, color: '#1a1a2e' }}>Invoice</Text>
+              <Text
+                style={{ color: '#3730a3', fontSize: 13, cursor: 'pointer', fontWeight: 500 }}
+                onClick={() => message.info('Select unpaid invoice to link')}
+              >
+                + Add Unpaid Invoice
+              </Text>
+            </div>
+            {payLinkedInvoices.map((inv) => {
+              const settled = Math.min(payAmount - (payDiscount || 0), inv.balance);
+              return (
+                <div key={inv.key} style={{ padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <Text style={{ fontWeight: 700, fontSize: 15, color: '#1a1a2e' }}>#{inv.inv || inv.key}</Text>
+                      <div>
+                        <Text style={{ fontSize: 12, color: '#888' }}>
+                          Inv Amt: {inv.balance.toLocaleString()} • {dayjs(inv.date?.split(' ')[0] || undefined).format('D MMM YYYY')}
+                        </Text>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <Text style={{ fontSize: 15, color: '#1a1a2e' }}>₹ {inv.balance.toLocaleString()}</Text>
+                      <div>
+                        <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
+                          ₹{settled.toLocaleString()} Settled <CheckCircleOutlined />
+                        </Text>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── Payment Mode ── */}
+          <div style={{ background: '#fff', padding: '16px', borderBottom: '1px solid #ebebeb' }}>
+            <Text style={{ fontSize: 14, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 10 }}>Payment Mode</Text>
+            <Row gutter={12}>
+              <Col span={payMode !== 'Cash' && payMode !== 'UPI' ? 12 : 24}>
+                <Select
+                  value={payMode}
+                  onChange={(v) => { setPayMode(v); setPayBankAccount(null); }}
+                  style={{ width: '100%', height: 44 }}
+                >
+                  {['Cash', 'UPI', 'Card', 'Net Banking', 'Bank Transfer', 'Cheque'].map(m => (
+                    <Option key={m} value={m}>{m}</Option>
+                  ))}
+                </Select>
+              </Col>
+              {payMode !== 'Cash' && payMode !== 'UPI' && (
+                <Col span={12}>
+                  <Select
+                    placeholder="Select Bank Acco..."
+                    value={payBankAccount}
+                    onChange={(v) => setPayBankAccount(v)}
+                    style={{ width: '100%', height: 44 }}
+                  >
+                    {bankAccounts.map(b => <Option key={b} value={b}>{b}</Option>)}
+                  </Select>
+                </Col>
+              )}
+            </Row>
+          </div>
+
+          {/* ── Note ── */}
+          <div style={{ background: '#fff', padding: '12px 16px', minHeight: 56 }}>
+            {!payNoteVisible ? (
+              <div style={{ textAlign: 'right' }}>
+                <Text
+                  style={{ color: '#3730a3', fontSize: 13, cursor: 'pointer', fontWeight: 500 }}
+                  onClick={() => setPayNoteVisible(true)}
+                >
+                  + Note
+                </Text>
+              </div>
+            ) : (
+              <div>
+                <Text style={{ fontSize: 13, fontWeight: 600, color: '#555', display: 'block', marginBottom: 6 }}>Note</Text>
+                <Input.TextArea
+                  placeholder="Add a note..."
+                  value={payNote}
+                  onChange={(e) => setPayNote(e.target.value)}
+                  rows={3}
+                  style={{ borderRadius: 8 }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       </Drawer>
 
