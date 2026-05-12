@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import dayjs from 'dayjs';
-import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload } from 'antd';
-import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined } from '@ant-design/icons';
+import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs } from 'antd';
+import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
@@ -33,6 +33,24 @@ export default function Expenses() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
 
+  // Purchase expenses (imported from Purchase module - shown in combined view)
+  const [purchaseExpenses] = useState([
+    { key: 'pe1', date: '2024-05-01', category: 'PURCHASE', desc: 'Soap Base (White) 100Kg', amount: 8500, status: 'Paid', vendor: 'ChemCo India', invoice_no: 'INV-CHEM-101' },
+    { key: 'pe2', date: '2024-05-04', category: 'PURCHASE', desc: 'Shampoo Concentrate 200Ltr', amount: 44000, status: 'Partially Paid', vendor: 'BioLife Ltd', invoice_no: 'INV-BIO-452' },
+    { key: 'pe3', date: '2024-05-06', category: 'PURCHASE', desc: 'Shampoo Bottles 500Pcs', amount: 2250, status: 'Unpaid', vendor: 'PlastiPack', invoice_no: 'INV-PP-203' },
+  ]);
+
+  // Expense history drill-down
+  const [historyModal, setHistoryModal] = useState(false);
+  const [historyItem, setHistoryItem] = useState(null);
+  const [historyDateRange, setHistoryDateRange] = useState(null);
+
+  // Combined expense list for "All Expenses" tab
+  const allExpenses = [
+    ...expenses.map(e => ({ ...e, source: 'other' })),
+    ...purchaseExpenses.map(e => ({ ...e, source: 'purchase' })),
+  ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
   const handleAddExpense = (values) => {
     const newExpense = {
       key: Date.now(),
@@ -51,48 +69,41 @@ export default function Expenses() {
     color: cat.color
   })).filter(d => d.value > 0);
 
-  const columns = [
+  const makeExpenseColumns = (showSource = false) => [
+    { title: 'Date', dataIndex: 'date', key: 'date', render: d => <Text style={{ color: textColor }}>{d}</Text> },
     {
-      title: 'Date',
-      dataIndex: 'date',
-      key: 'date',
-      render: (d) => <Text style={{ color: textColor }}>{d}</Text>
-    },
-    {
-      title: 'Category',
-      key: 'category',
+      title: 'Category', key: 'category',
       render: (_, r) => {
+        if (r.category === 'PURCHASE') return <Tag color="#B11E6A" style={{ borderRadius: 12, padding: '0 10px' }}>Purchase</Tag>;
         const cat = EXPENSE_CATEGORIES.find(x => x.value === r.category);
         const label = r.category === 'OTHER' ? r.customCategory : cat?.label;
         return <Tag color={cat?.color} style={{ borderRadius: 12, padding: '0 10px' }}>{label}</Tag>;
       }
     },
+    { title: 'Description', dataIndex: 'desc', key: 'desc', render: v => <Text style={{ color: textColor }}>{v}</Text> },
+    { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', render: v => <Text style={{ color: textColor }}>{v || '—'}</Text> },
+    { title: 'Amount', dataIndex: 'amount', key: 'amount', align: 'right', render: a => <Text strong style={{ color: '#B11E6A' }}>₹{a.toLocaleString()}</Text> },
     {
-      title: 'Description',
-      dataIndex: 'desc',
-      key: 'desc',
-      render: (v) => <Text style={{ color: textColor }}>{v}</Text>
+      title: 'Status', dataIndex: 'status', key: 'status',
+      render: s => <Tag color={s === 'Paid' ? 'success' : s === 'Partially Paid' ? 'warning' : 'error'} style={{ borderRadius: 12 }}>{s}</Tag>
     },
     {
-      title: 'Vendor',
-      dataIndex: 'vendor',
-      key: 'vendor',
-      render: (v) => <Text style={{ color: textColor }}>{v || '—'}</Text>
+      title: 'History', key: 'history',
+      render: (_, r) => (
+        <Button
+          size="small"
+          icon={<EyeOutlined />}
+          type="link"
+          style={{ color: '#B11E6A' }}
+          onClick={() => { setHistoryItem(r); setHistoryDateRange(null); setHistoryModal(true); }}
+        >
+          View History
+        </Button>
+      )
     },
-    {
-      title: 'Amount',
-      dataIndex: 'amount',
-      key: 'amount',
-      align: 'right',
-      render: (a) => <Text strong style={{ color: '#B11E6A' }}>₹{a.toLocaleString()}</Text>
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      render: (s) => <Tag color="success" style={{ borderRadius: 12 }}>{s}</Tag>
-    }
   ];
+
+  const columns = makeExpenseColumns(false);
 
   const totalExpense = expenses.reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -144,26 +155,65 @@ export default function Expenses() {
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={16}>
-          <Card 
+          <Card
             title={<Space><DollarOutlined /> <Text strong style={{ color: textColor }}>Expense Log</Text></Space>}
-            extra={
-              <Space>
-                <DatePicker size="small" style={{ borderRadius: 6, width: 120 }} />
-                <Select defaultValue="all" size="small" style={{ width: 120 }}>
-                  <Option value="all">All Categories</Option>
-                  {EXPENSE_CATEGORIES.map(c => <Option key={c.value} value={c.value}>{c.label}</Option>)}
-                </Select>
-              </Space>
-            }
             style={{ borderRadius: 14, background: cardBg, border: 'none', boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-            styles={{ body: { padding: 0 } }}
+            styles={{ body: { padding: '0 0 8px' } }}
           >
-            <Table 
-              dataSource={expenses} 
-              columns={columns} 
-              size="small" 
-              pagination={{ pageSize: 8 }}
-              style={{ padding: 4 }}
+            <Tabs
+              defaultActiveKey="all"
+              size="small"
+              style={{ padding: '0 16px' }}
+              tabBarExtraContent={
+                <Space>
+                  <DatePicker size="small" style={{ borderRadius: 6, width: 120 }} />
+                  <Select defaultValue="all" size="small" style={{ width: 120 }}>
+                    <Option value="all">All Categories</Option>
+                    {EXPENSE_CATEGORIES.map(c => <Option key={c.value} value={c.value}>{c.label}</Option>)}
+                  </Select>
+                </Space>
+              }
+              items={[
+                {
+                  key: 'all',
+                  label: `All Expenses (${allExpenses.length})`,
+                  children: (
+                    <Table
+                      dataSource={allExpenses}
+                      columns={makeExpenseColumns(true)}
+                      size="small"
+                      pagination={{ pageSize: 8 }}
+                      style={{ padding: 4 }}
+                    />
+                  ),
+                },
+                {
+                  key: 'other',
+                  label: `Other Expenses (${expenses.length})`,
+                  children: (
+                    <Table
+                      dataSource={expenses}
+                      columns={columns}
+                      size="small"
+                      pagination={{ pageSize: 8 }}
+                      style={{ padding: 4 }}
+                    />
+                  ),
+                },
+                {
+                  key: 'purchase',
+                  label: `Purchase Expenses (${purchaseExpenses.length})`,
+                  children: (
+                    <Table
+                      dataSource={purchaseExpenses}
+                      columns={makeExpenseColumns(false)}
+                      size="small"
+                      pagination={{ pageSize: 8 }}
+                      style={{ padding: 4 }}
+                    />
+                  ),
+                },
+              ]}
             />
           </Card>
         </Col>
@@ -204,6 +254,62 @@ export default function Expenses() {
           </Card>
         </Col>
       </Row>
+
+      {/* Expense History Drill-down Modal */}
+      <Modal
+        title={
+          <Space>
+            <EyeOutlined style={{ color: '#B11E6A' }} />
+            <Text strong style={{ fontSize: 15 }}>Expense History</Text>
+            {historyItem && <Tag color="#B11E6A" style={{ borderRadius: 10 }}>{historyItem.vendor || historyItem.desc}</Tag>}
+          </Space>
+        }
+        open={historyModal}
+        onCancel={() => setHistoryModal(false)}
+        footer={null}
+        width={700}
+        centered
+      >
+        {historyItem && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text type="secondary">Full history for this expense — filter by date range</Text>
+              <DatePicker.RangePicker
+                value={historyDateRange}
+                onChange={setHistoryDateRange}
+                style={{ width: 260 }}
+              />
+            </div>
+            <Table
+              size="small"
+              dataSource={[
+                { key: 1, date: '2024-03-01', desc: historyItem.desc, amount: historyItem.amount * 0.8, status: 'Paid', vendor: historyItem.vendor },
+                { key: 2, date: '2024-04-01', desc: historyItem.desc, amount: historyItem.amount * 0.9, status: 'Paid', vendor: historyItem.vendor },
+                { key: 3, date: historyItem.date, desc: historyItem.desc, amount: historyItem.amount, status: historyItem.status, vendor: historyItem.vendor },
+              ].filter(r => {
+                if (!historyDateRange || !historyDateRange[0] || !historyDateRange[1]) return true;
+                const d = dayjs(r.date);
+                return d.isAfter(historyDateRange[0].subtract(1, 'day')) && d.isBefore(historyDateRange[1].add(1, 'day'));
+              })}
+              columns={[
+                { title: 'Date', dataIndex: 'date', key: 'date' },
+                { title: 'Description', dataIndex: 'desc', key: 'desc' },
+                { title: 'Vendor', dataIndex: 'vendor', key: 'vendor' },
+                { title: 'Amount', dataIndex: 'amount', key: 'amount', render: a => <Text strong style={{ color: '#B11E6A' }}>₹{Math.round(a).toLocaleString()}</Text> },
+                { title: 'Status', dataIndex: 'status', key: 'status', render: s => <Tag color={s === 'Paid' ? 'success' : s === 'Partially Paid' ? 'warning' : 'error'} style={{ borderRadius: 10 }}>{s}</Tag> },
+              ]}
+              pagination={false}
+            />
+            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Total shown: <Text strong style={{ color: '#B11E6A' }}>
+                  ₹{[historyItem.amount * 0.8, historyItem.amount * 0.9, historyItem.amount].reduce((a, b) => a + b, 0).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                </Text>
+              </Text>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         title="Add New Expense"

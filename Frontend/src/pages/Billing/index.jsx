@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
-  Typography, Space, Divider, Avatar, InputNumber, Tabs, Tooltip, Modal, DatePicker, message,
+  Typography, Space, Divider, Avatar, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, message,
 } from 'antd';
 import {
   PlusOutlined, PrinterOutlined, DownloadOutlined, EyeOutlined,
   CheckCircleOutlined, LeftOutlined, CloseOutlined, UserOutlined,
   SearchOutlined, DeleteOutlined, CalendarOutlined, MinusOutlined,
   ShopOutlined, EnvironmentOutlined, BankOutlined, WhatsAppOutlined,
-  FileDoneOutlined, EditOutlined,
+  FileDoneOutlined, EditOutlined, UploadOutlined, BellOutlined, SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -130,6 +130,27 @@ export default function Billing() {
   const [paymentRefNum] = useState('176');
   const [payLinkedInvoices, setPayLinkedInvoices] = useState([]);
 
+  // Convert to Invoice modal (partial conversion)
+  const [convertOpen, setConvertOpen] = useState(false);
+  const [convertQuot, setConvertQuot] = useState(null);
+  const [convertAmt, setConvertAmt] = useState(0);
+
+  // Upload proof modal (Paid quotation)
+  const [proofOpen, setProofOpen] = useState(false);
+  const [proofQuot, setProofQuot] = useState(null);
+
+  // Reminder modal (Paid / Partially Paid)
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const [reminderQuot, setReminderQuot] = useState(null);
+  const [reminderDate, setReminderDate] = useState(null);
+  const [reminderTime, setReminderTime] = useState(null);
+  const [reminderMode, setReminderMode] = useState('WhatsApp');
+
+  // Verify payment modal (Paid quotation)
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [verifyQuot, setVerifyQuot] = useState(null);
+  const [verifierName, setVerifierName] = useState('');
+
   const filteredParties = partiesList.filter(p =>
     p.name.toLowerCase().includes(partySearch.toLowerCase()) ||
     (p.phone || '').includes(partySearch)
@@ -222,25 +243,41 @@ export default function Billing() {
     setRecordPayOpen(false);
   };
 
-  const handleConvertToInvoice = (quot) => {
+  const openConvertModal = (quot) => {
+    setConvertQuot(quot);
+    setConvertAmt(quot.total);
+    setConvertOpen(true);
+  };
+
+  const handleConvertConfirm = () => {
+    if (!convertQuot) return;
+    const amt = convertAmt || convertQuot.total;
+    const proportion = convertQuot.total > 0 ? amt / convertQuot.total : 1;
     const newInv = {
       key: Date.now(),
-      inv: `INV-${quot.quot.replace('QT-', '')}`,
-      client: quot.client,
-      order: quot.order,
-      date: quot.date,
-      amount: quot.amount,
-      gst: quot.gst,
-      total: quot.total,
-      advance: quot.advance,
-      balance: quot.balance,
-      type: quot.type,
-      status: quot.balance === 0 ? 'Paid' : quot.advance > 0 ? 'Partially Paid' : 'Pending',
+      inv: `INV-${convertQuot.quot.replace('QT-', '')}`,
+      client: convertQuot.client,
+      order: convertQuot.order,
+      date: convertQuot.date,
+      amount: Math.round(convertQuot.amount * proportion),
+      gst: Math.round(convertQuot.gst * proportion),
+      total: amt,
+      advance: Math.round(convertQuot.advance * proportion),
+      balance: Math.max(0, amt - Math.round(convertQuot.advance * proportion)),
+      type: convertQuot.type,
+      status: Math.round(convertQuot.advance * proportion) >= amt ? 'Paid' : convertQuot.advance > 0 ? 'Partially Paid' : 'Pending',
     };
     setInvoiceList(prev => [...prev, newInv]);
-    setQuotationList(prev => prev.filter(q => q.key !== quot.key));
+    if (amt >= convertQuot.total) {
+      setQuotationList(prev => prev.filter(q => q.key !== convertQuot.key));
+    } else {
+      setQuotationList(prev => prev.map(q =>
+        q.key === convertQuot.key ? { ...q, total: q.total - amt, balance: Math.max(0, q.balance - amt) } : q
+      ));
+    }
     setActiveTab('invoices');
-    message.success(`${quot.quot} converted to ${newInv.inv} and moved to Invoices`);
+    setConvertOpen(false);
+    message.success(`${convertQuot.quot} converted to ${newInv.inv} and moved to Invoices`);
   };
 
   // Style helpers
@@ -314,7 +351,8 @@ export default function Billing() {
     },
   ];
 
-  const makeQuotationColumns = (showConvert) => [
+  // tabType: 'in-process' | 'paid' | 'partially-paid' | 'unpaid'
+  const makeQuotationColumns = (tabType) => [
     { title: 'Quotation #', dataIndex: 'quot', width: 120, fixed: 'left', render: (v) => <Text strong style={{ color: '#7c3aed' }}>{v}</Text> },
     { title: 'Date', dataIndex: 'date', width: 160, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Client', dataIndex: 'client', width: 160 },
@@ -325,7 +363,9 @@ export default function Billing() {
     { title: 'Balance', dataIndex: 'balance', width: 110, render: (v) => <Text style={{ color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{v.toLocaleString()}</Text> },
     { title: 'Status', dataIndex: 'status', width: 120, render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, background: `${quotStatusColor[v]}22`, color: quotStatusColor[v], border: `1px solid ${quotStatusColor[v]}44` }}>{v}</Tag> },
     {
-      title: 'Actions', key: 'actions', width: showConvert ? 320 : 180, fixed: 'right',
+      title: 'Actions', key: 'actions',
+      width: tabType === 'in-process' ? 360 : tabType === 'paid' ? 340 : tabType === 'partially-paid' ? 240 : 190,
+      fixed: 'right',
       render: (_, r) => (
         <Space wrap>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewModal(true); }} /></Tooltip>
@@ -334,16 +374,46 @@ export default function Billing() {
           </Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} /></Tooltip>
-          {showConvert && (
+          {tabType === 'in-process' && (
             <Button
               size="small"
               type="primary"
               icon={<FileDoneOutlined />}
               style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none' }}
-              onClick={() => handleConvertToInvoice(r)}
+              onClick={() => openConvertModal(r)}
             >
               Convert to Invoice
             </Button>
+          )}
+          {(tabType === 'paid' || tabType === 'partially-paid') && (
+            <Button
+              size="small"
+              icon={<BellOutlined />}
+              style={{ color: '#fa8c16', borderColor: '#fa8c1644' }}
+              onClick={() => { setReminderQuot(r); setReminderDate(null); setReminderTime(null); setReminderMode('WhatsApp'); setReminderOpen(true); }}
+            >
+              Set Reminder
+            </Button>
+          )}
+          {tabType === 'paid' && (
+            <>
+              <Button
+                size="small"
+                icon={<UploadOutlined />}
+                style={{ color: '#1890ff', borderColor: '#1890ff44' }}
+                onClick={() => { setProofQuot(r); setProofOpen(true); }}
+              >
+                Upload Proof
+              </Button>
+              <Button
+                size="small"
+                icon={<SafetyCertificateOutlined />}
+                style={{ color: '#52c41a', borderColor: '#52c41a44' }}
+                onClick={() => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); }}
+              >
+                Verify
+              </Button>
+            </>
           )}
         </Space>
       ),
@@ -394,7 +464,7 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(124,58,237,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={quotationList.filter(q => q.status === 'In Process')} columns={makeQuotationColumns(true)} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1300 }} />
+                  <Table dataSource={quotationList.filter(q => q.status === 'In Process')} columns={makeQuotationColumns('in-process')} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1400 }} />
                 </div>
               </Card>
             ),
@@ -405,7 +475,7 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(107,18,64,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={quotationList.filter(q => q.status === 'Paid')} columns={makeQuotationColumns(false)} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1200 }} />
+                  <Table dataSource={quotationList.filter(q => q.status === 'Paid')} columns={makeQuotationColumns('paid')} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1400 }} />
                 </div>
               </Card>
             ),
@@ -416,7 +486,7 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={quotationList.filter(q => q.status === 'Partially Paid')} columns={makeQuotationColumns(false)} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1200 }} />
+                  <Table dataSource={quotationList.filter(q => q.status === 'Partially Paid')} columns={makeQuotationColumns('partially-paid')} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1300 }} />
                 </div>
               </Card>
             ),
@@ -427,7 +497,7 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(201,79,138,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={quotationList.filter(q => q.status === 'Unpaid')} columns={makeQuotationColumns(false)} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1200 }} />
+                  <Table dataSource={quotationList.filter(q => q.status === 'Unpaid')} columns={makeQuotationColumns('unpaid')} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1200 }} />
                 </div>
               </Card>
             ),
@@ -1311,6 +1381,248 @@ export default function Billing() {
           </div>
         </div>
       </Drawer>
+
+      {/* ───────────── CONVERT TO INVOICE MODAL (partial conversion) ───────────── */}
+      <Modal
+        title={
+          <Space>
+            <FileDoneOutlined style={{ color: '#7c3aed' }} />
+            <span style={{ fontWeight: 700 }}>Convert Quotation to Invoice</span>
+          </Space>
+        }
+        open={convertOpen}
+        onCancel={() => setConvertOpen(false)}
+        footer={null}
+        width={460}
+        centered
+      >
+        {convertQuot && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ background: '#7c3aed10', border: '1px solid #7c3aed33', borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Quotation</Text>
+                <Text strong style={{ color: '#7c3aed' }}>{convertQuot.quot}</Text>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Client</Text>
+                <Text strong>{convertQuot.client}</Text>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Full Amount</Text>
+                <Text strong style={{ color: '#B11E6A' }}>₹{convertQuot.total.toLocaleString()}</Text>
+              </div>
+            </div>
+            <Form layout="vertical">
+              <Form.Item
+                label={<Text strong>Amount to Convert to Invoice</Text>}
+                help="Enter the full amount or a partial amount to convert"
+              >
+                <InputNumber
+                  prefix="₹"
+                  value={convertAmt}
+                  onChange={(v) => setConvertAmt(v || 0)}
+                  min={1}
+                  max={convertQuot.total}
+                  style={{ width: '100%', height: 44 }}
+                  formatter={v => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                  parser={v => v.replace(/\₹\s?|(,*)/g, '')}
+                />
+              </Form.Item>
+              {convertAmt < convertQuot.total && convertAmt > 0 && (
+                <div style={{ background: '#fa8c1610', border: '1px solid #fa8c1633', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#d46b08' }}>
+                    Remaining ₹{(convertQuot.total - convertAmt).toLocaleString()} will stay in the quotation
+                  </Text>
+                </div>
+              )}
+            </Form>
+            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+              <Button style={{ flex: 1 }} onClick={() => setConvertOpen(false)}>Cancel</Button>
+              <Button
+                type="primary"
+                style={{ flex: 2, background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontWeight: 700 }}
+                onClick={handleConvertConfirm}
+              >
+                Confirm & Convert
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ───────────── UPLOAD PROOF MODAL (Paid Quotation) ───────────── */}
+      <Modal
+        title={
+          <Space>
+            <UploadOutlined style={{ color: '#1890ff' }} />
+            <span style={{ fontWeight: 700 }}>Upload Payment Proof</span>
+          </Space>
+        }
+        open={proofOpen}
+        onCancel={() => setProofOpen(false)}
+        footer={null}
+        width={440}
+        centered
+      >
+        {proofQuot && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ background: '#1890ff10', border: '1px solid #1890ff33', borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>Quotation: </Text>
+              <Text strong style={{ color: '#1890ff' }}>{proofQuot.quot}</Text>
+              <Text type="secondary" style={{ fontSize: 12, marginLeft: 12 }}>Client: </Text>
+              <Text strong>{proofQuot.client}</Text>
+            </div>
+            <Form layout="vertical">
+              <Form.Item label="Payment Date">
+                <DatePicker style={{ width: '100%' }} defaultValue={dayjs()} />
+              </Form.Item>
+              <Form.Item label="Upload Proof (Screenshot / Receipt / Bank Statement)">
+                <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ borderRadius: 8 }}>
+                  <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#1890ff', fontSize: 24 }} /></p>
+                  <p className="ant-upload-text">Click or drag file to upload</p>
+                  <p className="ant-upload-hint" style={{ fontSize: 11 }}>Supports: JPG, PNG, PDF</p>
+                </Upload.Dragger>
+              </Form.Item>
+              <Form.Item label="Remarks (optional)">
+                <Input.TextArea rows={2} placeholder="Any remarks about this payment..." />
+              </Form.Item>
+            </Form>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button style={{ flex: 1 }} onClick={() => setProofOpen(false)}>Cancel</Button>
+              <Button
+                type="primary"
+                style={{ flex: 2, background: 'linear-gradient(135deg,#1890ff,#096dd9)', border: 'none', fontWeight: 700 }}
+                onClick={() => { message.success('Payment proof uploaded successfully'); setProofOpen(false); }}
+              >
+                Upload Proof
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ───────────── SET REMINDER MODAL (Paid / Partially Paid) ───────────── */}
+      <Modal
+        title={
+          <Space>
+            <BellOutlined style={{ color: '#fa8c16' }} />
+            <span style={{ fontWeight: 700 }}>Set Automatic Reminder</span>
+          </Space>
+        }
+        open={reminderOpen}
+        onCancel={() => setReminderOpen(false)}
+        footer={null}
+        width={440}
+        centered
+      >
+        {reminderQuot && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ background: '#fa8c1610', border: '1px solid #fa8c1633', borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>Quotation: </Text>
+              <Text strong style={{ color: '#fa8c16' }}>{reminderQuot.quot}</Text>
+              <Text type="secondary" style={{ fontSize: 12, marginLeft: 12 }}>Client: </Text>
+              <Text strong>{reminderQuot.client}</Text>
+            </div>
+            <Form layout="vertical">
+              <Form.Item label="Reminder Date" required>
+                <DatePicker
+                  style={{ width: '100%' }}
+                  value={reminderDate}
+                  onChange={setReminderDate}
+                  disabledDate={d => d && d.isBefore(dayjs(), 'day')}
+                />
+              </Form.Item>
+              <Form.Item label="Reminder Time">
+                <TimePicker
+                  style={{ width: '100%' }}
+                  value={reminderTime}
+                  onChange={setReminderTime}
+                  format="HH:mm"
+                  use12Hours
+                />
+              </Form.Item>
+              <Form.Item label="Send Reminder Via">
+                <Select value={reminderMode} onChange={setReminderMode} style={{ width: '100%' }}>
+                  <Option value="WhatsApp">WhatsApp</Option>
+                  <Option value="SMS">SMS</Option>
+                  <Option value="Email">Email</Option>
+                  <Option value="All">All Channels</Option>
+                </Select>
+              </Form.Item>
+            </Form>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button style={{ flex: 1 }} onClick={() => setReminderOpen(false)}>Cancel</Button>
+              <Button
+                type="primary"
+                style={{ flex: 2, background: 'linear-gradient(135deg,#fa8c16,#d46b08)', border: 'none', fontWeight: 700 }}
+                onClick={() => {
+                  if (!reminderDate) { message.warning('Please select a reminder date'); return; }
+                  message.success(`Reminder scheduled for ${reminderDate.format('DD MMM YYYY')} via ${reminderMode}`);
+                  setReminderOpen(false);
+                }}
+              >
+                Schedule Reminder
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ───────────── VERIFY PAYMENT MODAL (Paid Quotation) ───────────── */}
+      <Modal
+        title={
+          <Space>
+            <SafetyCertificateOutlined style={{ color: '#52c41a' }} />
+            <span style={{ fontWeight: 700 }}>Manual Payment Verification</span>
+          </Space>
+        }
+        open={verifyOpen}
+        onCancel={() => setVerifyOpen(false)}
+        footer={null}
+        width={420}
+        centered
+      >
+        {verifyQuot && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ background: '#52c41a10', border: '1px solid #52c41a33', borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>Quotation: </Text>
+              <Text strong style={{ color: '#52c41a' }}>{verifyQuot.quot}</Text>
+              <Text type="secondary" style={{ fontSize: 12, marginLeft: 12 }}>Amount: </Text>
+              <Text strong>₹{verifyQuot.total.toLocaleString()}</Text>
+            </div>
+            <Form layout="vertical">
+              <Form.Item label={<Text strong>Verified By <span style={{ color: '#ff4d4f' }}>*</span></Text>}>
+                <Input
+                  placeholder="Enter verifier's name"
+                  value={verifierName}
+                  onChange={e => setVerifierName(e.target.value)}
+                  style={{ borderRadius: 8 }}
+                />
+              </Form.Item>
+              <Form.Item label="Verification Date">
+                <DatePicker style={{ width: '100%' }} defaultValue={dayjs()} />
+              </Form.Item>
+              <Form.Item label="Verification Remarks">
+                <Input.TextArea rows={2} placeholder="Optional remarks..." />
+              </Form.Item>
+            </Form>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button style={{ flex: 1 }} onClick={() => setVerifyOpen(false)}>Cancel</Button>
+              <Button
+                type="primary"
+                style={{ flex: 2, background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 700 }}
+                onClick={() => {
+                  if (!verifierName.trim()) { message.warning('Please enter verifier name'); return; }
+                  message.success(`Payment verified by ${verifierName}`);
+                  setVerifyOpen(false);
+                }}
+              >
+                Mark as Verified
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* ───────────── CREDIT/DEBIT NOTE MODAL ───────────── */}
       <Modal

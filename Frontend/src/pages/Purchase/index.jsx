@@ -113,6 +113,36 @@ export default function Purchase() {
   /* ── Request Order payment terms watch ── */
   const [requestOrderPaymentTerms, setRequestOrderPaymentTerms] = useState('');
 
+  /* ── Payment type (Immediate / Credit) in Request Order ── */
+  const [orderPaymentType, setOrderPaymentType] = useState('Immediate');
+  const [orderCreditDate, setOrderCreditDate] = useState(null);
+
+  /* ── LR Tracking modal ── */
+  const [showLRModal, setShowLRModal] = useState(false);
+  const [lrOrder, setLrOrder] = useState(null);
+  const [lrNumber, setLrNumber] = useState('');
+  const [lrReminderDate, setLrReminderDate] = useState(null);
+
+  /* ── "Verified by" for received orders ── */
+  const [verifiedByName, setVerifiedByName] = useState('');
+
+  /* ── Purchase Expense tab state ── */
+  const [purchaseExpenses, setPurchaseExpenses] = useState([
+    { key: 1, date: '2024-05-01', invoice_no: 'INV-CHEM-101', supplier: 'ChemCo India', qty: '100 Kg', paid_status: 'Paid', paid_amount: 8500, total_amount: 8500, remaining: 0 },
+    { key: 2, date: '2024-05-04', invoice_no: 'INV-BIO-452', supplier: 'BioLife Ltd', qty: '200 Ltr', paid_status: 'Partially Paid', paid_amount: 22000, total_amount: 44000, remaining: 22000 },
+    { key: 3, date: '2024-05-06', invoice_no: 'INV-PP-203', supplier: 'PlastiPack', qty: '500 Pcs', paid_status: 'Unpaid', paid_amount: 0, total_amount: 2250, remaining: 2250 },
+  ]);
+  const [showAddExpenseModal, setShowAddExpenseModal] = useState(false);
+  const [expenseScanFile, setExpenseScanFile] = useState(null);
+  const [expenseScanLoading, setExpenseScanLoading] = useState(false);
+  const [expenseForm] = Form.useForm();
+
+  /* ── Vendor bill scan state (scan & record vendor bill → purchase expense) ── */
+  const [showVendorBillScanModal, setShowVendorBillScanModal] = useState(false);
+  const [vendorBillFile, setVendorBillFile] = useState(null);
+  const [vendorBillScanLoading, setVendorBillScanLoading] = useState(false);
+  const [vendorBillForm] = Form.useForm();
+
   /* ── Camera capture (shared across all scan sections) ── */
   const [showCameraModal, setShowCameraModal] = useState(false);
   const [cameraStream, setCameraStream] = useState(null);
@@ -716,9 +746,10 @@ export default function Purchase() {
                                 value={vendorHistorySearch}
                                 onChange={e => setVendorHistorySearch(e.target.value)}
                                 allowClear
-                                style={{ width: 240, borderRadius: 8 }}
+                                style={{ width: 200, borderRadius: 8 }}
                                 suffix={vendorHistorySearch ? <Text style={{ fontSize: 11, color: '#B11E6A' }}>{filteredVendorHistory.length}</Text> : null}
                               />
+                              <DatePicker.RangePicker style={{ width: 250 }} placeholder={['From Date', 'To Date']} />
                             </Space>
                             <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewVendor.name} - Detailed History</Title>
                           </div>
@@ -821,16 +852,18 @@ export default function Purchase() {
                           </div>
                           <Table
                             size="small"
-                            dataSource={filteredVendors}
+                            dataSource={filteredVendors.map(v => ({ ...v, totalPaid: Math.floor(Math.random() * 100000 + 10000), pending: Math.floor(Math.random() * 50000) }))}
                             columns={[
                               { title: 'Vendor Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
                               { title: 'Phone', dataIndex: 'phone', key: 'phone' },
                               { title: 'Email', dataIndex: 'email', key: 'email' },
                               { title: 'Address', dataIndex: 'address', key: 'address' },
+                              { title: 'Total Paid', dataIndex: 'totalPaid', key: 'totalPaid', render: v => <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
+                              { title: 'Pending', dataIndex: 'pending', key: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
                               {
                                 title: 'Action', key: 'action',
                                 render: (_, r) => (
-                                  <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewVendor(r)} style={{ color: '#B11E6A' }}>View Details</Button>
+                                  <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewVendor(r)} style={{ color: '#B11E6A' }}>View History</Button>
                                 )
                               }
                             ]}
@@ -887,6 +920,78 @@ export default function Purchase() {
                               </Space>
                             )
                           },
+                        ]}
+                      />
+                    </div>
+                  )
+                },
+                {
+                  key: 'purchase_expense',
+                  label: <Space><DollarOutlined /> Purchase Expense</Space>,
+                  children: (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                        <Title level={5} style={{ margin: 0, color: textColor }}>Purchase Expenses</Title>
+                        <Space wrap>
+                          <Button
+                            icon={<CameraOutlined />}
+                            style={{ borderColor: '#B11E6A66', color: '#B11E6A' }}
+                            onClick={() => { setVendorBillFile(null); vendorBillForm.resetFields(); setShowVendorBillScanModal(true); }}
+                          >
+                            Scan & Record Bill
+                          </Button>
+                          <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                            onClick={() => { setExpenseScanFile(null); expenseForm.resetFields(); setShowAddExpenseModal(true); }}
+                          >
+                            Add Expense
+                          </Button>
+                          <Button icon={<DownloadOutlined />}>Export</Button>
+                        </Space>
+                      </div>
+                      <Table
+                        size="small"
+                        dataSource={purchaseExpenses}
+                        pagination={{ pageSize: 8 }}
+                        columns={[
+                          { title: 'Purchase Date', dataIndex: 'date', key: 'date', render: v => <Text strong>{v}</Text> },
+                          { title: 'Invoice Number', dataIndex: 'invoice_no', key: 'invoice_no', render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
+                          { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
+                          { title: 'Supplier Name', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ fontWeight: 600 }}>{v}</Text> },
+                          {
+                            title: 'Paid Status',
+                            key: 'paid_status',
+                            render: (_, r) => (
+                              <Space direction="vertical" size={0}>
+                                <Tag
+                                  color={r.paid_status === 'Paid' ? 'success' : r.paid_status === 'Partially Paid' ? 'warning' : 'error'}
+                                  style={{ borderRadius: 10 }}
+                                >
+                                  {r.paid_status}
+                                </Tag>
+                                {r.paid_amount > 0 && (
+                                  <Text style={{ fontSize: 11, color: '#52c41a' }}>Paid: ₹{r.paid_amount.toLocaleString()}</Text>
+                                )}
+                                {r.remaining > 0 && (
+                                  <Text style={{ fontSize: 11, color: '#ff4d4f' }}>Remaining: ₹{r.remaining.toLocaleString()}</Text>
+                                )}
+                              </Space>
+                            )
+                          },
+                          { title: 'Total', key: 'total', render: (_, r) => <Text strong style={{ color: '#B11E6A' }}>₹{r.total_amount.toLocaleString()}</Text> },
+                          {
+                            title: 'Actions', key: 'actions',
+                            render: (_, r) => (
+                              <Space>
+                                <Button size="small" icon={<EyeOutlined />} />
+                                {r.paid_status !== 'Paid' && (
+                                  <Button size="small" icon={<UploadOutlined />} style={{ color: '#1890ff' }} title="Upload proof">Proof</Button>
+                                )}
+                              </Space>
+                            )
+                          }
                         ]}
                       />
                     </div>
@@ -1338,6 +1443,51 @@ export default function Purchase() {
                 if (changed.payment_terms !== undefined) setRequestOrderPaymentTerms(changed.payment_terms);
               }}
             >
+              {/* Payment Type: Immediate or Credit */}
+              <Form.Item label={<Text strong>Payment Type <span style={{ color: '#ff4d4f' }}>*</span></Text>} style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  {[['Immediate', '#1890ff'], ['Credit', '#fa8c16']].map(([type, color]) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setOrderPaymentType(type)}
+                      style={{
+                        flex: 1,
+                        padding: '10px 0',
+                        borderRadius: 10,
+                        border: `2px solid ${orderPaymentType === type ? color : '#e0e0e0'}`,
+                        background: orderPaymentType === type ? `${color}15` : 'transparent',
+                        color: orderPaymentType === type ? color : '#888',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontSize: 13,
+                      }}
+                    >
+                      {type === 'Immediate' ? '⚡ Immediate Payment' : '📅 Credit Payment'}
+                    </button>
+                  ))}
+                </div>
+                {orderPaymentType === 'Immediate' && (
+                  <div style={{ marginTop: 8, padding: '8px 12px', background: '#1890ff10', border: '1px solid #1890ff33', borderRadius: 8 }}>
+                    <Text style={{ fontSize: 12, color: '#096dd9' }}>Payment will be done immediately after order is placed. Upload proof after payment.</Text>
+                  </div>
+                )}
+                {orderPaymentType === 'Credit' && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ padding: '8px 12px', background: '#fa8c1610', border: '1px solid #fa8c1633', borderRadius: 8, marginBottom: 8 }}>
+                      <Text style={{ fontSize: 12, color: '#d46b08' }}>Finance team will be notified on the selected due date to process payment.</Text>
+                    </div>
+                    <DatePicker
+                      style={{ width: '100%' }}
+                      placeholder="Select credit payment due date"
+                      value={orderCreditDate}
+                      onChange={setOrderCreditDate}
+                      disabledDate={d => d && d.isBefore(dayjs(), 'day')}
+                    />
+                  </div>
+                )}
+              </Form.Item>
+
               <Row gutter={12}>
                 <Col span={12}>
                   <Form.Item label="Bill No" name="bill_no" rules={[{ required: true, message: 'Bill number is required' }]}>
@@ -1587,6 +1737,214 @@ export default function Purchase() {
       </Modal>
 
 
+      {/* Scan & Record Vendor Bill Modal */}
+      <Modal
+        title={
+          <Space>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <CameraOutlined style={{ color: '#fff', fontSize: 16 }} />
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 15 }}>Scan & Record Vendor Bill</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 11 }}>AI extracts details — create as Purchase Expense</Text>
+            </div>
+          </Space>
+        }
+        open={showVendorBillScanModal}
+        onCancel={() => { setShowVendorBillScanModal(false); vendorBillForm.resetFields(); setVendorBillFile(null); }}
+        footer={null}
+        width={560}
+        centered
+      >
+        <div style={{ marginTop: 12 }}>
+          {/* Scan section */}
+          <div style={{ marginBottom: 16, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Upload
+                maxCount={1}
+                beforeUpload={(file) => { setVendorBillFile(file); return false; }}
+                onRemove={() => setVendorBillFile(null)}
+                accept=".pdf,.jpg,.jpeg,.png"
+                style={{ flex: 1 }}
+              >
+                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload Bill</Button>
+              </Upload>
+              <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setVendorBillFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A' }}>Capture</Button>
+              <Button
+                icon={<ThunderboltOutlined />}
+                loading={vendorBillScanLoading}
+                style={{ borderRadius: 8, background: vendorBillFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: vendorBillFile ? '#fff' : '#bbb', fontWeight: 700 }}
+                onClick={() => {
+                  if (!vendorBillFile) { message.warning('Please upload or capture a bill first'); return; }
+                  setVendorBillScanLoading(true);
+                  setTimeout(() => {
+                    vendorBillForm.setFieldsValue({
+                      date: dayjs(),
+                      invoice_no: 'INV-' + Math.floor(Math.random() * 9000 + 1000),
+                      supplier: 'ChemCo India',
+                      qty: '100 Kg',
+                      total_amount: 8500,
+                      paid_status: 'Unpaid',
+                    });
+                    setVendorBillScanLoading(false);
+                    message.success('AI extracted bill details successfully!');
+                  }, 2000);
+                }}
+              >
+                {vendorBillScanLoading ? 'Scanning...' : 'Scan with AI'}
+              </Button>
+            </div>
+            {vendorBillFile && (
+              <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{vendorBillFile.name}</Text>
+              </div>
+            )}
+          </div>
+
+          <Form form={vendorBillForm} layout="vertical">
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="Purchase Date" name="date" rules={[{ required: true }]}>
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Invoice Number" name="invoice_no" rules={[{ required: true }]}>
+                  <Input placeholder="INV-XXXX" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={12}>
+              <Col span={14}>
+                <Form.Item label="Supplier Name" name="supplier" rules={[{ required: true }]}>
+                  <Select placeholder="Select supplier">
+                    {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={10}>
+                <Form.Item label="Quantity" name="qty">
+                  <Input placeholder="e.g. 100 Kg" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true }]}>
+                  <InputNumber prefix="₹" style={{ width: '100%' }} min={0} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Paid Status" name="paid_status" rules={[{ required: true }]}>
+                  <Select>
+                    <Option value="Paid">Paid</Option>
+                    <Option value="Partially Paid">Partially Paid</Option>
+                    <Option value="Unpaid">Unpaid</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+          </Form>
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowVendorBillScanModal(false); vendorBillForm.resetFields(); setVendorBillFile(null); }}>Cancel</Button>
+            <Button
+              type="primary"
+              style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
+              onClick={() => {
+                vendorBillForm.validateFields().then(values => {
+                  const newExp = {
+                    key: Date.now(),
+                    date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
+                    invoice_no: values.invoice_no,
+                    supplier: values.supplier,
+                    qty: values.qty || '—',
+                    paid_status: values.paid_status,
+                    paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0,
+                    total_amount: values.total_amount,
+                    remaining: values.paid_status === 'Paid' ? 0 : values.total_amount,
+                  };
+                  setPurchaseExpenses(prev => [newExp, ...prev]);
+                  message.success('Bill recorded as Purchase Expense');
+                  setShowVendorBillScanModal(false);
+                  vendorBillForm.resetFields();
+                  setVendorBillFile(null);
+                });
+              }}
+            >
+              Create Purchase Expense
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add Purchase Expense Modal */}
+      <Modal
+        title={<Text strong style={{ fontSize: 16 }}>Add Purchase Expense</Text>}
+        open={showAddExpenseModal}
+        onCancel={() => { setShowAddExpenseModal(false); expenseForm.resetFields(); setExpenseScanFile(null); }}
+        footer={null}
+        width={480}
+        centered
+      >
+        <div style={{ marginTop: 12 }}>
+          <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Upload maxCount={1} beforeUpload={(f) => { setExpenseScanFile(f); return false; }} onRemove={() => setExpenseScanFile(null)} accept=".pdf,.jpg,.png" style={{ flex: 1 }}>
+                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Invoice / PDF</Button>
+              </Upload>
+              <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setExpenseScanFile)} style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>Capture</Button>
+              <Button
+                icon={<ThunderboltOutlined />}
+                loading={expenseScanLoading}
+                style={{ background: expenseScanFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: expenseScanFile ? '#fff' : '#bbb', fontWeight: 700 }}
+                onClick={() => {
+                  if (!expenseScanFile) { message.warning('Upload file first'); return; }
+                  setExpenseScanLoading(true);
+                  setTimeout(() => {
+                    expenseForm.setFieldsValue({ date: dayjs(), invoice_no: 'INV-' + Math.floor(Math.random() * 9000 + 1000), supplier: 'ChemCo India', qty: '50 Kg', total_amount: 4250, paid_status: 'Unpaid' });
+                    setExpenseScanLoading(false);
+                    message.success('AI extracted expense details!');
+                  }, 2000);
+                }}
+              >
+                {expenseScanLoading ? 'Scanning...' : 'Scan'}
+              </Button>
+            </div>
+          </div>
+          <Form form={expenseForm} layout="vertical">
+            <Row gutter={12}>
+              <Col span={12}><Form.Item label="Purchase Date" name="date" rules={[{ required: true }]}><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
+              <Col span={12}><Form.Item label="Invoice No" name="invoice_no" rules={[{ required: true }]}><Input placeholder="INV-XXXX" /></Form.Item></Col>
+            </Row>
+            <Row gutter={12}>
+              <Col span={14}><Form.Item label="Supplier" name="supplier" rules={[{ required: true }]}><Select placeholder="Select supplier">{suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}</Select></Form.Item></Col>
+              <Col span={10}><Form.Item label="Quantity" name="qty"><Input placeholder="e.g. 100 Kg" /></Form.Item></Col>
+            </Row>
+            <Row gutter={12}>
+              <Col span={12}><Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true }]}><InputNumber prefix="₹" style={{ width: '100%' }} min={0} /></Form.Item></Col>
+              <Col span={12}><Form.Item label="Paid Status" name="paid_status" rules={[{ required: true }]}><Select><Option value="Paid">Paid</Option><Option value="Partially Paid">Partially Paid</Option><Option value="Unpaid">Unpaid</Option></Select></Form.Item></Col>
+            </Row>
+          </Form>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowAddExpenseModal(false); expenseForm.resetFields(); setExpenseScanFile(null); }}>Cancel</Button>
+            <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
+              onClick={() => {
+                expenseForm.validateFields().then(values => {
+                  const newExp = { key: Date.now(), date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'), invoice_no: values.invoice_no, supplier: values.supplier, qty: values.qty || '—', paid_status: values.paid_status, paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0, total_amount: values.total_amount, remaining: values.paid_status === 'Paid' ? 0 : values.total_amount };
+                  setPurchaseExpenses(prev => [newExp, ...prev]);
+                  message.success('Purchase expense added');
+                  setShowAddExpenseModal(false);
+                  expenseForm.resetFields();
+                  setExpenseScanFile(null);
+                });
+              }}
+            >Save Expense</Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* AI Bill Detail Modal */}
       <Modal
         title={
@@ -1708,6 +2066,42 @@ export default function Purchase() {
             </Select>
           </Form.Item>
 
+          {updateType === 'supplier' && currentStatus === 'In Transit' && (
+            <>
+              <Form.Item
+                label={<Text strong>LR Number (Lorry Receipt / Bilty) <span style={{ color: '#ff4d4f' }}>*</span></Text>}
+                name="lr_number"
+                rules={[{ required: true, message: 'LR number is required for tracking' }]}
+                extra="Enter LR number to enable shipment tracking and reminders"
+              >
+                <Input placeholder="e.g. LR-20240501-001" style={{ borderRadius: 8 }} />
+              </Form.Item>
+              <Form.Item
+                label="Expected Delivery Date"
+                name="expected_delivery"
+                rules={[{ required: true, message: 'Select expected delivery date' }]}
+              >
+                <DatePicker
+                  style={{ width: '100%', borderRadius: 8 }}
+                  disabledDate={d => d && d.isBefore(dayjs(), 'day')}
+                  placeholder="When should the order arrive?"
+                />
+              </Form.Item>
+              <div style={{ padding: '8px 12px', background: '#fa8c1610', border: '1px solid #fa8c1633', borderRadius: 8, marginBottom: 12 }}>
+                <Text style={{ fontSize: 12, color: '#d46b08' }}>Reminders will be sent to the purchase team based on the LR and expected delivery date.</Text>
+              </div>
+              <Form.Item
+                label="Upload LR / Transport Bill"
+                name="lr_document"
+                extra="Upload PDF or Image of the Lorry Receipt"
+              >
+                <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
+                  <p className="ant-upload-drag-icon"><FileTextOutlined style={{ color: '#B11E6A' }} /></p>
+                  <p className="ant-upload-text">Click or drag LR document to upload</p>
+                </Upload.Dragger>
+              </Form.Item>
+            </>
+          )}
           {updateType === 'vendor' && currentStatus === 'Dispatched' && (
             <Form.Item
               label="Bill of Transport (LR/Bilty)"
@@ -1741,19 +2135,46 @@ export default function Purchase() {
           )}
 
           {updateType === 'supplier' && currentStatus === 'Received' && (
-            <Form.Item
-              label="Photo of Received Goods"
-              name="received_photo"
-              rules={[{ required: true, message: 'Please upload photo of goods' }]}
-              extra="Capture or upload photo of the received items"
-            >
-              <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
-                <p className="ant-upload-drag-icon">
-                  <CameraOutlined style={{ color: '#B11E6A' }} />
-                </p>
-                <p className="ant-upload-text">Capture/Upload Photo of Goods</p>
-              </Upload.Dragger>
-            </Form.Item>
+            <>
+              <Form.Item
+                label={<Text strong>Verified By <span style={{ color: '#ff4d4f' }}>*</span></Text>}
+                name="verified_by"
+                rules={[{ required: true, message: 'Please enter verifier name' }]}
+              >
+                <Input
+                  placeholder="Enter name of person verifying the goods"
+                  style={{ borderRadius: 8 }}
+                  value={verifiedByName}
+                  onChange={e => setVerifiedByName(e.target.value)}
+                />
+              </Form.Item>
+              <Form.Item
+                label="Upload Supplier Invoice (for auto stock update)"
+                name="supplier_invoice"
+                rules={[{ required: true, message: 'Please upload supplier invoice' }]}
+                extra="Stock will auto-update from this invoice after verification"
+              >
+                <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
+                  <p className="ant-upload-drag-icon">
+                    <FileTextOutlined style={{ color: '#B11E6A' }} />
+                  </p>
+                  <p className="ant-upload-text">Upload Supplier Invoice (PDF / Image)</p>
+                  <p className="ant-upload-hint" style={{ fontSize: 11 }}>Stock will be auto-fetched from this invoice</p>
+                </Upload.Dragger>
+              </Form.Item>
+              <Form.Item
+                label="Photo of Received Goods"
+                name="received_photo"
+                extra="Capture or upload photo of the received items"
+              >
+                <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
+                  <p className="ant-upload-drag-icon">
+                    <CameraOutlined style={{ color: '#B11E6A' }} />
+                  </p>
+                  <p className="ant-upload-text">Capture/Upload Photo of Goods</p>
+                </Upload.Dragger>
+              </Form.Item>
+            </>
           )}
 
           <Form.Item label="Remarks/Notes" name="remarks">

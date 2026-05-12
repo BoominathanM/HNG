@@ -189,6 +189,88 @@ export default function Reports() {
             ),
           },
           {
+            key: 'purchase_report',
+            label: 'Purchase Report',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                  <Title level={5} style={{ color: textColor }}>Purchase Report (GST Format)</Title>
+                  <Space>
+                    <DatePicker.RangePicker style={{ width: 260 }} />
+                    <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }}>Excel</Button>
+                    <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>PDF</Button>
+                  </Space>
+                </div>
+                <Table
+                  size="small"
+                  scroll={{ x: 1400 }}
+                  dataSource={[
+                    { key: 1, vendor_gst: '27AABCG1234F1Z5', supplier: 'ChemCo India', state_code: '27', state_name: 'Maharashtra', inv_no: 'PUR-8821', orig_inv_no: 'INV-CHEM-101', inv_date: '2024-05-01', inv_value: 10030, total_tax: 1530, taxable: 8500, cgst: 765, sgst: 765, igst: 0 },
+                    { key: 2, vendor_gst: '33AABHB5678K1Z2', supplier: 'BioLife Ltd', state_code: '33', state_name: 'Tamil Nadu', inv_no: 'PUR-8825', orig_inv_no: 'INV-BIO-452', inv_date: '2024-05-04', inv_value: 51920, total_tax: 7920, taxable: 44000, cgst: 3960, sgst: 3960, igst: 0 },
+                    { key: 3, vendor_gst: '07AABCP9012E1Z8', supplier: 'PlastiPack', state_code: '07', state_name: 'Delhi', inv_no: 'PUR-8831', orig_inv_no: 'INV-PP-203', inv_date: '2024-05-06', inv_value: 2655, total_tax: 405, taxable: 2250, cgst: 202.5, sgst: 0, igst: 202.5 },
+                  ]}
+                  columns={[
+                    { title: 'Vendor GST No', dataIndex: 'vendor_gst', key: 'vendor_gst', width: 160, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'Supplier Name', dataIndex: 'supplier', key: 'supplier', width: 140, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'State Code', dataIndex: 'state_code', key: 'state_code', width: 90, align: 'center' },
+                    { title: 'State Name', dataIndex: 'state_name', key: 'state_name', width: 120 },
+                    { title: 'Invoice No', dataIndex: 'inv_no', key: 'inv_no', width: 110, render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
+                    { title: 'Original Inv No', dataIndex: 'orig_inv_no', key: 'orig_inv_no', width: 130, render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
+                    { title: 'Invoice Date', dataIndex: 'inv_date', key: 'inv_date', width: 110 },
+                    { title: 'Invoice Value', dataIndex: 'inv_value', key: 'inv_value', width: 110, render: v => <Text strong>₹{v.toLocaleString()}</Text> },
+                    { title: 'Total Tax', dataIndex: 'total_tax', key: 'total_tax', width: 100, render: v => <Text style={{ color: '#fa8c16' }}>₹{v.toLocaleString()}</Text> },
+                    { title: 'Taxable Value', dataIndex: 'taxable', key: 'taxable', width: 120, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                    { title: 'CGST', dataIndex: 'cgst', key: 'cgst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                    { title: 'SGST', dataIndex: 'sgst', key: 'sgst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                    { title: 'IGST', dataIndex: 'igst', key: 'igst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                  ]}
+                  pagination={{ pageSize: 10 }}
+                />
+              </Card>
+            ),
+          },
+          {
+            key: 'sales_report',
+            label: 'Sales Report',
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                  <Title level={5} style={{ color: textColor }}>Sales Report (GST Format)</Title>
+                  <Space>
+                    <DatePicker.RangePicker style={{ width: 260 }} />
+                    <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }}>Excel</Button>
+                    <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>PDF</Button>
+                  </Space>
+                </div>
+                <Table
+                  size="small"
+                  scroll={{ x: 1400 }}
+                  dataSource={[
+                    { key: 1, gst_no: '27AAACM9876H1Z4', customer: 'Marriott Mumbai', state_code: '27', state_name: 'Maharashtra', inv_no: 'INV-2401', orig_inv_no: 'QT-2401', inv_date: '2024-01-18', inv_value: 45430, total_tax: 6930, taxable: 38500, cgst: 3465, sgst: 3465, igst: 0 },
+                    { key: 2, gst_no: '07AAACT7654D1Z6', customer: 'Taj Hotels Delhi', state_code: '07', state_name: 'Delhi', inv_no: 'INV-2402', orig_inv_no: 'QT-2402', inv_date: '2024-01-17', inv_value: 141600, total_tax: 21600, taxable: 120000, cgst: 0, sgst: 0, igst: 21600 },
+                    { key: 3, gst_no: '19AAACI5432G1Z1', customer: 'ITC Grand Kolkata', state_code: '19', state_name: 'West Bengal', inv_no: 'INV-2403', orig_inv_no: 'QT-2403', inv_date: '2024-01-16', inv_value: 250000, total_tax: 0, taxable: 250000, cgst: 0, sgst: 0, igst: 0 },
+                  ]}
+                  columns={[
+                    { title: 'GST No', dataIndex: 'gst_no', key: 'gst_no', width: 160, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'Customer Name', dataIndex: 'customer', key: 'customer', width: 150, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'State Code', dataIndex: 'state_code', key: 'state_code', width: 90, align: 'center' },
+                    { title: 'State Name', dataIndex: 'state_name', key: 'state_name', width: 130 },
+                    { title: 'Invoice No', dataIndex: 'inv_no', key: 'inv_no', width: 110, render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
+                    { title: 'Original Inv No', dataIndex: 'orig_inv_no', key: 'orig_inv_no', width: 130, render: v => <Text style={{ color: '#7c3aed' }}>{v}</Text> },
+                    { title: 'Invoice Date', dataIndex: 'inv_date', key: 'inv_date', width: 110 },
+                    { title: 'Invoice Value', dataIndex: 'inv_value', key: 'inv_value', width: 110, render: v => <Text strong>₹{v.toLocaleString()}</Text> },
+                    { title: 'Total Tax', dataIndex: 'total_tax', key: 'total_tax', width: 100, render: v => <Text style={{ color: '#fa8c16' }}>₹{v.toLocaleString()}</Text> },
+                    { title: 'Taxable Value', dataIndex: 'taxable', key: 'taxable', width: 120, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                    { title: 'CGST', dataIndex: 'cgst', key: 'cgst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                    { title: 'SGST', dataIndex: 'sgst', key: 'sgst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                    { title: 'IGST', dataIndex: 'igst', key: 'igst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                  ]}
+                  pagination={{ pageSize: 10 }}
+                />
+              </Card>
+            ),
+          },
+          {
             key: 'pl',
             label: 'Profit & Loss',
             children: (
