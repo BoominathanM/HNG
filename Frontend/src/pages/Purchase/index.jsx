@@ -82,6 +82,7 @@ export default function Purchase() {
 
   const [showRequestOrderModal, setShowRequestOrderModal] = useState(false);
   const [selectedApprovedRequest, setSelectedApprovedRequest] = useState(null);
+  const [selectedSupplier, setSelectedSupplier] = useState(null);
   const [requestOrderForm] = Form.useForm();
   const [requestOrderScanLoading, setRequestOrderScanLoading] = useState(false);
   const [requestOrderScannedFile, setRequestOrderScannedFile] = useState(null);
@@ -221,6 +222,7 @@ export default function Purchase() {
 
   const handleOpenRequest = (product) => {
     setSelectedProduct(product);
+    setSelectedSupplier(null);
     const suggestQty = product.min > product.current ? (product.min - product.current) * 2 : product.min;
     purchaseForm.setFieldsValue({
       product: product.name,
@@ -348,7 +350,7 @@ export default function Purchase() {
               items={[
                 {
                   key: 'stock_status',
-                  label: <Space><WarningOutlined /> Stock Status & Raise Request</Space>,
+                  label: <Space><WarningOutlined /> Quotation & Raise Request</Space>,
                   children: (
                     <div style={{ marginTop: 12 }}>
                       <div style={{ marginBottom: 16 }}>
@@ -398,7 +400,7 @@ export default function Purchase() {
                                 }}
                                 onClick={() => handleOpenRequest(r)}
                               >
-                                Raise Request
+                                Quotation Request & Approval
                               </Button>
                             )
                           }
@@ -409,7 +411,7 @@ export default function Purchase() {
                 },
                 {
                   key: 'purchase_requests',
-                  label: <Space><ShoppingOutlined />Purchase Requests</Space>,
+                  label: <Space><ShoppingOutlined />Request Order</Space>,
                   children: (
                     <div style={{ marginTop: 12 }}>
                       <div style={{ marginBottom: 16 }}>
@@ -866,7 +868,7 @@ export default function Purchase() {
           </div>
         }
         open={showAddPurchaseModal}
-        onCancel={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); }}
+        onCancel={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); setSelectedSupplier(null); }}
         footer={null}
         width={560}
         centered
@@ -884,13 +886,39 @@ export default function Purchase() {
               </Col>
               <Col span={12}>
                 <Form.Item label="Supplier" name="supplier" rules={[{ required: true, message: 'Select a supplier' }]} style={{ marginBottom: 0 }}>
-                  <Select placeholder="Select supplier" style={{ borderRadius: 8 }}>
+                  <Select
+                    placeholder="Select supplier"
+                    style={{ borderRadius: 8 }}
+                    onChange={(val) => setSelectedSupplier(suppliers.find(s => s.name === val) || null)}
+                  >
                     {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
                   </Select>
                 </Form.Item>
               </Col>
             </Row>
           </div>
+
+          {/* Supplier Details */}
+          {selectedSupplier && (
+            <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 16, border: `1px solid #B11E6A33` }}>
+              <div style={{ background: 'linear-gradient(135deg,#B11E6A18,#D85C9E10)', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <UserOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
+                <Text style={{ fontSize: 12, fontWeight: 600, color: '#B11E6A' }}>Supplier Contact Details</Text>
+              </div>
+              <div style={{ display: 'flex', padding: '10px 14px', gap: 0, background: isDark ? '#120b0e' : '#fffafc' }}>
+                {[
+                  { label: 'Phone / WhatsApp', value: selectedSupplier.phone, icon: <WhatsAppOutlined style={{ color: '#25D366', fontSize: 11, marginRight: 3 }} /> },
+                  { label: 'Email', value: selectedSupplier.email, icon: null },
+                  { label: 'Address', value: selectedSupplier.address, icon: null },
+                ].map((item, i) => (
+                  <div key={i} style={{ flex: 1, borderRight: i < 2 ? `1px solid ${isDark ? '#2a2d40' : '#f0e0ea'}` : 'none', padding: '0 10px', paddingLeft: i === 0 ? 0 : 10 }}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>{item.label}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, wordBreak: 'break-word' }}>{item.icon}{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Stock Status */}
           {selectedProduct && (
@@ -951,7 +979,8 @@ export default function Purchase() {
               const values = purchaseForm.getFieldsValue();
               if (!values.product || !values.supplier) { message.warning('Please select product and supplier first'); return; }
               const msg = `Hello, I would like to request a quotation for:\n\n*Product:* ${values.product}\n*Quantity:* ${values.qty || 'N/A'} ${values.unit || ''}\n*Payment Terms:* ${values.payment_terms || 'TBD'}\n\nPlease advise on pricing and availability.`;
-              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+              const phone = selectedSupplier ? selectedSupplier.phone.replace(/\D/g, '') : '';
+              window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
             }}
             style={{ height: 42, borderRadius: 10, borderColor: '#25D366', color: '#25D366', fontWeight: 600, marginBottom: 12, fontSize: 13 }}
           >
@@ -1018,6 +1047,34 @@ export default function Purchase() {
                 </Col>
               </Row>
             </div>
+
+            {/* Supplier Contact Details */}
+            {(() => {
+              const sup = suppliers.find(s => s.name === selectedApprovedRequest.supplier);
+              if (!sup) return null;
+              return (
+                <div style={{ padding: '12px 16px', background: isDark ? '#120b0e' : '#fff8fb', border: '1px solid #B11E6A33', borderRadius: 8, marginBottom: 20 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>SUPPLIER CONTACT</Text>
+                  <Row gutter={16}>
+                    <Col span={8}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>PHONE / WHATSAPP</Text>
+                      <div>
+                        <WhatsAppOutlined style={{ color: '#25D366', fontSize: 12, marginRight: 4 }} />
+                        <Text strong style={{ fontSize: 12 }}>{sup.phone}</Text>
+                      </div>
+                    </Col>
+                    <Col span={8}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>EMAIL</Text>
+                      <div><Text style={{ fontSize: 12, color: '#B11E6A' }}>{sup.email}</Text></div>
+                    </Col>
+                    <Col span={8}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>ADDRESS</Text>
+                      <div><Text style={{ fontSize: 12 }}>{sup.address}</Text></div>
+                    </Col>
+                  </Row>
+                </div>
+              );
+            })()}
 
             {/* AI Scan Invoice */}
             <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
