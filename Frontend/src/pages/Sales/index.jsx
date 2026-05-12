@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import dayjs from 'dayjs';
 import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal,
   Form, Row, Col, Typography, Drawer, Steps, Divider, Badge,
-  InputNumber, Tooltip, Checkbox, message, Slider, Upload, Progress, DatePicker, Descriptions,
+  InputNumber, Tooltip, Checkbox, message, Slider, Upload, Progress, DatePicker, Descriptions, Timeline, Spin,
 } from 'antd';
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
@@ -485,9 +485,9 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             )}
           </Col>
 
-          {/* Qty, Rate, GST & Sticker */}
+          {/* Qty, Rate, GST & Sticker/Printing */}
           <Col flex="none" style={{ minWidth: 320 }}>
-            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST / STICKER</Text>
+            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST / STICKER/PRINTING</Text>
             <Row gutter={4}>
               <Col span={5}>
                 <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
@@ -506,9 +506,10 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
               </Col>
               <Col span={7}>
                 <Form.Item {...rest} name={[name, 'sticker']} style={{ marginBottom: 0 }}>
-                  <Select size="small" placeholder="Sticker">
-                    <Option value="YES">With Sticker</Option>
-                    <Option value="NO">No Sticker</Option>
+                  <Select size="small" placeholder="Sticker/Printing">
+                    <Option value="YES">Yes</Option>
+                    <Option value="NO">No</Option>
+                    <Option value="PRINTING">Printing</Option>
                   </Select>
                 </Form.Item>
               </Col>
@@ -541,43 +542,46 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           </div>
 
           <Row gutter={[16, 16]}>
-            {/* Row 1 & 2 Optimized (4 per row) */}
+            {/* Row 1: Display Unit, Logo, Sticker / Printing, Packing Material */}
             <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'unit']} label={<span style={{ fontSize: 11 }}>Display Unit</span>} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'unit']} label={<span style={{ fontSize: 11 }}>Display Unit</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'sticker']} label={<span style={{ fontSize: 11 }}>Sticker</span>} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Sticker?" disabled={disabled} size="small" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={disabled} size="small" />
+              <Form.Item {...rest} name={[name, 'sticker']} label={<span style={{ fontSize: 11 }}>Sticker / Printing</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }, { value: 'PRINTING', label: 'Printing' }]} placeholder="Sticker / Printing?" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
 
+            {/* Row 2: Packing Material, Material Category, Brand, Product */}
             <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={disabled} size="small" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={6}>
+              <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'productType']} label={<span style={{ fontSize: 11 }}>Product</span>} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'productType']} label={<span style={{ fontSize: 11 }}>Product</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[]} placeholder="Select / Add product" disabled={disabled} size="small" />
               </Form.Item>
             </Col>
+
+            {/* Row 3: Other Specs */}
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specs</span>} style={{ marginBottom: 0 }}>
                 <Input placeholder="e.g. Special handle" size="small" />
@@ -833,6 +837,39 @@ export default function Sales() {
   const watchedProductType = Form.useWatch('productType', leadForm);
   const watchedPriority = Form.useWatch('priority', leadForm);
   const watchedStatus = Form.useWatch('status', leadForm);
+  const watchedSoftwareInterest = Form.useWatch('interestedInSoftware', leadForm);
+  const watchedOrderProducts = Form.useWatch('products', orderForm);
+  const watchedLeadProducts = Form.useWatch('products', leadForm);
+
+  const [gstApiData, setGstApiData] = useState(null);
+  const [gstApiLoading, setGstApiLoading] = useState(false);
+  const [gstApiError, setGstApiError] = useState(null);
+
+  const fetchGstDetails = async (gstin) => {
+    if (!gstin) return;
+    setGstApiLoading(true);
+    setGstApiData(null);
+    setGstApiError(null);
+    try {
+      const res = await fetch(`https://api.gst-return-status.app/taxpayerApi/search/${gstin}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setGstApiData(json.taxpayerInfo || json);
+    } catch (err) {
+      setGstApiError('Unable to fetch GST details. Please verify GSTIN manually.');
+    } finally {
+      setGstApiLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (viewMode === 'order-detail' && selectedRecord?.gstNumber) {
+      fetchGstDetails(selectedRecord.gstNumber);
+    } else {
+      setGstApiData(null);
+      setGstApiError(null);
+    }
+  }, [viewMode, selectedRecord?.gstNumber]);
 
   const newLeadDefaults = {
     hotelType: 'OLD', billType: 'GST', forwardingCharge: false,
@@ -1030,6 +1067,12 @@ export default function Sales() {
     message.success('Payment recorded and Order is now in production!');
   };
 
+  const convertOrderToInvoice = (order) => {
+    const invId = `INV-${3000 + ordersData.length + 1}`;
+    setOrdersData(prev => prev.map(o => o.key === order.key ? { ...o, invId, status: 'Payment Pending' } : o));
+    message.success('Invoice generated successfully! Order is now pending payment.');
+  };
+
   const startOrderFromQuotation = (q) => {
     const newOrder = {
       key: Date.now(),
@@ -1080,29 +1123,31 @@ export default function Sales() {
 
   // ─── Complaint handlers ───────────────────────────────────────────
   const openComplaintModal = (order) => {
-    setComplaintOrder(order);
+    setComplaintOrder(order || null);
     complaintForm.resetFields();
     complaintForm.setFieldsValue({
       raisedDate: dayjs(),
-      raisedTime: dayjs().format('HH:mm')
+      raisedTime: dayjs().format('HH:mm'),
+      ...(order ? { orderId: order.oid } : {}),
     });
     setComplaintModalOpen(true);
   };
 
   const submitComplaint = () => {
     complaintForm.validateFields().then(vals => {
-      const { raisedDate, raisedTime, ...rest } = vals;
+      const { raisedDate, raisedTime, orderId, ...rest } = vals;
       let finalRaisedAt = dayjs().toISOString();
       if (raisedDate && raisedTime) {
         const [h, m] = raisedTime.split(':').map(Number);
         finalRaisedAt = dayjs(raisedDate).hour(h).minute(m).second(0).toISOString();
       }
-
+      const resolvedOrderId = complaintOrder?.oid || orderId;
+      const resolvedOrder = complaintOrder || ordersData.find(o => o.oid === resolvedOrderId);
       const newComplaint = {
         key: Date.now(),
-        orderId: complaintOrder?.oid,
-        hotelName: complaintOrder?.hotelName,
-        salesPerson: complaintOrder?.salesPerson,
+        orderId: resolvedOrderId,
+        hotelName: resolvedOrder?.hotelName || '—',
+        salesPerson: resolvedOrder?.salesPerson || '—',
         raisedAt: finalRaisedAt,
         ...rest,
         status: 'Open',
@@ -1294,9 +1339,9 @@ export default function Sales() {
       render: (_, r) => (
         <Space size={4}>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedRecord(r); setViewMode('negotiation-detail'); }} /></Tooltip>
-          <Tooltip title="Convert to Invoice">
-            <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertToInvoice(r)}>
-              → Invoice
+          <Tooltip title="Convert to Order">
+            <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertNegotiationToOrder(r)}>
+              → Order
             </Button>
           </Tooltip>
         </Space>
@@ -1343,9 +1388,9 @@ export default function Sales() {
               → Negotiation
             </Button>
           </Tooltip>
-          <Tooltip title="Convert to Invoice">
-            <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertToInvoice(r)}>
-              → Invoice
+          <Tooltip title="Convert to Order">
+            <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => startOrderFromQuotation(r)}>
+              → Order
             </Button>
           </Tooltip>
         </Space>
@@ -1389,6 +1434,13 @@ export default function Sales() {
             <Tooltip title="Record Payment">
               <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => recordPayment(r)}>
                 Record Payment
+              </Button>
+            </Tooltip>
+          )}
+          {!r.invId && (
+            <Tooltip title="Convert to Invoice">
+              <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertOrderToInvoice(r)}>
+                → Invoice
               </Button>
             </Tooltip>
           )}
@@ -1450,7 +1502,7 @@ export default function Sales() {
                 <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 10 }}>SPECIFICATIONS</Text>
                 <Row gutter={[12, 10]}>
                   {p.specs.logo && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Logo</Text><Tag color={p.specs.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}</Tag></Col>}
-                  {p.specs.sticker && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Sticker</Text><Tag color={p.specs.sticker === 'YES' ? 'blue' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.sticker === 'YES' ? '✓ Sticker' : '✗ No Sticker'}</Tag></Col>}
+                  {p.specs.sticker && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Sticker / Printing</Text><Tag color={p.specs.sticker === 'YES' ? 'blue' : p.specs.sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.sticker === 'YES' ? '✓ Yes' : p.specs.sticker === 'PRINTING' ? 'Printing' : '✗ No'}</Tag></Col>}
                   {p.specs.packingMaterial && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Packing Material</Text><Text strong style={{ fontSize: 12 }}>{p.specs.packingMaterial}</Text></Col>}
                   {p.specs.materialCategory && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Material Category</Text><Tag color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.materialCategory}</Tag></Col>}
                   {p.specs.brand && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Brand</Text><Text strong style={{ fontSize: 12 }}>{p.specs.brand}</Text></Col>}
@@ -1643,7 +1695,7 @@ export default function Sales() {
                   <Button icon={<EditOutlined />} block size="large" style={{ borderRadius: 10, height: 44 }} onClick={() => editExistingQuotation(q)}>Edit Products / Rates</Button>
                   <Button icon={<WhatsAppOutlined />} block size="large" style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => sendViaWhatsApp(q)}>Send via WhatsApp</Button>
                   <Button block size="large" style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => moveToNegotiation(q)}>Move to Negotiation</Button>
-                  <Button block size="large" style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => convertToInvoice(q)}>Convert to Invoice</Button>
+                  <Button block size="large" style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => startOrderFromQuotation(q)}>Convert to Order</Button>
                 </Space>
               </Card>
               {q.customerId && (
@@ -1783,7 +1835,7 @@ export default function Sales() {
                 <Space direction="vertical" style={{ width: '100%' }} size={10}>
                   <Button icon={<EditOutlined />} block size="large" style={{ background: '#fa8c16', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => editNegotiation(n)}>Submit Counter Offer</Button>
                   <Button icon={<WhatsAppOutlined />} block size="large" style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => sendViaWhatsApp(n)}>Send via WhatsApp</Button>
-                  <Button block size="large" style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => convertToInvoice(n)}>Convert to Invoice</Button>
+                  <Button block size="large" style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => convertNegotiationToOrder(n)}>Convert to Order</Button>
                 </Space>
               </Card>
               <Card size="small" style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
@@ -1820,6 +1872,11 @@ export default function Sales() {
             <Space wrap>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(o)}>WhatsApp</Button>
               <Button icon={<FileTextOutlined />} style={{ borderRadius: 8 }}>Download Invoice</Button>
+              {!o.invId && (
+                <Button icon={<FileTextOutlined />} style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => convertOrderToInvoice(o)}>
+                  Convert to Invoice
+                </Button>
+              )}
               <Button
                 icon={<WarningOutlined />}
                 style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
@@ -1879,6 +1936,37 @@ export default function Sales() {
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Order Products & Specifications</span></Space>}>
                 <DetailProductCards products={o.products} totalAmount={o.totalAmount} />
+              </Card>
+
+              {/* Urgent / Emergency Deliveries (Partial) */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span>Urgent / Emergency Deliveries (Partial)</span></Space>}>
+                {(o.splitDates || []).length === 0 ? (
+                  <Text type="secondary" style={{ fontSize: 13 }}>No urgent / emergency deliveries added.</Text>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {(o.splitDates || []).map((sd, i) => (
+                      <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
+                        <Row gutter={[16, 8]} align="middle">
+                          <Col xs={24} sm={8}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PARTIAL DATE</Text>
+                            <Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>
+                              {sd.date ? (typeof sd.date === 'string' ? sd.date : sd.date.format?.('YYYY-MM-DD') || String(sd.date)) : '—'}
+                            </Text>
+                          </Col>
+                          <Col xs={24} sm={8}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
+                            <Text strong style={{ fontSize: 13 }}>{sd.product || '—'}</Text>
+                          </Col>
+                          <Col xs={24} sm={8}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>NOTE</Text>
+                            <Text style={{ fontSize: 13 }}>{sd.note || '—'}</Text>
+                          </Col>
+                        </Row>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Card>
 
               {/* Delivery & Payment */}
@@ -1974,64 +2062,79 @@ export default function Sales() {
                   )}
                 </Descriptions>
               </Card>
-              <Card size="small" style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
+              <Card size="small" style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
                 <Text type="secondary" style={{ fontSize: 11 }}>LINKED TO</Text>
                 <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 11 }}>Quotation: </Text><Text strong style={{ color: '#1e3799' }}>{o.quotationId || '—'}</Text></div>
                 {o.negotiationId && <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>Negotiation: </Text><Text strong style={{ color: '#fa8c16' }}>{o.negotiationId}</Text></div>}
                 <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>Order Date: </Text><Text strong>{o.date || '—'}</Text></div>
               </Card>
+
+              {/* GST API Details Card */}
+              {o.billType === 'GST' && o.gstNumber && (
+                <Card
+                  style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={
+                    <Space>
+                      <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
+                      <BankOutlined style={{ color: '#722ed1' }} />
+                      <span>GST API Details</span>
+                      {!gstApiLoading && (
+                        <Button size="small" type="text" icon={<HistoryOutlined />} style={{ color: '#722ed1' }} onClick={() => fetchGstDetails(o.gstNumber)}>
+                          Refresh
+                        </Button>
+                      )}
+                    </Space>
+                  }
+                >
+                  {gstApiLoading && (
+                    <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                      <Spin size="small" />
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>Fetching GST details…</Text>
+                    </div>
+                  )}
+                  {gstApiError && !gstApiLoading && (
+                    <div style={{ padding: '10px 12px', background: 'rgba(255,77,79,0.06)', borderRadius: 8, border: '1px solid rgba(255,77,79,0.2)' }}>
+                      <Text style={{ color: '#ff4d4f', fontSize: 12 }}>{gstApiError}</Text>
+                      <div style={{ marginTop: 8 }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>GSTIN on file: </Text>
+                        <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>{o.gstNumber}</Text>
+                      </div>
+                    </div>
+                  )}
+                  {gstApiData && !gstApiLoading && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {[
+                        { label: 'GSTIN', value: gstApiData.gstin || o.gstNumber, mono: true },
+                        { label: 'Legal Name', value: gstApiData.lgnm },
+                        { label: 'Trade Name', value: gstApiData.tradeNam },
+                        { label: 'Status', value: gstApiData.sts, tag: true, color: gstApiData.sts === 'Active' ? 'success' : 'error' },
+                        { label: 'Taxpayer Type', value: gstApiData.ctb || gstApiData.dty },
+                        { label: 'Registration Date', value: gstApiData.rgdt },
+                        { label: 'State', value: gstApiData.stj },
+                        { label: 'e-Invoice', value: gstApiData.einvoiceStatus },
+                      ].filter(f => f.value).map((f, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}` }}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>{f.label}</Text>
+                          {f.tag ? (
+                            <Tag color={f.color} style={{ borderRadius: 12, margin: 0, fontSize: 11 }}>{f.value}</Tag>
+                          ) : (
+                            <Text strong style={{ fontSize: 12, fontFamily: f.mono ? 'monospace' : undefined, color: f.mono ? '#722ed1' : undefined }}>{f.value}</Text>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {!gstApiData && !gstApiLoading && !gstApiError && (
+                    <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>Click Refresh to load GST details</Text>
+                    </div>
+                  )}
+                </Card>
+              )}
             </Col>
           </Row>
 
-          {/* Raise Complaint Modal is now handled at the end of the file or via a helper if needed, 
-              but for now let's keep it here but fixed with upload option and auto-fetch logic */}
-          <Modal
-            title={
-              <Space>
-                <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
-                <span>Raise Complaint — {complaintOrder?.oid}</span>
-              </Space>
-            }
-            open={complaintModalOpen}
-            onCancel={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}
-            width={Math.min(560, window.innerWidth - 32)}
-            footer={[
-              <Button key="cancel" onClick={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}>Cancel</Button>,
-              <Button key="submit" type="primary" style={{ background: '#ff4d4f', border: 'none' }} onClick={submitComplaint}>Submit Complaint</Button>,
-            ]}
-          >
-            <Form form={complaintForm} layout="vertical" style={{ marginTop: 16 }}>
-              <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="Raised Date" name="raisedDate">
-                    <DatePicker style={{ width: '100%' }} />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="Raised Time" name="raisedTime">
-                    <Input type="time" />
-                  </Form.Item>
-                </Col>
-                <Col xs={24}>
-                  <Form.Item label="Complaint Description" name="description" rules={[{ required: true, message: 'Please describe the complaint' }]}>
-                    <Input.TextArea rows={4} placeholder="E.g., Missing items in the last delivery" />
-                  </Form.Item>
-                </Col>
-                <Col xs={24}>
-                  <Form.Item
-                    label="Attach Evidence (Optional)"
-                    name="files"
-                    valuePropName="fileList"
-                    getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
-                  >
-                    <Upload beforeUpload={() => false} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
-                      <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Files</Button>
-                    </Upload>
-                  </Form.Item>
-                </Col>
-              </Row>
-            </Form>
-          </Modal>
+          {/* Raise Complaint Modal — handled via shared modal at end of file */}
 
         </motion.div>
       );
@@ -2183,6 +2286,47 @@ export default function Sales() {
                   <ProductHeaders />
                   <ProductFormList fieldName="products" />
                 </Card>
+
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span>Urgent / Emergency Deliveries (Partial)</span></Space>}>
+                  <Form.List name="splitDates">
+                    {(fields, { add, remove }) => (
+                      <div>
+                        {fields.map(({ key, name, ...rest }) => (
+                          <div key={key} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 8, border: '1px solid #ff4d4f33' }}>
+                            <Row gutter={[8, 0]} align="middle">
+                              <Col xs={24} sm={7}>
+                                <Form.Item {...rest} name={[name, 'date']} label="Partial Date" style={{ marginBottom: 6 }}>
+                                  <DatePicker style={{ width: '100%' }} size="small" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Form.Item {...rest} name={[name, 'product']} label="Product" style={{ marginBottom: 6 }}>
+                                  <Select size="small" placeholder="Select product" allowClear>
+                                    {(watchedOrderProducts || []).filter(p => p?.name || p?.kitType).map((p, i) => (
+                                      <Option key={i} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
+                                    ))}
+                                  </Select>
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={7}>
+                                <Form.Item {...rest} name={[name, 'note']} label="Note" style={{ marginBottom: 6 }}>
+                                  <Input size="small" placeholder="e.g. First batch 500 units" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 20 }}>
+                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                              </Col>
+                            </Row>
+                          </div>
+                        ))}
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ marginTop: 4, borderColor: '#ff4d4f55', color: '#ff4d4f' }}>
+                          Add Urgent / Emergency Delivery (Partial)
+                        </Button>
+                      </div>
+                    )}
+                  </Form.List>
+                </Card>
               </Col>
 
               <Col xs={24} lg={8}>
@@ -2202,33 +2346,6 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                   </Row>
-                  <Form.List name="splitDates">
-                    {(fields, { add, remove }) => (
-                      <div style={{ marginBottom: 12 }}>
-                        <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 6 }}>Partial Delivery Dates</Text>
-                        {fields.map(({ key, name, ...rest }) => (
-                          <div key={key} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 8, border: '1px solid #B11E6A22' }}>
-                            <Row gutter={[8, 0]} align="middle">
-                              <Col xs={24} sm={10}>
-                                <Form.Item {...rest} name={[name, 'date']} label="Delivery Date" style={{ marginBottom: 6 }}>
-                                  <DatePicker style={{ width: '100%' }} size="small" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={10}>
-                                <Form.Item {...rest} name={[name, 'note']} label="Note" style={{ marginBottom: 6 }}>
-                                  <Input size="small" placeholder="e.g. First batch 500 units" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={4} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 20 }}>
-                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
-                              </Col>
-                            </Row>
-                          </div>
-                        ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ marginTop: 4, borderColor: '#B11E6A55', color: '#B11E6A' }}>Add Partial Delivery Date</Button>
-                      </div>
-                    )}
-                  </Form.List>
                   <Form.Item label="Order Notes" name="notes"><Input.TextArea rows={2} /></Form.Item>
                 </Card>
               </Col>
@@ -2423,7 +2540,7 @@ export default function Sales() {
                       <Descriptions.Item label="Hotel / Company" span={1}>{record.hotelName}</Descriptions.Item>
                       <Descriptions.Item label="Billing Name" span={2}>{record.billingName || '—'}</Descriptions.Item>
                       <Descriptions.Item label="No. of Rooms">{record.rowsInHotel}</Descriptions.Item>
-                      <Descriptions.Item label="Occupancy">{record.generalOccupancy}</Descriptions.Item>
+                      <Descriptions.Item label="Occupancy (%)">{record.generalOccupancy ? `${record.generalOccupancy}%` : '—'}</Descriptions.Item>
                       <Descriptions.Item label="Hotel Type">{record.hotelType}</Descriptions.Item>
                       <Descriptions.Item label="POC Designation">{record.pocDesignation || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Phone">{record.phone || '—'}</Descriptions.Item>
@@ -2448,8 +2565,8 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="General Occupancy" name="generalOccupancy" rules={[{ required: true }]}>
-                        <InputNumber placeholder="1000" style={{ width: '100%' }} />
+                      <Form.Item label="General Occupancy (%)" name="generalOccupancy" rules={[{ required: true }]}>
+                        <InputNumber placeholder="e.g. 75" style={{ width: '100%' }} min={0} max={100} addonAfter="%" />
                       </Form.Item>
                     </Col>
 
@@ -2546,53 +2663,32 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
 
-                    {/* Partial Dates Moved Here */}
+                    {/* Software Interest */}
                     <Col xs={24}>
-                      <Divider style={{ margin: '16px 0 12px', fontSize: 12, color: '#B11E6A' }}>Partial Dates & Delivery Notes</Divider>
-                      <Form.List name="partialDates">
-                        {(fields, { add, remove }) => (
-                          <>
-                            {fields.map(({ key, name, ...rest }) => (
-                              <div key={key} style={{ 
-                                marginBottom: 12, 
-                                padding: '10px 14px', 
-                                background: isDark ? 'rgba(255,255,255,0.02)' : '#fafafa', 
-                                borderRadius: 10, 
-                                border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` 
-                              }}>
-                                <Row gutter={12} align="middle">
-                                  <Col xs={24} sm={8}>
-                                    <Form.Item 
-                                      {...rest} 
-                                      name={[name, 'date']} 
-                                      label={<span style={{ fontSize: 11, fontWeight: 600 }}>Date</span>}
-                                      style={{ marginBottom: 0 }}
-                                    >
-                                      <DatePicker style={{ width: '100%' }} size="small" />
-                                    </Form.Item>
-                                  </Col>
-                                  <Col xs={24} sm={14}>
-                                    <Form.Item 
-                                      {...rest} 
-                                      name={[name, 'note']} 
-                                      label={<span style={{ fontSize: 11, fontWeight: 600 }}>Note</span>}
-                                      style={{ marginBottom: 0 }}
-                                    >
-                                      <Input size="small" placeholder="e.g. Batch 1 - 500 units" />
-                                    </Form.Item>
-                                  </Col>
-                                  <Col xs={24} sm={2} style={{ textAlign: 'right' }}>
-                                    <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} style={{ marginTop: 20 }} />
-                                  </Col>
-                                </Row>
-                              </div>
-                            ))}
-                            <Button type="dashed" onClick={() => add()} icon={<PlusOutlined />} block size="small" style={{ borderRadius: 8, color: '#B11E6A', borderColor: '#B11E6A55' }}>
-                              Add Partial Date
-                            </Button>
-                          </>
-                        )}
-                      </Form.List>
+                      <Divider style={{ margin: '16px 0 12px', fontSize: 12, color: '#722ed1' }}>Software Interest</Divider>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Interested in Software" name="interestedInSoftware" rules={[{ required: true, message: 'Please select' }]}>
+                        <Select placeholder="Select Yes / No">
+                          <Option value="YES">Yes</Option>
+                          <Option value="NO">No</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Previous Software" name="previousSoftware" rules={[{ required: watchedSoftwareInterest === 'YES', message: 'Required' }]}>
+                        <Input placeholder="e.g. TallySoft, Zoho" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Previous Software Price (₹)" name="previousSoftwarePrice" rules={[{ required: watchedSoftwareInterest === 'YES', message: 'Required' }]}>
+                        <InputNumber placeholder="e.g. 12000" style={{ width: '100%' }} min={0} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Software Expiry Date" name="softwareExpiryDate" rules={[{ required: watchedSoftwareInterest === 'YES', message: 'Required' }]}>
+                        <DatePicker style={{ width: '100%' }} placeholder="Select expiry date" />
+                      </Form.Item>
                     </Col>
 
                   </Row>
@@ -2649,13 +2745,13 @@ export default function Sales() {
                         <Form.Item name="status" label="Status">
                           <SelectWithAdd
                             defaultOptions={[
-                              { value: 'Need manager help', label: '🟣 Need manager help' },
-                              { value: 'Warm(In discussion)', label: '🟡 Warm(In discussion)' },
-                              { value: 'Hot(Going to close soon)', label: '🔴 Hot(Going to close soon)' },
-                              { value: 'Cold(First Intro)', label: '🔵 Cold(First Intro)' },
+                              { value: 'Cold', label: '🔵 Cold' },
+                              { value: 'Warm', label: '🟡 Warm' },
                               { value: 'Quotation (Sent)', label: '📄 Quotation (Sent)' },
                               { value: 'Quotation (Not Sent)', label: '📄 Quotation (Not Sent)' },
+                              { value: 'Hot', label: '🔴 Hot' },
                               { value: 'Negotiation', label: '🤝 Negotiation' },
+                              { value: 'Need manager help', label: '🟣 Need manager help' },
                               { value: 'Converted', label: '✅ Converted' },
                               { value: 'Rejected', label: '❌ Rejected' },
                             ]}
@@ -2691,12 +2787,20 @@ export default function Sales() {
                         )}
                         {(record.statusHistory || []).length > 1 && (
                           <div style={{ marginTop: 8 }}>
-                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>STATUS HISTORY</Text>
-                            {[...record.statusHistory].reverse().slice(0, 3).map((h, i) => (
-                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-                                <Text>{h.status}</Text><Text type="secondary">{fmtDateTimeShort(h.changedAt)}</Text>
-                              </div>
-                            ))}
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10 }}>STATUS HISTORY</Text>
+                            <Timeline
+                              mode="left"
+                              style={{ marginLeft: -8 }}
+                              items={[...record.statusHistory].reverse().slice(0, 5).map((h, i) => ({
+                                color: STATUS_COLORS[h.status] || '#ccc',
+                                label: (
+                                  <Text style={{ fontSize: 12, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? (isDark ? '#fff' : '#333') : (isDark ? '#aaa' : '#666') }}>
+                                    {fmtDateTimeShort(h.changedAt)}
+                                  </Text>
+                                ),
+                                children: <Tag color={STATUS_COLORS[h.status] || 'default'} style={{ borderRadius: 20, fontSize: 12, padding: '1px 10px', fontWeight: i === 0 ? 700 : 400 }}>{h.status}</Tag>,
+                              }))}
+                            />
                           </div>
                         )}
                       </div>
@@ -2823,9 +2927,9 @@ export default function Sales() {
                                   )}
                                   {p.specs.sticker && (
                                     <Col xs={12} sm={8}>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Sticker</Text>
-                                      <Tag color={p.specs.sticker === 'YES' ? 'blue' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
-                                        {p.specs.sticker === 'YES' ? '✓ Sticker' : '✗ No Sticker'}
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Sticker / Printing</Text>
+                                      <Tag color={p.specs.sticker === 'YES' ? 'blue' : p.specs.sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
+                                        {p.specs.sticker === 'YES' ? '✓ Yes' : p.specs.sticker === 'PRINTING' ? 'Printing' : '✗ No'}
                                       </Tag>
                                     </Col>
                                   )}
@@ -2885,6 +2989,80 @@ export default function Sales() {
                 </Card>
               )}
 
+              {/* ── Urgent / Emergency Deliveries (Partial) ─────────── */}
+              {showProductsCard && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span>Urgent / Emergency Deliveries (Partial)</span></Space>}
+                >
+                  {isDetail ? (
+                    (record.splitDates || []).length === 0 ? (
+                      <Text type="secondary" style={{ fontSize: 13 }}>No urgent / emergency deliveries added.</Text>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {(record.splitDates || []).map((sd, i) => (
+                          <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
+                            <Row gutter={[16, 8]} align="middle">
+                              <Col xs={24} sm={8}>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PARTIAL DATE</Text>
+                                <Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>
+                                  {sd.date ? (typeof sd.date === 'string' ? sd.date : sd.date.format?.('YYYY-MM-DD') || String(sd.date)) : '—'}
+                                </Text>
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
+                                <Text strong style={{ fontSize: 13 }}>{sd.product || '—'}</Text>
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>NOTE</Text>
+                                <Text style={{ fontSize: 13 }}>{sd.note || '—'}</Text>
+                              </Col>
+                            </Row>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ) : (
+                    <Form.List name="splitDates">
+                      {(fields, { add, remove }) => (
+                        <div>
+                          {fields.map(({ key, name, ...rest }) => (
+                            <div key={key} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 8, border: '1px solid #ff4d4f33' }}>
+                              <Row gutter={[8, 0]} align="middle">
+                                <Col xs={24} sm={7}>
+                                  <Form.Item {...rest} name={[name, 'date']} label="Partial Date" style={{ marginBottom: 6 }}>
+                                    <DatePicker style={{ width: '100%' }} size="small" />
+                                  </Form.Item>
+                                </Col>
+                                <Col xs={24} sm={8}>
+                                  <Form.Item {...rest} name={[name, 'product']} label="Product" style={{ marginBottom: 6 }}>
+                                    <Select size="small" placeholder="Select product" allowClear>
+                                      {(watchedLeadProducts || []).filter(p => p?.name || p?.kitType).map((p, pi) => (
+                                        <Option key={pi} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
+                                      ))}
+                                    </Select>
+                                  </Form.Item>
+                                </Col>
+                                <Col xs={24} sm={7}>
+                                  <Form.Item {...rest} name={[name, 'note']} label="Note" style={{ marginBottom: 6 }}>
+                                    <Input size="small" placeholder="e.g. First batch 500 units" />
+                                  </Form.Item>
+                                </Col>
+                                <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 20 }}>
+                                  <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                                </Col>
+                              </Row>
+                            </div>
+                          ))}
+                          <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ marginTop: 4, borderColor: '#ff4d4f55', color: '#ff4d4f' }}>
+                            Add Urgent / Emergency Delivery (Partial)
+                          </Button>
+                        </div>
+                      )}
+                    </Form.List>
+                  )}
+                </Card>
+              )}
 
               {/* ── Delivery & Payment ────────────── */}
               {(isAddLead || isAddCustomer) && (
@@ -3145,16 +3323,29 @@ export default function Sales() {
                   <Col xs={24} lg={12}>
                     <Card
                       style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                      title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Status Timeline</span></Space>}
+                      title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><HistoryOutlined style={{ color: '#fa8c16' }} /><span>Status Timeline</span></Space>}
                     >
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {[...(record.statusHistory || [])].reverse().map((h, i) => (
-                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: i < record.statusHistory.length - 1 ? `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` : 'none' }}>
-                            <Tag color={STATUS_COLORS[h.status] || '#ccc'}>{h.status}</Tag>
-                            <Text type="secondary" style={{ fontSize: 11 }}>{fmtDateTimeShort(h.changedAt)}</Text>
-                          </div>
-                        ))}
-                      </div>
+                      {(record.statusHistory || []).length === 0 ? (
+                        <Text type="secondary" style={{ fontSize: 12 }}>No history yet.</Text>
+                      ) : (
+                        <Timeline
+                          mode="left"
+                          items={[...(record.statusHistory || [])].reverse().map((h, i) => ({
+                            color: STATUS_COLORS[h.status] || '#ccc',
+                            dot: i === 0 ? <div style={{ width: 12, height: 12, borderRadius: '50%', background: STATUS_COLORS[h.status] || '#ccc', border: '2px solid #fff', boxShadow: `0 0 0 3px ${STATUS_COLORS[h.status] || '#ccc'}` }} /> : undefined,
+                            label: (
+                              <Text style={{ fontSize: 13, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? (isDark ? '#fff' : '#222') : (isDark ? '#aaa' : '#555') }}>
+                                {fmtDateTimeShort(h.changedAt)}
+                              </Text>
+                            ),
+                            children: (
+                              <Tag color={STATUS_COLORS[h.status] || 'default'} style={{ borderRadius: 20, fontSize: 13, padding: '2px 12px', fontWeight: i === 0 ? 700 : 400 }}>
+                                {h.status}
+                              </Tag>
+                            ),
+                          }))}
+                        />
+                      )}
                     </Card>
                   </Col>
                 </Row>
@@ -3162,53 +3353,7 @@ export default function Sales() {
             )}
           </Row>
         </Form>
-        <Modal
-          title={
-            <Space>
-              <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
-              <span>Raise Complaint — {complaintOrder?.oid}</span>
-            </Space>
-          }
-          open={complaintModalOpen}
-          onCancel={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}
-          width={Math.min(560, window.innerWidth - 32)}
-          footer={[
-            <Button key="cancel" onClick={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}>Cancel</Button>,
-            <Button key="submit" type="primary" style={{ background: '#ff4d4f', border: 'none' }} onClick={submitComplaint}>Submit Complaint</Button>,
-          ]}
-        >
-          <Form form={complaintForm} layout="vertical" style={{ marginTop: 16 }}>
-            <Row gutter={16}>
-              <Col xs={24} sm={12}>
-                <Form.Item label="Raised Date" name="raisedDate">
-                  <DatePicker style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col xs={24} sm={12}>
-                <Form.Item label="Raised Time" name="raisedTime">
-                  <Input type="time" />
-                </Form.Item>
-              </Col>
-              <Col xs={24}>
-                <Form.Item label="Complaint Description" name="description" rules={[{ required: true, message: 'Please describe the complaint' }]}>
-                  <Input.TextArea rows={4} placeholder="E.g., Missing items in the last delivery" />
-                </Form.Item>
-              </Col>
-              <Col xs={24}>
-                <Form.Item
-                  label="Attach Evidence (Optional)"
-                  name="files"
-                  valuePropName="fileList"
-                  getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
-                >
-                  <Upload beforeUpload={() => false} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
-                    <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Files</Button>
-                  </Upload>
-                </Form.Item>
-              </Col>
-            </Row>
-          </Form>
-        </Modal>
+        {/* Raise Complaint Modal — handled via shared modal at end of file */}
       </motion.div>
     );
   }
@@ -3481,6 +3626,15 @@ export default function Sales() {
               label: 'Complaints',
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+                    <Button
+                      icon={<WarningOutlined />}
+                      style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
+                      onClick={() => openComplaintModal(null)}
+                    >
+                      Raise Complaint
+                    </Button>
+                  </div>
                   <Table
                     dataSource={filtered(complaintsData)}
                     columns={complaintColumns}
@@ -3500,12 +3654,12 @@ export default function Sales() {
         title={
           <Space>
             <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
-            <span>Raise Complaint — {complaintOrder?.oid}</span>
+            <span>{complaintOrder ? `Raise Complaint — ${complaintOrder.oid}` : 'Raise Complaint'}</span>
           </Space>
         }
         open={complaintModalOpen}
         onCancel={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}
-        width={Math.min(560, window.innerWidth - 32)}
+        width={Math.min(580, window.innerWidth - 32)}
         footer={[
           <Button key="cancel" onClick={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}>Cancel</Button>,
           <Button key="submit" type="primary" style={{ background: '#ff4d4f', border: 'none' }} onClick={submitComplaint}>Submit Complaint</Button>,
@@ -3513,6 +3667,19 @@ export default function Sales() {
       >
         <Form form={complaintForm} layout="vertical" style={{ marginTop: 16 }}>
           <Row gutter={16}>
+            <Col xs={24}>
+              <Form.Item label="Order ID" name="orderId" rules={[{ required: true, message: 'Please select an Order ID' }]}>
+                {complaintOrder ? (
+                  <Input disabled value={complaintOrder.oid} />
+                ) : (
+                  <Select placeholder="Select Order ID" showSearch optionFilterProp="children">
+                    {ordersData.map(o => (
+                      <Option key={o.oid} value={o.oid}>{o.oid} — {o.hotelName}</Option>
+                    ))}
+                  </Select>
+                )}
+              </Form.Item>
+            </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Raised Date" name="raisedDate">
                 <DatePicker style={{ width: '100%' }} />
