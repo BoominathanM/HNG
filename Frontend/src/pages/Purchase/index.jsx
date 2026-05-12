@@ -6,7 +6,8 @@ import {
 import {
   PlusOutlined, DownloadOutlined, ShoppingOutlined, SearchOutlined,
   UploadOutlined, EyeOutlined, EditOutlined, FileTextOutlined, WarningOutlined, InfoCircleOutlined, WhatsAppOutlined,
-  TeamOutlined, ContactsOutlined, DollarOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined
+  TeamOutlined, ContactsOutlined, DollarOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined,
+  ThunderboltOutlined, RobotOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -80,6 +81,18 @@ export default function Purchase() {
   const [updateType, setUpdateType] = useState('supplier'); // 'supplier' or 'vendor'
   const [statusForm] = Form.useForm();
   const [currentStatus, setCurrentStatus] = useState('');
+
+  /* ── History material search ── */
+  const [supplierHistorySearch, setSupplierHistorySearch] = useState('');
+  const [vendorHistorySearch, setVendorHistorySearch] = useState('');
+
+  /* ── AI scan state ── */
+  const [supplierScanLoading, setSupplierScanLoading] = useState(false);
+  const [vendorScanLoading, setVendorScanLoading] = useState(false);
+  const [inventoryPurchaseScanLoading, setInventoryPurchaseScanLoading] = useState(false);
+  const [supplierScannedFile, setSupplierScannedFile] = useState(null);
+  const [vendorScannedFile, setVendorScannedFile] = useState(null);
+  const [inventoryPurchaseScannedFile, setInventoryPurchaseScannedFile] = useState(null);
 
   const filteredSuppliers = suppliers.filter((s) =>
     s.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
@@ -168,6 +181,57 @@ export default function Purchase() {
     setSelectedProduct(null);
   };
 
+  const handleSupplierAIScan = () => {
+    if (!supplierScannedFile) { message.warning('Please upload a document first'); return; }
+    setSupplierScanLoading(true);
+    setTimeout(() => {
+      supplierForm.setFieldsValue({
+        sup_name: 'Global Chem Supplies Pvt. Ltd.',
+        sup_phone: '+91 98001 23456',
+        sup_email: 'contact@globalchem.in',
+        sup_tax: '27AABCG1234F1Z5',
+        sup_address: 'Andheri East, Mumbai, MH 400069',
+        sup_bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234',
+        sup_notes: 'Preferred supplier for chemical raw materials. NET-30 payment terms.',
+      });
+      setSupplierScanLoading(false);
+      message.success('AI extracted supplier details from the document!');
+    }, 2200);
+  };
+
+  const handleVendorAIScan = () => {
+    if (!vendorScannedFile) { message.warning('Please upload a document first'); return; }
+    setVendorScanLoading(true);
+    setTimeout(() => {
+      vendorForm.setFieldsValue({
+        cust_name: 'Hilton Hotels & Resorts',
+        cust_phone: '+91 20 6720 0000',
+        cust_email: 'procurement@hilton.in',
+        cust_tax: '27AABHH5678K1Z2',
+        cust_address: 'Koregaon Park, Pune, MH 411001',
+        cust_bank: 'ICICI Bank — A/C 007601234567 | IFSC ICIC0000076',
+        cust_notes: 'Premium hotel chain. Monthly billing cycle.',
+        cust_discount: 8,
+      });
+      setVendorScanLoading(false);
+      message.success('AI extracted vendor details from the document!');
+    }, 2200);
+  };
+
+  const handleInventoryPurchaseAIScan = () => {
+    if (!inventoryPurchaseScannedFile) { message.warning('Please upload an invoice first'); return; }
+    setInventoryPurchaseScanLoading(true);
+    setTimeout(() => {
+      inventoryPurchaseForm.setFieldsValue({
+        amount: 12500,
+        qty: 150,
+        date: dayjs(),
+      });
+      setInventoryPurchaseScanLoading(false);
+      message.success('AI extracted invoice details successfully!');
+    }, 2200);
+  };
+
   return (
     <div className="page-container fade-in">
       <div style={{ marginBottom: 20 }}>
@@ -181,44 +245,92 @@ export default function Purchase() {
             styles={{ body: { padding: '8px 16px 16px' } }}
           >
             <Tabs
-              defaultActiveKey="suppliers"
+              defaultActiveKey="stock_status"
               items={[
+                {
+                  key: 'stock_status',
+                  label: <Space><WarningOutlined /> Stock Status & Raise Request</Space>,
+                  children: (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ marginBottom: 16 }}>
+                        <Title level={5} style={{ margin: 0, color: textColor }}>Inventory Stock Availability</Title>
+                        <Text type="secondary">Raise purchase requests directly for low stock products</Text>
+                      </div>
+                      <Table
+                        size="small"
+                        dataSource={INVENTORY_DATA}
+                        pagination={{ pageSize: 5 }}
+                        columns={[
+                          { title: 'Item Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
+                          { title: 'Category', dataIndex: 'category', key: 'category' },
+                          { title: 'Current Stock', dataIndex: 'current', key: 'current', render: (v, r) => <Text style={{ color: v <= r.min ? '#ff4d4f' : 'inherit' }}>{v} {r.unit}</Text> },
+                          { title: 'Min. Required', dataIndex: 'min', key: 'min', render: (v, r) => `${v} ${r.unit}` },
+                          {
+                            title: 'Status',
+                            key: 'status',
+                            render: (_, r) => (
+                              <Tag color={r.current <= r.min ? 'error' : 'success'} style={{ borderRadius: 12 }}>
+                                {r.current <= r.min ? 'Low Stock' : 'Healthy'}
+                              </Tag>
+                            )
+                          },
+                          {
+                            title: 'Action',
+                            key: 'action',
+                            render: (_, r) => (
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={<PlusOutlined />}
+                                style={{
+                                  background: r.current <= r.min ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0',
+                                  border: 'none',
+                                  color: r.current <= r.min ? '#fff' : '#888'
+                                }}
+                                onClick={() => handleOpenRequest(r)}
+                              >
+                                Raise Request
+                              </Button>
+                            )
+                          }
+                        ]}
+                      />
+                    </div>
+                  )
+                },
                 {
                   key: 'suppliers',
                   label: <Space><TeamOutlined />Suppliers</Space>,
                   children: (
                     <div className="fade-in" style={{ marginTop: 12 }}>
-                      {viewSupplier ? (
+                      {viewSupplier ? (() => {
+                        const supplierHistoryRaw = [
+                          { key: 1, date: '2024-05-01', bill_no: 'BILL-1001', inv_no: 'INV-A101', items: [{ name: 'Soap Base (White)', qty: '100 Kg', price: '₹85/Kg', total: '₹8,500' }, { name: 'Glycerin', qty: '10 Kg', price: '₹120/Kg', total: '₹1,200' }], status: 'Received' },
+                          { key: 2, date: '2024-04-15', bill_no: 'BILL-982', inv_no: 'INV-B452', items: [{ name: 'Shampoo Concentrate', qty: '50 Ltr', price: '₹220/Ltr', total: '₹11,000' }], status: 'Received' },
+                        ];
+                        const filteredSupplierHistory = supplierHistorySearch
+                          ? supplierHistoryRaw.filter(r => r.items.some(i => i.name.toLowerCase().includes(supplierHistorySearch.toLowerCase())))
+                          : supplierHistoryRaw;
+                        return (
                         <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                            <Button icon={<LeftOutlined />} onClick={() => setViewSupplier(null)}>Back to Suppliers</Button>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+                            <Space>
+                              <Button icon={<LeftOutlined />} onClick={() => { setViewSupplier(null); setSupplierHistorySearch(''); }}>Back to Suppliers</Button>
+                              <Input
+                                prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                                placeholder="Search by material..."
+                                value={supplierHistorySearch}
+                                onChange={e => setSupplierHistorySearch(e.target.value)}
+                                allowClear
+                                style={{ width: 240, borderRadius: 8 }}
+                                suffix={supplierHistorySearch ? <Text style={{ fontSize: 11, color: '#B11E6A' }}>{filteredSupplierHistory.length}</Text> : null}
+                              />
+                            </Space>
                             <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewSupplier.name} - Purchase History</Title>
                           </div>
                           <Table
                             size="small"
-                            dataSource={[
-                              {
-                                key: 1,
-                                date: '2024-05-01',
-                                bill_no: 'BILL-1001',
-                                inv_no: 'INV-A101',
-                                items: [
-                                  { name: 'Soap Base (White)', qty: '100 Kg', price: '₹85/Kg', total: '₹8,500' },
-                                  { name: 'Glycerin', qty: '10 Kg', price: '₹120/Kg', total: '₹1,200' }
-                                ],
-                                status: 'Received'
-                              },
-                              {
-                                key: 2,
-                                date: '2024-04-15',
-                                bill_no: 'BILL-982',
-                                inv_no: 'INV-B452',
-                                items: [
-                                  { name: 'Shampoo Concentrate', qty: '50 Ltr', price: '₹220/Ltr', total: '₹11,000' }
-                                ],
-                                status: 'Received'
-                              },
-                            ]}
+                            dataSource={filteredSupplierHistory}
                             columns={[
                               { title: 'Date', dataIndex: 'date', key: 'date' },
                               { title: 'Bill No', dataIndex: 'bill_no', key: 'bill_no', render: v => <Text strong>{v}</Text> },
@@ -284,7 +396,8 @@ export default function Purchase() {
                             ]}
                           />
                         </div>
-                      ) : (
+                        );
+                      })() : (
                         <div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
                             <Title level={5} style={{ margin: 0, color: textColor }}>Supplier Management</Title>
@@ -338,37 +451,34 @@ export default function Purchase() {
                   label: <Space><ContactsOutlined />Vendors</Space>,
                   children: (
                     <div className="fade-in" style={{ marginTop: 12 }}>
-                      {viewVendor ? (
+                      {viewVendor ? (() => {
+                        const vendorHistoryRaw = [
+                          { key: 1, date: '2024-05-02', bill_no: 'SAL-2001', inv_no: 'INV-X99', items: [{ name: 'Dental Kit Boxes', qty: '50 Pcs', price: '₹15/Pc', total: '₹750' }, { name: 'Soap Bars', qty: '20 Pcs', price: '₹10/Pc', total: '₹200' }], status: 'Dispatched' },
+                          { key: 2, date: '2024-04-20', bill_no: 'SAL-1980', inv_no: 'INV-X85', items: [{ name: 'Custom Stickers', qty: '1000 Pcs', price: '₹2/Pc', total: '₹2,000' }], status: 'Delivered' },
+                        ];
+                        const filteredVendorHistory = vendorHistorySearch
+                          ? vendorHistoryRaw.filter(r => r.items.some(i => i.name.toLowerCase().includes(vendorHistorySearch.toLowerCase())))
+                          : vendorHistoryRaw;
+                        return (
                         <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                            <Button icon={<LeftOutlined />} onClick={() => setViewVendor(null)}>Back to Vendors</Button>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+                            <Space>
+                              <Button icon={<LeftOutlined />} onClick={() => { setViewVendor(null); setVendorHistorySearch(''); }}>Back to Vendors</Button>
+                              <Input
+                                prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                                placeholder="Search by product..."
+                                value={vendorHistorySearch}
+                                onChange={e => setVendorHistorySearch(e.target.value)}
+                                allowClear
+                                style={{ width: 240, borderRadius: 8 }}
+                                suffix={vendorHistorySearch ? <Text style={{ fontSize: 11, color: '#B11E6A' }}>{filteredVendorHistory.length}</Text> : null}
+                              />
+                            </Space>
                             <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewVendor.name} - Detailed History</Title>
                           </div>
                           <Table
                             size="small"
-                            dataSource={[
-                              {
-                                key: 1,
-                                date: '2024-05-02',
-                                bill_no: 'SAL-2001',
-                                inv_no: 'INV-X99',
-                                items: [
-                                  { name: 'Dental Kit Boxes', qty: '50 Pcs', price: '₹15/Pc', total: '₹750' },
-                                  { name: 'Soap Bars', qty: '20 Pcs', price: '₹10/Pc', total: '₹200' }
-                                ],
-                                status: 'Dispatched'
-                              },
-                              {
-                                key: 2,
-                                date: '2024-04-20',
-                                bill_no: 'SAL-1980',
-                                inv_no: 'INV-X85',
-                                items: [
-                                  { name: 'Custom Stickers', qty: '1000 Pcs', price: '₹2/Pc', total: '₹2,000' }
-                                ],
-                                status: 'Delivered'
-                              },
-                            ]}
+                            dataSource={filteredVendorHistory}
                             columns={[
                               { title: 'Date', dataIndex: 'date', key: 'date' },
                               { title: 'Bill No', dataIndex: 'bill_no', key: 'bill_no', render: v => <Text strong>{v}</Text> },
@@ -434,7 +544,8 @@ export default function Purchase() {
                             ]}
                           />
                         </div>
-                      ) : (
+                        );
+                      })() : (
                         <div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
                             <Title level={5} style={{ margin: 0, color: textColor }}>Vendor Management</Title>
@@ -531,57 +642,6 @@ export default function Purchase() {
                               </Space>
                             )
                           },
-                        ]}
-                      />
-                    </div>
-                  )
-                },
-                {
-                  key: 'stock_status',
-                  label: <Space><WarningOutlined /> Stock Status & Raise Request</Space>,
-                  children: (
-                    <div style={{ marginTop: 12 }}>
-                      <div style={{ marginBottom: 16 }}>
-                        <Title level={5} style={{ margin: 0, color: textColor }}>Inventory Stock Availability</Title>
-                        <Text type="secondary">Raise purchase requests directly for low stock products</Text>
-                      </div>
-                      <Table
-                        size="small"
-                        dataSource={INVENTORY_DATA}
-                        pagination={{ pageSize: 5 }}
-                        columns={[
-                          { title: 'Item Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
-                          { title: 'Category', dataIndex: 'category', key: 'category' },
-                          { title: 'Current Stock', dataIndex: 'current', key: 'current', render: (v, r) => <Text style={{ color: v <= r.min ? '#ff4d4f' : 'inherit' }}>{v} {r.unit}</Text> },
-                          { title: 'Min. Required', dataIndex: 'min', key: 'min', render: (v, r) => `${v} ${r.unit}` },
-                          {
-                            title: 'Status',
-                            key: 'status',
-                            render: (_, r) => (
-                              <Tag color={r.current <= r.min ? 'error' : 'success'} style={{ borderRadius: 12 }}>
-                                {r.current <= r.min ? 'Low Stock' : 'Healthy'}
-                              </Tag>
-                            )
-                          },
-                          {
-                            title: 'Action',
-                            key: 'action',
-                            render: (_, r) => (
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<PlusOutlined />}
-                                style={{
-                                  background: r.current <= r.min ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0',
-                                  border: 'none',
-                                  color: r.current <= r.min ? '#fff' : '#888'
-                                }}
-                                onClick={() => handleOpenRequest(r)}
-                              >
-                                Raise Request
-                              </Button>
-                            )
-                          }
                         ]}
                       />
                     </div>
@@ -772,12 +832,46 @@ export default function Purchase() {
       <Modal
         title={<Text strong style={{ fontSize: 16 }}>Add New Supplier</Text>}
         open={showAddSupplierModal}
-        onCancel={() => { setShowAddSupplierModal(false); supplierForm.resetFields(); }}
+        onCancel={() => { setShowAddSupplierModal(false); supplierForm.resetFields(); setSupplierScannedFile(null); }}
         footer={null}
-        width={520}
+        width={540}
         centered
       >
-        <Form form={supplierForm} layout="vertical" onFinish={handleSaveSupplier} style={{ marginTop: 16 }}>
+        {/* AI Scan Invoice Section */}
+        <div style={{ marginTop: 16, marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <RobotOutlined style={{ color: '#fff', fontSize: 15 }} />
+            </div>
+            <div>
+              <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a business card, GST certificate, or invoice — AI will auto-fill the fields below</Text>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Upload
+              maxCount={1}
+              beforeUpload={(file) => { setSupplierScannedFile(file); return false; }}
+              onRemove={() => setSupplierScannedFile(null)}
+              accept=".pdf,.jpg,.jpeg,.png"
+              style={{ flex: 1 }}
+            >
+              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                {supplierScannedFile ? supplierScannedFile.name : 'Upload Document'}
+              </Button>
+            </Upload>
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={supplierScanLoading}
+              onClick={handleSupplierAIScan}
+              style={{ borderRadius: 8, background: supplierScannedFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: supplierScannedFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
+            >
+              {supplierScanLoading ? 'Scanning...' : 'Scan with AI'}
+            </Button>
+          </div>
+        </div>
+
+        <Form form={supplierForm} layout="vertical" onFinish={handleSaveSupplier}>
           <Row gutter={10}>
             <Col span={14}>
               <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="sup_name" rules={[{ required: true }]} style={{ marginBottom: 12 }}>
@@ -822,12 +916,46 @@ export default function Purchase() {
       <Modal
         title={<Text strong style={{ fontSize: 16 }}>Add New Vendor</Text>}
         open={showAddVendorModal}
-        onCancel={() => { setShowAddVendorModal(false); vendorForm.resetFields(); }}
+        onCancel={() => { setShowAddVendorModal(false); vendorForm.resetFields(); setVendorScannedFile(null); }}
         footer={null}
-        width={520}
+        width={540}
         centered
       >
-        <Form form={vendorForm} layout="vertical" onFinish={handleSaveVendor} style={{ marginTop: 16 }}>
+        {/* AI Scan Invoice Section */}
+        <div style={{ marginTop: 16, marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <RobotOutlined style={{ color: '#fff', fontSize: 15 }} />
+            </div>
+            <div>
+              <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a business card, GST certificate, or invoice — AI will auto-fill the fields below</Text>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Upload
+              maxCount={1}
+              beforeUpload={(file) => { setVendorScannedFile(file); return false; }}
+              onRemove={() => setVendorScannedFile(null)}
+              accept=".pdf,.jpg,.jpeg,.png"
+              style={{ flex: 1 }}
+            >
+              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                {vendorScannedFile ? vendorScannedFile.name : 'Upload Document'}
+              </Button>
+            </Upload>
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={vendorScanLoading}
+              onClick={handleVendorAIScan}
+              style={{ borderRadius: 8, background: vendorScannedFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: vendorScannedFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
+            >
+              {vendorScanLoading ? 'Scanning...' : 'Scan with AI'}
+            </Button>
+          </div>
+        </div>
+
+        <Form form={vendorForm} layout="vertical" onFinish={handleSaveVendor}>
           <Row gutter={10}>
             <Col span={14}>
               <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="cust_name" rules={[{ required: true }]} style={{ marginBottom: 12 }}>
@@ -881,12 +1009,46 @@ export default function Purchase() {
       <Modal
         title={<Text strong style={{ fontSize: 16 }}>Add New Purchase Expense</Text>}
         open={showAddInventoryPurchaseModal}
-        onCancel={() => { setShowAddInventoryPurchaseModal(false); inventoryPurchaseForm.resetFields(); }}
+        onCancel={() => { setShowAddInventoryPurchaseModal(false); inventoryPurchaseForm.resetFields(); setInventoryPurchaseScannedFile(null); }}
         footer={null}
         width={540}
         centered
       >
-        <Form form={inventoryPurchaseForm} layout="vertical" style={{ marginTop: 16 }}>
+        {/* AI Scan Invoice Section — same design as Supplier / Vendor modals */}
+        <div style={{ marginTop: 16, marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <RobotOutlined style={{ color: '#fff', fontSize: 15 }} />
+            </div>
+            <div>
+              <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice with AI</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload an invoice or receipt — AI will auto-fill quantity, amount & date</Text>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Upload
+              maxCount={1}
+              beforeUpload={(file) => { setInventoryPurchaseScannedFile(file); return false; }}
+              onRemove={() => setInventoryPurchaseScannedFile(null)}
+              accept=".pdf,.jpg,.jpeg,.png"
+              style={{ flex: 1 }}
+            >
+              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                {inventoryPurchaseScannedFile ? inventoryPurchaseScannedFile.name : 'Upload Invoice'}
+              </Button>
+            </Upload>
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={inventoryPurchaseScanLoading}
+              onClick={handleInventoryPurchaseAIScan}
+              style={{ borderRadius: 8, background: inventoryPurchaseScannedFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: inventoryPurchaseScannedFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
+            >
+              {inventoryPurchaseScanLoading ? 'Scanning...' : 'Scan with AI'}
+            </Button>
+          </div>
+        </div>
+
+        <Form form={inventoryPurchaseForm} layout="vertical">
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item label="Select Product" name="product" rules={[{ required: true }]}>
@@ -920,30 +1082,6 @@ export default function Purchase() {
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item label="Invoice Details" name="invoice">
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Upload maxCount={1} beforeUpload={() => false}>
-                <Button icon={<UploadOutlined />} style={{ width: '100%' }}>Upload Invoice File</Button>
-              </Upload>
-              <Button
-                block
-                icon={<EyeOutlined />}
-                onClick={() => {
-                  message.loading('AI Scanning invoice...', 2).then(() => {
-                    inventoryPurchaseForm.setFieldsValue({
-                      amount: 12500,
-                      qty: 150,
-                      date: dayjs()
-                    });
-                    message.success('AI successfully fetched details from invoice!');
-                  });
-                }}
-                style={{ borderColor: '#B11E6A', color: '#B11E6A' }}
-              >
-                Scan Invoice with AI
-              </Button>
-            </Space>
-          </Form.Item>
           <Form.Item label="Payment Status" name="status" valuePropName="checked">
             <Switch checkedChildren="Paid" unCheckedChildren="Unpaid" defaultChecked />
           </Form.Item>
