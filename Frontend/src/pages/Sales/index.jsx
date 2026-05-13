@@ -180,9 +180,9 @@ const SALES_PERSONS = [
 ];
 
 const REMINDERS_DATA = [
-  { key: 1, type: 'Delayed Payment', customer: 'Hotel Blue Star', amount: 25000, daysDelayed: 12, salesPerson: 'Priya', reminderDate: '2024-05-06', reminderTime: '10:00 AM' },
-  { key: 2, type: 'Follow-up', customer: 'Grand Regency', topic: 'Quotation Review', dueDate: '2024-05-05', salesPerson: 'Priya', reminderDate: '2024-05-05', reminderTime: '02:30 PM' },
-  { key: 3, type: 'Occupancy Alert', customer: 'Sea View Stay', rooms: 80, occupancy: '85%', action: 'Check next order', salesPerson: 'Priya', reminderDate: '2024-05-07', reminderTime: '11:00 AM' },
+  { key: 1, leadId: 'LEAD-1001', type: 'Delayed Payment', customer: 'Hotel Blue Star', amount: 25000, daysDelayed: 12, salesPerson: 'Priya', reminderDate: '2024-05-06', reminderTime: '10:00 AM' },
+  { key: 2, leadId: 'LEAD-1002', type: 'Follow-up', customer: 'Grand Regency', topic: 'Quotation Review', dueDate: '2024-05-05', salesPerson: 'Priya', reminderDate: '2024-05-05', reminderTime: '02:30 PM' },
+  { key: 3, leadId: 'LEAD-1003', type: 'Occupancy Alert', customer: 'Sea View Stay', rooms: 80, occupancy: '85%', action: 'Check next order', salesPerson: 'Priya', reminderDate: '2024-05-07', reminderTime: '11:00 AM' },
 ];
 
 const fmtDateTime = (v) =>
@@ -971,6 +971,41 @@ export default function Sales() {
     setActiveTab('customers');
   };
 
+  const convertLeadToNegotiation = (lead) => {
+    const newNeg = {
+      key: Date.now(),
+      nid: `NEG-${1000 + negotiationsData.length + 1}`,
+      leadId: lead.leadId,
+      quotationId: null,
+      customerId: null,
+      hotelName: lead.hotelName, billingName: lead.billingName, location: lead.location,
+      contactPerson: lead.contactPerson, phone: lead.phone,
+      hotelType: lead.hotelType, billType: lead.billType, gstNumber: lead.gstNumber, gstPercent: lead.gstPercent,
+      salesPerson: lead.salesPerson,
+      products: (lead.products || []).map(p => ({ ...p })),
+      forwardingCharge: lead.forwardingCharge, deliveryBy: lead.deliveryBy, transportationBy: lead.transportationBy,
+      paymentTerms: lead.paymentTerms,
+      status: 'Initial', flowStep: 0,
+      date: new Date().toISOString().split('T')[0],
+      totalAmount: calcTotal(lead.products),
+      createdAt: new Date().toISOString(),
+      rounds: [
+        {
+          round: 1,
+          date: new Date().toISOString().split('T')[0],
+          by: lead.salesPerson || 'Sales',
+          type: 'Initial',
+          totalAmount: calcTotal(lead.products),
+          note: `Negotiation initiated from lead ${lead.leadId}. Products and initial rates as per lead discussion.`,
+        },
+      ],
+    };
+    setNegotiationsData(prev => [...prev, newNeg]);
+    message.success(`${lead.hotelName} converted to Negotiation (${newNeg.nid})`);
+    setActiveTab('quotations');
+    setViewMode('table');
+  };
+
   const startQuotationFromLead = (lead) => {
     setEditingQuotation(null);
     setQuotationFromLead(lead);
@@ -1174,7 +1209,7 @@ export default function Sales() {
     setViewMode('quotation-form');
   };
 
-  const moveToNegotiation = (q) => {
+  const convertToNegotiation = (q) => {
     const newNeg = {
       key: Date.now(),
       nid: `NEG-${1000 + negotiationsData.length + 1}`,
@@ -1265,6 +1300,10 @@ export default function Sales() {
   // ─── Table columns ────────────────────────────────────────────────
   const leadColumns = [
     {
+      title: 'Lead ID', dataIndex: 'leadId',
+      render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace' }}>{v || '—'}</Text>,
+    },
+    {
       title: 'Hotel / Company', dataIndex: 'hotelName',
       render: (v) => <Text strong style={{ color: textColor }}>{v}</Text>,
     },
@@ -1297,9 +1336,13 @@ export default function Sales() {
           <Tooltip title="Edit">
             <Button size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); openAddLead(r); }} />
           </Tooltip>
-          <Tooltip title="Convert to Customer">
-            <Button size="small" icon={<ArrowRightOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }}
-              onClick={(e) => { e.stopPropagation(); convertToCustomer(r); }} />
+          <Tooltip title="Convert to Quotation">
+            <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 11 }}
+              onClick={(e) => { e.stopPropagation(); startQuotationFromLead(r); }}>→ Quotation</Button>
+          </Tooltip>
+          <Tooltip title="Convert to Negotiation">
+            <Button size="small" style={{ background: '#722ed1', color: '#fff', border: 'none', fontSize: 11 }}
+              onClick={(e) => { e.stopPropagation(); convertLeadToNegotiation(r); }}>→ Negotiation</Button>
           </Tooltip>
         </Space>
       ),
@@ -1383,8 +1426,8 @@ export default function Sales() {
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
           </Tooltip>
-          <Tooltip title="Move to Negotiation">
-            <Button size="small" style={{ background: '#722ed1', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => moveToNegotiation(r)}>
+          <Tooltip title="Convert to Negotiation">
+            <Button size="small" style={{ background: '#722ed1', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertToNegotiation(r)}>
               → Negotiation
             </Button>
           </Tooltip>
@@ -1571,9 +1614,8 @@ export default function Sales() {
             <Space wrap>
               <Button icon={<EditOutlined />} onClick={() => editExistingQuotation(q)} style={{ borderRadius: 8 }}>Edit Products</Button>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(q)}>WhatsApp</Button>
-              {(q.flowStep || 0) < 2 && (
-                <Button style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => moveToNegotiation(q)}>Move to Negotiation</Button>
-              )}
+              <Button style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => convertToNegotiation(q)}>Convert to Negotiation</Button>
+              <Button style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => startOrderFromQuotation(q)}>Convert to Order</Button>
             </Space>
           </div>
 
@@ -1694,7 +1736,7 @@ export default function Sales() {
                 <Space direction="vertical" style={{ width: '100%' }} size={10}>
                   <Button icon={<EditOutlined />} block size="large" style={{ borderRadius: 10, height: 44 }} onClick={() => editExistingQuotation(q)}>Edit Products / Rates</Button>
                   <Button icon={<WhatsAppOutlined />} block size="large" style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => sendViaWhatsApp(q)}>Send via WhatsApp</Button>
-                  <Button block size="large" style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => moveToNegotiation(q)}>Move to Negotiation</Button>
+                  <Button block size="large" style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => convertToNegotiation(q)}>Convert to Negotiation</Button>
                   <Button block size="large" style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }} onClick={() => startOrderFromQuotation(q)}>Convert to Order</Button>
                 </Space>
               </Card>
@@ -1778,30 +1820,81 @@ export default function Sales() {
 
           <Row gutter={20}>
             <Col xs={24} lg={16}>
-              {/* Negotiation rounds */}
+              {/* Negotiation rounds — Timeline UI */}
               {(n.rounds || []).length > 0 && (
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                  title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><HistoryOutlined style={{ color: '#fa8c16' }} /><span>Negotiation Rounds</span></Space>}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {(n.rounds || []).map((r, i) => (
-                      <div key={i} style={{ padding: '12px 16px', borderRadius: 10, background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderLeft: `3px solid ${r.type === 'Quotation' ? '#1e3799' : r.type === 'Counter Offer' ? '#fa8c16' : '#52c41a'}` }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ width: 24, height: 24, borderRadius: '50%', background: r.type === 'Quotation' ? '#1e3799' : r.type === 'Counter Offer' ? '#fa8c16' : '#52c41a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>{r.round}</span>
+                  title={
+                    <Space>
+                      <div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} />
+                      <HistoryOutlined style={{ color: '#fa8c16', fontSize: 18 }} />
+                      <span style={{ fontSize: 16, fontWeight: 700 }}>Negotiation Rounds</span>
+                      <Tag color="orange" style={{ borderRadius: 20, fontSize: 13 }}>{n.rounds.length} Round{n.rounds.length !== 1 ? 's' : ''}</Tag>
+                    </Space>
+                  }
+                >
+                  <Timeline
+                    mode="left"
+                    style={{ padding: '12px 0 4px' }}
+                    items={(n.rounds || []).map((r, i) => {
+                      const roundColor = r.type === 'Quotation' || r.type === 'Initial' ? '#1890ff' : r.type === 'Counter Offer' ? '#fa8c16' : '#52c41a';
+                      const isLast = i === (n.rounds.length - 1);
+                      return {
+                        color: roundColor,
+                        dot: (
+                          <div style={{
+                            width: 36, height: 36, borderRadius: '50%',
+                            background: `linear-gradient(135deg, ${roundColor}, ${roundColor}cc)`,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            boxShadow: isLast ? `0 0 0 4px ${roundColor}33` : 'none',
+                            border: isLast ? `2px solid ${roundColor}` : 'none',
+                          }}>
+                            <span style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>{r.round}</span>
+                          </div>
+                        ),
+                        label: (
+                          <div style={{ textAlign: 'right', paddingRight: 8 }}>
+                            <Text style={{ fontSize: 14, fontWeight: 600, color: isDark ? '#ccc' : '#444', display: 'block' }}>{r.date}</Text>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{r.by}</Text>
+                          </div>
+                        ),
+                        children: (
+                          <div style={{
+                            marginBottom: 8,
+                            padding: '16px 20px',
+                            borderRadius: 12,
+                            background: isDark ? `rgba(${roundColor === '#1890ff' ? '24,144,255' : roundColor === '#fa8c16' ? '250,140,22' : '82,196,26'},0.08)` : `${roundColor}0d`,
+                            border: `1.5px solid ${roundColor}33`,
+                            boxShadow: isLast ? `0 4px 16px ${roundColor}22` : 'none',
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <Tag
+                                  color={r.type === 'Quotation' || r.type === 'Initial' ? 'blue' : r.type === 'Counter Offer' ? 'orange' : 'green'}
+                                  style={{ borderRadius: 20, fontSize: 14, padding: '3px 14px', fontWeight: 700, margin: 0 }}
+                                >
+                                  {r.type}
+                                </Tag>
+                                {isLast && <Tag color="gold" style={{ borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Latest</Tag>}
+                              </div>
+                              <div style={{
+                                background: `linear-gradient(135deg, ${roundColor}22, ${roundColor}11)`,
+                                border: `1.5px solid ${roundColor}44`,
+                                borderRadius: 10, padding: '6px 14px', textAlign: 'center',
+                              }}>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block', fontWeight: 600, letterSpacing: 0.5 }}>ROUND VALUE</Text>
+                                <Text style={{ fontSize: 20, fontWeight: 800, color: roundColor, display: 'block', lineHeight: 1.2 }}>
+                                  ₹{(r.totalAmount || 0).toLocaleString()}
+                                </Text>
+                              </div>
                             </div>
-                            <Tag color={r.type === 'Quotation' ? 'blue' : r.type === 'Counter Offer' ? 'orange' : 'green'} style={{ borderRadius: 20, margin: 0 }}>{r.type}</Tag>
-                            <Text type="secondary" style={{ fontSize: 11 }}>{r.by}</Text>
+                            <Text style={{ fontSize: 14, color: isDark ? 'rgba(255,255,255,0.8)' : '#444', lineHeight: 1.6, display: 'block' }}>
+                              {r.note}
+                            </Text>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <Text strong style={{ color: '#B11E6A' }}>₹{(r.totalAmount || 0).toLocaleString()}</Text>
-                            <Text type="secondary" style={{ fontSize: 11 }}>{r.date}</Text>
-                          </div>
-                        </div>
-                        <Text style={{ fontSize: 12, color: isDark ? 'rgba(255,255,255,0.65)' : '#555' }}>{r.note}</Text>
-                      </div>
-                    ))}
-                  </div>
+                        ),
+                      };
+                    })}
+                  />
                 </Card>
               )}
 
@@ -2410,10 +2503,16 @@ export default function Sales() {
                   onClick={() => sendViaWhatsApp(record)}
                 >WhatsApp</Button>
                 {record.leadId && !record.customerId && (
-                  <Button icon={<ArrowRightOutlined />}
-                    style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 8 }}
-                    onClick={() => convertToCustomer(record)}
-                  >Convert to Customer</Button>
+                  <>
+                    <Button icon={<FileTextOutlined />}
+                      style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 8 }}
+                      onClick={() => startQuotationFromLead(record)}
+                    >Convert to Quotation</Button>
+                    <Button icon={<ArrowRightOutlined />}
+                      style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 8 }}
+                      onClick={() => convertLeadToNegotiation(record)}
+                    >Convert to Negotiation</Button>
+                  </>
                 )}
               </>
             )}
@@ -2856,14 +2955,29 @@ export default function Sales() {
               )}
 
               {/* ── Order Details Products ────────────────────────────── */}
-              {showProductsCard && (
+              {showProductsCard && (() => {
+                const latestCustomerOrder = (isDetail && record.customerId)
+                  ? ordersData.filter(o => o.hotelName === record.hotelName).slice(-1)[0]
+                  : null;
+                return (
                 <Card
                   style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={
                     <Space>
                       <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
                       <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                      <span>Order Details — Products</span>
+                      {(isDetail && record.customerId) ? (
+                        <>
+                          <span>Latest Order Details</span>
+                          {latestCustomerOrder && (
+                            <Tag style={{ background: '#1890ff18', color: '#1890ff', border: '1px solid #1890ff44', borderRadius: 20, fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
+                              {latestCustomerOrder.oid}
+                            </Tag>
+                          )}
+                        </>
+                      ) : (
+                        <span>Order Details — Products</span>
+                      )}
                     </Space>
                   }
                 >
@@ -2987,7 +3101,8 @@ export default function Sales() {
                     </>
                   )}
                 </Card>
-              )}
+                );
+              })()}
 
               {/* ── Urgent / Emergency Deliveries (Partial) ─────────── */}
               {showProductsCard && (
@@ -3160,13 +3275,14 @@ export default function Sales() {
               {/* ── Orders & Payment History — customer detail only ───────── */}
               {isDetail && record.customerId && (() => {
                 const hotelOrders = ordersData.filter(o => o.hotelName === record.hotelName);
+                const latestOrder = hotelOrders.length > 0 ? hotelOrders[hotelOrders.length - 1] : null;
                 const totalOrders = hotelOrders.length;
                 const totalPaid = hotelOrders.reduce((s, o) => s + (o.advance || 0), 0);
                 const totalAmount = hotelOrders.reduce((s, o) => s + (o.totalAmount || 0), 0);
                 return (
                   <Card
                     style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                    title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#B11E6A' }} /><span>Order & Payment History</span></Space>}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#B11E6A' }} /><span>All Order History</span><Tag color="pink" style={{ borderRadius: 20, fontSize: 12 }}>{hotelOrders.length} Order{hotelOrders.length !== 1 ? 's' : ''}</Tag></Space>}
                   >
                     <Row gutter={12} style={{ marginBottom: 16 }}>
                       {[
@@ -3189,7 +3305,17 @@ export default function Sales() {
                         size="small"
                         pagination={false}
                         columns={[
-                          { title: 'Order ID', dataIndex: 'oid', render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                          {
+                            title: 'Order ID — Products', key: 'oid_products',
+                            render: (_, r) => (
+                              <div>
+                                <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace', fontSize: 13, display: 'block' }}>{r.oid}</Text>
+                                <Text type="secondary" style={{ fontSize: 11 }}>
+                                  {(r.products || []).map(p => p.name).join(', ') || '—'}
+                                </Text>
+                              </div>
+                            )
+                          },
                           { title: 'Date', dataIndex: 'date', render: v => v || '—' },
                           { title: 'Total', dataIndex: 'totalAmount', render: v => <Text strong>₹{(v || 0).toLocaleString()}</Text> },
                           { title: 'Advance Paid', dataIndex: 'advance', render: v => <Text style={{ color: '#52c41a' }}>₹{(v || 0).toLocaleString()}</Text> },
@@ -3298,25 +3424,27 @@ export default function Sales() {
                           >WhatsApp</Button>
                         </Col>
                         <Col span={12}>
-                          <Button icon={<FileTextOutlined />} block
-                            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
-                            onClick={() => startQuotationFromLead(record)}
-                          >Get Order</Button>
-                        </Col>
-                        {(record.leadId && !record.customerId) && (
-                          <Col span={12} style={{ marginTop: 12 }}>
-                            <Button icon={<ArrowRightOutlined />} block
-                              style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
-                              onClick={() => convertToCustomer(record)}
-                            >Convert to Customer</Button>
-                          </Col>
-                        )}
-                        <Col span={12} style={{ marginTop: 12 }}>
                           <Button icon={<EditOutlined />} block
                             style={{ borderRadius: 10, height: 44 }}
                             onClick={() => openAddLead(record)}
                           >Edit Details</Button>
                         </Col>
+                        {(record.leadId && !record.customerId) && (
+                          <>
+                            <Col span={12} style={{ marginTop: 12 }}>
+                              <Button icon={<FileTextOutlined />} block
+                                style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
+                                onClick={() => startQuotationFromLead(record)}
+                              >Convert to Quotation</Button>
+                            </Col>
+                            <Col span={12} style={{ marginTop: 12 }}>
+                              <Button icon={<ArrowRightOutlined />} block
+                                style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 10, height: 44 }}
+                                onClick={() => convertLeadToNegotiation(record)}
+                              >Convert to Negotiation</Button>
+                            </Col>
+                          </>
+                        )}
                       </Row>
                     </Card>
                   </Col>
@@ -3544,6 +3672,7 @@ export default function Sales() {
                   <Table
                     dataSource={REMINDERS_DATA}
                     columns={[
+                      { title: 'Lead ID', dataIndex: 'leadId', key: 'leadId', render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace', fontSize: 12 }}>{v || '—'}</Text> },
                       { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'}>{t}</Tag> },
                       { title: 'Party', dataIndex: 'customer', key: 'customer' },
                       {
