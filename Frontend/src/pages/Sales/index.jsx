@@ -464,13 +464,6 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             </div>
           </Col>
 
-          {/* Is Kit? */}
-          <Col flex="none">
-            <Form.Item {...rest} name={[name, 'isKit']} valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Checkbox style={{ fontSize: 12 }}>Kit?</Checkbox>
-            </Form.Item>
-          </Col>
-
           {/* Name / Kit Type Select */}
           <Col flex="auto">
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
@@ -640,9 +633,9 @@ function ProductFormList({ fieldName = 'products', disabled = false, showSpecs =
             />
           ))}
           {!disabled && (
-            <Button type="dashed" onClick={() => add({ isKit: false, qty: undefined, rate: undefined })} icon={<PlusOutlined />} block
+            <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined })} icon={<PlusOutlined />} block
               style={{ borderRadius: 10, height: 45, borderDashOffset: 4 }}>
-              Add Product / Kit
+              Add Product
             </Button>
           )}
         </>
@@ -2756,12 +2749,6 @@ export default function Sales() {
                       )}
                     </Col>
 
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="Order Delivery Date" name="orderDeliveryDate">
-                        <DatePicker style={{ width: '100%' }} />
-                      </Form.Item>
-                    </Col>
-
                     {/* Software Interest */}
                     <Col xs={24}>
                       <Divider style={{ margin: '16px 0 12px', fontSize: 12, color: '#722ed1' }}>Software Interest</Divider>
@@ -3104,78 +3091,37 @@ export default function Sales() {
                 );
               })()}
 
-              {/* ── Urgent / Emergency Deliveries (Partial) ─────────── */}
-              {showProductsCard && (
+              {/* ── Urgent / Emergency Deliveries (Partial) — detail only ─────────── */}
+              {isDetail && (record.splitDates || []).length > 0 && (
                 <Card
                   style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span>Urgent / Emergency Deliveries (Partial)</span></Space>}
                 >
-                  {isDetail ? (
-                    (record.splitDates || []).length === 0 ? (
-                      <Text type="secondary" style={{ fontSize: 13 }}>No urgent / emergency deliveries added.</Text>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {(record.splitDates || []).map((sd, i) => (
-                          <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
-                            <Row gutter={[16, 8]} align="middle">
-                              <Col xs={24} sm={8}>
-                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PARTIAL DATE</Text>
-                                <Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>
-                                  {sd.date ? (typeof sd.date === 'string' ? sd.date : sd.date.format?.('YYYY-MM-DD') || String(sd.date)) : '—'}
-                                </Text>
-                              </Col>
-                              <Col xs={24} sm={8}>
-                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
-                                <Text strong style={{ fontSize: 13 }}>{sd.product || '—'}</Text>
-                              </Col>
-                              <Col xs={24} sm={8}>
-                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>NOTE</Text>
-                                <Text style={{ fontSize: 13 }}>{sd.note || '—'}</Text>
-                              </Col>
-                            </Row>
-                          </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {(record.splitDates || []).map((sd, i) => (
+                      <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
+                        <Text strong style={{ fontSize: 13, color: '#ff4d4f', display: 'block', marginBottom: 8 }}>
+                          {sd.date ? (typeof sd.date === 'string' ? sd.date : sd.date.format?.('YYYY-MM-DD') || String(sd.date)) : '—'}
+                        </Text>
+                        {(sd.products || (sd.product ? [{ product: sd.product, qty: sd.qty, notes: sd.note }] : [])).map((p, pi) => (
+                          <Row key={pi} gutter={[16, 4]} style={{ marginBottom: 4 }}>
+                            <Col xs={24} sm={8}>
+                              <Text type="secondary" style={{ fontSize: 11 }}>Product: </Text>
+                              <Text strong style={{ fontSize: 13 }}>{p.product || '—'}</Text>
+                            </Col>
+                            <Col xs={24} sm={6}>
+                              <Text type="secondary" style={{ fontSize: 11 }}>Qty: </Text>
+                              <Text strong style={{ fontSize: 13 }}>{p.qty || '—'}</Text>
+                            </Col>
+                            <Col xs={24} sm={10}>
+                              <Text type="secondary" style={{ fontSize: 11 }}>Notes: </Text>
+                              <Text style={{ fontSize: 13 }}>{p.notes || p.note || '—'}</Text>
+                            </Col>
+                          </Row>
                         ))}
                       </div>
-                    )
-                  ) : (
-                    <Form.List name="splitDates">
-                      {(fields, { add, remove }) => (
-                        <div>
-                          {fields.map(({ key, name, ...rest }) => (
-                            <div key={key} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 8, border: '1px solid #ff4d4f33' }}>
-                              <Row gutter={[8, 0]} align="middle">
-                                <Col xs={24} sm={7}>
-                                  <Form.Item {...rest} name={[name, 'date']} label="Partial Date" style={{ marginBottom: 6 }}>
-                                    <DatePicker style={{ width: '100%' }} size="small" />
-                                  </Form.Item>
-                                </Col>
-                                <Col xs={24} sm={8}>
-                                  <Form.Item {...rest} name={[name, 'product']} label="Product" style={{ marginBottom: 6 }}>
-                                    <Select size="small" placeholder="Select product" allowClear>
-                                      {(watchedLeadProducts || []).filter(p => p?.name || p?.kitType).map((p, pi) => (
-                                        <Option key={pi} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
-                                      ))}
-                                    </Select>
-                                  </Form.Item>
-                                </Col>
-                                <Col xs={24} sm={7}>
-                                  <Form.Item {...rest} name={[name, 'note']} label="Note" style={{ marginBottom: 6 }}>
-                                    <Input size="small" placeholder="e.g. First batch 500 units" />
-                                  </Form.Item>
-                                </Col>
-                                <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 20 }}>
-                                  <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
-                                </Col>
-                              </Row>
-                            </div>
-                          ))}
-                          <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ marginTop: 4, borderColor: '#ff4d4f55', color: '#ff4d4f' }}>
-                            Add Urgent / Emergency Delivery (Partial)
-                          </Button>
-                        </div>
-                      )}
-                    </Form.List>
-                  )}
+                    ))}
+                  </div>
                 </Card>
               )}
 
@@ -3191,7 +3137,90 @@ export default function Sales() {
                     </Space>
                   }
                 >
+                  {/* Order Delivery Date */}
+                  <Row gutter={12} style={{ marginBottom: 4 }}>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Order Delivery Date" name="orderDeliveryDate">
+                        <DatePicker style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+
                   <DeliveryPaymentFields showUpload />
+
+                  {/* Urgent / Emergency Deliveries (Partial) */}
+                  <Divider style={{ margin: '16px 0 12px', fontSize: 12, color: '#ff4d4f', borderColor: 'rgba(255,77,79,0.2)' }}>
+                    <Space>
+                      <WarningOutlined style={{ color: '#ff4d4f' }} />
+                      <span style={{ color: '#ff4d4f', fontWeight: 600 }}>Urgent / Emergency Deliveries (Partial)</span>
+                    </Space>
+                  </Divider>
+                  <Form.List name="splitDates">
+                    {(dateFields, { add: addDate, remove: removeDate }) => (
+                      <div>
+                        {dateFields.map(({ key: dateKey, name: dateName, ...dateRest }) => (
+                          <div key={dateKey} style={{ background: isDark ? 'rgba(255,77,79,0.05)' : 'rgba(255,77,79,0.03)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
+                            <Row gutter={[8, 0]} align="middle" style={{ marginBottom: 8 }}>
+                              <Col xs={24} sm={10}>
+                                <Form.Item {...dateRest} name={[dateName, 'date']} label="Partial Delivery Date" style={{ marginBottom: 0 }}>
+                                  <DatePicker style={{ width: '100%' }} size="small" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={14} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', paddingBottom: 2 }}>
+                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => removeDate(dateName)}>
+                                  Remove Entry
+                                </Button>
+                              </Col>
+                            </Row>
+
+                            <Form.List name={[dateName, 'products']}>
+                              {(prodFields, { add: addProd, remove: removeProd }) => (
+                                <div>
+                                  {prodFields.map(({ key: prodKey, name: prodName, ...prodRest }) => (
+                                    <div key={prodKey} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fff', borderRadius: 8, padding: '8px 10px', marginBottom: 6, border: '1px solid rgba(255,77,79,0.12)' }}>
+                                      <Row gutter={[8, 0]} align="middle">
+                                        <Col xs={24} sm={8}>
+                                          <Form.Item {...prodRest} name={[prodName, 'product']} label="Product" style={{ marginBottom: 0 }}>
+                                            <Select size="small" placeholder="Select product" allowClear>
+                                              {(watchedLeadProducts || []).filter(p => p?.name || p?.kitType).map((p, pi) => (
+                                                <Option key={pi} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
+                                              ))}
+                                            </Select>
+                                          </Form.Item>
+                                        </Col>
+                                        <Col xs={24} sm={4}>
+                                          <Form.Item {...prodRest} name={[prodName, 'qty']} label="Qty" style={{ marginBottom: 0 }}>
+                                            <InputNumber size="small" style={{ width: '100%' }} min={1} placeholder="Qty" />
+                                          </Form.Item>
+                                        </Col>
+                                        <Col xs={24} sm={9}>
+                                          <Form.Item {...prodRest} name={[prodName, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
+                                            <Input size="small" placeholder="e.g. First batch 500 units" />
+                                          </Form.Item>
+                                        </Col>
+                                        <Col xs={24} sm={3} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 20 }}>
+                                          <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addProd()} style={{ color: '#ff4d4f', padding: '0 4px' }} title="Add product row" />
+                                          <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => removeProd(prodName)} style={{ padding: '0 4px' }} />
+                                        </Col>
+                                      </Row>
+                                    </div>
+                                  ))}
+                                  {prodFields.length === 0 && (
+                                    <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addProd()} block style={{ borderColor: '#ff4d4f55', color: '#ff4d4f', marginBottom: 4 }}>
+                                      + Add Product
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
+                            </Form.List>
+                          </div>
+                        ))}
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addDate({ products: [{}] })} block style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>
+                          Add Urgent / Emergency Delivery (Partial)
+                        </Button>
+                      </div>
+                    )}
+                  </Form.List>
                 </Card>
               )}
 
