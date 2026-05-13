@@ -29,11 +29,6 @@ export default function Financial() {
   const [selectedForPayment, setSelectedForPayment] = useState(null);
   const [paymentForm] = Form.useForm();
 
-  // Approve modal state
-  const [showApproveModal, setShowApproveModal] = useState(false);
-  const [approveTarget, setApproveTarget] = useState(null);
-  const [approvalFile, setApprovalFile] = useState(null);
-  const [approvalForm] = Form.useForm();
 
   // Parties & Ledgers tab state
   const [partiesSearch, setPartiesSearch] = useState('');
@@ -67,6 +62,7 @@ export default function Financial() {
     const paidAmt = values.amount_paid || selectedForPayment.amount;
     const remaining = selectedForPayment.amount - paidAmt;
     const finalStatus = values.status === 'Partial Paid' && remaining > 0 ? 'Partial Paid' : 'Paid';
+    const proofFileName = values.proof?.fileList?.[0]?.name || null;
 
     message.success(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`);
 
@@ -81,6 +77,7 @@ export default function Financial() {
         key: selectedForPayment.key,
         status: finalStatus,
         paid_amount: (selectedForPayment.paid_amount || 0) + paidAmt,
+        payment_proof: proofFileName,
       }));
     }
     setShowPaymentModal(false);
@@ -226,7 +223,10 @@ export default function Financial() {
                                   size="small"
                                   type="primary"
                                   icon={<CheckCircleOutlined />}
-                                  onClick={() => { setApproveTarget(r); setApprovalFile(null); approvalForm.resetFields(); setShowApproveModal(true); }}
+                                  onClick={() => {
+                                    dispatch(updateRequestStatus({ key: r.key, status: 'Approved' }));
+                                    message.success(`Request for ${r.item} approved`);
+                                  }}
                                   style={{ background: '#52c41a', border: 'none', color: '#fff' }}
                                 >
                                   Approve
@@ -534,85 +534,6 @@ export default function Financial() {
             )}
             <Divider />
             <Button block type="primary" onClick={() => setViewRequest(null)}>Close</Button>
-          </div>
-        )}
-      </Modal>
-      {/* Approve Request Modal */}
-      <Modal
-        title={
-          <Space>
-            <CheckCircleOutlined style={{ color: '#52c41a' }} />
-            <Text strong style={{ fontSize: 16 }}>Approve Request</Text>
-          </Space>
-        }
-        open={showApproveModal}
-        onCancel={() => { setShowApproveModal(false); setApproveTarget(null); setApprovalFile(null); approvalForm.resetFields(); }}
-        footer={null}
-        width={480}
-        centered
-      >
-        {approveTarget && (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ background: isDark ? '#16192a' : '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
-              <Text strong style={{ color: '#52c41a', display: 'block', marginBottom: 2 }}>{approveTarget.item}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>Supplier: {approveTarget.supplier} · Qty: {approveTarget.qty} {approveTarget.unit}</Text>
-            </div>
-            <Form form={approvalForm} layout="vertical" onFinish={(vals) => {
-              dispatch(updateRequestStatus({
-                key: approveTarget.key,
-                status: 'Approved',
-                approval_doc: approvalFile ? approvalFile.name : null,
-                approval_description: vals.description || '',
-              }));
-              message.success(`Request for ${approveTarget.item} approved`);
-              setShowApproveModal(false);
-              setApproveTarget(null);
-              setApprovalFile(null);
-              approvalForm.resetFields();
-            }}>
-              <Form.Item label="Upload Approval Document" name="approval_doc">
-                <Upload
-                  beforeUpload={(file) => { setApprovalFile(file); return false; }}
-                  onRemove={() => setApprovalFile(null)}
-                  maxCount={1}
-                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                  fileList={approvalFile ? [{ uid: '-1', name: approvalFile.name, status: 'done' }] : []}
-                >
-                  <Button icon={<UploadOutlined />} style={{ width: '100%', textAlign: 'left' }}>
-                    Click to upload (PDF, Image, Word)
-                  </Button>
-                </Upload>
-                {approvalFile && (
-                  <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, color: '#52c41a', fontSize: 12 }}>
-                    <FileTextOutlined />
-                    <Text style={{ fontSize: 12, color: '#52c41a' }}>{approvalFile.name}</Text>
-                  </div>
-                )}
-              </Form.Item>
-              <Form.Item label="Description / Notes" name="description">
-                <Input.TextArea
-                  rows={3}
-                  placeholder="Enter approval notes, conditions, or remarks..."
-                  style={{ borderRadius: 8 }}
-                />
-              </Form.Item>
-              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                <Button
-                  style={{ flex: 1, height: 40, borderRadius: 8 }}
-                  onClick={() => { setShowApproveModal(false); setApproveTarget(null); setApprovalFile(null); approvalForm.resetFields(); }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  icon={<CheckCircleOutlined />}
-                  style={{ flex: 2, height: 40, borderRadius: 8, background: '#52c41a', border: 'none', fontWeight: 700 }}
-                >
-                  Confirm Approve
-                </Button>
-              </div>
-            </Form>
           </div>
         )}
       </Modal>

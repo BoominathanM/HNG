@@ -84,6 +84,7 @@ const purchaseSlice = createSlice({
       if (order) {
         order.status = action.payload.status;
         order.paid_amount = action.payload.paid_amount;
+        if (action.payload.payment_proof) order.payment_proof = action.payload.payment_proof;
       }
     },
   },

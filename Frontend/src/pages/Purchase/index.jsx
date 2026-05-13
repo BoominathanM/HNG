@@ -550,17 +550,19 @@ export default function Purchase() {
                             }
                           },
                           {
-                            title: 'Approval Doc', key: 'approval_doc',
-                            render: (_, r) => (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 110 }}>
+                            title: 'Payment Doc', key: 'payment_doc',
+                            render: (_, r) => {
+                              const linkedOrder = purchaseOrders.find(o => o.requestKey === r.key);
+                              const paymentDoc = linkedOrder?.payment_proof;
+                              return (
                                 <Button
                                   size="small"
                                   icon={<FileTextOutlined />}
-                                  disabled={!r.approval_doc}
-                                  onClick={() => r.approval_doc && setViewApprovalDoc(r)}
+                                  disabled={!paymentDoc}
+                                  onClick={() => paymentDoc && setViewApprovalDoc({ ...r, payment_doc: paymentDoc })}
                                   style={{
-                                    color: r.approval_doc ? '#52c41a' : '#bbb',
-                                    borderColor: r.approval_doc ? '#52c41a' : '#d9d9d9',
+                                    color: paymentDoc ? '#52c41a' : '#bbb',
+                                    borderColor: paymentDoc ? '#52c41a' : '#d9d9d9',
                                     fontWeight: 600,
                                     fontSize: 12,
                                     background: 'transparent',
@@ -568,20 +570,8 @@ export default function Purchase() {
                                 >
                                   View File
                                 </Button>
-                                {r.approval_description ? (
-                                  <Tooltip title={r.approval_description}>
-                                    <Text
-                                      type="secondary"
-                                      style={{ fontSize: 11, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', cursor: 'pointer' }}
-                                    >
-                                      {r.approval_description}
-                                    </Text>
-                                  </Tooltip>
-                                ) : (
-                                  <Text type="secondary" style={{ fontSize: 11, color: '#ccc' }}>No notes</Text>
-                                )}
-                              </div>
-                            )
+                              );
+                            }
                           },
                           {
                             title: 'Action', key: 'action',
@@ -2217,12 +2207,12 @@ export default function Purchase() {
         </div>
       </Modal>
 
-      {/* Approval Document View Modal */}
+      {/* Payment Document View Modal */}
       <Modal
         title={
           <Space>
             <FileTextOutlined style={{ color: '#52c41a' }} />
-            <Text strong style={{ fontSize: 16 }}>Approval Document</Text>
+            <Text strong style={{ fontSize: 16 }}>Payment Document</Text>
           </Space>
         }
         open={!!viewApprovalDoc}
@@ -2241,26 +2231,19 @@ export default function Purchase() {
               <Text style={{ fontSize: 12, color: '#B11E6A' }}>Supplier: {viewApprovalDoc.supplier} · Qty: {viewApprovalDoc.qty} {viewApprovalDoc.unit}</Text>
             </div>
 
-            {viewApprovalDoc.approval_doc ? (
+            {viewApprovalDoc.payment_doc ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, background: 'linear-gradient(135deg,#52c41a12,#52c41a08)', border: '1.5px solid #52c41a44', marginBottom: 16 }}>
                 <div style={{ width: 44, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#52c41a,#73d13d)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <FileTextOutlined style={{ color: '#fff', fontSize: 20 }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <Text strong style={{ color: '#52c41a', fontSize: 13, display: 'block', wordBreak: 'break-all' }}>{viewApprovalDoc.approval_doc}</Text>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Uploaded by Financial team on approval</Text>
+                  <Text strong style={{ color: '#52c41a', fontSize: 13, display: 'block', wordBreak: 'break-all' }}>{viewApprovalDoc.payment_doc}</Text>
+                  <Text type="secondary" style={{ fontSize: 11 }}>Uploaded as payment proof</Text>
                 </div>
                 <Button size="small" icon={<DownloadOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }}>Download</Button>
               </div>
             ) : (
-              <div style={{ textAlign: 'center', padding: '16px 0', color: '#aaa', fontSize: 13 }}>No document attached</div>
-            )}
-
-            {viewApprovalDoc.approval_description && (
-              <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '12px 16px', border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Notes / Description</Text>
-                <Text style={{ fontSize: 13 }}>{viewApprovalDoc.approval_description}</Text>
-              </div>
+              <div style={{ textAlign: 'center', padding: '16px 0', color: '#aaa', fontSize: 13 }}>No payment document attached</div>
             )}
           </div>
         )}
