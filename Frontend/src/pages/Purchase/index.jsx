@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch
+  Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, Tooltip
 } from 'antd';
 import {
   PlusOutlined, DownloadOutlined, ShoppingOutlined, SearchOutlined,
@@ -35,10 +35,10 @@ const suppliersList = [
 ];
 
 const vendorsList = [
-  { id: 1, name: 'Marriott Mumbai', phone: '+91 22 6651 1234', email: 'purchase@marriott.in', address: 'Mumbai, MH', whatsapp: '912266511234' },
-  { id: 2, name: 'Taj Hotels Delhi', phone: '+91 11 6600 7777', email: 'orders@tajhotels.in', address: 'Delhi, DL', whatsapp: '911166007777' },
-  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in', address: 'Kolkata, WB', whatsapp: '913322889999' },
-  { id: 4, name: 'Hyatt Chennai', phone: '+91 44 6150 1234', email: 'procurement@hyatt.in', address: 'Chennai, TN', whatsapp: '914461501234' },
+  { id: 1, name: 'Marriott Mumbai',   phone: '+91 22 6651 1234', email: 'purchase@marriott.in',    address: 'Mumbai, MH',  whatsapp: '912266511234', totalPaid: 95000,  pending: 25000 },
+  { id: 2, name: 'Taj Hotels Delhi',  phone: '+91 11 6600 7777', email: 'orders@tajhotels.in',     address: 'Delhi, DL',   whatsapp: '911166007777', totalPaid: 60000,  pending: 81600 },
+  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in',     address: 'Kolkata, WB', whatsapp: '913322889999', totalPaid: 250000, pending: 0     },
+  { id: 4, name: 'Hyatt Chennai',     phone: '+91 44 6150 1234', email: 'procurement@hyatt.in',   address: 'Chennai, TN', whatsapp: '914461501234', totalPaid: 42000,  pending: 18000 },
 ];
 
 const INVENTORY_DATA = [
@@ -80,6 +80,7 @@ export default function Purchase() {
 
   const [showRequestOrderModal, setShowRequestOrderModal] = useState(false);
   const [selectedApprovedRequest, setSelectedApprovedRequest] = useState(null);
+  const [viewApprovalDoc, setViewApprovalDoc] = useState(null);
   const [selectedSupplier, setSelectedSupplier] = useState(null);
   const [requestOrderForm] = Form.useForm();
   const [requestOrderScanLoading, setRequestOrderScanLoading] = useState(false);
@@ -100,6 +101,8 @@ export default function Purchase() {
   const [vendorScanLoading, setVendorScanLoading] = useState(false);
   const [supplierScannedFile, setSupplierScannedFile] = useState(null);
   const [vendorScannedFile, setVendorScannedFile] = useState(null);
+  const [quotationFile, setQuotationFile] = useState(null);
+  const [quotationScanLoading, setQuotationScanLoading] = useState(false);
 
   /* ── Raise Request modal (separate from Ask Quotation) ── */
   const [showRaiseRequestModal, setShowRaiseRequestModal] = useState(false);
@@ -547,6 +550,40 @@ export default function Purchase() {
                             }
                           },
                           {
+                            title: 'Approval Doc', key: 'approval_doc',
+                            render: (_, r) => (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 110 }}>
+                                <Button
+                                  size="small"
+                                  icon={<FileTextOutlined />}
+                                  disabled={!r.approval_doc}
+                                  onClick={() => r.approval_doc && setViewApprovalDoc(r)}
+                                  style={{
+                                    color: r.approval_doc ? '#52c41a' : '#bbb',
+                                    borderColor: r.approval_doc ? '#52c41a' : '#d9d9d9',
+                                    fontWeight: 600,
+                                    fontSize: 12,
+                                    background: 'transparent',
+                                  }}
+                                >
+                                  View File
+                                </Button>
+                                {r.approval_description ? (
+                                  <Tooltip title={r.approval_description}>
+                                    <Text
+                                      type="secondary"
+                                      style={{ fontSize: 11, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', cursor: 'pointer' }}
+                                    >
+                                      {r.approval_description}
+                                    </Text>
+                                  </Tooltip>
+                                ) : (
+                                  <Text type="secondary" style={{ fontSize: 11, color: '#ccc' }}>No notes</Text>
+                                )}
+                              </div>
+                            )
+                          },
+                          {
                             title: 'Action', key: 'action',
                             render: (_, r) => {
                               const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === r.key);
@@ -852,7 +889,7 @@ export default function Purchase() {
                           </div>
                           <Table
                             size="small"
-                            dataSource={filteredVendors.map(v => ({ ...v, totalPaid: Math.floor(Math.random() * 100000 + 10000), pending: Math.floor(Math.random() * 50000) }))}
+                            dataSource={filteredVendors}
                             columns={[
                               { title: 'Vendor Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
                               { title: 'Phone', dataIndex: 'phone', key: 'phone' },
@@ -870,58 +907,6 @@ export default function Purchase() {
                           />
                         </div>
                       )}
-                    </div>
-                  )
-                },
-                {
-                  key: 'purchases',
-                  label: <Space><DollarOutlined />Inventory Purchase</Space>,
-                  children: (
-                    <div style={{ marginTop: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
-                        <Title level={5} style={{ margin: 0, color: textColor }}>Inventory Purchase Management</Title>
-                        <Space>
-                          <DatePicker.RangePicker style={{ width: 280 }} />
-                          <Button icon={<DownloadOutlined />}>Export</Button>
-                        </Space>
-                      </div>
-                      <Table
-                        size="small"
-                        dataSource={[
-                          { key: 1, date: '2024-05-01', item: 'Soap Base (White)', qty: '100 Kg', entity: 'ChemCo India', amount: '₹8,500', status: 'Paid', invoice: 'INV-101' },
-                          { key: 4, date: '2024-05-04', item: 'Shampoo Concentrate', qty: '200 Ltr', entity: 'BioLife Ltd', amount: '₹44,000', status: 'Unpaid', invoice: 'INV-104' },
-                        ]}
-                        columns={[
-                          { title: 'Purchase Date', dataIndex: 'date', key: 'date', render: (v) => <Text strong>{v}</Text> },
-                          { title: 'Product', dataIndex: 'item', key: 'item' },
-                          { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
-                          { title: 'Amount', dataIndex: 'amount', key: 'amount', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                          { title: 'Supplier', dataIndex: 'entity', key: 'entity', render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                          {
-                            title: 'Payment', dataIndex: 'status', key: 'payment_status',
-                            render: (v) => (
-                              <Space size={4}>
-                                <Switch size="small" checked={v === 'Paid'} onChange={() => message.success('Status updated')} />
-                                <Tag color={v === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 12 }}>{v}</Tag>
-                              </Space>
-                            )
-                          },
-                          {
-                            title: 'Invoice', dataIndex: 'invoice', key: 'invoice',
-                            render: (v) => <Button type="link" size="small" icon={<FileTextOutlined />}>{v}</Button>
-                          },
-                          {
-                            title: 'Actions', key: 'actions',
-                            render: () => (
-                              <Space>
-                                <Button size="small" type="text" icon={<EyeOutlined />} />
-                                <Button size="small" type="text" icon={<EditOutlined />} />
-                                <Button size="small" type="text" icon={<UploadOutlined />} title="Upload Invoice" />
-                              </Space>
-                            )
-                          },
-                        ]}
-                      />
                     </div>
                   )
                 },
@@ -1279,18 +1264,8 @@ export default function Purchase() {
             )}
           </div>
 
-          {/* Payment Terms + Quantity */}
+          {/* Quantity */}
           <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-            <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Select payment terms' }]} style={{ marginBottom: 12 }}>
-              <Select
-                placeholder="Select or AI will fill from quotation"
-                onChange={(val) => setRaiseRequestPaymentTerms(val)}
-              >
-                <Option value="100% Payment">100% Payment</Option>
-                <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
-                <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
-              </Select>
-            </Form.Item>
             <Row gutter={12}>
               <Col span={16}>
                 <Form.Item label="Quantity" name="qty" rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
@@ -2240,6 +2215,55 @@ export default function Purchase() {
             Capture Photo
           </Button>
         </div>
+      </Modal>
+
+      {/* Approval Document View Modal */}
+      <Modal
+        title={
+          <Space>
+            <FileTextOutlined style={{ color: '#52c41a' }} />
+            <Text strong style={{ fontSize: 16 }}>Approval Document</Text>
+          </Space>
+        }
+        open={!!viewApprovalDoc}
+        onCancel={() => setViewApprovalDoc(null)}
+        footer={[
+          <Button key="close" onClick={() => setViewApprovalDoc(null)}>Close</Button>
+        ]}
+        width={480}
+        centered
+      >
+        {viewApprovalDoc && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '12px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>Request</Text>
+              <Text strong style={{ display: 'block', marginTop: 2 }}>{viewApprovalDoc.item}</Text>
+              <Text style={{ fontSize: 12, color: '#B11E6A' }}>Supplier: {viewApprovalDoc.supplier} · Qty: {viewApprovalDoc.qty} {viewApprovalDoc.unit}</Text>
+            </div>
+
+            {viewApprovalDoc.approval_doc ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, background: 'linear-gradient(135deg,#52c41a12,#52c41a08)', border: '1.5px solid #52c41a44', marginBottom: 16 }}>
+                <div style={{ width: 44, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#52c41a,#73d13d)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <FileTextOutlined style={{ color: '#fff', fontSize: 20 }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Text strong style={{ color: '#52c41a', fontSize: 13, display: 'block', wordBreak: 'break-all' }}>{viewApprovalDoc.approval_doc}</Text>
+                  <Text type="secondary" style={{ fontSize: 11 }}>Uploaded by Financial team on approval</Text>
+                </div>
+                <Button size="small" icon={<DownloadOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }}>Download</Button>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '16px 0', color: '#aaa', fontSize: 13 }}>No document attached</div>
+            )}
+
+            {viewApprovalDoc.approval_description && (
+              <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '12px 16px', border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Notes / Description</Text>
+                <Text style={{ fontSize: 13 }}>{viewApprovalDoc.approval_description}</Text>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   );

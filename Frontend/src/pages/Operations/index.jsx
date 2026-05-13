@@ -857,8 +857,7 @@ export default function Operations() {
             style={{ background: 'linear-gradient(135deg,#1677ff,#4096ff)', border: 'none' }}
             onClick={() => {
               const vals = dispatchForm.getFieldsValue();
-              selectedQueueItem.dispatchDate = vals.dispatchDate;
-              selectedQueueItem.dispatchTime = vals.dispatchTime;
+              setSelectedQueueItem(prev => ({ ...prev, dispatchDate: vals.dispatchDate, dispatchTime: vals.dispatchTime }));
               message.success(`Dispatched to Operations at ${vals.dispatchTime}`);
               setDispatchOpen(false);
             }}
@@ -896,7 +895,7 @@ export default function Operations() {
             style={{ background: 'linear-gradient(135deg,#faad14,#ffc53d)', border: 'none' }}
             onClick={() => {
               const vals = receiveForm.getFieldsValue();
-              selectedQueueItem.arrivalDate = vals.arrivalDate;
+              setSelectedQueueItem(prev => ({ ...prev, arrivalDate: vals.arrivalDate }));
               message.success(`Stock Received with Arrival Date: ${vals.arrivalDate}`);
               setReceiveOpen(false);
             }}

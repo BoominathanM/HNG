@@ -84,10 +84,26 @@ export default function Billing() {
   const [selectedInv, setSelectedInv] = useState(null);
   const [viewDocType, setViewDocType] = useState('invoice');
   const [ledgerEntries, setLedgerEntries] = useState([
-    { key: 1, date: '2024-05-01', client: 'Hotel Blue Star', type: 'Invoice', doc: 'INV-1001', debit: 25000, credit: 0, balance: 25000 },
-    { key: 2, date: '2024-05-02', client: 'Hotel Blue Star', type: 'Payment', doc: 'REC-2041', debit: 0, credit: 15000, balance: 10000 },
-    { key: 3, date: '2024-05-03', client: 'Hotel Blue Star', type: 'Credit Note', doc: 'CN-501', debit: 0, credit: 2000, balance: 8000 },
+    { key: 1,  date: '2024-01-18', client: 'Marriott Mumbai',    type: 'Invoice',     doc: 'INV-2401', debit: 45430,  credit: 0,     balance: 45430  },
+    { key: 2,  date: '2024-01-20', client: 'Marriott Mumbai',    type: 'Payment',     doc: 'REC-3001', debit: 0,      credit: 19250, balance: 26180  },
+    { key: 3,  date: '2024-01-17', client: 'Taj Hotels Delhi',   type: 'Invoice',     doc: 'INV-2402', debit: 141600, credit: 0,     balance: 141600 },
+    { key: 4,  date: '2024-01-19', client: 'Taj Hotels Delhi',   type: 'Payment',     doc: 'REC-3002', debit: 0,      credit: 60000, balance: 81600  },
+    { key: 5,  date: '2024-01-16', client: 'ITC Grand Kolkata',  type: 'Invoice',     doc: 'INV-2403', debit: 250000, credit: 0,     balance: 250000 },
+    { key: 6,  date: '2024-01-18', client: 'ITC Grand Kolkata',  type: 'Payment',     doc: 'REC-3003', debit: 0,      credit: 250000,balance: 0      },
+    { key: 7,  date: '2024-01-10', client: 'The Grand Hotel',    type: 'Invoice',     doc: 'INV-2404', debit: 49560,  credit: 0,     balance: 49560  },
+    { key: 8,  date: '2024-01-12', client: 'The Grand Hotel',    type: 'Payment',     doc: 'REC-3004', debit: 0,      credit: 21000, balance: 28560  },
+    { key: 9,  date: '2023-11-20', client: 'Client Demo',        type: 'Invoice',     doc: 'INV-2389', debit: 29500,  credit: 0,     balance: 29500  },
+    { key: 10, date: '2023-11-25', client: 'Client Demo',        type: 'Payment',     doc: 'REC-3005', debit: 0,      credit: 17000, balance: 12500  },
+    { key: 11, date: '2024-01-15', client: 'Client Demo',        type: 'Invoice',     doc: 'INV-2405', debit: 59000,  credit: 0,     balance: 61500  },
+    { key: 12, date: '2024-01-16', client: 'Client Demo',        type: 'Payment',     doc: 'REC-3006', debit: 0,      credit: 10000, balance: 61500  },
+    { key: 13, date: '2024-05-01', client: 'Hotel Blue Star',    type: 'Invoice',     doc: 'INV-1001', debit: 25000,  credit: 0,     balance: 25000  },
+    { key: 14, date: '2024-05-02', client: 'Hotel Blue Star',    type: 'Payment',     doc: 'REC-2041', debit: 0,      credit: 15000, balance: 10000  },
+    { key: 15, date: '2024-05-03', client: 'Hotel Blue Star',    type: 'Credit Note', doc: 'CN-501',   debit: 0,      credit: 2000,  balance: 8000   },
   ]);
+
+  // Parties & Ledgers tab state
+  const [viewBillingPartyLedger, setViewBillingPartyLedger] = useState(null);
+  const [billingPartiesSearch, setBillingPartiesSearch] = useState('');
 
   // Drawer open
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -163,6 +179,18 @@ export default function Billing() {
 
   const filteredItems = itemsList.filter(i =>
     i.name.toLowerCase().includes(itemSearch.toLowerCase())
+  );
+
+  const billingPartiesData = Object.values(
+    invoiceList.reduce((acc, inv) => {
+      if (!acc[inv.client]) {
+        acc[inv.client] = { key: inv.client, name: inv.client, type: 'Customer', totalSales: 0, received: 0, pending: 0 };
+      }
+      acc[inv.client].totalSales += inv.total;
+      acc[inv.client].received += inv.advance;
+      acc[inv.client].pending += inv.balance;
+      return acc;
+    }, {})
   );
 
   const subtotal = invoiceItems.reduce((s, i) => s + i.price * i.qty, 0);
@@ -541,25 +569,91 @@ export default function Billing() {
           },
           {
             key: 'ledger',
-            label: 'Ledger (TO COLLECT)',
+            label: <Space>Parties &amp; Ledgers</Space>,
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                <div style={{ marginBottom: 16 }}>
-                  <Title level={5} style={{ color: textColor }}>Client Ledger</Title>
-                </div>
-                <Table
-                  size="small"
-                  dataSource={ledgerEntries}
-                  columns={[
-                    { title: 'Date', dataIndex: 'date' },
-                    { title: 'Client', dataIndex: 'client' },
-                    { title: 'Type', dataIndex: 'type', render: (t) => <Tag color={t === 'Invoice' ? 'blue' : t === 'Payment' ? 'green' : 'orange'}>{t}</Tag> },
-                    { title: 'Doc #', dataIndex: 'doc' },
-                    { title: 'Debit (+)', dataIndex: 'debit', render: (v) => <Text style={{ color: '#ff4d4f' }}>{v > 0 ? `₹${v.toLocaleString()}` : '—'}</Text> },
-                    { title: 'Credit (-)', dataIndex: 'credit', render: (v) => <Text style={{ color: '#52c41a' }}>{v > 0 ? `₹${v.toLocaleString()}` : '—'}</Text> },
-                    { title: 'Running Bal', dataIndex: 'balance', render: (v) => <Text strong>₹{v.toLocaleString()}</Text> },
-                  ]}
-                />
+                {viewBillingPartyLedger ? (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                      <Space>
+                        <Button icon={<LeftOutlined />} onClick={() => setViewBillingPartyLedger(null)}>Back to Parties</Button>
+                        <Text strong style={{ color: '#B11E6A', fontSize: 15 }}>{viewBillingPartyLedger.name} — Ledger</Text>
+                      </Space>
+                      <DatePicker.RangePicker style={{ width: 260 }} />
+                    </div>
+                    {(() => {
+                      const entries = ledgerEntries.filter(e => e.client === viewBillingPartyLedger.name);
+                      const totalDebit  = entries.reduce((s, r) => s + r.debit, 0);
+                      const totalCredit = entries.reduce((s, r) => s + r.credit, 0);
+                      const netBalance  = entries.at(-1)?.balance ?? 0;
+                      return (
+                        <>
+                          <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+                            {[
+                              { label: 'Total Invoiced (Dr)', val: `₹${totalDebit.toLocaleString()}`,  color: '#ff4d4f' },
+                              { label: 'Total Received (Cr)', val: `₹${totalCredit.toLocaleString()}`, color: '#52c41a' },
+                              { label: 'Net Balance',         val: `₹${netBalance.toLocaleString()}`,  color: '#B11E6A' },
+                            ].map(s => (
+                              <Col xs={8} key={s.label}>
+                                <Card style={{ borderRadius: 10, border: 'none', background: `${s.color}10` }} styles={{ body: { padding: '10px 14px' } }}>
+                                  <Text style={{ fontSize: 11, color: '#888', display: 'block' }}>{s.label}</Text>
+                                  <Text strong style={{ color: s.color, fontSize: 16 }}>{s.val}</Text>
+                                </Card>
+                              </Col>
+                            ))}
+                          </Row>
+                          <Table
+                            size="small"
+                            dataSource={entries}
+                            pagination={{ pageSize: 10 }}
+                            columns={[
+                              { title: 'Date', dataIndex: 'date' },
+                              { title: 'Type', dataIndex: 'type', render: t => <Tag color={t === 'Invoice' ? 'blue' : t === 'Payment' ? 'green' : 'orange'}>{t}</Tag> },
+                              { title: 'Document #', dataIndex: 'doc', render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
+                              { title: 'Debit (Dr)', dataIndex: 'debit', render: v => v > 0 ? <Text style={{ color: '#ff4d4f' }}>₹{v.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
+                              { title: 'Credit (Cr)', dataIndex: 'credit', render: v => v > 0 ? <Text style={{ color: '#52c41a' }}>₹{v.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
+                              { title: 'Running Balance', dataIndex: 'balance', render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v.toLocaleString()}</Text> },
+                            ]}
+                          />
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                      <Text type="secondary">Debit and Credit ledger per client — click a party to view full history</Text>
+                      <Input
+                        prefix={<SearchOutlined />}
+                        placeholder="Search clients..."
+                        value={billingPartiesSearch}
+                        onChange={e => setBillingPartiesSearch(e.target.value)}
+                        style={{ width: 220, borderRadius: 8 }}
+                        allowClear
+                      />
+                    </div>
+                    <Table
+                      size="small"
+                      dataSource={billingPartiesData.filter(p => !billingPartiesSearch || p.name.toLowerCase().includes(billingPartiesSearch.toLowerCase()))}
+                      pagination={{ pageSize: 8 }}
+                      columns={[
+                        { title: 'Party Name', dataIndex: 'name', render: v => <Text strong>{v}</Text> },
+                        { title: 'Type', dataIndex: 'type', render: v => <Tag color="purple" style={{ borderRadius: 10 }}>{v}</Tag> },
+                        { title: 'Total Invoiced', key: 'total', render: (_, r) => <Text strong>₹{r.totalSales.toLocaleString()}</Text> },
+                        { title: 'Received', key: 'received', render: (_, r) => <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{r.received.toLocaleString()}</Text> },
+                        { title: 'Pending', dataIndex: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
+                        {
+                          title: 'Action', key: 'action',
+                          render: (_, r) => (
+                            <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewBillingPartyLedger(r)} style={{ color: '#B11E6A' }}>
+                              View Ledger
+                            </Button>
+                          )
+                        },
+                      ]}
+                    />
+                  </div>
+                )}
               </Card>
             ),
           }

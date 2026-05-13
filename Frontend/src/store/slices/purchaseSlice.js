@@ -5,9 +5,9 @@ const purchaseSlice = createSlice({
   initialState: {
     raisedRequests: [
       { key: 1001, item: 'Soap Base (Transparent)', supplier: 'BioLife Ltd', qty: 110, unit: 'Kg', payment_terms: '50% Advance, 50% on Dispatch', date: '2024-05-07', status: 'Pending', quotation_file: 'quotation_biolife_soap_base.pdf' },
-      { key: 1002, item: 'Shampoo Bottles (Flip 30ml)', supplier: 'PlastiPack', qty: 800, unit: 'Pcs', payment_terms: '100% Payment', date: '2024-05-08', status: 'Approved', quotation_file: 'quotation_plastipack_bottles.pdf' },
+      { key: 1002, item: 'Shampoo Bottles (Flip 30ml)', supplier: 'PlastiPack', qty: 800, unit: 'Pcs', payment_terms: '100% Payment', date: '2024-05-08', status: 'Approved', quotation_file: 'quotation_plastipack_bottles.pdf', approval_doc: 'approval_plastipack_bottles.pdf', approval_description: 'Approved for Q2 procurement. Ensure delivery by end of May 2024.' },
       { key: 1003, item: 'Shampoo Concentrate', supplier: 'ChemCo India', qty: 100, unit: 'Ltr', payment_terms: '50% Advance, 50% After Delivery (Max 15 days)', date: '2024-05-06', status: 'Rejected' },
-      { key: 1004, item: 'Amber Bottles 100ml', supplier: 'PlastiPack', qty: 600, unit: 'Pcs', payment_terms: '100% Payment', date: '2024-05-09', status: 'Approved' },
+      { key: 1004, item: 'Amber Bottles 100ml', supplier: 'PlastiPack', qty: 600, unit: 'Pcs', payment_terms: '100% Payment', date: '2024-05-09', status: 'Approved', approval_doc: 'approval_amber_bottles_100ml.pdf', approval_description: '50% advance payment cleared. Remaining balance to be settled upon delivery confirmation.' },
     ],
     purchaseOrders: [
       {
@@ -50,7 +50,11 @@ const purchaseSlice = createSlice({
     },
     updateRequestStatus(state, action) {
       const req = state.raisedRequests.find(r => r.key === action.payload.key);
-      if (req) req.status = action.payload.status;
+      if (req) {
+        req.status = action.payload.status;
+        if (action.payload.approval_doc) req.approval_doc = action.payload.approval_doc;
+        if (action.payload.approval_description !== undefined) req.approval_description = action.payload.approval_description;
+      }
     },
     raiseOrder(state, action) {
       // action.payload = { requestKey, bill_no, inv_no, price, amount, orderDate }
