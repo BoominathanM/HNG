@@ -29,16 +29,6 @@ export default function Financial() {
   const [selectedForPayment, setSelectedForPayment] = useState(null);
   const [paymentForm] = Form.useForm();
 
-  // Order Approvals tab state
-  const [orderApprovals, setOrderApprovals] = useState([
-    { key: 1, date: '2024-05-08', item: 'Soap Base (White)', supplier: 'ChemCo India', qty: 200, unit: 'Kg', amount: 17000, payment_type: 'Credit', payment_date: '2024-06-08', status: 'Pending' },
-    { key: 2, date: '2024-05-09', item: 'Shampoo Bottles', supplier: 'PlastiPack', qty: 1000, unit: 'Pcs', amount: 4500, payment_type: 'Immediate', status: 'Pending' },
-  ]);
-  const [viewOrderApproval, setViewOrderApproval] = useState(null);
-
-  // My Orders tab state
-  const [myOrdersSearch, setMyOrdersSearch] = useState('');
-
   // Parties & Ledgers tab state
   const [partiesSearch, setPartiesSearch] = useState('');
   const [viewPartyLedger, setViewPartyLedger] = useState(null);
@@ -289,140 +279,6 @@ export default function Financial() {
               )
             },
             {
-              key: 'order_approvals',
-              label: <Space><CheckCircleOutlined /> Order Approvals</Space>,
-              children: (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ marginBottom: 12 }}>
-                    <Text type="secondary">Purchase orders placed by the Purchase team — approve or reject before payment is processed</Text>
-                  </div>
-                  <Table
-                    size="small"
-                    dataSource={orderApprovals}
-                    pagination={{ pageSize: 8 }}
-                    columns={[
-                      { title: 'Date', dataIndex: 'date', key: 'date' },
-                      { title: 'Item', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
-                      { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                      { title: 'Qty', key: 'qty', render: (_, r) => `${r.qty} ${r.unit}` },
-                      { title: 'Amount', dataIndex: 'amount', key: 'amount', render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v?.toLocaleString()}</Text> },
-                      {
-                        title: 'Payment Type', key: 'pay_type', render: (_, r) => (
-                          <Space direction="vertical" size={0}>
-                            <Tag color={r.payment_type === 'Immediate' ? 'blue' : 'orange'} style={{ borderRadius: 10 }}>{r.payment_type}</Tag>
-                            {r.payment_type === 'Credit' && r.payment_date && (
-                              <Text style={{ fontSize: 11, color: '#fa8c16' }}>Due: {r.payment_date}</Text>
-                            )}
-                          </Space>
-                        )
-                      },
-                      {
-                        title: 'Status', dataIndex: 'status', key: 'status',
-                        render: v => <Tag color={v === 'Approved' ? 'success' : v === 'Rejected' ? 'error' : 'processing'} style={{ borderRadius: 10 }}>{v}</Tag>
-                      },
-                      {
-                        title: 'Actions', key: 'actions',
-                        render: (_, r) => (
-                          <Space>
-                            <Button size="small" icon={<EyeOutlined />} onClick={() => setViewOrderApproval(r)}>Details</Button>
-                            {r.status === 'Pending' && (
-                              <>
-                                <Button
-                                  size="small"
-                                  type="primary"
-                                  icon={<CheckCircleOutlined />}
-                                  style={{ background: '#52c41a', border: 'none' }}
-                                  onClick={() => {
-                                    setOrderApprovals(prev => prev.map(o => o.key === r.key ? { ...o, status: 'Approved' } : o));
-                                    message.success(`Order for ${r.item} approved`);
-                                  }}
-                                >Approve</Button>
-                                <Button
-                                  size="small"
-                                  danger
-                                  icon={<CloseCircleOutlined />}
-                                  onClick={() => {
-                                    setOrderApprovals(prev => prev.map(o => o.key === r.key ? { ...o, status: 'Rejected' } : o));
-                                    message.warning(`Order for ${r.item} rejected`);
-                                  }}
-                                >Reject</Button>
-                              </>
-                            )}
-                          </Space>
-                        )
-                      }
-                    ]}
-                  />
-                </div>
-              )
-            },
-            {
-              key: 'my_orders',
-              label: <Space><ShopOutlined /> My Orders</Space>,
-              children: (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-                    <Text type="secondary">All purchase orders — their approval status and payment details</Text>
-                    <Input
-                      prefix={<SearchOutlined />}
-                      placeholder="Search orders..."
-                      value={myOrdersSearch}
-                      onChange={e => setMyOrdersSearch(e.target.value)}
-                      style={{ width: 220, borderRadius: 8 }}
-                      allowClear
-                    />
-                  </div>
-                  <Table
-                    size="small"
-                    dataSource={[...orderApprovals, ...purchaseOrders.map(o => ({ ...o, source: 'purchase' }))]
-                      .filter(o => !myOrdersSearch || (o.item || '').toLowerCase().includes(myOrdersSearch.toLowerCase()) || (o.supplier || '').toLowerCase().includes(myOrdersSearch.toLowerCase()))}
-                    pagination={{ pageSize: 8 }}
-                    columns={[
-                      { title: 'Date', dataIndex: 'date', key: 'date' },
-                      { title: 'Item', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
-                      { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                      { title: 'Amount', dataIndex: 'amount', key: 'amount', render: v => <Text strong>₹{v?.toLocaleString()}</Text> },
-                      {
-                        title: 'Approval', dataIndex: 'status', key: 'approval',
-                        render: v => <Tag color={v === 'Approved' ? 'success' : v === 'Rejected' ? 'error' : 'processing'} style={{ borderRadius: 10 }}>{v}</Tag>
-                      },
-                      {
-                        title: 'Payment', key: 'payment',
-                        render: (_, r) => {
-                          const paid = r.paid_amount || 0;
-                          const total = r.amount || 0;
-                          return (
-                            <Space direction="vertical" size={0}>
-                              <Tag color={paid >= total ? 'success' : paid > 0 ? 'warning' : 'error'} style={{ borderRadius: 10 }}>
-                                {paid >= total ? 'Paid' : paid > 0 ? 'Partial' : 'Unpaid'}
-                              </Tag>
-                              {paid > 0 && <Text style={{ fontSize: 11, color: '#aaa' }}>₹{paid.toLocaleString()} paid</Text>}
-                            </Space>
-                          );
-                        }
-                      },
-                      {
-                        title: 'Actions', key: 'actions',
-                        render: (_, r) => (
-                          <Space>
-                            {r.status === 'Approved' && (r.paid_amount || 0) < (r.amount || 0) && (
-                              <Button
-                                size="small"
-                                type="primary"
-                                icon={<DollarCircleOutlined />}
-                                style={{ background: '#B11E6A', border: 'none' }}
-                                onClick={() => { setSelectedForPayment(r); setShowPaymentModal(true); }}
-                              >Pay</Button>
-                            )}
-                          </Space>
-                        )
-                      }
-                    ]}
-                  />
-                </div>
-              )
-            },
-            {
               key: 'parties_ledger',
               label: <Space><BookOutlined /> Parties & Ledgers</Space>,
               children: (
@@ -643,42 +499,6 @@ export default function Financial() {
                 </Tag>
               </Descriptions.Item>
             </Descriptions>
-          </div>
-        )}
-      </Modal>
-
-      {/* Order Approval Detail Modal */}
-      <Modal
-        title={<Text strong style={{ fontSize: 16 }}>Order Approval Details</Text>}
-        open={!!viewOrderApproval}
-        onCancel={() => setViewOrderApproval(null)}
-        footer={null}
-        width={480}
-        centered
-      >
-        {viewOrderApproval && (
-          <div style={{ marginTop: 12 }}>
-            <Descriptions bordered size="small" column={2}>
-              <Descriptions.Item label="Date">{viewOrderApproval.date}</Descriptions.Item>
-              <Descriptions.Item label="Status">
-                <Tag color={viewOrderApproval.status === 'Approved' ? 'success' : viewOrderApproval.status === 'Rejected' ? 'error' : 'processing'}>
-                  {viewOrderApproval.status}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Item" span={2}><Text strong>{viewOrderApproval.item}</Text></Descriptions.Item>
-              <Descriptions.Item label="Supplier"><Text style={{ color: '#B11E6A', fontWeight: 600 }}>{viewOrderApproval.supplier}</Text></Descriptions.Item>
-              <Descriptions.Item label="Quantity">{viewOrderApproval.qty} {viewOrderApproval.unit}</Descriptions.Item>
-              <Descriptions.Item label="Amount" span={2}><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{viewOrderApproval.amount?.toLocaleString()}</Text></Descriptions.Item>
-              <Descriptions.Item label="Payment Type">
-                <Tag color={viewOrderApproval.payment_type === 'Immediate' ? 'blue' : 'orange'}>{viewOrderApproval.payment_type}</Tag>
-              </Descriptions.Item>
-              {viewOrderApproval.payment_date && (
-                <Descriptions.Item label="Due Date">{viewOrderApproval.payment_date}</Descriptions.Item>
-              )}
-            </Descriptions>
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <Button block onClick={() => setViewOrderApproval(null)}>Close</Button>
-            </div>
           </div>
         )}
       </Modal>

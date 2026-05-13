@@ -14,6 +14,7 @@ import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
+import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -78,11 +79,15 @@ export default function Billing() {
   const [quotationList, setQuotationList] = useState(initialQuotations);
   const [activeTab, setActiveTab] = useState('quotation-in-process');
 
-  // View invoice
+  // View invoice / quotation
   const [viewModal, setViewModal] = useState(false);
   const [selectedInv, setSelectedInv] = useState(null);
-  const [noteModalOpen, setNoteModalOpen] = useState(false);
-  const [noteType, setNoteType] = useState('Credit');
+  const [viewDocType, setViewDocType] = useState('invoice');
+  const [ledgerEntries, setLedgerEntries] = useState([
+    { key: 1, date: '2024-05-01', client: 'Hotel Blue Star', type: 'Invoice', doc: 'INV-1001', debit: 25000, credit: 0, balance: 25000 },
+    { key: 2, date: '2024-05-02', client: 'Hotel Blue Star', type: 'Payment', doc: 'REC-2041', debit: 0, credit: 15000, balance: 10000 },
+    { key: 3, date: '2024-05-03', client: 'Hotel Blue Star', type: 'Credit Note', doc: 'CN-501', debit: 0, credit: 2000, balance: 8000 },
+  ]);
 
   // Drawer open
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -239,6 +244,20 @@ export default function Billing() {
   };
 
   const handleSavePayment = () => {
+    const lastBalance = ledgerEntries.length > 0 ? ledgerEntries[ledgerEntries.length - 1].balance : 0;
+    const paid = (payAmount || 0) - (payDiscount || 0);
+    const newBalance = Math.max(0, lastBalance - paid);
+    const newEntry = {
+      key: Date.now(),
+      date: dayjs().format('YYYY-MM-DD'),
+      client: payParty?.name || '',
+      type: 'Payment',
+      doc: `REC-${paymentRefNum}`,
+      debit: 0,
+      credit: paid,
+      balance: newBalance,
+    };
+    setLedgerEntries(prev => [...prev, newEntry]);
     message.success(`Payment of ₹${payAmount.toLocaleString()} recorded successfully`);
     setRecordPayOpen(false);
   };
@@ -278,6 +297,13 @@ export default function Billing() {
     setActiveTab('invoices');
     setConvertOpen(false);
     message.success(`${convertQuot.quot} converted to ${newInv.inv} and moved to Invoices`);
+  };
+
+  const handlePrintDocument = (docType, data) => {
+    const html = generatePrintHTML(docType, data);
+    const win = window.open('', '_blank', 'width=900,height=700');
+    win.document.write(html);
+    win.document.close();
   };
 
   // Style helpers
@@ -334,12 +360,12 @@ export default function Billing() {
       title: 'Actions', key: 'actions', width: 300, fixed: 'right',
       render: (_, r) => (
         <Space wrap>
-          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewModal(true); }} /></Tooltip>
+          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); }} /></Tooltip>
           <Tooltip title="Share on WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Invoice shared on WhatsApp')} />
           </Tooltip>
-          <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} /></Tooltip>
-          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} /></Tooltip>
+          <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
+          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           {r.balance > 0 && (
             <>
               <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none' }} onClick={() => openRecordPay(r)}>Record Manually</Button>
@@ -368,12 +394,12 @@ export default function Billing() {
       fixed: 'right',
       render: (_, r) => (
         <Space wrap>
-          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewModal(true); }} /></Tooltip>
+          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType('quotation'); setViewModal(true); }} /></Tooltip>
           <Tooltip title="Share on WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Quotation shared on WhatsApp')} />
           </Tooltip>
-          <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} /></Tooltip>
-          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} /></Tooltip>
+          <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
+          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
           {tabType === 'in-process' && (
             <Button
               size="small"
@@ -518,28 +544,20 @@ export default function Billing() {
             label: 'Ledger (TO COLLECT)',
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <Title level={5} style={{ color: textColor }}>Client Credit/Debit Ledger</Title>
-                  <Space>
-                    <Button type="primary" size="small" style={{ background: '#52c41a', border: 'none' }} onClick={() => { setNoteType('Credit'); setNoteModalOpen(true); }}>+ Credit Note</Button>
-                    <Button type="primary" size="small" danger onClick={() => { setNoteType('Debit'); setNoteModalOpen(true); }}>+ Debit Note</Button>
-                  </Space>
+                <div style={{ marginBottom: 16 }}>
+                  <Title level={5} style={{ color: textColor }}>Client Ledger</Title>
                 </div>
                 <Table
                   size="small"
-                  dataSource={[
-                    { key: 1, date: '2024-05-01', client: 'Hotel Blue Star', type: 'Invoice', doc: 'INV-1001', debit: '₹25,000', credit: '—', balance: '₹25,000' },
-                    { key: 2, date: '2024-05-02', client: 'Hotel Blue Star', type: 'Payment', doc: 'REC-2041', debit: '—', credit: '₹15,000', balance: '₹10,000' },
-                    { key: 3, date: '2024-05-03', client: 'Hotel Blue Star', type: 'Credit Note', doc: 'CN-501', debit: '—', credit: '₹2,000', balance: '₹8,000' },
-                  ]}
+                  dataSource={ledgerEntries}
                   columns={[
                     { title: 'Date', dataIndex: 'date' },
                     { title: 'Client', dataIndex: 'client' },
                     { title: 'Type', dataIndex: 'type', render: (t) => <Tag color={t === 'Invoice' ? 'blue' : t === 'Payment' ? 'green' : 'orange'}>{t}</Tag> },
                     { title: 'Doc #', dataIndex: 'doc' },
-                    { title: 'Debit (+)', dataIndex: 'debit', render: (v) => <Text style={{ color: '#ff4d4f' }}>{v}</Text> },
-                    { title: 'Credit (-)', dataIndex: 'credit', render: (v) => <Text style={{ color: '#52c41a' }}>{v}</Text> },
-                    { title: 'Running Bal', dataIndex: 'balance', render: (v) => <Text strong>{v}</Text> },
+                    { title: 'Debit (+)', dataIndex: 'debit', render: (v) => <Text style={{ color: '#ff4d4f' }}>{v > 0 ? `₹${v.toLocaleString()}` : '—'}</Text> },
+                    { title: 'Credit (-)', dataIndex: 'credit', render: (v) => <Text style={{ color: '#52c41a' }}>{v > 0 ? `₹${v.toLocaleString()}` : '—'}</Text> },
+                    { title: 'Running Bal', dataIndex: 'balance', render: (v) => <Text strong>₹{v.toLocaleString()}</Text> },
                   ]}
                 />
               </Card>
@@ -548,56 +566,41 @@ export default function Billing() {
         ]}
       />
 
-      {/* ───────────── VIEW INVOICE ───────────── */}
-      <Drawer
-        title={<span style={{ fontSize: 16, fontWeight: 700 }}>Invoice: {selectedInv?.inv}</span>}
+      {/* ───────────── VIEW QUOTATION / INVOICE ───────────── */}
+      <Modal
         open={viewModal}
-        onClose={() => setViewModal(false)}
-        extra={
+        onCancel={() => setViewModal(false)}
+        footer={null}
+        width={Math.min(860, window.innerWidth - 32)}
+        styles={{ body: { padding: '16px 12px', background: isDark ? '#1a1a2a' : '#f4f5f9', maxHeight: '85vh', overflowY: 'auto' } }}
+        title={
           <Space>
-            <Button icon={<PrinterOutlined />}>Print</Button>
-            <Button icon={<DownloadOutlined />} type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>PDF</Button>
+            <span style={{ fontSize: 15, fontWeight: 700 }}>
+              {viewDocType === 'quotation' ? `Quotation: ${selectedInv?.inv}` : `Invoice: ${selectedInv?.inv}`}
+            </span>
+            <Button
+              size="small"
+              icon={<PrinterOutlined />}
+              onClick={() => handlePrintDocument(viewDocType, selectedInv || {})}
+            >
+              Print
+            </Button>
+            <Button
+              size="small"
+              icon={<DownloadOutlined />}
+              type="primary"
+              style={{ background: 'linear-gradient(135deg,#2d5016,#4a7c24)', border: 'none' }}
+              onClick={() => handlePrintDocument(viewDocType, selectedInv || {})}
+            >
+              PDF
+            </Button>
           </Space>
         }
-        width={Math.min(560, window.innerWidth)}
       >
         {selectedInv && (
-          <div>
-            <div style={{ textAlign: 'center', marginBottom: 20 }}>
-              <Title level={4} style={{ color: '#B11E6A', margin: 0 }}>HEAL N GLOW</Title>
-              <Text style={{ color: '#999', fontSize: 12 }}>Tax Invoice | {selectedInv.inv}</Text>
-            </div>
-            <Divider />
-            <Row gutter={16} style={{ marginBottom: 16 }}>
-              <Col span={12}><Text strong>Bill To:</Text><br /><Text>{selectedInv.client}</Text></Col>
-              <Col span={12} style={{ textAlign: 'right' }}>
-                <Text strong>Date:</Text><br /><Text>{selectedInv.date}</Text><br />
-                <Text strong>Order:</Text> <Text style={{ color: '#B11E6A' }}>{selectedInv.order}</Text>
-              </Col>
-            </Row>
-            <Divider />
-            <Row><Col span={16}><Text>Subtotal</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text>₹{selectedInv.amount.toLocaleString()}</Text></Col></Row>
-            {selectedInv.type === 'GST' && <Row style={{ marginTop: 6 }}><Col span={16}><Text>GST (18%)</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text>₹{selectedInv.gst.toLocaleString()}</Text></Col></Row>}
-            <Divider />
-            <Row><Col span={16}><Text strong>Current Bill Total</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{selectedInv.total.toLocaleString()}</Text></Col></Row>
-            <Row style={{ marginTop: 6 }}><Col span={16}><Text style={{ color: '#52c41a' }}>Advance</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text style={{ color: '#52c41a' }}>- ₹{selectedInv.advance.toLocaleString()}</Text></Col></Row>
-            <Row style={{ marginTop: 6 }}>
-              <Col span={16}><Text strong style={{ color: selectedInv.balance > 0 ? '#B11E6A' : '#52c41a' }}>Current Bill Balance</Text></Col>
-              <Col span={8} style={{ textAlign: 'right' }}><Text strong style={{ color: selectedInv.balance > 0 ? '#B11E6A' : '#52c41a', fontSize: 16 }}>₹{selectedInv.balance.toLocaleString()}</Text></Col>
-            </Row>
-            {selectedInv.previousBalance > 0 && (
-              <>
-                <Divider style={{ margin: '8px 0' }} />
-                <Row><Col span={16}><Text style={{ color: '#ff4d4f' }}>Existing Overdue Balance</Text></Col><Col span={8} style={{ textAlign: 'right' }}><Text style={{ color: '#ff4d4f' }}>₹{selectedInv.previousBalance.toLocaleString()}</Text></Col></Row>
-                <Row style={{ marginTop: 6 }}>
-                  <Col span={16}><Text strong style={{ color: '#ff4d4f', fontSize: 15 }}>Total Pending Balance</Text></Col>
-                  <Col span={8} style={{ textAlign: 'right' }}><Text strong style={{ color: '#ff4d4f', fontSize: 18 }}>₹{(selectedInv.balance + selectedInv.previousBalance).toLocaleString()}</Text></Col>
-                </Row>
-              </>
-            )}
-          </div>
+          <DocumentTemplate type={viewDocType} data={selectedInv} />
         )}
-      </Drawer>
+      </Modal>
 
       {/* ───────────── CREATE INVOICE DRAWER (single page, no sub-modals) ───────────── */}
       <Drawer
@@ -1624,47 +1627,6 @@ export default function Billing() {
         )}
       </Modal>
 
-      {/* ───────────── CREDIT/DEBIT NOTE MODAL ───────────── */}
-      <Modal
-        title={`${noteType} Note`}
-        open={noteModalOpen}
-        onCancel={() => setNoteModalOpen(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setNoteModalOpen(false)}>Cancel</Button>,
-          <Button key="submit" type="primary" onClick={() => { message.success(`${noteType} Note created`); setNoteModalOpen(false); }} style={{ background: noteType === 'Credit' ? '#52c41a' : '#ff4d4f', border: 'none' }}>
-            Create {noteType} Note
-          </Button>
-        ]}
-        width={450}
-        centered
-      >
-        <Form layout="vertical">
-          <Form.Item label="Select Client" required>
-            <Select placeholder="Select Client" defaultValue="Hotel Blue Star">
-              <Option value="Hotel Blue Star">Hotel Blue Star</Option>
-              <Option value="Marriott Mumbai">Marriott Mumbai</Option>
-            </Select>
-          </Form.Item>
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item label="Date" required>
-                <DatePicker style={{ width: '100%' }} defaultValue={dayjs()} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Reference #" required>
-                <Input placeholder="Invoice or Receipt #" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Amount" required>
-            <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" />
-          </Form.Item>
-          <Form.Item label="Reason / Remarks">
-            <Input.TextArea placeholder="Reason for note..." rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   );
 }
