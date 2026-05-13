@@ -27,6 +27,8 @@ import Notifications from './pages/Notifications';
 import Expenses from './pages/Expenses';
 import Purchase from './pages/Purchase';
 import Financial from './pages/Financial';
+import WhatsAppIntegration from './pages/Integration/WhatsAppIntegration';
+import AIIntegration from './pages/Integration/AIIntegration';
 
 function PrivateRoute() {
   const isAuthenticated = useSelector((s) => s.auth.isAuthenticated);
@@ -66,6 +68,8 @@ function ThemedApp() {
               <Route path="/reports" element={<Reports />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/notifications" element={<Notifications />} />
+              <Route path="/integration/whatsapp" element={<WhatsAppIntegration />} />
+              <Route path="/integration/ai" element={<AIIntegration />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

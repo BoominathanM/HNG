@@ -7,7 +7,7 @@ import {
   DashboardOutlined, TeamOutlined, ApartmentOutlined, CheckSquareOutlined,
   CarOutlined, UserOutlined, InboxOutlined, DollarOutlined,
   BarChartOutlined, SettingOutlined, BellOutlined, CloseOutlined, RightOutlined, LogoutOutlined,
-  ShoppingOutlined, BankOutlined
+  ShoppingOutlined, BankOutlined, ApiOutlined, MessageOutlined, RobotOutlined
 } from '@ant-design/icons';
 import { toggleSidebar } from '../../store/slices/themeSlice';
 import { logout } from '../../store/slices/authSlice';
@@ -29,6 +29,15 @@ const menuItems = [
   { key: '/expenses', icon: <DollarOutlined />, label: 'Expenses' },
   { key: '/reports', icon: <BarChartOutlined />, label: 'Reports' },
   { key: '/notifications', icon: <BellOutlined />, label: 'Notifications', badge: 3 },
+  {
+    key: '/integration',
+    icon: <ApiOutlined />,
+    label: 'Integration',
+    children: [
+      { key: '/integration/whatsapp', icon: <MessageOutlined />, label: 'WhatsApp' },
+      { key: '/integration/ai', icon: <RobotOutlined />, label: 'AI Integration' },
+    ],
+  },
   { key: '/settings', icon: <SettingOutlined />, label: 'Settings' },
 ];
 
