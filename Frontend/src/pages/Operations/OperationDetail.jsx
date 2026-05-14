@@ -5,10 +5,10 @@ import {
   Card,
   Checkbox,
   Col,
-  Descriptions,
   Divider,
   Form,
   Input,
+  Modal,
   Progress,
   Row,
   Select,
@@ -21,8 +21,12 @@ import {
 } from 'antd';
 import {
   ArrowLeftOutlined,
+  CreditCardOutlined,
+  DownloadOutlined,
+  EyeOutlined,
   FileImageOutlined,
   FilePdfOutlined,
+  FileTextOutlined,
   MessageOutlined,
   PlusOutlined,
   PrinterOutlined,
@@ -40,6 +44,7 @@ import {
   getProgressFromChecks,
   operationEmployees,
   operationOrders,
+  PAYMENT_LABELS,
   statusPill,
 } from './data';
 
@@ -51,11 +56,29 @@ export default function OperationDetail() {
   const location = useLocation();
   const navigate = useNavigate();
   const isDark = useSelector((state) => state.theme.isDark);
+  const loggedInUser = useSelector((state) => state.auth.user);
   const [taskForm] = Form.useForm();
+  const [assignModalForm] = Form.useForm();
   const [checkStates, setCheckStates] = useState(getCheckStateMap());
   const [taskOptions, setTaskOptions] = useState(['Packing', 'Labeling', 'Filling']);
   const [newTaskValue, setNewTaskValue] = useState('');
+  const [printingValues, setPrintingValues] = useState({});
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignModalRecord, setAssignModalRecord] = useState(null);
   const inputRef = useRef(null);
+
+  const openAssignModal = (record, currentOrder) => {
+    setAssignModalRecord(record);
+    assignModalForm.setFieldsValue({
+      taskName: record.processTask || '',
+      taskType: '',
+      orderId: currentOrder.id,
+      product: record.product,
+      printing: printingValues[record.key] || undefined,
+      assignee: loggedInUser?.name || currentOrder.assignedEmployee,
+    });
+    setAssignModalOpen(true);
+  };
 
   const addTaskOption = (e) => {
     e.preventDefault();
@@ -96,26 +119,80 @@ export default function OperationDetail() {
   const productColumns = [
     { title: 'Product', dataIndex: 'product' },
     { title: 'Print Type', dataIndex: 'logoType', render: (value) => <Tag color="purple">{value}</Tag> },
-    { title: 'Quantity', dataIndex: 'qty', render: (value) => <Text strong>{value.toLocaleString()}</Text> },
+    {
+      title: 'Inventory Stock',
+      dataIndex: 'inventoryStock',
+      align: 'right',
+      render: (stock, record) => {
+        const enough = (stock ?? 0) >= record.qty;
+        return (
+          <Text strong style={{ color: enough ? '#389e0d' : '#cf1322' }}>
+            {(stock ?? 0).toLocaleString()}
+          </Text>
+        );
+      },
+    },
+    {
+      title: 'Required Qty',
+      dataIndex: 'qty',
+      align: 'right',
+      render: (value, record) => {
+        const enough = (record.inventoryStock ?? 0) >= value;
+        return (
+          <Space direction="vertical" size={0} style={{ textAlign: 'right' }}>
+            <Text strong>{value.toLocaleString()}</Text>
+            {!enough && (
+              <Tag color="error" style={{ fontSize: 10, margin: 0 }}>
+                Short {(value - (record.inventoryStock ?? 0)).toLocaleString()}
+              </Tag>
+            )}
+          </Space>
+        );
+      },
+    },
     { title: 'Default Size', dataIndex: 'size', render: (value) => <Tag color="geekblue">{value}</Tag> },
     { title: 'Packaging', dataIndex: 'packaging' },
     { title: 'Material', dataIndex: 'material' },
-    { 
-      title: 'Production Status', 
+    {
+      title: 'Production Status',
       key: 'prodStatus',
-      render: (_, record) => {
-        const type = record.logoType;
-        // Simulating data check
-        return (
-          <Space direction="vertical" size={0}>
-            <Tag color="blue" style={{ fontSize: 10 }}>Dispatched: 05/05/26</Tag>
-            <Tag color="green" style={{ fontSize: 10 }}>Arrived: 06/05/26</Tag>
-          </Space>
-        );
-      }
+      render: () => (
+        <Space direction="vertical" size={0}>
+          <Tag color="blue" style={{ fontSize: 10 }}>Dispatched: 05/05/26</Tag>
+          <Tag color="green" style={{ fontSize: 10 }}>Arrived: 06/05/26</Tag>
+        </Space>
+      ),
     },
-    { title: 'Verification', key: 'verify', render: () => <Tag color="success">Verified</Tag> },
-    { title: 'Task', dataIndex: 'processTask' },
+    {
+      title: 'Printing',
+      key: 'printing',
+      render: (_, record) => (
+        <Select
+          value={printingValues[record.key]}
+          onChange={(val) => setPrintingValues((prev) => ({ ...prev, [record.key]: val }))}
+          placeholder="Select"
+          style={{ width: 160 }}
+        >
+          <Option value="sticker_printing">Sticker Printing</Option>
+          <Option value="box">Box</Option>
+          <Option value="frosted_ziplock">Frosted Ziplock</Option>
+        </Select>
+      ),
+    },
+    {
+      title: 'Assign Task',
+      key: 'assignTask',
+      render: (_, record) => (
+        <Button
+          type="primary"
+          size="small"
+          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+          onClick={() => openAssignModal(record, order)}
+        >
+          Assign Task
+        </Button>
+      ),
+    },
   ];
 
   const checklist = [
@@ -179,33 +256,155 @@ export default function OperationDetail() {
           </Card>
         </Col>
         <Col xs={24} lg={16}>
-          <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-            <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }}>
-              <Descriptions.Item label="Order ID">{order.id}</Descriptions.Item>
-              <Descriptions.Item label="Order Type">{order.orderType}</Descriptions.Item>
-              <Descriptions.Item label="Sales Person">{order.salesPerson}</Descriptions.Item>
-              <Descriptions.Item label="Created Date">
-                {new Date(order.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
-              </Descriptions.Item>
-              <Descriptions.Item label="Assigned Employee">{order.assignedEmployee}</Descriptions.Item>
-              <Descriptions.Item label="Client Approval">{order.clientApproval}</Descriptions.Item>
-              <Descriptions.Item label="Inventory Stock">{(order.inventoryStock ?? 0).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Order Received">{(order.orderReceivedStock ?? 0).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Default Calculation">{(order.items.reduce((sum, item) => sum + item.qty, 0) ?? 0).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Printer Sent">{(order.printerSentTotal ?? 0).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Printer Verification">
-                <Tag color={order.printerVerified ? 'success' : 'warning'}>
-                  {order.printerVerified ? 'Verified' : 'Pending'}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Specs Summary">{order.specsSummary}</Descriptions.Item>
-            </Descriptions>
-            <div style={{ marginTop: 16 }}>
-              <Text style={{ fontSize: 11, color: '#999', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                Operation Readiness
-              </Text>
-              <Progress percent={progressPercent} strokeColor="#B11E6A" status={readyToAssign ? 'success' : 'active'} />
-            </div>
+          <Card
+            style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }}
+            title={
+              <Space>
+                <CreditCardOutlined style={{ color: '#B11E6A' }} />
+                <Text strong style={{ color: textColor }}>Payment & Delivery Terms</Text>
+              </Space>
+            }
+          >
+            <Space direction="vertical" size={18} style={{ width: '100%' }}>
+
+              {/* Payment Terms */}
+              <div>
+                <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 8 }}>
+                  Payment Terms
+                </Text>
+                <Space wrap>
+                  <Tag color="blue" style={{ fontSize: 13, padding: '4px 14px', borderRadius: 20 }}>
+                    {PAYMENT_LABELS[order.paymentTerms] || order.paymentTerms || '—'}
+                  </Tag>
+                  {order.paymentTerms === '50_ADVANCE_50_AFTER' && order.paymentReminderDate && (
+                    <Tag color="orange" style={{ fontSize: 12 }}>
+                      Reminder: {new Date(order.paymentReminderDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                    </Tag>
+                  )}
+                </Space>
+              </div>
+
+              {/* Delivery & Forwarding */}
+              <Row gutter={[16, 10]}>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Delivery By</Text>
+                  <Text strong style={{ color: textColor }}>{order.deliveryBy || '—'}</Text>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Transportation By</Text>
+                  <Text strong style={{ color: textColor }}>{order.transportationBy || '—'}</Text>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Forwarding Charge</Text>
+                  <Tag color={order.forwardingCharge ? 'orange' : 'default'} style={{ marginTop: 2 }}>
+                    {order.forwardingCharge ? 'Applicable' : 'Not Applicable'}
+                  </Tag>
+                </Col>
+              </Row>
+
+              {/* Financial Summary */}
+              <Row gutter={[16, 10]}>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Total Amount</Text>
+                  <Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{(order.totalAmount ?? 0).toLocaleString()}</Text>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Advance Paid</Text>
+                  <Text strong style={{ color: '#52c41a', fontSize: 16 }}>₹{(order.advance ?? 0).toLocaleString()}</Text>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Expected Delivery</Text>
+                  <Text strong style={{ color: textColor }}>
+                    {order.expectedDelivery
+                      ? new Date(order.expectedDelivery).toLocaleDateString('en-IN', { dateStyle: 'medium' })
+                      : '—'}
+                  </Text>
+                </Col>
+              </Row>
+
+              {/* Contact Info */}
+              <Row gutter={[16, 10]}>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Contact Person</Text>
+                  <Text strong style={{ color: textColor }}>{order.contactPerson || '—'}</Text>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Phone</Text>
+                  <Text strong style={{ color: textColor }}>{order.phone || '—'}</Text>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Location</Text>
+                  <Text strong style={{ color: textColor }}>{order.location || '—'}</Text>
+                </Col>
+              </Row>
+
+              {/* Payment Proofs */}
+              <div>
+                <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 10 }}>
+                  Payment Proof {order.paymentProofs?.length > 0 && `(${order.paymentProofs.length} file${order.paymentProofs.length > 1 ? 's' : ''})`}
+                </Text>
+                {(order.paymentProofs || []).length > 0 ? (
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    {order.paymentProofs.map((file, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '8px 14px',
+                          borderRadius: 8,
+                          border: '1px solid #f0f0f0',
+                          background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa',
+                        }}
+                      >
+                        <Space size={8}>
+                          <FileTextOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
+                          <Text style={{ fontSize: 12 }}>{file.name || `Proof ${idx + 1}`}</Text>
+                          {file.size && (
+                            <Text type="secondary" style={{ fontSize: 11 }}>
+                              ({(file.size / 1024).toFixed(0)} KB)
+                            </Text>
+                          )}
+                        </Space>
+                        <Space size={6}>
+                          <Button
+                            size="small"
+                            icon={<EyeOutlined />}
+                            onClick={() => window.open(file.url || '#', '_blank')}
+                          >
+                            View
+                          </Button>
+                          <Button
+                            size="small"
+                            icon={<DownloadOutlined />}
+                            type="primary"
+                            style={{ background: '#B11E6A', borderColor: '#B11E6A' }}
+                            href={file.url || '#'}
+                            download={file.name}
+                          >
+                            Download
+                          </Button>
+                        </Space>
+                      </div>
+                    ))}
+                  </Space>
+                ) : (
+                  <div style={{ padding: '12px 16px', borderRadius: 8, border: '1px dashed #d9d9d9', textAlign: 'center' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>No payment proof attached</Text>
+                  </div>
+                )}
+              </div>
+
+              {/* Operation Readiness */}
+              <div>
+                <Text style={{ fontSize: 11, color: '#999', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                  Operation Readiness
+                </Text>
+                <Progress percent={progressPercent} strokeColor="#B11E6A" status={readyToAssign ? 'success' : 'active'} />
+              </div>
+
+            </Space>
           </Card>
         </Col>
       </Row>
@@ -532,6 +731,104 @@ export default function OperationDetail() {
           },
         ]}
       />
+      <Modal
+        open={assignModalOpen}
+        onCancel={() => setAssignModalOpen(false)}
+        title={
+          <Space>
+            <TeamOutlined style={{ color: '#B11E6A' }} />
+            <span>Assign Task</span>
+          </Space>
+        }
+        footer={null}
+        width={600}
+        destroyOnClose
+      >
+        <Form form={assignModalForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="Task Name" name="taskName">
+                <Input placeholder="e.g. Box filling / sticker placing" style={{ borderRadius: 8 }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="Task Type" name="taskType">
+                <Select
+                  placeholder="Select or add task type"
+                  dropdownRender={(menu) => (
+                    <>
+                      {menu}
+                      <Divider style={{ margin: '8px 0' }} />
+                      <Space style={{ padding: '0 8px 4px' }}>
+                        <Input
+                          placeholder="Add new task"
+                          ref={inputRef}
+                          value={newTaskValue}
+                          onChange={(e) => setNewTaskValue(e.target.value)}
+                          onKeyDown={(e) => e.stopPropagation()}
+                          style={{ width: 120 }}
+                        />
+                        <Button type="text" icon={<PlusOutlined />} onClick={addTaskOption}>
+                          Add
+                        </Button>
+                      </Space>
+                    </>
+                  )}
+                >
+                  {taskOptions.map((item) => (
+                    <Option key={item} value={item.toLowerCase()}>{item}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="Order ID" name="orderId">
+                <Input readOnly style={{ borderRadius: 8, background: mutedBg }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="Product" name="product">
+                <Input readOnly style={{ borderRadius: 8, background: mutedBg }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="Printing" name="printing">
+                <Select placeholder="Select printing type">
+                  <Option value="sticker_printing">Sticker Printing</Option>
+                  <Option value="box">Box</Option>
+                  <Option value="frosted_ziplock">Frosted Ziplock</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="Assign To" name="assignee">
+                <Select>
+                  {operationEmployees.map((emp) => (
+                    <Option key={emp.key} value={emp.name}>{emp.name}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+            <Button
+              type="primary"
+              block
+              style={{
+                height: 42,
+                borderRadius: 10,
+                background: 'linear-gradient(135deg,#B11E6A,#D85C9E)',
+                border: 'none',
+                fontWeight: 600,
+                boxShadow: '0 4px 15px rgba(177,30,106,0.3)',
+              }}
+              onClick={() => setAssignModalOpen(false)}
+            >
+              Create and Assign Task
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }
