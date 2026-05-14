@@ -58,6 +58,13 @@ export default function Financial() {
     { key: 2, name: 'BioLife Ltd', phone: '+91 87654 32109' },
   ];
 
+  const suppliersData = {
+    'ChemCo India': { phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH', bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234' },
+    'BioLife Ltd': { phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN', bank: 'SBI — A/C 30112345678 | IFSC SBIN0001234' },
+    'PlastiPack': { phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL', bank: 'ICICI — A/C 007601234567 | IFSC ICIC0000076' },
+    'BoxWorld': { phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA', bank: 'Axis Bank — A/C 912010012345678 | IFSC UTIB0000001' },
+  };
+
   const handleProcessPayment = (values) => {
     const paidAmt = values.amount_paid || selectedForPayment.amount;
     const remaining = selectedForPayment.amount - paidAmt;
@@ -217,7 +224,7 @@ export default function Financial() {
                                 View File
                               </Button>
                             )}
-                            {r.status === 'Pending' ? (
+                            {r.status === 'Pending' && (
                               <>
                                 <Button
                                   size="small"
@@ -243,8 +250,6 @@ export default function Financial() {
                                   Reject
                                 </Button>
                               </>
-                            ) : (
-                              <Tag color={r.status === 'Approved' ? 'success' : 'error'} style={{ borderRadius: 12 }}>{r.status}</Tag>
                             )}
                           </Space>
                         )
@@ -515,27 +520,45 @@ export default function Financial() {
         width={600}
         centered
       >
-        {viewRequest && (
-          <div style={{ marginTop: 16 }}>
-            <Descriptions bordered size="small" column={2}>
-              <Descriptions.Item label="Date">{viewRequest.date}</Descriptions.Item>
-              <Descriptions.Item label="Status"><Tag color={getStatusColor(viewRequest.status)}>{viewRequest.status}</Tag></Descriptions.Item>
-              <Descriptions.Item label="Bill No">{viewRequest.bill_no}</Descriptions.Item>
-              <Descriptions.Item label="Payment Terms" span={2}>{viewRequest.payment_terms || 'N/A'}</Descriptions.Item>
-            </Descriptions>
-            {viewRequest.stock_context && (
-               <>
-                 <Divider orientation="left">Inventory Impact</Divider>
-                 <Descriptions size="small" column={2}>
-                   <Descriptions.Item label="Current Stock">{viewRequest.stock_context.current} {viewRequest.unit}</Descriptions.Item>
-                   <Descriptions.Item label="Min. Requirement">{viewRequest.stock_context.min} {viewRequest.unit}</Descriptions.Item>
-                 </Descriptions>
-               </>
-            )}
-            <Divider />
-            <Button block type="primary" onClick={() => setViewRequest(null)}>Close</Button>
-          </div>
-        )}
+        {viewRequest && (() => {
+          const sup = suppliersData[viewRequest.supplier] || null;
+          return (
+            <div style={{ marginTop: 16 }}>
+              <Descriptions bordered size="small" column={2}>
+                <Descriptions.Item label="Date">{viewRequest.date}</Descriptions.Item>
+                <Descriptions.Item label="Status"><Tag color={getStatusColor(viewRequest.status)}>{viewRequest.status}</Tag></Descriptions.Item>
+                <Descriptions.Item label="Bill No">{viewRequest.bill_no}</Descriptions.Item>
+                <Descriptions.Item label="Payment Terms" span={2}>{viewRequest.payment_terms || 'N/A'}</Descriptions.Item>
+              </Descriptions>
+              {viewRequest.supplier && (
+                <>
+                  <Divider orientation="left" style={{ marginTop: 16 }}>Supplier / Vendor Details</Divider>
+                  <Descriptions bordered size="small" column={2}>
+                    <Descriptions.Item label="Name"><Text strong style={{ color: '#B11E6A' }}>{viewRequest.supplier}</Text></Descriptions.Item>
+                    <Descriptions.Item label="Phone">{sup?.phone || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Email">{sup?.email || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Address" span={2}>{sup?.address || '—'}</Descriptions.Item>
+                  </Descriptions>
+                  <Divider orientation="left" style={{ marginTop: 16 }}>Bank Details</Divider>
+                  <Descriptions bordered size="small" column={1}>
+                    <Descriptions.Item label="Bank / A/C">{sup?.bank || '—'}</Descriptions.Item>
+                  </Descriptions>
+                </>
+              )}
+              {viewRequest.stock_context && (
+                 <>
+                   <Divider orientation="left">Inventory Impact</Divider>
+                   <Descriptions size="small" column={2}>
+                     <Descriptions.Item label="Current Stock">{viewRequest.stock_context.current} {viewRequest.unit}</Descriptions.Item>
+                     <Descriptions.Item label="Min. Requirement">{viewRequest.stock_context.min} {viewRequest.unit}</Descriptions.Item>
+                   </Descriptions>
+                 </>
+              )}
+              <Divider />
+              <Button block type="primary" onClick={() => setViewRequest(null)}>Close</Button>
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );

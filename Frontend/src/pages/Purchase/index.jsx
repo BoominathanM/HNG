@@ -28,10 +28,10 @@ const inventory = [
 ];
 
 const suppliersList = [
-  { id: 1, name: 'ChemCo India', phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH' },
-  { id: 2, name: 'BioLife Ltd', phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN' },
-  { id: 3, name: 'PlastiPack', phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL' },
-  { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA' },
+  { id: 1, name: 'ChemCo India', phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH', bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234' },
+  { id: 2, name: 'BioLife Ltd', phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN', bank: 'SBI — A/C 30112345678 | IFSC SBIN0001234' },
+  { id: 3, name: 'PlastiPack', phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL', bank: 'ICICI — A/C 007601234567 | IFSC ICIC0000076' },
+  { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA', bank: 'Axis Bank — A/C 912010012345678 | IFSC UTIB0000001' },
 ];
 
 const vendorsList = [
@@ -112,6 +112,14 @@ export default function Purchase() {
   const [raiseRequestScanLoading, setRaiseRequestScanLoading] = useState(false);
   const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
   const [raiseRequestForm] = Form.useForm();
+
+  /* ── WhatsApp sent tracking for stock status flow ── */
+  const [whatsappSentItems, setWhatsappSentItems] = useState(new Set());
+
+  /* ── Place Order modal ── */
+  const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
+  const [selectedPlaceOrderItem, setSelectedPlaceOrderItem] = useState(null);
+  const [selectedPlaceOrderReq, setSelectedPlaceOrderReq] = useState(null);
 
   /* ── Request Order payment terms watch ── */
   const [requestOrderPaymentTerms, setRequestOrderPaymentTerms] = useState('');
@@ -474,16 +482,7 @@ export default function Purchase() {
                           { title: 'Current Stock', dataIndex: 'current', key: 'current', render: (v, r) => <Text style={{ color: v <= r.min ? '#ff4d4f' : 'inherit' }}>{v} {r.unit}</Text> },
                           { title: 'Min. Required', dataIndex: 'min', key: 'min', render: (v, r) => `${v} ${r.unit}` },
                           {
-                            title: 'Status',
-                            key: 'status',
-                            render: (_, r) => (
-                              <Tag color={r.current <= r.min ? 'error' : 'success'} style={{ borderRadius: 12 }}>
-                                {r.current <= r.min ? 'Low Stock' : 'Healthy'}
-                              </Tag>
-                            )
-                          },
-                          {
-                            title: 'Request Status',
+                            title: 'Quotation Status',
                             key: 'req_status',
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
@@ -495,16 +494,23 @@ export default function Purchase() {
                           {
                             title: 'Action',
                             key: 'action',
-                            render: (_, r) => (
-                              <Space size={6}>
+                            render: (_, r) => {
+                              const req = raisedRequests.find(req => req.item === r.name);
+                              const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === req?.key);
+                              if (orderAlreadyRaised) return <Tag color="success" style={{ borderRadius: 12 }}>Order Placed</Tag>;
+                              if (req?.status === 'Approved') return (
                                 <Button
                                   size="small"
-                                  icon={<WhatsAppOutlined />}
-                                  onClick={() => handleOpenRequest(r)}
-                                  style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
+                                  type="primary"
+                                  icon={<ShoppingOutlined />}
+                                  onClick={() => { setSelectedPlaceOrderReq(req); setSelectedPlaceOrderItem(r); setShowPlaceOrderModal(true); }}
+                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
                                 >
-                                  Ask Quotation
+                                  Place Order
                                 </Button>
+                              );
+                              if (req?.status === 'Pending') return <Tag color="processing" style={{ borderRadius: 12 }}>Request Pending</Tag>;
+                              if (whatsappSentItems.has(r.key)) return (
                                 <Button
                                   size="small"
                                   type="primary"
@@ -514,8 +520,18 @@ export default function Purchase() {
                                 >
                                   Raise Request
                                 </Button>
-                              </Space>
-                            )
+                              );
+                              return (
+                                <Button
+                                  size="small"
+                                  icon={<WhatsAppOutlined />}
+                                  onClick={() => handleOpenRequest(r)}
+                                  style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
+                                >
+                                  Ask Quotation
+                                </Button>
+                              );
+                            }
                           }
                         ]}
                       />
@@ -533,7 +549,7 @@ export default function Purchase() {
                       </div>
                       <Table
                         size="small"
-                        dataSource={raisedRequests}
+                        dataSource={raisedRequests.filter(r => r.status !== 'Rejected')}
                         pagination={{ pageSize: 8 }}
                         locale={{ emptyText: 'No purchase requests raised yet. Go to Stock Status tab to raise a request.' }}
                         columns={[
@@ -543,10 +559,10 @@ export default function Purchase() {
                           { title: 'Qty', key: 'qty', render: (_, r) => `${r.qty} ${r.unit}` },
                           { title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', render: v => <Text style={{ fontSize: 11 }}>{v}</Text> },
                           {
-                            title: 'Status', dataIndex: 'status', key: 'status',
+                            title: 'Quotation Status', dataIndex: 'status', key: 'status',
                             render: v => {
-                              const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
-                              return <Tag color={colorMap[v]} style={{ borderRadius: 12 }}>{v}</Tag>;
+                              const colorMap = { Approved: 'success', Pending: 'processing' };
+                              return <Tag color={colorMap[v] || 'default'} style={{ borderRadius: 12 }}>{v}</Tag>;
                             }
                           },
                           {
@@ -577,7 +593,6 @@ export default function Purchase() {
                             title: 'Action', key: 'action',
                             render: (_, r) => {
                               const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === r.key);
-                              if (r.status === 'Rejected') return <Tag color="error" style={{ borderRadius: 12 }}>Rejected</Tag>;
                               if (orderAlreadyRaised) return <Tag color="success" style={{ borderRadius: 12 }}>Order Sent</Tag>;
                               return (
                                 <Button
@@ -1131,6 +1146,9 @@ export default function Purchase() {
                 const msg = `Hello, I would like to request a quotation for:\n\n*Product:* ${values.product}\n*Quantity:* ${values.qty || 'N/A'} ${values.unit || ''}\n\nPlease advise on pricing and availability.`;
                 const phone = selectedSupplier ? selectedSupplier.phone.replace(/\D/g, '') : '';
                 window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                if (selectedProduct?.key) {
+                  setWhatsappSentItems(prev => new Set(prev).add(selectedProduct.key));
+                }
                 setShowAddPurchaseModal(false);
                 purchaseForm.resetFields();
                 setSelectedProduct(null);
@@ -2205,6 +2223,117 @@ export default function Purchase() {
             Capture Photo
           </Button>
         </div>
+      </Modal>
+
+      {/* Place Order Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <ShoppingOutlined style={{ color: '#fff', fontSize: 20 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Place Order</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Review order & supplier details, then send order via WhatsApp</div>
+            </div>
+          </div>
+        }
+        open={showPlaceOrderModal}
+        onCancel={() => { setShowPlaceOrderModal(false); setSelectedPlaceOrderItem(null); setSelectedPlaceOrderReq(null); }}
+        footer={null}
+        width={540}
+        centered
+      >
+        {selectedPlaceOrderReq && (() => {
+          const sup = suppliersList.find(s => s.name === selectedPlaceOrderReq.supplier);
+          return (
+            <div style={{ marginTop: 8 }}>
+              {/* Order Details */}
+              <div style={{ padding: '12px 16px', background: isDark ? '#0d2010' : '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 10, marginBottom: 16 }}>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>ORDER DETAILS</Text>
+                <Row gutter={[12, 8]}>
+                  <Col span={12}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>ITEM</Text>
+                    <div><Text strong>{selectedPlaceOrderReq.item}</Text></div>
+                  </Col>
+                  <Col span={12}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>SUPPLIER</Text>
+                    <div><Text strong style={{ color: '#B11E6A' }}>{selectedPlaceOrderReq.supplier}</Text></div>
+                  </Col>
+                  <Col span={12}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>QUANTITY</Text>
+                    <div><Text strong>{selectedPlaceOrderReq.qty} {selectedPlaceOrderReq.unit}</Text></div>
+                  </Col>
+                  <Col span={12}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>PAYMENT TERMS</Text>
+                    <div><Text strong style={{ fontSize: 11 }}>{selectedPlaceOrderReq.payment_terms}</Text></div>
+                  </Col>
+                  <Col span={12}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>REQUEST DATE</Text>
+                    <div><Text strong>{selectedPlaceOrderReq.date}</Text></div>
+                  </Col>
+                </Row>
+              </div>
+
+              {/* Supplier / Vendor Details */}
+              {sup && (
+                <div style={{ padding: '12px 16px', background: isDark ? '#120b0e' : '#fff8fb', border: '1px solid #B11E6A33', borderRadius: 10, marginBottom: 16 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>SUPPLIER / VENDOR DETAILS</Text>
+                  <Row gutter={[12, 8]}>
+                    <Col span={12}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>PHONE / WHATSAPP</Text>
+                      <div>
+                        <WhatsAppOutlined style={{ color: '#25D366', fontSize: 12, marginRight: 4 }} />
+                        <Text strong style={{ fontSize: 12 }}>{sup.phone}</Text>
+                      </div>
+                    </Col>
+                    <Col span={12}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>EMAIL</Text>
+                      <div><Text style={{ fontSize: 12, color: '#B11E6A' }}>{sup.email}</Text></div>
+                    </Col>
+                    <Col span={24}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>ADDRESS</Text>
+                      <div><Text style={{ fontSize: 12 }}>{sup.address}</Text></div>
+                    </Col>
+                    {sup.bank && (
+                      <Col span={24}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>BANK DETAILS</Text>
+                        <div style={{ padding: '6px 10px', background: isDark ? '#1a1a2e' : '#fafafa', borderRadius: 6, border: `1px solid ${isDark ? '#2a2d40' : '#e8e8e8'}`, marginTop: 4 }}>
+                          <Text style={{ fontSize: 12, fontWeight: 600 }}>{sup.bank}</Text>
+                        </div>
+                      </Col>
+                    )}
+                  </Row>
+                </div>
+              )}
+
+              {/* Send via WhatsApp */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button
+                  onClick={() => { setShowPlaceOrderModal(false); setSelectedPlaceOrderItem(null); setSelectedPlaceOrderReq(null); }}
+                  style={{ flex: 1, height: 44, borderRadius: 10 }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  icon={<WhatsAppOutlined />}
+                  style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#25D366,#128C7E)', border: 'none', color: '#fff', fontWeight: 700, fontSize: 14 }}
+                  onClick={() => {
+                    const msg = `*Purchase Order*\n\n*Item:* ${selectedPlaceOrderReq.item}\n*Quantity:* ${selectedPlaceOrderReq.qty} ${selectedPlaceOrderReq.unit}\n*Payment Terms:* ${selectedPlaceOrderReq.payment_terms}\n*Date:* ${selectedPlaceOrderReq.date}\n\nKindly confirm the order and advise on delivery timeline.`;
+                    const phone = sup ? sup.phone.replace(/\D/g, '') : '';
+                    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                    message.success('Order sent via WhatsApp');
+                    setShowPlaceOrderModal(false);
+                    setSelectedPlaceOrderItem(null);
+                    setSelectedPlaceOrderReq(null);
+                  }}
+                >
+                  Send Order via WhatsApp
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       {/* Payment Document View Modal */}

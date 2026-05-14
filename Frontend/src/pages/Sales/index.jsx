@@ -440,6 +440,12 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const qty = Form.useWatch([fieldName, name, 'qty']);
   const rate = Form.useWatch([fieldName, name, 'rate']);
 
+  const form = Form.useFormInstance();
+  const initQty = form?.getFieldValue([fieldName, name, 'qty']);
+  const initRate = form?.getFieldValue([fieldName, name, 'rate']);
+  const [isLocalEdit, setIsLocalEdit] = React.useState(initQty === undefined && initRate === undefined);
+  const isItemDisabled = disabled || !isLocalEdit;
+
   return (
     <div
       key={key}
@@ -465,41 +471,41 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           </Col>
 
           {/* Name / Kit Type Select */}
-          <Col flex="auto">
+          <Col flex="none" style={{ width: 220 }}>
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
             {!isKit ? (
               <Form.Item {...rest} name={[name, 'name']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={PRODUCT_TYPE_OPTIONS} placeholder="Select Product" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={PRODUCT_TYPE_OPTIONS} placeholder="Select Product" disabled={isItemDisabled} size="small" />
               </Form.Item>
             ) : (
               <Form.Item {...rest} name={[name, 'kitType']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={KIT_CATEGORIES} placeholder="Select Kit Type" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={KIT_CATEGORIES} placeholder="Select Kit Type" disabled={isItemDisabled} size="small" />
               </Form.Item>
             )}
           </Col>
 
           {/* Qty, Rate, GST & Sticker/Printing */}
-          <Col flex="none" style={{ minWidth: 320 }}>
+          <Col flex="auto">
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST / STICKER/PRINTING</Text>
-            <Row gutter={4}>
+            <Row gutter={8}>
               <Col span={5}>
                 <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
-                  <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
+                  <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
                 </Form.Item>
               </Col>
               <Col span={6}>
                 <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
-                  <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={disabled} size="small" />
+                  <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={isItemDisabled} size="small" />
                 </Form.Item>
               </Col>
               <Col span={6}>
                 <Form.Item {...rest} name={[name, 'gst']} style={{ marginBottom: 0 }}>
-                  <InputNumber placeholder="GST %" style={{ width: '100%' }} min={0} disabled={disabled} size="small" />
+                  <InputNumber placeholder="GST %" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
                 </Form.Item>
               </Col>
               <Col span={7}>
                 <Form.Item {...rest} name={[name, 'sticker']} style={{ marginBottom: 0 }}>
-                  <Select size="small" placeholder="Sticker/Printing">
+                  <Select size="small" placeholder="Sticker/Printing" disabled={isItemDisabled}>
                     <Option value="YES">Yes</Option>
                     <Option value="NO">No</Option>
                     <Option value="PRINTING">Printing</Option>
@@ -517,10 +523,17 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             </Text>
           </Col>
 
-          {/* Remove Button */}
+          {/* Action Buttons */}
           {!disabled && (
             <Col flex="none">
-              <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} size="small" />
+              <Space>
+                {!isLocalEdit ? (
+                  <Button type="text" icon={<EditOutlined />} onClick={() => setIsLocalEdit(true)} size="small" />
+                ) : (
+                  <Button type="text" icon={<CheckOutlined />} onClick={() => setIsLocalEdit(false)} size="small" style={{ color: '#52c41a' }} />
+                )}
+                <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} size="small" />
+              </Space>
             </Col>
           )}
         </Row>
@@ -538,46 +551,46 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             {/* Row 1: Display Unit, Logo, Sticker / Printing, Packing Material */}
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'unit']} label={<span style={{ fontSize: 11 }}>Display Unit</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'sticker']} label={<span style={{ fontSize: 11 }}>Sticker / Printing</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }, { value: 'PRINTING', label: 'Printing' }]} placeholder="Sticker / Printing?" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }, { value: 'PRINTING', label: 'Printing' }]} placeholder="Sticker / Printing?" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </Col>
 
             {/* Row 2: Packing Material, Material Category, Brand, Product */}
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'productType']} label={<span style={{ fontSize: 11 }}>Product</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[]} placeholder="Select / Add product" disabled={disabled} size="small" />
+                <SelectWithAdd defaultOptions={[]} placeholder="Select / Add product" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </Col>
 
             {/* Row 3: Other Specs */}
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specs</span>} style={{ marginBottom: 0 }}>
-                <Input placeholder="e.g. Special handle" size="small" />
+                <Input placeholder="e.g. Special handle" size="small" disabled={isItemDisabled} />
               </Form.Item>
             </Col>
 
@@ -587,20 +600,20 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   <Text strong style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Kit Contents:</Text>
                   {kitType === 'DENTAL_KIT' && (
                     <Row gutter={8}>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'brush']} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small">{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'paste']} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small">{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small">{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'brush']} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'paste']} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
+                      <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
                     </Row>
                   )}
                   {kitType === 'SHAVING_KIT' && (
                     <Row gutter={8}>
-                      <Col span={12}><Form.Item {...rest} name={[name, 'razor']} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small">{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r.name} value={r.name}>{r.name}</Option>)}</Select></Form.Item></Col>
-                      <Col span={12}><Form.Item {...rest} name={[name, 'gel']} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small">{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g.name} value={g.name}>{g.name}</Option>)}</Select></Form.Item></Col>
+                      <Col span={12}><Form.Item {...rest} name={[name, 'razor']} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small" disabled={isItemDisabled}>{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r.name} value={r.name}>{r.name}</Option>)}</Select></Form.Item></Col>
+                      <Col span={12}><Form.Item {...rest} name={[name, 'gel']} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small" disabled={isItemDisabled}>{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g.name} value={g.name}>{g.name}</Option>)}</Select></Form.Item></Col>
                     </Row>
                   )}
                   {kitType === 'CARE_KIT' && (
                     <Form.Item {...rest} name={[name, 'careProducts']} style={{ marginBottom: 0 }}>
-                      <Select mode="multiple" placeholder="Select Products" size="small">{CARE_KIT_PRODUCTS.products.map(p => <Option key={p} value={p}>{p}</Option>)}</Select>
+                      <Select mode="multiple" placeholder="Select Products" size="small" disabled={isItemDisabled}>{CARE_KIT_PRODUCTS.products.map(p => <Option key={p} value={p}>{p}</Option>)}</Select>
                     </Form.Item>
                   )}
                 </div>
@@ -2946,148 +2959,233 @@ export default function Sales() {
                 const latestCustomerOrder = (isDetail && record.customerId)
                   ? ordersData.filter(o => o.hotelName === record.hotelName).slice(-1)[0]
                   : null;
-                return (
-                <Card
-                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                  title={
-                    <Space>
-                      <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
-                      <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                      {(isDetail && record.customerId) ? (
-                        <>
-                          <span>Latest Order Details</span>
-                          {latestCustomerOrder && (
-                            <Tag style={{ background: '#1890ff18', color: '#1890ff', border: '1px solid #1890ff44', borderRadius: 20, fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
-                              {latestCustomerOrder.oid}
-                            </Tag>
-                          )}
-                        </>
-                      ) : (
-                        <span>Order Details — Products</span>
-                      )}
-                    </Space>
-                  }
-                >
-                  {isDetail ? (
-                    <>
-                      {/* Personalization badge */}
-                      {record.productType && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'rgba(114,46,209,0.06)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.12)' }}>
-                          <GiftOutlined style={{ color: '#722ed1' }} />
-                          <Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 600 }}>
-                            {Array.isArray(record.productType)
-                              ? record.productType.map(pt => pt === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product').join(' & ')
-                              : (record.productType === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product')}
-                          </Text>
-                          {record.displayUnit && (
+
+                const hasKit = watchedProductType?.includes('PERSONALIZED_KIT');
+                const hasSeparate = watchedProductType?.includes('SEPARATE_PRODUCT');
+                const showKitCard = hasKit || (!hasKit && !hasSeparate);
+                const showSeparateCard = hasSeparate || (!hasKit && !hasSeparate);
+
+                if (isDetail) {
+                  return (
+                    <Card
+                      style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                      title={
+                        <Space>
+                          <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
+                          <ShoppingCartOutlined style={{ color: '#1890ff' }} />
+                          {(record.customerId) ? (
                             <>
-                              <span style={{ color: '#ccc' }}>·</span>
-                              <Text style={{ fontSize: 12, color: '#722ed1' }}>Display Unit: {record.displayUnit.replace(/_/g, ' ')}</Text>
+                              <span>Latest Order Details</span>
+                              {latestCustomerOrder && (
+                                <Tag style={{ background: '#1890ff18', color: '#1890ff', border: '1px solid #1890ff44', borderRadius: 20, fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
+                                  {latestCustomerOrder.oid}
+                                </Tag>
+                              )}
                             </>
+                          ) : (
+                            <span>Order Details — Products</span>
                           )}
-                        </div>
-                      )}
-
-                      {/* Per-product cards */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                        {(record.products || []).map((p, i) => (
-                          <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
-                            {/* Product header row */}
-                            <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                  <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>{i + 1}</span>
-                                </div>
-                                <div>
-                                  <Text type="secondary" style={{ fontSize: 11 }}>PRODUCT</Text>
-                                  <Text strong style={{ display: 'block', fontSize: 15 }}>{p.name || '—'}</Text>
-                                </div>
-                              </div>
-                              <div style={{ textAlign: 'right' }}>
-                                <Text strong style={{ display: 'block', fontSize: 20, color: '#B11E6A', lineHeight: 1.2 }}>
-                                  ₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}
-                                </Text>
-                                <Text type="secondary" style={{ fontSize: 12 }}>
-                                  {p.qty || 0} pcs × ₹{p.rate || 0}
-                                </Text>
-                              </div>
-                            </div>
-
-                            {/* Specifications */}
-                            {p.specs && typeof p.specs === 'object' && Object.values(p.specs).some(Boolean) && (
-                              <div style={{ padding: '14px 18px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
-                                <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 12 }}>SPECIFICATIONS</Text>
-                                <Row gutter={[12, 14]}>
-                                  {p.specs.logo && (
-                                    <Col xs={12} sm={8}>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Logo</Text>
-                                      <Tag color={p.specs.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
-                                        {p.specs.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}
-                                      </Tag>
-                                    </Col>
-                                  )}
-                                  {p.specs.sticker && (
-                                    <Col xs={12} sm={8}>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Sticker / Printing</Text>
-                                      <Tag color={p.specs.sticker === 'YES' ? 'blue' : p.specs.sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
-                                        {p.specs.sticker === 'YES' ? '✓ Yes' : p.specs.sticker === 'PRINTING' ? 'Printing' : '✗ No'}
-                                      </Tag>
-                                    </Col>
-                                  )}
-                                  {p.specs.packingMaterial && (
-                                    <Col xs={12} sm={8}>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Packing Material</Text>
-                                      <Text strong style={{ fontSize: 13 }}>{p.specs.packingMaterial}</Text>
-                                    </Col>
-                                  )}
-                                  {p.specs.materialCategory && (
-                                    <Col xs={12} sm={8}>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Material Category</Text>
-                                      <Tag
-                                        color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'}
-                                        style={{ borderRadius: 20, fontSize: 12 }}
-                                      >
-                                        {p.specs.materialCategory}
-                                      </Tag>
-                                    </Col>
-                                  )}
-                                  {p.specs.brand && (
-                                    <Col xs={12} sm={8}>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Brand</Text>
-                                      <Text strong style={{ fontSize: 13 }}>{p.specs.brand}</Text>
-                                    </Col>
-                                  )}
-                                  {p.specs.product && (
-                                    <Col xs={12} sm={8}>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Product Type</Text>
-                                      <Tag color="orange" style={{ borderRadius: 20, fontSize: 12 }}>{p.specs.product}</Tag>
-                                    </Col>
-                                  )}
-                                </Row>
-                              </div>
+                        </Space>
+                      }
+                    >
+                      <>
+                        {/* Personalization badge */}
+                        {record.productType && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'rgba(114,46,209,0.06)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.12)' }}>
+                            <GiftOutlined style={{ color: '#722ed1' }} />
+                            <Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 600 }}>
+                              {Array.isArray(record.productType)
+                                ? record.productType.map(pt => pt === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product').join(' & ')
+                                : (record.productType === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product')}
+                            </Text>
+                            {record.displayUnit && (
+                              <>
+                                <span style={{ color: '#ccc' }}>·</span>
+                                <Text style={{ fontSize: 12, color: '#722ed1' }}>Display Unit: {record.displayUnit.replace(/_/g, ' ')}</Text>
+                              </>
                             )}
                           </div>
-                        ))}
-                      </div>
+                        )}
 
-                      {/* Total footer */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, padding: '14px 18px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
-                        <div>
-                          <Text type="secondary" style={{ fontSize: 12 }}>{(record.products || []).length} product{(record.products || []).length !== 1 ? 's' : ''}</Text>
+                        {/* Per-product cards */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                          {(record.products || []).map((p, i) => (
+                            <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
+                              {/* Product header row */}
+                              <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>{i + 1}</span>
+                                  </div>
+                                  <div>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>PRODUCT</Text>
+                                    <Text strong style={{ display: 'block', fontSize: 15 }}>{p.name || '—'}</Text>
+                                  </div>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <Text strong style={{ display: 'block', fontSize: 20, color: '#B11E6A', lineHeight: 1.2 }}>
+                                    ₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}
+                                  </Text>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    {p.qty || 0} pcs × ₹{p.rate || 0}
+                                  </Text>
+                                </div>
+                              </div>
+
+                              {/* Specifications */}
+                              {p.specs && typeof p.specs === 'object' && Object.values(p.specs).some(Boolean) && (
+                                <div style={{ padding: '14px 18px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
+                                  <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 12 }}>SPECIFICATIONS</Text>
+                                  <Row gutter={[12, 14]}>
+                                    {p.specs.logo && (
+                                      <Col xs={12} sm={8}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Logo</Text>
+                                        <Tag color={p.specs.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
+                                          {p.specs.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}
+                                        </Tag>
+                                      </Col>
+                                    )}
+                                    {p.specs.sticker && (
+                                      <Col xs={12} sm={8}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Sticker / Printing</Text>
+                                        <Tag color={p.specs.sticker === 'YES' ? 'blue' : p.specs.sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
+                                          {p.specs.sticker === 'YES' ? '✓ Yes' : p.specs.sticker === 'PRINTING' ? 'Printing' : '✗ No'}
+                                        </Tag>
+                                      </Col>
+                                    )}
+                                    {p.specs.packingMaterial && (
+                                      <Col xs={12} sm={8}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Packing Material</Text>
+                                        <Text strong style={{ fontSize: 13 }}>{p.specs.packingMaterial}</Text>
+                                      </Col>
+                                    )}
+                                    {p.specs.materialCategory && (
+                                      <Col xs={12} sm={8}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Material Category</Text>
+                                        <Tag
+                                          color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'}
+                                          style={{ borderRadius: 20, fontSize: 12 }}
+                                        >
+                                          {p.specs.materialCategory}
+                                        </Tag>
+                                      </Col>
+                                    )}
+                                    {p.specs.brand && (
+                                      <Col xs={12} sm={8}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Brand</Text>
+                                        <Text strong style={{ fontSize: 13 }}>{p.specs.brand}</Text>
+                                      </Col>
+                                    )}
+                                    {p.specs.product && (
+                                      <Col xs={12} sm={8}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Product Type</Text>
+                                        <Tag color="orange" style={{ borderRadius: 20, fontSize: 12 }}>{p.specs.product}</Tag>
+                                      </Col>
+                                    )}
+                                  </Row>
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL ORDER VALUE</Text>
-                          <Text strong style={{ fontSize: 22, color: '#B11E6A' }}>₹{totalValue.toLocaleString()}</Text>
+
+                        {/* Total footer */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, padding: '14px 18px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
+                          <div>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{(record.products || []).length} product{(record.products || []).length !== 1 ? 's' : ''}</Text>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL ORDER VALUE</Text>
+                            <Text strong style={{ fontSize: 22, color: '#B11E6A' }}>₹{totalValue.toLocaleString()}</Text>
+                          </div>
                         </div>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <ProductHeaders />
-                      <ProductFormList fieldName="products" showSpecs={isAddLead || isAddCustomer} />
-                    </>
-                  )}
-                </Card>
+                      </>
+                    </Card>
+                  );
+                }
+
+                // EDIT MODE
+                return (
+                  <Form.List name="products">
+                    {(fields, { add, remove }) => {
+                      const kitFields = fields.filter(f => {
+                        const isKit = leadForm.getFieldValue(['products', f.name, 'isKit']);
+                        const kitType = leadForm.getFieldValue(['products', f.name, 'kitType']);
+                        return isKit || kitType;
+                      });
+                      const separateFields = fields.filter(f => {
+                        const isKit = leadForm.getFieldValue(['products', f.name, 'isKit']);
+                        const kitType = leadForm.getFieldValue(['products', f.name, 'kitType']);
+                        return !(isKit || kitType);
+                      });
+
+                      return (
+                        <>
+                          {showKitCard && (
+                            <Card
+                              style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                              title={
+                                <Space>
+                                  <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
+                                  <ShoppingCartOutlined style={{ color: '#1890ff' }} />
+                                  <span>{hasKit && hasSeparate ? 'Personalized Kit Order Details' : 'Order Details — Products'}</span>
+                                </Space>
+                              }
+                            >
+                              <ProductHeaders />
+                              {kitFields.map((field, index) => (
+                                <ProductItem
+                                  key={field.key}
+                                  field={field}
+                                  index={index}
+                                  remove={remove}
+                                  disabled={false}
+                                  fieldName="products"
+                                  showSpecs={isAddLead || isAddCustomer}
+                                  isDark={isDark}
+                                />
+                              ))}
+                              <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: true })} icon={<PlusOutlined />} block
+                                style={{ borderRadius: 10, height: 45, borderDashOffset: 4, marginTop: 8 }}>
+                                Add Kit Product
+                              </Button>
+                            </Card>
+                          )}
+
+                          {showSeparateCard && (
+                            <Card
+                              style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                              title={
+                                <Space>
+                                  <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
+                                  <ShoppingCartOutlined style={{ color: '#1890ff' }} />
+                                  <span>{hasKit && hasSeparate ? 'Separate Products Order Details' : 'Order Details — Products'}</span>
+                                </Space>
+                              }
+                            >
+                              <ProductHeaders />
+                              {separateFields.map((field, index) => (
+                                <ProductItem
+                                  key={field.key}
+                                  field={field}
+                                  index={index + kitFields.length}
+                                  remove={remove}
+                                  disabled={false}
+                                  fieldName="products"
+                                  showSpecs={isAddLead || isAddCustomer}
+                                  isDark={isDark}
+                                />
+                              ))}
+                              <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: false })} icon={<PlusOutlined />} block
+                                style={{ borderRadius: 10, height: 45, borderDashOffset: 4, marginTop: 8 }}>
+                                Add Separate Product
+                              </Button>
+                            </Card>
+                          )}
+                        </>
+                      );
+                    }}
+                  </Form.List>
                 );
               })()}
 
@@ -3145,8 +3243,6 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                   </Row>
-
-                  <DeliveryPaymentFields showUpload />
 
                   {/* Urgent / Emergency Deliveries (Partial) */}
                   <Divider style={{ margin: '16px 0 12px', fontSize: 12, color: '#ff4d4f', borderColor: 'rgba(255,77,79,0.2)' }}>
@@ -3221,6 +3317,8 @@ export default function Sales() {
                       </div>
                     )}
                   </Form.List>
+
+                  <DeliveryPaymentFields showUpload />
                 </Card>
               )}
 
