@@ -823,6 +823,7 @@ export default function Sales() {
   // Lead state
   const [editingLead, setEditingLead] = useState(null);
   const [leadForm] = Form.useForm();
+  const [editingSection, setEditingSection] = useState(null);
 
   // Quotation state
   const [quotationFromLead, setQuotationFromLead] = useState(null);
@@ -890,6 +891,7 @@ export default function Sales() {
   const openDetailNextScreen = (record) => {
     setEditingLead(null);
     setSelectedRecord(record);
+    setEditingSection(null);
     leadForm.resetFields();
     leadForm.setFieldsValue(prepareFormValues(record));
     setViewMode('detail');
@@ -947,6 +949,31 @@ export default function Sales() {
         setViewMode('table');
       }
     } catch (_) { }
+  };
+
+  const saveSectionEdit = (section) => {
+    const now = new Date().toISOString();
+    const fieldsBySection = {
+      hotel: ['hotelName', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
+      billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber', 'gstPercent'],
+      leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
+      leadJourney: ['followUpStep'],
+      personalization: ['productType', 'displayUnit'],
+      delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'paymentProofs'],
+    };
+    const values = leadForm.getFieldsValue(fieldsBySection[section]);
+    const updated = { ...selectedRecord, ...values };
+    if (section === 'leadStatus' && values.status && values.status !== selectedRecord.status) {
+      updated.statusHistory = [...(selectedRecord.statusHistory || []), { status: values.status, changedAt: now }];
+    }
+    setSelectedRecord(updated);
+    if (updated.customerId) {
+      setCustomersData(prev => prev.map(c => c.key === updated.key ? updated : c));
+    } else if (updated.leadId) {
+      setLeadsData(prev => prev.map(l => l.key === updated.key ? updated : l));
+    }
+    setEditingSection(null);
+    message.success('Section updated successfully');
   };
 
   const saveDraft = (lead) => {
@@ -2459,6 +2486,8 @@ export default function Sales() {
     const isAddCustomer = viewMode === 'add-customer';
     const record = selectedRecord || {};
     const totalValue = calcTotal(record.products);
+    // Show per-card edit buttons in both detail view AND when editing an existing record
+    const usePerCardEdit = isDetail || !!editingLead;
 
     const InfoRow = ({ label, value }) => (
       <div style={{ padding: '8px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}` }}>
@@ -2638,8 +2667,18 @@ export default function Sales() {
                     <span>Hotel / Company Information</span>
                   </Space>
                 }
+                extra={usePerCardEdit && (
+                  editingSection === 'hotel' ? (
+                    <Space size="small">
+                      <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('hotel')} style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Save</Button>
+                      <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                    </Space>
+                  ) : (
+                    <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('hotel')} style={{ borderRadius: 6 }}>Edit</Button>
+                  )
+                )}
               >
-                {isDetail ? (
+                {usePerCardEdit && editingSection !== 'hotel' ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ background: isDark ? 'transparent' : '#fff' }}>
                       <Descriptions.Item label="Hotel / Company" span={1}>{record.hotelName}</Descriptions.Item>
@@ -2800,8 +2839,18 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#52c41a' }} /><span>Billing & Address</span></Space>}
+                    extra={usePerCardEdit && (
+                      editingSection === 'billing' ? (
+                        <Space size="small">
+                          <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('billing')} style={{ background: '#52c41a', border: 'none', borderRadius: 6 }}>Save</Button>
+                          <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                        </Space>
+                      ) : (
+                        <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('billing')} style={{ borderRadius: 6 }}>Edit</Button>
+                      )
+                    )}
                   >
-                    {isDetail ? (
+                    {usePerCardEdit && editingSection !== 'billing' ? (
                       <Row gutter={[24, 12]}>
                         <Col xs={24} sm={12}><InfoRow label="Bill Type" value={record.billType === 'GST' ? 'GST Bill' : 'Non-GST'} /></Col>
                         {record.billType === 'GST' && (
@@ -2838,8 +2887,18 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><StarOutlined style={{ color: '#B11E6A' }} /><span>{isAddCustomer ? 'Customer Settings' : 'Lead Status'}</span></Space>}
+                    extra={usePerCardEdit && (
+                      editingSection === 'leadStatus' ? (
+                        <Space size="small">
+                          <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('leadStatus')} style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Save</Button>
+                          <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                        </Space>
+                      ) : (
+                        <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('leadStatus')} style={{ borderRadius: 6 }}>Edit</Button>
+                      )
+                    )}
                   >
-                    {!isDetail ? (
+                    {!usePerCardEdit || editingSection === 'leadStatus' ? (
                       <>
                         <Form.Item name="status" label="Status">
                           <SelectWithAdd
@@ -2912,14 +2971,34 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><CalendarOutlined style={{ color: '#722ed1' }} /><span>Lead Journey</span></Space>}
+                    extra={usePerCardEdit && (
+                      editingSection === 'leadJourney' ? (
+                        <Space size="small">
+                          <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('leadJourney')} style={{ background: '#722ed1', border: 'none', borderRadius: 6 }}>Save</Button>
+                          <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                        </Space>
+                      ) : (
+                        <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('leadJourney')} style={{ borderRadius: 6 }}>Edit</Button>
+                      )
+                    )}
                   >
-                    <Steps direction="vertical" size="small" current={record.followUpStep || 0} items={LEAD_STEPS} />
+                    {usePerCardEdit && editingSection === 'leadJourney' ? (
+                      <Form.Item name="followUpStep" label="Current Step">
+                        <Select style={{ width: '100%' }}>
+                          {LEAD_STEPS.map((step, idx) => (
+                            <Option key={idx} value={idx}>{step.title} — {step.description}</Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                    ) : (
+                      <Steps direction="vertical" size="small" current={record.followUpStep || 0} items={LEAD_STEPS} />
+                    )}
                   </Card>
                 </Col>
               </Row>
 
               {/* ── Personalization card — show for both ──────────── */}
-              {(isAddLead || isAddCustomer) && (
+              {(isAddLead || isAddCustomer || isDetail) && (
                 <Card
                   style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={
@@ -2929,28 +3008,59 @@ export default function Sales() {
                       <span>Personalization</span>
                     </Space>
                   }
+                  extra={usePerCardEdit && (
+                    editingSection === 'personalization' ? (
+                      <Space size="small">
+                        <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('personalization')} style={{ background: '#722ed1', border: 'none', borderRadius: 6 }}>Save</Button>
+                        <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                      </Space>
+                    ) : (
+                      <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('personalization')} style={{ borderRadius: 6 }}>Edit</Button>
+                    )
+                  )}
                 >
-                  <Row gutter={16}>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Product Selection" name="productType" rules={[{ required: true, message: 'Select product type' }]}>
-                        <SelectWithAdd
-                          mode="multiple"
-                          defaultOptions={PERSONALIZATION_OPTIONS}
-                          placeholder="Select product types"
-                        />
-                      </Form.Item>
-                    </Col>
-                    {watchedProductType?.includes('PERSONALIZED_KIT') && (
+                  {usePerCardEdit && editingSection !== 'personalization' ? (
+                    <Row gutter={[24, 12]}>
                       <Col xs={24} sm={12}>
-                        <Form.Item label="Display Unit" name="displayUnit" rules={[{ required: true, message: 'Select display unit' }]}>
+                        <InfoRow label="Product Selection" value={
+                          record.productType
+                            ? (Array.isArray(record.productType)
+                              ? record.productType.map(pt => PERSONALIZATION_OPTIONS.find(o => o.value === pt)?.label || pt).join(', ')
+                              : PERSONALIZATION_OPTIONS.find(o => o.value === record.productType)?.label || record.productType)
+                            : '—'
+                        } />
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <InfoRow label="Display Unit" value={
+                          record.displayUnit
+                            ? (DISPLAY_UNIT_OPTIONS.find(o => o.value === record.displayUnit)?.label || record.displayUnit)
+                            : '—'
+                        } />
+                      </Col>
+                    </Row>
+                  ) : (
+                    <Row gutter={16}>
+                      <Col xs={24} sm={12}>
+                        <Form.Item label="Product Selection" name="productType" rules={[{ required: true, message: 'Select product type' }]}>
                           <SelectWithAdd
-                            defaultOptions={DISPLAY_UNIT_OPTIONS}
-                            placeholder="Select display unit"
+                            mode="multiple"
+                            defaultOptions={PERSONALIZATION_OPTIONS}
+                            placeholder="Select product types"
                           />
                         </Form.Item>
                       </Col>
-                    )}
-                  </Row>
+                      {watchedProductType?.includes('PERSONALIZED_KIT') && (
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Display Unit" name="displayUnit" rules={[{ required: true, message: 'Select display unit' }]}>
+                            <SelectWithAdd
+                              defaultOptions={DISPLAY_UNIT_OPTIONS}
+                              placeholder="Select display unit"
+                            />
+                          </Form.Item>
+                        </Col>
+                      )}
+                    </Row>
+                  )}
                 </Card>
               )}
 
@@ -3223,8 +3333,8 @@ export default function Sales() {
                 </Card>
               )}
 
-              {/* ── Delivery & Payment ────────────── */}
-              {(isAddLead || isAddCustomer) && (
+              {/* ── Delivery & Payment — unified card ────────── */}
+              {(isAddLead || isAddCustomer || isDetail) && (
                 <Card
                   style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={
@@ -3234,7 +3344,72 @@ export default function Sales() {
                       <span>Delivery & Payment Details</span>
                     </Space>
                   }
+                  extra={usePerCardEdit && (
+                    editingSection === 'delivery' ? (
+                      <Space size="small">
+                        <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('delivery')} style={{ background: '#fa8c16', border: 'none', borderRadius: 6 }}>Save</Button>
+                        <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                      </Space>
+                    ) : (
+                      <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('delivery')} style={{ borderRadius: 6 }}>Edit</Button>
+                    )
+                  )}
                 >
+                  {usePerCardEdit && editingSection !== 'delivery' ? (
+                    <Row gutter={12}>
+                      <Col xs={24} sm={12}>
+                        <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>DELIVERY INFO</Text>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Delivery By</Text>
+                            <Text strong>{record.deliveryBy || '—'}</Text>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text>
+                            <Text strong>{record.transportationBy || '—'}</Text>
+                          </div>
+                          <Tag color={record.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>
+                            {record.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}
+                          </Tag>
+                        </div>
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.12)', height: '100%' }}>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>PAYMENT TERMS</Text>
+                          <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[record.paymentTerms] || record.paymentTerms || '—'}</Text>
+                          {record.paymentTerms === '50_ADVANCE_50_AFTER' && record.paymentReminderDate && (
+                            <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
+                              <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE PAYMENT DUE</Text>
+                              <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>
+                                {typeof record.paymentReminderDate === 'string'
+                                  ? record.paymentReminderDate
+                                  : record.paymentReminderDate?.format?.('DD/MM/YYYY') || '—'}
+                              </Text>
+                            </div>
+                          )}
+                        </div>
+                      </Col>
+                      {(record.paymentProofs || []).length > 0 && (
+                        <Col xs={24} style={{ marginTop: 12 }}>
+                          <div style={{ padding: '14px 16px', background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, border: '1px solid #f0f0f0' }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10, fontWeight: 600, letterSpacing: 0.5 }}>
+                              PAYMENT PROOF ({record.paymentProofs.length} file{record.paymentProofs.length > 1 ? 's' : ''})
+                            </Text>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                              {record.paymentProofs.map((file, idx) => (
+                                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid #d9d9d9', background: '#fff', cursor: 'pointer' }}>
+                                  <FileTextOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
+                                  <Text style={{ fontSize: 12 }}>{file.name || `Proof ${idx + 1}`}</Text>
+                                  {file.size && <Text type="secondary" style={{ fontSize: 11 }}>({(file.size / 1024).toFixed(0)} KB)</Text>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </Col>
+                      )}
+                    </Row>
+                  ) : (
+                    <>
                   {/* Order Delivery Date */}
                   <Row gutter={12} style={{ marginBottom: 4 }}>
                     <Col xs={24} sm={12}>
@@ -3319,83 +3494,8 @@ export default function Sales() {
                   </Form.List>
 
                   <DeliveryPaymentFields showUpload />
-                </Card>
-              )}
-
-              {/* ── Delivery & Payment — customer detail only ────────── */}
-              {isDetail && !isLeadDetail && (
-                <Card
-                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                  title={
-                    <Space>
-                      <div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} />
-                      <CarOutlined style={{ color: '#fa8c16' }} />
-                      <span>Delivery & Payment</span>
-                    </Space>
-                  }
-                >
-                  <Row gutter={12}>
-                    <Col xs={24} sm={12}>
-                      <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
-                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>DELIVERY INFO</Text>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                          <Text type="secondary" style={{ fontSize: 12 }}>Delivery By</Text>
-                          <Text strong>{record.deliveryBy || '—'}</Text>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                          <Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text>
-                          <Text strong>{record.transportationBy || '—'}</Text>
-                        </div>
-                        <Tag color={record.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>
-                          {record.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}
-                        </Tag>
-                      </div>
-                    </Col>
-                    <Col xs={24} sm={12}>
-                      <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.12)', height: '100%' }}>
-                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>PAYMENT TERMS</Text>
-                        <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[record.paymentTerms] || record.paymentTerms || '—'}</Text>
-                        {record.paymentTerms === '50_ADVANCE_50_AFTER' && record.paymentReminderDate && (
-                          <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
-                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE PAYMENT DUE</Text>
-                            <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>
-                              {typeof record.paymentReminderDate === 'string'
-                                ? record.paymentReminderDate
-                                : record.paymentReminderDate?.format?.('DD/MM/YYYY') || '—'}
-                            </Text>
-                          </div>
-                        )}
-                      </div>
-                    </Col>
-
-                    {/* Payment proof files */}
-                    {(record.paymentProofs || []).length > 0 && (
-                      <Col xs={24} style={{ marginTop: 12 }}>
-                        <div style={{ padding: '14px 16px', background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, border: '1px solid #f0f0f0' }}>
-                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10, fontWeight: 600, letterSpacing: 0.5 }}>
-                            PAYMENT PROOF ({record.paymentProofs.length} file{record.paymentProofs.length > 1 ? 's' : ''})
-                          </Text>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                            {record.paymentProofs.map((file, idx) => (
-                              <div key={idx} style={{
-                                display: 'flex', alignItems: 'center', gap: 6,
-                                padding: '6px 12px', borderRadius: 8, border: '1px solid #d9d9d9',
-                                background: '#fff', cursor: 'pointer',
-                              }}>
-                                <FileTextOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
-                                <Text style={{ fontSize: 12 }}>{file.name || `Proof ${idx + 1}`}</Text>
-                                {file.size && (
-                                  <Text type="secondary" style={{ fontSize: 11 }}>
-                                    ({(file.size / 1024).toFixed(0)} KB)
-                                  </Text>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </Col>
-                    )}
-                  </Row>
+                  </>
+                  )}
                 </Card>
               )}
 
