@@ -8,6 +8,7 @@ import {
   Divider,
   Form,
   Input,
+  message,
   Modal,
   Progress,
   Row,
@@ -20,6 +21,7 @@ import {
   Typography,
 } from 'antd';
 import {
+  AlertFilled,
   ArrowLeftOutlined,
   CreditCardOutlined,
   DownloadOutlined,
@@ -45,6 +47,7 @@ import {
   operationEmployees,
   operationOrders,
   PAYMENT_LABELS,
+  productionQueues,
   statusPill,
 } from './data';
 
@@ -65,6 +68,8 @@ export default function OperationDetail() {
   const [printingValues, setPrintingValues] = useState({});
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignModalRecord, setAssignModalRecord] = useState(null);
+  const [printingModalOpen, setPrintingModalOpen] = useState(false);
+  const [printingModalType, setPrintingModalType] = useState(null);
   const inputRef = useRef(null);
 
   const openAssignModal = (record, currentOrder) => {
@@ -93,6 +98,19 @@ export default function OperationDetail() {
 
   const activeTabFromQuery = useMemo(() => new URLSearchParams(location.search).get('tab') || 'overview', [location.search]);
   const [activeTab, setActiveTab] = useState(activeTabFromQuery);
+
+  const printingTeamItems = useMemo(() => {
+    const queueMap = {
+      sticker_printing: productionQueues.sticker,
+      box: productionQueues.box,
+      frosted_ziplock: productionQueues.frosted,
+    };
+    const items = (queueMap[printingModalType] || []).map((item) => ({
+      ...item,
+      isUrgent: operationOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
+    }));
+    return items.sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
+  }, [printingModalType]);
 
   const order = operationOrders.find((item) => item.id === id);
   const assignedEmployee = operationEmployees.find((employee) => employee.name === order?.assignedEmployee);
@@ -154,22 +172,16 @@ export default function OperationDetail() {
     { title: 'Packaging', dataIndex: 'packaging' },
     { title: 'Material', dataIndex: 'material' },
     {
-      title: 'Production Status',
-      key: 'prodStatus',
-      render: () => (
-        <Space direction="vertical" size={0}>
-          <Tag color="blue" style={{ fontSize: 10 }}>Dispatched: 05/05/26</Tag>
-          <Tag color="green" style={{ fontSize: 10 }}>Arrived: 06/05/26</Tag>
-        </Space>
-      ),
-    },
-    {
       title: 'Printing',
       key: 'printing',
       render: (_, record) => (
         <Select
           value={printingValues[record.key]}
-          onChange={(val) => setPrintingValues((prev) => ({ ...prev, [record.key]: val }))}
+          onChange={(val) => {
+            setPrintingValues((prev) => ({ ...prev, [record.key]: val }));
+            setPrintingModalType(val);
+            setPrintingModalOpen(true);
+          }}
           placeholder="Select"
           style={{ width: 160 }}
         >
@@ -232,6 +244,12 @@ export default function OperationDetail() {
         <Col xs={24} lg={8}>
           <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }}>
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              {order.isUrgent && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, background: '#fff2f0', border: '1px solid #ffccc7' }}>
+                  <AlertFilled style={{ color: '#ff4d4f', fontSize: 16 }} />
+                  <Text strong style={{ color: '#ff4d4f', fontSize: 12 }}>Urgent / Emergency Deliveries (Partial)</Text>
+                </div>
+              )}
               <div style={{ width: 80, height: 80, borderRadius: 16, background: '#B11E6A12', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #B11E6A30' }}>
                 <FileImageOutlined style={{ fontSize: 34, color: '#B11E6A' }} />
               </div>
@@ -442,295 +460,103 @@ export default function OperationDetail() {
                   </div>
                 </Card>
 
-                <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-                  <Title level={5} style={{ color: textColor, marginBottom: 20 }}>Operation Workflow Manager</Title>
-                  <Steps
-                    direction="vertical"
-                    current={checks.stockVerified ? (checks.clientApproved ? (checks.movedToOps ? 3 : 2) : 1) : 0}
-                    items={[
-                      {
-                        title: 'Stock & Material Verification',
-                        description: (
-                          <Space direction="vertical" style={{ marginTop: 8, marginBottom: 24, width: '100%' }}>
-                            <Text type="secondary">Compare order details and material stocks against available inventory.</Text>
-                            <Table
-                              dataSource={order.items}
-                              columns={[
-                                { title: 'Product Name', dataIndex: 'product', key: 'product' },
-                                { title: 'Type', dataIndex: 'logoType', key: 'logoType', render: (val) => <Tag color="purple">{val}</Tag> },
-                                { title: 'Material', dataIndex: 'material', key: 'material' },
-                                { title: 'Req. Qty', dataIndex: 'qty', key: 'qty', align: 'right', render: (val) => <Text strong>{(val ?? 0).toLocaleString()}</Text> },
-                                { title: 'Inventory Stock', key: 'inv', align: 'right', render: (_, record) => <Text style={{ color: '#389e0d' }}>{(Math.floor(record.qty * 1.2) ?? 0).toLocaleString()}</Text> },
-                                { title: 'Order Stack', key: 'stack', align: 'right', render: (_, record) => <Text type="secondary">{(Math.floor(record.qty * 0.8) ?? 0).toLocaleString()}</Text> },
-                              ]}
-                              pagination={false}
-                              size="small"
-                              bordered
-                              summary={(pageData) => {
-                                let totalQty = 0;
-                                let totalInv = 0;
-                                let totalStack = 0;
-                                pageData.forEach(({ qty }) => {
-                                  totalQty += qty;
-                                  totalInv += Math.floor(qty * 1.2);
-                                  totalStack += Math.floor(qty * 0.8);
-                                });
-                                return (
-                                  <Table.Summary fixed>
-                                    <Table.Summary.Row style={{ background: mutedBg }}>
-                                      <Table.Summary.Cell index={0} colSpan={3}><Text strong>Total Verification</Text></Table.Summary.Cell>
-                                      <Table.Summary.Cell index={1} align="right"><Text strong>{(totalQty ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
-                                      <Table.Summary.Cell index={2} align="right"><Text strong style={{ color: '#389e0d' }}>{(totalInv ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
-                                      <Table.Summary.Cell index={3} align="right"><Text strong>{(totalStack ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
-                                    </Table.Summary.Row>
-                                  </Table.Summary>
-                                );
-                              }}
-                              style={{ maxWidth: 800 }}
-                            />
-                            <Checkbox 
-                              checked={checks.stockVerified} 
-                              onChange={(e) => onCheck('stockVerified', e.target.checked)}
-                            >
-                              <Text strong>Verify and Make Stocks Available</Text>
-                            </Checkbox>
-                          </Space>
-                        ),
-                      },
-                      {
-                        title: 'Design & Customer Approval',
-                        description: (
-                          <Space direction="vertical" style={{ marginTop: 8, marginBottom: 24, width: '100%' }}>
-                            <Text type="secondary">Send hotel logo to design team and notify customer for verification.</Text>
-                            <Space wrap>
-                              <Button 
-                                type="default" 
-                                icon={<FileImageOutlined />} 
-                                disabled={!checks.stockVerified}
-                                onClick={() => onCheck('designSent', true)}
-                                style={checks.designSent ? { borderColor: '#52c41a', color: '#52c41a' } : { borderColor: '#B11E6A', color: '#B11E6A' }}
-                              >
-                                {checks.designSent ? 'Logo Sent to Design Team' : 'Send Logo to Design Team'}
-                              </Button>
-                              <Checkbox 
-                                checked={checks.whatsappNotify} 
-                                onChange={(e) => onCheck('whatsappNotify', e.target.checked)}
-                                disabled={!checks.designSent}
-                              >
-                                Notify Sales & Customer via WhatsApp
-                              </Checkbox>
-                              <Button 
-                                type="primary" 
-                                disabled={!checks.whatsappNotify}
-                                style={{ background: checks.clientApproved ? '#52c41a' : 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                                onClick={() => onCheck('clientApproved', true)}
-                              >
-                                {checks.clientApproved ? 'Customer Verified' : 'Send for Verification'}
-                              </Button>
-                            </Space>
-                          </Space>
-                        ),
-                      },
-                      {
-                        title: 'Operations Transfer & Verification',
-                        description: (
-                          <Space direction="vertical" style={{ marginTop: 8, marginBottom: 24, width: '100%' }}>
-                            <Text type="secondary">Based on material (Ziplock/Box/Sticker), move to operations and verify received stock.</Text>
-                            <Checkbox 
-                              checked={checks.movedToOps} 
-                              onChange={(e) => onCheck('movedToOps', e.target.checked)}
-                              disabled={!checks.clientApproved}
-                            >
-                              <Text strong>Move to Operation Team</Text>
-                            </Checkbox>
-                            
-                            {checks.movedToOps && (
-                              <Card size="small" style={{ borderRadius: 8, border: '1px solid #52c41a22', background: isDark ? '#102618' : '#f6fff6', marginTop: 8, maxWidth: 600 }}>
-                                <Text strong style={{ color: '#389e0d', display: 'block', marginBottom: 8 }}>Stocks Available Checklist</Text>
-                                <Row gutter={[12, 12]}>
-                                    {order.items.some((item) => item.logoType === 'Sticker') && (
-                                      <Col xs={24} sm={12}>
-                                        <Space>
-                                          <Checkbox checked={checks.stickerReceived} onChange={(e) => onCheck('stickerReceived', e.target.checked)}>Sticker Received (Arrived)</Checkbox>
-                                          <Tag color="cyan">Verified</Tag>
-                                        </Space>
-                                      </Col>
-                                    )}
-                                    {order.items.some((item) => item.logoType === 'Box') && (
-                                      <Col xs={24} sm={12}>
-                                        <Space>
-                                          <Checkbox checked={checks.boxReceived} onChange={(e) => onCheck('boxReceived', e.target.checked)}>Box Received (Arrived)</Checkbox>
-                                          <Tag color="cyan">Verified</Tag>
-                                        </Space>
-                                      </Col>
-                                    )}
-                                    {order.items.some((item) => item.logoType === 'Frosted Ziplock') && (
-                                      <Col xs={24} sm={12}>
-                                        <Space>
-                                          <Checkbox checked={checks.ziplockReceived} onChange={(e) => onCheck('ziplockReceived', e.target.checked)}>Ziplock Received (Arrived)</Checkbox>
-                                          <Tag color="cyan">Verified</Tag>
-                                        </Space>
-                                      </Col>
-                                    )}
-                                </Row>
-                              </Card>
-                            )}
-                          </Space>
-                        ),
-                      },
-                      {
-                        title: 'Task Assignment',
-                        description: (
-                          <Space direction="vertical" style={{ marginTop: 8, width: '100%' }}>
-                            <Text type="secondary">Assign tasks for packing, labeling, or filling to employees.</Text>
-                            <Form layout="inline" style={{ marginTop: 8 }}>
-                              <Form.Item label="Task">
-                                <Select 
-                                  placeholder="Select task" 
-                                  style={{ width: 160 }} 
-                                  disabled={!checks.movedToOps}
-                                  dropdownRender={(menu) => (
-                                    <>
-                                      {menu}
-                                      <Divider style={{ margin: '8px 0' }} />
-                                      <Space style={{ padding: '0 8px 4px' }}>
-                                        <Input
-                                          placeholder="Add new task"
-                                          ref={inputRef}
-                                          value={newTaskValue}
-                                          onChange={(e) => setNewTaskValue(e.target.value)}
-                                          onKeyDown={(e) => e.stopPropagation()}
-                                          style={{ width: 120 }}
-                                        />
-                                        <Button type="text" icon={<PlusOutlined />} onClick={addTaskOption}>
-                                          Add
-                                        </Button>
-                                      </Space>
-                                    </>
-                                  )}
-                                >
-                                  {taskOptions.map((item) => (
-                                    <Select.Option key={item} value={item.toLowerCase()}>
-                                      {item}
-                                    </Select.Option>
-                                  ))}
-                                </Select>
-                              </Form.Item>
-                              <Form.Item label="Employee">
-                                <Select placeholder="Select assignee" style={{ width: 160 }} disabled={!checks.movedToOps}>
-                                  {operationEmployees.map(emp => <Select.Option key={emp.name} value={emp.name}>{emp.name}</Select.Option>)}
-                                </Select>
-                              </Form.Item>
-                              <Form.Item>
-                                <Button type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }} disabled={!checks.movedToOps}>
-                                  Assign Task
-                                </Button>
-                              </Form.Item>
-                            </Form>
-                          </Space>
-                        ),
-                      },
-                    ]}
-                  />
-                </Card>
               </Space>
             ),
           },
 
-          {
-            key: 'tasks',
-            label: 'Task Assignment',
-            children: (
-              <Row gutter={[16, 16]}>
-                <Col xs={24}>
-                  <Card 
-                    title={<Space><TeamOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Create Assignment Task</Text></Space>}
-                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                  >
-                    <Form form={taskForm} layout="vertical">
-                      <Row gutter={24}>
-                        <Col xs={24} md={12}>
-                          <Form.Item label="Task Name" name="taskName">
-                            <Input placeholder="e.g. Box filling / sticker placing" style={{ borderRadius: 8 }} />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item label="Task Type" name="taskType">
-                            <Select 
-                              placeholder="Select or add task type" 
-                              style={{ borderRadius: 8 }}
-                              dropdownRender={(menu) => (
-                                <>
-                                  {menu}
-                                  <Divider style={{ margin: '8px 0' }} />
-                                  <Space style={{ padding: '0 8px 4px' }}>
-                                    <Input
-                                      placeholder="Add new task"
-                                      ref={inputRef}
-                                      value={newTaskValue}
-                                      onChange={(e) => setNewTaskValue(e.target.value)}
-                                      onKeyDown={(e) => e.stopPropagation()}
-                                      style={{ width: 120 }}
-                                    />
-                                    <Button type="text" icon={<PlusOutlined />} onClick={addTaskOption}>
-                                      Add
-                                    </Button>
-                                  </Space>
-                                </>
-                              )}
-                            >
-                              {taskOptions.map((item) => (
-                                <Option key={item} value={item.toLowerCase()}>{item}</Option>
-                              ))}
-                            </Select>
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item label="Order ID" name="orderId" initialValue={order.id}>
-                            <Input value={order.id} readOnly style={{ borderRadius: 8, background: mutedBg }} />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item label="Assign To" name="assignee" initialValue={order.assignedEmployee}>
-                            <Select style={{ borderRadius: 8 }}>
-                              {operationEmployees.map((employee) => (
-                                <Option key={employee.key} value={employee.name}>{employee.name}</Option>
-                              ))}
-                            </Select>
-                          </Form.Item>
-                        </Col>
-                      </Row>
-                      <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
-                        <Button
-                          type="primary"
-                          block
-                          disabled={!readyToAssign}
-                          style={{ 
-                            height: 45,
-                            borderRadius: 10,
-                            background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', 
-                            border: 'none',
-                            fontSize: 16,
-                            fontWeight: 600,
-                            boxShadow: '0 4px 15px rgba(177,30,106,0.3)'
-                          }}
-                        >
-                          Create and Assign Task
-                        </Button>
-                        {!readyToAssign && (
-                          <Text type="secondary" style={{ fontSize: 12, display: 'block', textAlign: 'center', marginTop: 8 }}>
-                            * Complete the workflow steps in Overview to enable task assignment
-                          </Text>
-                        )}
-                      </Form.Item>
-                    </Form>
-                  </Card>
-                </Col>
-              </Row>
-            ),
-          },
         ]}
       />
+      <Modal
+        title={
+          <Space>
+            <PrinterOutlined style={{ color: '#B11E6A' }} />
+            <span>
+              Send to{' '}
+              {printingModalType === 'sticker_printing'
+                ? 'Sticker Team'
+                : printingModalType === 'box'
+                ? 'Box Team'
+                : printingModalType === 'frosted_ziplock'
+                ? 'Ziplock Team'
+                : 'Team'}
+            </span>
+            <Tag color="default">{printingTeamItems.length} Total</Tag>
+            {printingTeamItems.filter((i) => i.isUrgent).length > 0 && (
+              <Tag color="error">{printingTeamItems.filter((i) => i.isUrgent).length} Urgent</Tag>
+            )}
+          </Space>
+        }
+        open={printingModalOpen}
+        onCancel={() => setPrintingModalOpen(false)}
+        width={820}
+        footer={[
+          <Button key="cancel" onClick={() => setPrintingModalOpen(false)}>Close</Button>,
+          <Button
+            key="send"
+            type="primary"
+            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+            onClick={() => {
+              const teamLabel =
+                printingModalType === 'sticker_printing'
+                  ? 'Sticker Team'
+                  : printingModalType === 'box'
+                  ? 'Box Team'
+                  : 'Ziplock Team';
+              message.success(`Confirmed: ${printingTeamItems.length} item(s) sent to ${teamLabel}`);
+              setPrintingModalOpen(false);
+            }}
+          >
+            Confirm Send
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={16}>
+          {printingTeamItems.filter((i) => i.isUrgent).length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '6px 12px', borderRadius: 8, background: '#fff2f0', border: '1px solid #ffccc7' }}>
+                <AlertFilled style={{ color: '#ff4d4f' }} />
+                <Text strong style={{ color: '#ff4d4f' }}>Urgent / Emergency Deliveries (Partial)</Text>
+                <Tag color="error">{printingTeamItems.filter((i) => i.isUrgent).length}</Tag>
+              </div>
+              <Table
+                dataSource={printingTeamItems.filter((i) => i.isUrgent)}
+                rowKey="key"
+                size="small"
+                pagination={false}
+                columns={[
+                  { title: 'Order', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                  { title: 'Hotel', dataIndex: 'hotelLogo' },
+                  { title: 'Product', dataIndex: 'product' },
+                  { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
+                  { title: 'Status', key: 'urgentStatus', render: () => <Tag icon={<AlertFilled />} color="error">Emergency</Tag> },
+                ]}
+              />
+            </div>
+          )}
+          {printingTeamItems.filter((i) => !i.isUrgent).length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Text strong>Pending Orders</Text>
+                <Tag>{printingTeamItems.filter((i) => !i.isUrgent).length}</Tag>
+              </div>
+              <Table
+                dataSource={printingTeamItems.filter((i) => !i.isUrgent)}
+                rowKey="key"
+                size="small"
+                pagination={false}
+                columns={[
+                  { title: 'Order', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                  { title: 'Hotel', dataIndex: 'hotelLogo' },
+                  { title: 'Product', dataIndex: 'product' },
+                  { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
+                  { title: 'Status', key: 'pendingStatus', render: () => <Tag color="default">Pending</Tag> },
+                ]}
+              />
+            </div>
+          )}
+        </Space>
+      </Modal>
+
       <Modal
         open={assignModalOpen}
         onCancel={() => setAssignModalOpen(false)}

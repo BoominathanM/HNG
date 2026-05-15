@@ -23,6 +23,7 @@ import {
   Upload,
 } from 'antd';
 import {
+  AlertFilled,
   BoxPlotOutlined,
   CheckCircleOutlined,
   CopyOutlined,
@@ -113,25 +114,60 @@ export default function Operations() {
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [dispatchForm] = Form.useForm();
   const [receiveForm] = Form.useForm();
+  const [teamSendOpen, setTeamSendOpen] = useState(false);
+  const [teamSendType, setTeamSendType] = useState('Sticker');
+
+  const [queueSteps, setQueueSteps] = useState(() => {
+    const init = {};
+    [...productionQueues.sticker, ...productionQueues.box, ...productionQueues.frosted].forEach((item) => {
+      if (item.verified || item.materialVerified || item.status === 'Completed') init[item.key] = 6;
+      else if (item.arrivalDate) init[item.key] = 5;
+      else if (item.dispatchDate) init[item.key] = 4;
+      else if (item.workStarted || item.status === 'Printing') init[item.key] = 3;
+      else if (item.status === 'Approved') init[item.key] = 2;
+      else if (item.status === 'Pending Approval' || item.status === 'In Process') init[item.key] = 1;
+      else init[item.key] = 0;
+    });
+    return init;
+  });
+
+  const getQueueStep = (item) => queueSteps[item.key] ?? 0;
+  const advanceStep = (itemKey, nextStep) => setQueueSteps((prev) => ({ ...prev, [itemKey]: nextStep }));
+
+  const [printingStatuses, setPrintingStatuses] = useState(
+    () => Object.fromEntries(operationOrders.map((o) => [o.id, null]))
+  );
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const mutedBg = isDark ? '#161622' : '#faf8fb';
   const textColor = isDark ? '#ececf1' : '#1a1a2e';
 
-  const filteredOrders = useMemo(
-    () =>
-      operationOrders.filter((order) => {
-        const query = searchText.trim().toLowerCase();
-        if (!query) return true;
-        return (
-          order.id.toLowerCase().includes(query) ||
-          order.hotelLogo.toLowerCase().includes(query) ||
-          order.specsSummary.toLowerCase().includes(query) ||
-          order.items.some((item) => item.product.toLowerCase().includes(query))
-        );
-      }),
-    [searchText]
-  );
+  const filteredOrders = useMemo(() => {
+    const result = operationOrders.filter((order) => {
+      const query = searchText.trim().toLowerCase();
+      if (!query) return true;
+      return (
+        order.id.toLowerCase().includes(query) ||
+        order.hotelLogo.toLowerCase().includes(query) ||
+        order.specsSummary.toLowerCase().includes(query) ||
+        order.items.some((item) => item.product.toLowerCase().includes(query))
+      );
+    });
+    return [...result].sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
+  }, [searchText]);
+
+  const teamSendItems = useMemo(() => {
+    const queueMap = {
+      Sticker: productionQueues.sticker,
+      Box: productionQueues.box,
+      'Frosted Ziplock': productionQueues.frosted,
+    };
+    const items = (queueMap[teamSendType] || []).map((item) => ({
+      ...item,
+      isUrgent: operationOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
+    }));
+    return items.sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
+  }, [teamSendType]);
 
   const stats = [
     {
@@ -170,7 +206,16 @@ export default function Operations() {
     {
       title: 'Order ID',
       dataIndex: 'id',
-      render: (value) => <Text strong style={{ color: '#B11E6A' }}>{value}</Text>,
+      render: (value, record) => (
+        <Space size={4}>
+          {record.isUrgent && (
+            <Tooltip title="Urgent / Emergency Deliveries (Partial)">
+              <AlertFilled style={{ color: '#ff4d4f', fontSize: 14 }} />
+            </Tooltip>
+          )}
+          <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
+        </Space>
+      ),
     },
     { title: 'Hotel Name', dataIndex: 'hotelLogo' },
     {
@@ -178,29 +223,6 @@ export default function Operations() {
       dataIndex: 'createdAt',
       render: (value) => new Date(value).toLocaleDateString('en-IN', { dateStyle: 'medium' }),
       responsive: ['md'],
-    },
-    {
-      title: 'Pipeline Stage',
-      key: 'flowStage',
-      render: (_, record) => {
-        const step = getFlowStep(record);
-        const next = flowNextActions[step];
-        return (
-          <Space direction="vertical" size={4}>
-            <Tag color={flowStageColors[step]}>{FLOW_STAGES[step]}</Tag>
-            {next && (
-              <Button
-                size="small"
-                type="primary"
-                style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
-                onClick={() => navigate(`/operations/${record.id}?tab=${next.tab}`)}
-              >
-                {next.label}
-              </Button>
-            )}
-          </Space>
-        );
-      },
     },
     { title: 'Assigned To', dataIndex: 'assignedEmployee', responsive: ['lg'] },
     {
@@ -218,28 +240,34 @@ export default function Operations() {
       },
     },
     {
-      title: 'Status',
-      key: 'status',
+      title: 'Printing Status',
+      key: 'printingStatus',
       render: (_, record) => (
-        <Space direction="vertical" size={2}>
-          <Tag color={designColor[record.designStatus] || 'default'}>{record.designStatus}</Tag>
-          <Tag color={statusPill[record.stockStatus] || 'default'}>{record.stockStatus}</Tag>
-          {record.printerVerified && <Tag color="success">Material Verified</Tag>}
-        </Space>
+        <Select
+          value={printingStatuses[record.id]}
+          size="small"
+          style={{ width: 148 }}
+          placeholder="Select"
+          onClick={(e) => e.stopPropagation()}
+          onChange={(val) => {
+            setPrintingStatuses((prev) => ({ ...prev, [record.id]: val }));
+            message.success(`${record.id} status → ${val}`);
+          }}
+          options={[
+            { value: 'Yet to Receive', label: <Tag color="orange" style={{ margin: 0 }}>Yet to Receive</Tag> },
+            { value: 'Received', label: <Tag color="blue" style={{ margin: 0 }}>Received</Tag> },
+            { value: 'Closed', label: <Tag color="success" style={{ margin: 0 }}>Closed</Tag> },
+          ]}
+        />
       ),
     },
     {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
-        <Space>
-          <Tooltip title="View full operation screen">
-            <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/operations/${record.id}`)} />
-          </Tooltip>
-          <Tooltip title="Open design view">
-            <Button size="small" icon={<FileImageOutlined />} onClick={() => navigate(`/operations/${record.id}?tab=design`)} />
-          </Tooltip>
-        </Space>
+        <Tooltip title="View full operation screen">
+          <Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/operations/${record.id}`); }} />
+        </Tooltip>
       ),
     },
   ];
@@ -326,7 +354,16 @@ export default function Operations() {
     {
       title: 'Order',
       dataIndex: 'orderId',
-      render: (value) => <Text strong style={{ color: '#B11E6A' }}>{value}</Text>,
+      render: (value) => (
+        <Space size={4}>
+          {operationOrders.find((o) => o.id === value)?.isUrgent && (
+            <Tooltip title="Urgent / Emergency Deliveries (Partial)">
+              <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
+            </Tooltip>
+          )}
+          <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
+        </Space>
+      ),
     },
     { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
     { title: 'Product', dataIndex: 'product' },
@@ -337,116 +374,97 @@ export default function Operations() {
     },
     { title: 'Qty', dataIndex: 'qty', render: (value) => value.toLocaleString() },
     {
-      title: 'Status',
-      dataIndex: 'status',
-      render: (value) => <Tag color={designColor[value] || 'default'}>{value}</Tag>,
-    },
-    {
-      title: 'Dispatch Info',
-      key: 'dispatchInfo',
-      render: (_, record) => (
-        record.dispatchDate ? (
-          <Space direction="vertical" size={0}>
-            <Text style={{ fontSize: 11 }}>{record.dispatchDate}</Text>
-            <Text type="secondary" style={{ fontSize: 10 }}>{record.dispatchTime}</Text>
-          </Space>
-        ) : <Text type="secondary" style={{ fontSize: 11 }}>-</Text>
-      ),
-    },
-    {
-      title: 'Arrival Info',
-      key: 'arrivalInfo',
-      render: (_, record) => (
-        record.arrivalDate ? (
-          <Space direction="vertical" size={0}>
-            <Text style={{ fontSize: 11 }}>{record.arrivalDate}</Text>
-            <Tag color="green" style={{ fontSize: 10 }}>Received</Tag>
-          </Space>
-        ) : <Text type="secondary" style={{ fontSize: 11 }}>-</Text>
-      ),
-    },
-    {
       title: 'Actions',
       key: 'actions',
+      width: 280,
       render: (_, record) => {
-        const isApproved = record.status === 'Approved' || record.workStarted;
-        const isDispatched = !!record.dispatchDate;
-        const isReceived = !!record.arrivalDate;
-        const isVerified = record.materialVerified;
-
+        const step = getQueueStep(record);
         return (
-          <Space wrap>
-            {!isApproved && (
-              <Button
-                size="small"
-                icon={<CheckCircleOutlined />}
-                style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
-                onClick={() => {
-                  record.workStarted = true;
-                  message.success(`${record.orderId} team started work`);
-                }}
-              >
-                Approve
-              </Button>
-            )}
-            {isApproved && !isDispatched && (
+          <Space wrap size={4}>
+            {step === 0 && (
               <>
+                <Tag color="blue">Designing</Tag>
                 <Button
                   size="small"
-                  icon={<PrinterOutlined />}
-                  onClick={() => message.info(`Printing triggered for ${record.orderId}`)}
+                  type="primary"
+                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                  onClick={() => {
+                    advanceStep(record.key, 1);
+                    const ord = operationOrders.find((o) => o.id === record.orderId);
+                    message.info(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team for ${record.orderId}`);
+                  }}
                 >
-                  Print
+                  Send for Approval
                 </Button>
+              </>
+            )}
+            {step === 1 && (
+              <>
+                <Tag color="gold">Waiting for Approval</Tag>
                 <Button
                   size="small"
                   icon={<MessageOutlined />}
+                  style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
+                  onClick={() => {
+                    const ord = operationOrders.find((o) => o.id === record.orderId);
+                    message.success(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`);
+                  }}
+                >
+                  WhatsApp
+                </Button>
+                <Button
+                  size="small"
+                  icon={<CheckCircleOutlined />}
+                  style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
+                  onClick={() => advanceStep(record.key, 2)}
+                >
+                  Approve
+                </Button>
+              </>
+            )}
+            {step === 2 && (
+              <>
+                <Tag color="green">Approved</Tag>
+                <Button
+                  size="small"
+                  icon={<PrinterOutlined />}
                   style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff' }}
+                  onClick={() => advanceStep(record.key, 3)}
+                >
+                  Print
+                </Button>
+              </>
+            )}
+            {step === 3 && (
+              <>
+                <Tag color="magenta">Printing</Tag>
+                <Button
+                  size="small"
+                  icon={<TruckOutlined />}
+                  style={{ background: '#722ed1', borderColor: '#722ed1', color: '#fff' }}
                   onClick={() => {
                     setSelectedQueueItem(record);
                     dispatchForm.setFieldsValue({
                       orderId: record.orderId,
                       dispatchDate: new Date().toLocaleDateString('en-IN'),
-                      dispatchTime: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+                      dispatchTime: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
                     });
                     setDispatchOpen(true);
                   }}
                 >
-                  Dispatch
+                  Dispatch to Operation
                 </Button>
               </>
             )}
-            {isDispatched && !isReceived && (
-              <Button
-                size="small"
-                icon={<InboxOutlined />}
-                style={{ background: '#faad14', borderColor: '#faad14', color: '#fff' }}
-                onClick={() => {
-                  setSelectedQueueItem(record);
-                  receiveForm.setFieldsValue({
-                    orderId: record.orderId,
-                    arrivalDate: new Date().toLocaleDateString('en-IN')
-                  });
-                  setReceiveOpen(true);
-                }}
-              >
-                Receive
-              </Button>
+            {step === 4 && (
+              <Tag color="purple" icon={<TruckOutlined />}>Dispatched to Operation</Tag>
             )}
-            {isReceived && !isVerified && (
-              <Button
-                size="small"
-                icon={<SafetyOutlined />}
-                style={{ background: '#eb2f96', borderColor: '#eb2f96', color: '#fff' }}
-                onClick={() => {
-                  record.materialVerified = true;
-                  message.success(`${record.type} Material Verified and Stock Updated`);
-                }}
-              >
-                Verify Arrived Material
-              </Button>
+            {step === 5 && (
+              <Tag color="blue" icon={<InboxOutlined />}>Received</Tag>
             )}
-            {isVerified && <Tag color="success" icon={<CheckCircleOutlined />}>Completed</Tag>}
+            {step === 6 && (
+              <Tag color="success" icon={<CheckCircleOutlined />}>Closed</Tag>
+            )}
           </Space>
         );
       },
@@ -459,25 +477,84 @@ export default function Operations() {
     setRequestOpen(true);
   };
 
-  const renderQueueCard = (type, rows, label) => (
-    <div>
-      {renderQueueSummary(rows)}
-      <Card
-        title={<Text strong style={{ color: textColor }}>{label}</Text>}
-        extra={
-          <Button icon={<PlusOutlined />} onClick={() => openRequestModal(type)}>
-            New {type} Request
-          </Button>
-        }
-        style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-        styles={{ body: { padding: 0 } }}
-      >
-        <div className="table-responsive" style={{ padding: 4 }}>
-          <Table dataSource={rows} columns={queueColumns(type)} pagination={type === 'Sticker' ? { pageSize: 5, size: 'small' } : false} size="small" />
-        </div>
-      </Card>
-    </div>
-  );
+  const renderQueueCard = (type, rows, label) => {
+    const activeRows = rows.filter((r) => getQueueStep(r) < 6);
+    const closedRows = rows.filter((r) => getQueueStep(r) === 6);
+    return (
+      <div>
+        {renderQueueSummary(activeRows)}
+        <Card
+          title={<Text strong style={{ color: textColor }}>{label}</Text>}
+          extra={
+            <Space>
+              <Button
+                icon={<AlertFilled />}
+                type="primary"
+                style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                onClick={() => { setTeamSendType(type); setTeamSendOpen(true); }}
+              >
+                Send to {type} Team
+              </Button>
+              <Button icon={<PlusOutlined />} onClick={() => openRequestModal(type)}>
+                New {type} Request
+              </Button>
+            </Space>
+          }
+          style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+          styles={{ body: { padding: 0 } }}
+        >
+          <div className="table-responsive" style={{ padding: 4 }}>
+            <Table
+              dataSource={activeRows}
+              columns={queueColumns(type)}
+              pagination={type === 'Sticker' ? { pageSize: 5, size: 'small' } : false}
+              size="small"
+            />
+          </div>
+        </Card>
+        {closedRows.length > 0 && (
+          <Card
+            title={
+              <Space>
+                <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                <Text strong style={{ color: textColor }}>Closed Orders</Text>
+                <Tag color="success">{closedRows.length}</Tag>
+              </Space>
+            }
+            style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginTop: 16 }}
+            styles={{ body: { padding: 0 } }}
+          >
+            <div className="table-responsive" style={{ padding: 4 }}>
+              <Table
+                dataSource={closedRows}
+                rowKey="key"
+                size="small"
+                pagination={false}
+                columns={[
+                  {
+                    title: 'Order',
+                    dataIndex: 'orderId',
+                    render: (v) => (
+                      <Space size={4}>
+                        {operationOrders.find((o) => o.id === v)?.isUrgent && (
+                          <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
+                        )}
+                        <Text strong style={{ color: '#B11E6A' }}>{v}</Text>
+                      </Space>
+                    ),
+                  },
+                  { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
+                  { title: 'Product', dataIndex: 'product' },
+                  { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
+                  { title: 'Status', key: 'closedStatus', render: () => <Tag color="success" icon={<CheckCircleOutlined />}>Closed</Tag> },
+                ]}
+              />
+            </div>
+          </Card>
+        )}
+      </div>
+    );
+  };
 
   const renderQueueSummary = (rows) => {
     const countByStatus = Object.fromEntries(queueStatuses.map((status) => [status, 0]));
@@ -583,48 +660,18 @@ export default function Operations() {
                   styles={{ body: { padding: 0 } }}
                 >
                   <div className="table-responsive" style={{ padding: 4 }}>
-                    <Table 
-                      dataSource={filteredOrders} 
-                      columns={orderColumns} 
-                      pagination={{ pageSize: 6, size: 'small' }} 
-                      size="small" 
+                    <Table
+                      dataSource={filteredOrders}
+                      columns={orderColumns}
+                      pagination={{ pageSize: 6, size: 'small' }}
+                      size="small"
                       onRow={(record) => ({
                         onClick: () => navigate(`/operations/${record.id}`),
-                        style: { cursor: 'pointer' }
+                        style: { cursor: 'pointer', background: record.isUrgent ? '#fff2f0' : undefined }
                       })}
                     />
                   </div>
                 </Card>
-              </Space>
-            ),
-          },
-          {
-            key: 'design',
-            label: <Space><FileImageOutlined />Designing</Space>,
-            children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                {renderQueueSummary(designQueue)}
-                <Tabs
-                  type="card"
-                  style={{ marginTop: 8 }}
-                  items={[
-                    {
-                      key: 'sticker_designs',
-                      label: <Space><TagsOutlined />Sticker</Space>,
-                      children: renderDesignTable('Sticker'),
-                    },
-                    {
-                      key: 'box_designs',
-                      label: <Space><BoxPlotOutlined />Box</Space>,
-                      children: renderDesignTable('Box'),
-                    },
-                    {
-                      key: 'ziplock_designs',
-                      label: <Space><InboxOutlined />Frosted Ziplock</Space>,
-                      children: renderDesignTable('Frosted Ziplock'),
-                    },
-                  ]}
-                />
               </Space>
             ),
           },
@@ -858,6 +905,7 @@ export default function Operations() {
             onClick={() => {
               const vals = dispatchForm.getFieldsValue();
               setSelectedQueueItem(prev => ({ ...prev, dispatchDate: vals.dispatchDate, dispatchTime: vals.dispatchTime }));
+              if (selectedQueueItem) advanceStep(selectedQueueItem.key, 4);
               message.success(`Dispatched to Operations at ${vals.dispatchTime}`);
               setDispatchOpen(false);
             }}
@@ -889,9 +937,9 @@ export default function Operations() {
         onCancel={() => setReceiveOpen(false)}
         footer={[
           <Button key="cancel" onClick={() => setReceiveOpen(false)}>Cancel</Button>,
-          <Button 
-            key="receive" 
-            type="primary" 
+          <Button
+            key="receive"
+            type="primary"
             style={{ background: 'linear-gradient(135deg,#faad14,#ffc53d)', border: 'none' }}
             onClick={() => {
               const vals = receiveForm.getFieldsValue();
@@ -910,6 +958,82 @@ export default function Operations() {
           </Form.Item>
           <Text type="secondary" style={{ fontSize: 12 }}>* Stock will be updated with "Received" status.</Text>
         </Form>
+      </Modal>
+
+      <Modal
+        title={
+          <Space>
+            <AlertFilled style={{ color: '#ff4d4f' }} />
+            <span>Send to {teamSendType} Team</span>
+            <Tag color="default">{teamSendItems.length} Total</Tag>
+            {teamSendItems.filter((i) => i.isUrgent).length > 0 && (
+              <Tag color="error">{teamSendItems.filter((i) => i.isUrgent).length} Urgent</Tag>
+            )}
+          </Space>
+        }
+        open={teamSendOpen}
+        onCancel={() => setTeamSendOpen(false)}
+        width={820}
+        footer={[
+          <Button key="cancel" onClick={() => setTeamSendOpen(false)}>Cancel</Button>,
+          <Button
+            key="send"
+            type="primary"
+            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+            onClick={() => {
+              message.success(`${teamSendItems.length} item(s) sent to ${teamSendType} Team`);
+              setTeamSendOpen(false);
+            }}
+          >
+            Send All to {teamSendType} Team
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={16}>
+          {teamSendItems.filter((i) => i.isUrgent).length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '6px 12px', borderRadius: 8, background: '#fff2f0', border: '1px solid #ffccc7' }}>
+                <AlertFilled style={{ color: '#ff4d4f' }} />
+                <Text strong style={{ color: '#ff4d4f' }}>Urgent / Emergency Deliveries (Partial)</Text>
+                <Tag color="error">{teamSendItems.filter((i) => i.isUrgent).length}</Tag>
+              </div>
+              <Table
+                dataSource={teamSendItems.filter((i) => i.isUrgent)}
+                rowKey="key"
+                size="small"
+                pagination={false}
+                columns={[
+                  { title: 'Order', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                  { title: 'Hotel', dataIndex: 'hotelLogo' },
+                  { title: 'Product', dataIndex: 'product' },
+                  { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
+                  { title: 'Status', key: 'status', render: () => <Tag icon={<AlertFilled />} color="error">Emergency</Tag> },
+                ]}
+              />
+            </div>
+          )}
+          {teamSendItems.filter((i) => !i.isUrgent).length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Text strong>Pending Orders</Text>
+                <Tag>{teamSendItems.filter((i) => !i.isUrgent).length}</Tag>
+              </div>
+              <Table
+                dataSource={teamSendItems.filter((i) => !i.isUrgent)}
+                rowKey="key"
+                size="small"
+                pagination={false}
+                columns={[
+                  { title: 'Order', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                  { title: 'Hotel', dataIndex: 'hotelLogo' },
+                  { title: 'Product', dataIndex: 'product' },
+                  { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
+                  { title: 'Status', key: 'status', render: () => <Tag color="default">Pending</Tag> },
+                ]}
+              />
+            </div>
+          )}
+        </Space>
       </Modal>
     </div>
   );

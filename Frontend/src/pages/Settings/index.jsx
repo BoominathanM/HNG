@@ -51,6 +51,12 @@ const initRoles = [
     perms: buildPerms(['Dashboard','Dispatch Team']) },
   { key: 5, role: 'Finance Manager',  color: '#6b1240', users: 1, status: 'Active',
     perms: buildPerms(['Dashboard','Billing','Reports']) },
+  { key: 6, role: 'Sticker',          color: '#B11E6A', users: 0, status: 'Active',
+    perms: buildPerms(['Dashboard','Task Management']) },
+  { key: 7, role: 'Box',              color: '#8a1652', users: 0, status: 'Active',
+    perms: buildPerms(['Dashboard','Task Management']) },
+  { key: 8, role: 'Ziplock',          color: '#C94F8A', users: 0, status: 'Active',
+    perms: buildPerms(['Dashboard','Task Management']) },
 ];
 
 const initUsers = [
@@ -73,7 +79,7 @@ export default function Settings() {
   const [newRole, setNewRole]   = useState('');
 
   // Departments
-  const [departments, setDepartments] = useState(['Sales', 'Marketing', 'Operations', 'Dispatch', 'Finance']);
+  const [departments, setDepartments] = useState(['Sales', 'Marketing', 'Operations', 'Dispatch', 'Finance', 'Vendors']);
   const [newDept, setNewDept]         = useState('');
 
   // Users

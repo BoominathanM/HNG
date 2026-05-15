@@ -6,11 +6,12 @@ import {
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
-  FileImageOutlined,
+  FileImageOutlined, CheckCircleOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import { operationOrders } from '../Operations/data';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -139,6 +140,23 @@ export default function Tasks() {
     setEmergencyDispatchOpen(true);
   };
 
+  // ── Inventory-based task suggestions ─────────────────────────────────
+  const getSuggestedTasks = (task) => {
+    if (!task.orderId) return [];
+    const order = operationOrders.find((o) => o.id === task.orderId);
+    if (!order) return [];
+    return order.items.map((item) => {
+      const short = item.qty - (item.inventoryStock ?? 0);
+      const isLow = short > 0;
+      const label =
+        item.logoType === 'Sticker' ? 'Sticker Placing' :
+        item.logoType === 'Box' ? 'Box Filling' :
+        item.logoType === 'Frosted Ziplock' ? 'Ziplock Sealing' :
+        item.processTask || 'Process';
+      return { label, product: item.product, isLow, short };
+    });
+  };
+
   // ── Columns ───────────────────────────────────────────────────────────
   const columns = [
     {
@@ -161,6 +179,29 @@ export default function Tasks() {
     },
     { title: 'Type', dataIndex: 'type', render: (v) => <Tag color={typeColor[v]} style={{ borderRadius: 20 }}>{v}</Tag> },
     { title: 'Title', dataIndex: 'title' },
+    {
+      title: 'Suggested Task',
+      key: 'suggestedTask',
+      render: (_, r) => {
+        const suggestions = getSuggestedTasks(r);
+        if (!suggestions.length) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        return (
+          <Space direction="vertical" size={3}>
+            {suggestions.map((s, i) => (
+              <Tooltip key={i} title={s.isLow ? `${s.product} — short by ${s.short.toLocaleString()} units` : s.product}>
+                <Tag
+                  color={s.isLow ? 'error' : 'processing'}
+                  icon={s.isLow ? <ExclamationCircleOutlined /> : undefined}
+                  style={{ fontSize: 11, margin: 0 }}
+                >
+                  {s.label}{s.isLow ? ` (−${s.short.toLocaleString()})` : ''}
+                </Tag>
+              </Tooltip>
+            ))}
+          </Space>
+        );
+      },
+    },
     {
       title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'],
       render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
@@ -200,10 +241,16 @@ export default function Tasks() {
             </Button>
           )}
           {r.status === 'In Progress' && (
-            <Button size="small" type="primary" icon={<CheckOutlined />}
-              onClick={() => handleCompleteTask(r.id)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
-              Done
-            </Button>
+            <Space direction="vertical" size={3}>
+              <Tag color="processing" icon={<ClockCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>In Process</Tag>
+              <Button size="small" type="primary" icon={<CheckOutlined />}
+                onClick={() => handleCompleteTask(r.id)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+                Done
+              </Button>
+            </Space>
+          )}
+          {r.status === 'Completed' && (
+            <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>Completed</Tag>
           )}
           {r.status === 'Completed' && r.paymentStatus === 'Paid' && !r.dispatchStatus && (
             <Button size="small" type="primary" icon={<ShoppingOutlined />}
@@ -335,7 +382,13 @@ export default function Tasks() {
                           <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => handleStartTask(task.id)} style={{ background: '#1890ff', border: 'none', width: '100%' }}>Start</Button>
                         )}
                         {task.status === 'In Progress' && (
-                          <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => handleCompleteTask(task.id)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', width: '100%' }}>Done</Button>
+                          <>
+                            <Tag color="processing" icon={<ClockCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>In Process</Tag>
+                            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => handleCompleteTask(task.id)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', width: '100%' }}>Done</Button>
+                          </>
+                        )}
+                        {task.status === 'Completed' && (
+                          <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Completed</Tag>
                         )}
                         {task.status === 'Completed' && task.paymentStatus === 'Paid' && !task.dispatchStatus && (
                           <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}>Dispatch</Button>

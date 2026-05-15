@@ -70,6 +70,8 @@ export const operationOrders = [
   {
     key: '1',
     id: 'ORD-2401',
+    isUrgent: true,
+    deliveryType: 'Urgent / Emergency Deliveries (Partial)',
     hotelLogo: 'The Grand Hotel',
     salesPerson: 'Priya',
     createdAt: '2026-05-01T09:00:00Z',
@@ -244,6 +246,8 @@ export const operationOrders = [
   {
     key: '3',
     id: 'ORD-2403',
+    isUrgent: true,
+    deliveryType: 'Urgent / Emergency Deliveries (Partial)',
     hotelLogo: 'Taj Hotels',
     salesPerson: 'Karthik',
     createdAt: '2026-05-03T08:15:00Z',
