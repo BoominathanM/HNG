@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Typography, Space,
-  Descriptions, Alert, Select, Tabs, Divider, Collapse,
+  Descriptions, Alert, Select, Tabs, Divider, Collapse, Checkbox,
 } from 'antd';
 import {
   CarOutlined, CheckCircleOutlined, UploadOutlined, EyeOutlined,
   SearchOutlined, PrinterOutlined, SaveOutlined, EditOutlined,
   ThunderboltOutlined, InboxOutlined, FilterOutlined, GlobalOutlined,
+  ExportOutlined, CheckSquareOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -16,12 +17,30 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-// ── Existing data (unchanged) ────────────────────────────────────────────
+// ── Sample products per order ──────────────────────────────────────────────
+const ORDER_PRODUCTS = {
+  'ORD-2402': [
+    { key: 1, name: 'Shampoo 30ml', qty: 1000, rate: 5.5, boxes: 20 },
+    { key: 2, name: 'Shampoo 50ml', qty: 500, rate: 7.0, boxes: 10 },
+  ],
+  'ORD-2403': [
+    { key: 1, name: 'Dental Kit', qty: 3000, rate: 12.0, boxes: 60 },
+  ],
+  'ORD-2404': [
+    { key: 1, name: 'Soap 30g', qty: 2500, rate: 3.5, boxes: 50 },
+    { key: 2, name: 'Shampoo 30ml', qty: 2500, rate: 5.5, boxes: 50 },
+  ],
+  'ORD-2406': [
+    { key: 1, name: 'Conditioner 30ml', qty: 2000, rate: 6.0, boxes: 40 },
+  ],
+};
+
+// ── Existing data ────────────────────────────────────────────────────────────
 const dispatchOrders = [
-  { key: 1, id: 'ORD-2402', client: 'Marriott Mumbai', contactPerson: 'Raju', phone: '+91 9876543210', email: 'raju@marriott.com', product: 'Shampoo 30ml', qty: 1500, boxes: 30, weight: '45 Kg', payment: 'Confirmed', address: 'Mumbai, MH', detailedAddress: 'Marine Drive, Nariman Point', city: 'Mumbai', state: 'MH', pincode: '400021', transport: 'Fast Cargo', status: 'Ready to Dispatch', salesPerson: 'Arun', createdAt: '2024-01-21T11:30:00Z' },
-  { key: 2, id: 'ORD-2403', client: 'Taj Hotels Delhi', contactPerson: 'Raman', phone: '+91 9123456780', email: 'raman@taj.com', product: 'Dental Kit', qty: 3000, boxes: 60, weight: '90 Kg', payment: 'Pending', address: 'Delhi, DL', detailedAddress: 'Sardar Patel Marg', city: 'New Delhi', state: 'DL', pincode: '110021', transport: '-', status: 'Payment Pending', salesPerson: 'Priya', createdAt: '2024-01-22T14:15:00Z' },
-  { key: 3, id: 'ORD-2404', client: 'ITC Grand', contactPerson: 'Sonia', phone: '+91 9988776655', email: 'sonia@itc.com', product: 'Soap + Shampoo Kit', qty: 5000, boxes: 100, weight: '200 Kg', payment: 'Confirmed', address: 'Kolkata, WB', detailedAddress: 'JBS Haldane Avenue', city: 'Kolkata', state: 'WB', pincode: '700046', transport: 'Blue Dart', status: 'Dispatched', salesPerson: 'Karthik', createdAt: '2024-01-23T09:45:00Z' },
-  { key: 4, id: 'ORD-2406', client: 'Hyatt Chennai', contactPerson: 'Arun', phone: '+91 9876512345', email: 'arun@hyatt.com', product: 'Conditioner 30ml', qty: 2000, boxes: 40, weight: '60 Kg', payment: 'Confirmed', address: 'Chennai, TN', detailedAddress: '365 Anna Salai, Teynampet', city: 'Chennai', state: 'TN', pincode: '600018', transport: '-', status: 'Packing', salesPerson: 'Arun', createdAt: '2024-01-24T10:20:00Z' },
+  { key: 1, id: 'ORD-2402', client: 'Marriott Mumbai', contactPerson: 'Raju', phone: '+91 9876543210', email: 'raju@marriott.com', product: 'Shampoo 30ml', qty: 1500, boxes: 30, weight: '45 Kg', payment: 'Confirmed', address: 'Mumbai, MH', destination: 'Mumbai', detailedAddress: 'Marine Drive, Nariman Point', city: 'Mumbai', state: 'MH', pincode: '400021', transport: 'Fast Cargo', status: 'Ready to Dispatch', salesPerson: 'Arun', createdAt: new Date().toISOString() },
+  { key: 2, id: 'ORD-2403', client: 'Taj Hotels Delhi', contactPerson: 'Raman', phone: '+91 9123456780', email: 'raman@taj.com', product: 'Dental Kit', qty: 3000, boxes: 60, weight: '90 Kg', payment: 'Pending', address: 'Delhi, DL', destination: 'New Delhi', detailedAddress: 'Sardar Patel Marg', city: 'New Delhi', state: 'DL', pincode: '110021', transport: '-', status: 'Payment Pending', salesPerson: 'Priya', createdAt: new Date().toISOString() },
+  { key: 3, id: 'ORD-2404', client: 'ITC Grand', contactPerson: 'Sonia', phone: '+91 9988776655', email: 'sonia@itc.com', product: 'Soap + Shampoo Kit', qty: 5000, boxes: 100, weight: '200 Kg', payment: 'Confirmed', address: 'Kolkata, WB', destination: 'Kolkata', detailedAddress: 'JBS Haldane Avenue', city: 'Kolkata', state: 'WB', pincode: '700046', transport: 'Blue Dart', status: 'Dispatched', salesPerson: 'Karthik', createdAt: '2024-01-23T09:45:00Z' },
+  { key: 4, id: 'ORD-2406', client: 'Hyatt Chennai', contactPerson: 'Arun', phone: '+91 9876512345', email: 'arun@hyatt.com', product: 'Conditioner 30ml', qty: 2000, boxes: 40, weight: '60 Kg', payment: 'Confirmed', address: 'Chennai, TN', destination: 'Chennai', detailedAddress: '365 Anna Salai, Teynampet', city: 'Chennai', state: 'TN', pincode: '600018', transport: '-', status: 'Packing', salesPerson: 'Arun', createdAt: '2024-01-24T10:20:00Z' },
 ];
 
 const statusColor = {
@@ -31,14 +50,14 @@ const statusColor = {
   'Packing': '#B11E6A',
 };
 
-// ── New: Transport data ───────────────────────────────────────────────────
+// ── Transport data ─────────────────────────────────────────────────────────
 const initTransportData = [
   { key: 1, lrNumber: 'LR-4521', orderId: 'ORD-2402', client: 'Marriott Mumbai', transport: 'Fast Cargo', boxes: 30, weight: '45 Kg', freight: '₹2,100', dispatchDate: '2024-01-25', status: 'In Transit' },
   { key: 2, lrNumber: 'LR-4520', orderId: 'ORD-2404', client: 'ITC Grand', transport: 'Blue Dart', boxes: 100, weight: '200 Kg', freight: '₹8,500', dispatchDate: '2024-01-24', status: 'Delivered' },
   { key: 3, lrNumber: 'LR-4518', orderId: 'ORD-2401', client: 'The Grand Hotel', transport: 'VRL Logistics', boxes: 40, weight: '60 Kg', freight: '₹3,200', dispatchDate: '2024-01-23', status: 'Delivered' },
 ];
 
-// ── Company info for FROM section ─────────────────────────────────────────
+// ── Company info ─────────────────────────────────────────────────────────────
 const HNG = {
   name: 'Heal N Glow',
   tagline: "Let Your Skin Breathe Organic",
@@ -50,7 +69,6 @@ const HNG = {
   gstin: '33AAACH1234B1Z5',
 };
 
-// ── Mock AI-parsed receipt fields ─────────────────────────────────────────
 const MOCK_PARSED = {
   lrNumber: 'LR-78921',
   date: '2024-01-25',
@@ -63,16 +81,32 @@ const MOCK_PARSED = {
   deliveryDate: '2024-01-28',
 };
 
-// ─────────────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const isToday = (dateStr) => {
+  const d = new Date(dateStr);
+  const now = new Date();
+  return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+};
+
+const exportCSV = (data, filename) => {
+  const headers = ['Order ID', 'Client', 'Destination', 'Product', 'Boxes', 'Weight', 'Payment', 'Status'];
+  const rows = data.map(o => [o.id, o.client, o.destination || '', o.product, o.boxes, o.weight, o.payment, o.status]);
+  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 export default function Dispatch() {
   const isDark = useSelector((s) => s.theme.isDark);
   const navigate = useNavigate();
 
-  // Existing state
   const [searchText, setSearchText] = useState('');
-
-  // New state
   const [activeTab, setActiveTab] = useState('dispatch');
+  const [dispatchSubTab, setDispatchSubTab] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [selectedPrintOrder, setSelectedPrintOrder] = useState(null);
@@ -82,11 +116,15 @@ export default function Dispatch() {
   const [aiParsed, setAiParsed] = useState(null);
   const [aiForm] = Form.useForm();
 
+  // Product verify state: { [orderId]: { dispatchType, verifiedProducts: Set } }
+  const [productVerify, setProductVerify] = useState({});
+  // Expanded rows for product panel
+  const [expandedRows, setExpandedRows] = useState([]);
+
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
-  const labelBg = isDark ? '#16162A' : '#f8f9fc';
 
-  // ── Handlers ─────────────────────────────────────────────────────────
+  // ── Handlers ───────────────────────────────────────────────────────────────
   const openPrintModal = (order) => {
     setSelectedPrintOrder(order);
     printForm.setFieldsValue({
@@ -156,11 +194,91 @@ export default function Dispatch() {
     }, 1800);
   };
 
-  // ── Columns ───────────────────────────────────────────────────────────
-  const columns = [
+  const setDispatchType = (orderId, type) => {
+    setProductVerify(prev => ({
+      ...prev,
+      [orderId]: { ...(prev[orderId] || {}), dispatchType: type, verifiedProducts: prev[orderId]?.verifiedProducts || new Set() },
+    }));
+    // Auto-expand row when dispatch type is chosen
+    if (!expandedRows.includes(orderId)) setExpandedRows(r => [...r, orderId]);
+  };
+
+  const toggleVerifyProduct = (orderId, productKey) => {
+    setProductVerify(prev => {
+      const existing = prev[orderId] || { verifiedProducts: new Set() };
+      const next = new Set(existing.verifiedProducts);
+      next.has(productKey) ? next.delete(productKey) : next.add(productKey);
+      return { ...prev, [orderId]: { ...existing, verifiedProducts: next } };
+    });
+  };
+
+  // ── Product verify expanded row ────────────────────────────────────────────
+  const renderProductPanel = (record) => {
+    const state = productVerify[record.id] || {};
+    const products = ORDER_PRODUCTS[record.id] || [];
+    const verified = state.verifiedProducts || new Set();
+
+    return (
+      <div style={{ padding: '12px 24px', background: isDark ? '#161622' : '#fafafa', borderRadius: 8, margin: '4px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontWeight: 600 }}>
+            {record.id}
+          </Tag>
+          <Tag color={state.dispatchType === 'Partial Dispatch' ? 'orange' : 'blue'} style={{ borderRadius: 12 }}>
+            {state.dispatchType || 'Full Dispatch'}
+          </Tag>
+          <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>— Product Details</Text>
+        </div>
+
+        <Table
+          size="small"
+          pagination={false}
+          dataSource={products}
+          style={{ borderRadius: 8, overflow: 'hidden' }}
+          columns={[
+            { title: 'Product', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
+            { title: 'Qty', dataIndex: 'qty', render: (v) => v.toLocaleString() },
+            { title: 'Rate (₹)', dataIndex: 'rate', render: (v) => `₹${v}` },
+            { title: 'Boxes', dataIndex: 'boxes', render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space> },
+            {
+              title: 'Status', key: 'status',
+              render: (_, row) => verified.has(row.key)
+                ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
+                : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>,
+            },
+            {
+              title: 'Action', key: 'action',
+              render: (_, row) => (
+                <Button
+                  size="small"
+                  icon={<CheckSquareOutlined />}
+                  type={verified.has(row.key) ? 'default' : 'primary'}
+                  style={verified.has(row.key) ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
+                  onClick={() => toggleVerifyProduct(record.id, row.key)}
+                >
+                  {verified.has(row.key) ? 'Unverify' : 'Verify'}
+                </Button>
+              ),
+            },
+          ]}
+        />
+
+        {products.length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>
+            <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+            {verified.size} / {products.length} products verified
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Columns ────────────────────────────────────────────────────────────────
+  const buildColumns = (showTodayActions = false) => [
     { title: 'Order', dataIndex: 'id', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
     { title: 'Client', dataIndex: 'client' },
-    { title: 'Location', dataIndex: 'address', responsive: ['md'] },
+    { title: 'Destination', dataIndex: 'destination', responsive: ['md'], render: (v) => v || '—' },
+    { title: 'Location', dataIndex: 'address', responsive: ['lg'] },
     { title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'], render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
     { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'] },
     { title: 'Product', dataIndex: 'product', responsive: ['md'] },
@@ -183,11 +301,31 @@ export default function Dispatch() {
       render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag>,
     },
     {
+      title: 'Dispatch Type', key: 'dispatchType',
+      render: (_, r) => (
+        <Select
+          size="small"
+          value={productVerify[r.id]?.dispatchType || undefined}
+          placeholder="Select type"
+          style={{ width: 140 }}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(v) => setDispatchType(r.id, v)}
+        >
+          <Option value="Full Dispatch">Full Dispatch</Option>
+          <Option value="Partial Dispatch">Partial Dispatch</Option>
+        </Select>
+      ),
+    },
+    {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space onClick={(e) => e.stopPropagation()}>
           <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/dispatch/${r.id}`)} />
           <Button size="small" icon={<PrinterOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => openPrintModal(r)} />
+          {showTodayActions && (
+            <Button size="small" icon={<ExportOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
+              onClick={() => exportCSV([r], `${r.id}-export.csv`)} />
+          )}
         </Space>
       ),
     },
@@ -206,12 +344,46 @@ export default function Dispatch() {
   ];
 
   const filteredOrders = dispatchOrders.filter((o) => {
-    const s = !searchText || o.id.toLowerCase().includes(searchText.toLowerCase()) || o.client.toLowerCase().includes(searchText.toLowerCase()) || o.address.toLowerCase().includes(searchText.toLowerCase());
+    const s = !searchText || o.id.toLowerCase().includes(searchText.toLowerCase()) || o.client.toLowerCase().includes(searchText.toLowerCase()) || o.address.toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
     const p = paymentFilter === 'All' || o.payment === paymentFilter;
     return s && p;
   });
 
-  // ── Render ────────────────────────────────────────────────────────────
+  const todayOrders = filteredOrders.filter(o => isToday(o.createdAt));
+
+  // Expandable config for all orders table
+  const expandable = {
+    expandedRowKeys: expandedRows,
+    onExpand: (expanded, record) => {
+      setExpandedRows(expanded ? [...expandedRows, record.id] : expandedRows.filter(k => k !== record.id));
+    },
+    expandedRowRender: (record) => renderProductPanel(record),
+    rowExpandable: () => true,
+  };
+
+  // ── Filters row ───────────────────────────────────────────────────────────
+  const filtersRow = (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+      <Input
+        prefix={<SearchOutlined />}
+        placeholder="Search orders, clients, destinations..."
+        value={searchText}
+        onChange={(e) => setSearchText(e.target.value)}
+        allowClear
+        style={{ flex: 1, minWidth: 200, borderRadius: 8 }}
+      />
+      <Space>
+        <FilterOutlined style={{ color: '#B11E6A' }} />
+        <Select value={paymentFilter} onChange={setPaymentFilter} style={{ width: 160, borderRadius: 8 }}>
+          <Option value="All">All Payments</Option>
+          <Option value="Confirmed">Confirmed</Option>
+          <Option value="Pending">Pending</Option>
+        </Select>
+      </Space>
+    </div>
+  );
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="page-container fade-in">
       <PageBreadcrumb title="Dispatch Team" items={[{ label: 'Dispatch Team' }]} />
@@ -235,53 +407,103 @@ export default function Dispatch() {
         ))}
       </Row>
 
-      {/* Tabs */}
+      {/* Main Tabs */}
       <Tabs activeKey={activeTab} onChange={setActiveTab} type="card"
         items={[
           {
             key: 'dispatch',
             label: <Space><CarOutlined />Dispatch Orders</Space>,
             children: (
-              <div>
-                {/* Filters row */}
-                <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <Input
-                    prefix={<SearchOutlined />}
-                    placeholder="Search orders, clients, locations..."
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                    allowClear
-                    style={{ flex: 1, minWidth: 200, borderRadius: 8 }}
-                  />
-                  <Space>
-                    <FilterOutlined style={{ color: '#B11E6A' }} />
-                    <Select value={paymentFilter} onChange={setPaymentFilter} style={{ width: 160, borderRadius: 8 }}>
-                      <Option value="All">All Payments</Option>
-                      <Option value="Confirmed">Confirmed</Option>
-                      <Option value="Pending">Pending</Option>
-                    </Select>
-                  </Space>
-                </div>
-
-                <Card
-                  title={<Text strong style={{ color: textColor }}>Dispatch Orders</Text>}
-                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                  styles={{ body: { padding: 0 } }}
-                >
-                  <div className="table-responsive" style={{ padding: '4px' }}>
-                    <Table
-                      dataSource={filteredOrders}
-                      columns={columns}
-                      pagination={{ pageSize: 8, size: 'small' }}
-                      size="small"
-                      onRow={(record) => ({
-                        onClick: () => navigate(`/dispatch/${record.id}`),
-                        style: { cursor: 'pointer' },
-                      })}
-                    />
-                  </div>
-                </Card>
-              </div>
+              <Tabs
+                activeKey={dispatchSubTab}
+                onChange={setDispatchSubTab}
+                size="small"
+                tabBarStyle={{ marginBottom: 12 }}
+                items={[
+                  {
+                    key: 'all',
+                    label: 'All Orders',
+                    children: (
+                      <div>
+                        {filtersRow}
+                        <Card
+                          title={<Text strong style={{ color: textColor }}>Dispatch Orders</Text>}
+                          style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                          styles={{ body: { padding: 0 } }}
+                        >
+                          <div className="table-responsive" style={{ padding: '4px' }}>
+                            <Table
+                              dataSource={filteredOrders}
+                              columns={buildColumns(false)}
+                              expandable={expandable}
+                              rowKey="id"
+                              pagination={{ pageSize: 8, size: 'small' }}
+                              size="small"
+                              onRow={(record) => ({
+                                onClick: () => navigate(`/dispatch/${record.id}`),
+                                style: { cursor: 'pointer' },
+                              })}
+                            />
+                          </div>
+                        </Card>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'today',
+                    label: (
+                      <Space>
+                        Today's Orders
+                        <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', fontSize: 11 }}>
+                          {todayOrders.length}
+                        </Tag>
+                      </Space>
+                    ),
+                    children: (
+                      <div>
+                        {filtersRow}
+                        <Card
+                          title={<Text strong style={{ color: textColor }}>Today's Dispatch Orders</Text>}
+                          extra={
+                            <Button
+                              size="small"
+                              icon={<ExportOutlined />}
+                              style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
+                              onClick={() => exportCSV(todayOrders, `today-orders-${new Date().toLocaleDateString('en-IN').replace(/\//g, '-')}.csv`)}
+                            >
+                              Export All
+                            </Button>
+                          }
+                          style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                          styles={{ body: { padding: 0 } }}
+                        >
+                          <div className="table-responsive" style={{ padding: '4px' }}>
+                            {todayOrders.length === 0 ? (
+                              <div style={{ textAlign: 'center', padding: '32px', color: isDark ? '#aaa' : '#888' }}>
+                                <CarOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block', color: '#B11E6A55' }} />
+                                No orders created today.
+                              </div>
+                            ) : (
+                              <Table
+                                dataSource={todayOrders}
+                                columns={buildColumns(true)}
+                                expandable={expandable}
+                                rowKey="id"
+                                pagination={{ pageSize: 8, size: 'small' }}
+                                size="small"
+                                onRow={(record) => ({
+                                  onClick: () => navigate(`/dispatch/${record.id}`),
+                                  style: { cursor: 'pointer' },
+                                })}
+                              />
+                            )}
+                          </div>
+                        </Card>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
             ),
           },
           {
@@ -289,7 +511,6 @@ export default function Dispatch() {
             label: <Space><GlobalOutlined />Transport</Space>,
             children: (
               <div>
-                {/* Transport stats */}
                 <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
                   {[
                     { label: 'Total Dispatched', val: initTransportData.length, color: '#B11E6A' },
@@ -320,7 +541,7 @@ export default function Dispatch() {
         ]}
       />
 
-      {/* ── Hotel Details Printout Modal ──────────────────────────────────────── */}
+      {/* ── Dispatch Label Modal ──────────────────────────────────────────────── */}
       <Modal
         title={<Space><PrinterOutlined style={{ color: '#B11E6A' }} /><span>Hotel Details Printout — {selectedPrintOrder?.id}</span></Space>}
         open={printModalOpen}
@@ -350,12 +571,9 @@ export default function Dispatch() {
                   children: (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
                       <div id="dispatch-label" style={{ border: '2px solid #333', borderRadius: 6, padding: 20, width: 380, background: '#fff', color: '#111', fontFamily: 'Arial, sans-serif' }}>
-                        {/* HNG badge */}
                         <div style={{ background: '#B11E6A', color: '#fff', display: 'inline-block', padding: '2px 12px', borderRadius: 12, fontSize: 11, fontWeight: 700, marginBottom: 14, letterSpacing: 1 }}>
                           HEAL N GLOW — DISPATCH LABEL
                         </div>
-
-                        {/* FROM */}
                         <div style={{ marginBottom: 12 }}>
                           <div style={{ fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', color: '#888', fontWeight: 700, marginBottom: 6 }}>From</div>
                           <div style={{ fontWeight: 700, fontSize: 15 }}>{HNG.name}</div>
@@ -364,10 +582,7 @@ export default function Dispatch() {
                           <div style={{ fontSize: 12, color: '#444' }}>Ph: {HNG.phone}</div>
                           <div style={{ fontSize: 11, color: '#888' }}>GSTIN: {HNG.gstin}</div>
                         </div>
-
                         <div style={{ borderTop: '1px dashed #aaa', margin: '12px 0' }} />
-
-                        {/* TO — reads from printForm live */}
                         <div>
                           <div style={{ fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', color: '#888', fontWeight: 700, marginBottom: 6 }}>To</div>
                           <div style={{ fontWeight: 700, fontSize: 15 }}>{printForm.getFieldValue('toName') || selectedPrintOrder.client}</div>
@@ -380,7 +595,6 @@ export default function Dispatch() {
                           </div>
                           <div style={{ fontSize: 12, color: '#444' }}>Ph: {printForm.getFieldValue('toPhone') || selectedPrintOrder.phone}</div>
                         </div>
-
                         <div style={{ borderTop: '1px solid #eee', marginTop: 12, paddingTop: 8 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#555' }}>
                             <span>Order: <b>{printForm.getFieldValue('orderRef') || selectedPrintOrder.id}</b></span>

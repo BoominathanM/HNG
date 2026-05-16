@@ -113,8 +113,8 @@ export default function Purchase() {
   const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
   const [raiseRequestForm] = Form.useForm();
 
-  /* ── WhatsApp sent tracking for stock status flow ── */
-  const [whatsappSentItems, setWhatsappSentItems] = useState(new Set());
+  /* ── WhatsApp sent tracking for stock status flow (key 1 pre-seeded for demo) ── */
+  const [whatsappSentItems, setWhatsappSentItems] = useState(new Set([1]));
 
   /* ── Place Order modal ── */
   const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
@@ -497,30 +497,35 @@ export default function Purchase() {
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
                               const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === req?.key);
-                              if (orderAlreadyRaised) return <Tag color="success" style={{ borderRadius: 12 }}>Order Placed</Tag>;
+
+                              if (orderAlreadyRaised) return null;
+
                               if (req?.status === 'Approved') return (
                                 <Button
                                   size="small"
                                   type="primary"
                                   icon={<ShoppingOutlined />}
                                   onClick={() => { setSelectedPlaceOrderReq(req); setSelectedPlaceOrderItem(r); setShowPlaceOrderModal(true); }}
-                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
                                 >
                                   Place Order
                                 </Button>
                               );
-                              if (req?.status === 'Pending') return <Tag color="processing" style={{ borderRadius: 12 }}>Request Pending</Tag>;
+
+                              if (req?.status === 'Pending') return null;
+
                               if (whatsappSentItems.has(r.key)) return (
                                 <Button
                                   size="small"
                                   type="primary"
-                                  icon={<UploadOutlined />}
+                                  icon={<PlusOutlined />}
                                   onClick={() => handleOpenRaiseRequest(r)}
-                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
                                 >
                                   Raise Request
                                 </Button>
                               );
+
                               return (
                                 <Button
                                   size="small"

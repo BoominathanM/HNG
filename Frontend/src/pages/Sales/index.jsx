@@ -2694,6 +2694,7 @@ export default function Sales() {
                       <Descriptions.Item label="Email">{record.email || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Assigned To">{record.salesPerson}</Descriptions.Item>
                       <Descriptions.Item label="Location">{record.location}</Descriptions.Item>
+                      <Descriptions.Item label="Destination">{record.destination || '—'}</Descriptions.Item>
                     </Descriptions>
                   </div>
                 ) : (
@@ -2775,6 +2776,11 @@ export default function Sales() {
                     <Col xs={24} sm={8}>
                       <Form.Item label="Location / City" name="location" rules={[{ required: true }]}>
                         <Input placeholder="e.g. Coimbatore" prefix={<EnvironmentOutlined style={{ color: '#ccc' }} />} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Destination" name="destination">
+                        <Input placeholder="e.g. Chennai, Delhi" prefix={<EnvironmentOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
