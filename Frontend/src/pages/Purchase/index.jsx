@@ -1,16 +1,16 @@
-import React, { useState, useRef } from 'react';
+﻿import React, { useState, useRef, useEffect } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, Tooltip
+  Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, Tooltip, Badge, notification, Popover
 } from 'antd';
 import {
   PlusOutlined, DownloadOutlined, ShoppingOutlined, SearchOutlined,
   UploadOutlined, EyeOutlined, EditOutlined, FileTextOutlined, WarningOutlined, InfoCircleOutlined, WhatsAppOutlined,
   TeamOutlined, ContactsOutlined, DollarOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined,
-  ThunderboltOutlined, RobotOutlined
+  ThunderboltOutlined, RobotOutlined, MessageOutlined, BellOutlined, CloseOutlined, ClockCircleOutlined, ReloadOutlined, SaveOutlined, TruckOutlined, CheckCircleOutlined
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
-import { addRaisedRequest, raiseOrder } from '../../store/slices/purchaseSlice';
+import { addRaisedRequest, raiseOrder, addBulkRequests, dismissNewProductRequest, updateFinanceStatus, updateRequestQty, addRequestNote, updateQuotationDetails } from '../../store/slices/purchaseSlice';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
@@ -19,19 +19,19 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const inventory = [
-  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', seller: 'ChemCo India', purchasedDate: '2024-01-15' },
-  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', seller: 'BioLife Ltd', purchasedDate: '2024-01-10' },
-  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', seller: 'PlastiPack', purchasedDate: '2024-01-05' },
-  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', seller: 'BoxWorld', purchasedDate: '2024-01-12' },
-  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', seller: 'PrintFast', purchasedDate: '2024-01-18' },
-  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', seller: 'ChemCo India', purchasedDate: '2023-12-20' },
+  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: 'â‚¹85/Kg', status: 'OK', seller: 'ChemCo India', purchasedDate: '2024-01-15' },
+  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: 'â‚¹95/Kg', status: 'Low', seller: 'BioLife Ltd', purchasedDate: '2024-01-10' },
+  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: 'â‚¹4.5/Pc', status: 'Low', seller: 'PlastiPack', purchasedDate: '2024-01-05' },
+  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: 'â‚¹12/Pc', status: 'OK', seller: 'BoxWorld', purchasedDate: '2024-01-12' },
+  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: 'â‚¹1.2/Pc', status: 'OK', seller: 'PrintFast', purchasedDate: '2024-01-18' },
+  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: 'â‚¹220/Ltr', status: 'Out', seller: 'ChemCo India', purchasedDate: '2023-12-20' },
 ];
 
 const suppliersList = [
-  { id: 1, name: 'ChemCo India', phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH', bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234' },
-  { id: 2, name: 'BioLife Ltd', phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN', bank: 'SBI — A/C 30112345678 | IFSC SBIN0001234' },
-  { id: 3, name: 'PlastiPack', phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL', bank: 'ICICI — A/C 007601234567 | IFSC ICIC0000076' },
-  { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA', bank: 'Axis Bank — A/C 912010012345678 | IFSC UTIB0000001' },
+  { id: 1, name: 'ChemCo India', phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH', bank: 'HDFC Bank â€" A/C 50100123456789 | IFSC HDFC0001234' },
+  { id: 2, name: 'BioLife Ltd', phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN', bank: 'SBI â€" A/C 30112345678 | IFSC SBIN0001234' },
+  { id: 3, name: 'PlastiPack', phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL', bank: 'ICICI â€" A/C 007601234567 | IFSC ICIC0000076' },
+  { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA', bank: 'Axis Bank â€" A/C 912010012345678 | IFSC UTIB0000001' },
 ];
 
 const vendorsList = [
@@ -53,6 +53,7 @@ export default function Purchase() {
   const dispatch = useDispatch();
   const raisedRequests = useSelector((s) => s.purchase.raisedRequests);
   const purchaseOrders = useSelector((s) => s.purchase.purchaseOrders);
+  const newProductRequests = useSelector((s) => s.purchase.newProductRequests);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
@@ -92,11 +93,11 @@ export default function Purchase() {
   const [statusForm] = Form.useForm();
   const [currentStatus, setCurrentStatus] = useState('');
 
-  /* ── History material search ── */
+  /* â"€â"€ History material search â"€â"€ */
   const [supplierHistorySearch, setSupplierHistorySearch] = useState('');
   const [vendorHistorySearch, setVendorHistorySearch] = useState('');
 
-  /* ── AI scan state ── */
+  /* â"€â"€ AI scan state â"€â"€ */
   const [supplierScanLoading, setSupplierScanLoading] = useState(false);
   const [vendorScanLoading, setVendorScanLoading] = useState(false);
   const [supplierScannedFile, setSupplierScannedFile] = useState(null);
@@ -104,7 +105,7 @@ export default function Purchase() {
   const [quotationFile, setQuotationFile] = useState(null);
   const [quotationScanLoading, setQuotationScanLoading] = useState(false);
 
-  /* ── Raise Request modal (separate from Ask Quotation) ── */
+  /* â"€â"€ Raise Request modal (separate from Ask Quotation) â"€â"€ */
   const [showRaiseRequestModal, setShowRaiseRequestModal] = useState(false);
   const [raiseRequestProduct, setRaiseRequestProduct] = useState(null);
   const [raiseRequestSupplier, setRaiseRequestSupplier] = useState(null);
@@ -113,31 +114,83 @@ export default function Purchase() {
   const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
   const [raiseRequestForm] = Form.useForm();
 
-  /* ── WhatsApp sent tracking for stock status flow (key 1 pre-seeded for demo) ── */
+  /* â"€â"€ WhatsApp sent tracking for stock status flow (key 1 pre-seeded for demo) â"€â"€ */
   const [whatsappSentItems, setWhatsappSentItems] = useState(new Set([1]));
 
-  /* ── Place Order modal ── */
+  /* â"€â"€ Place Order modal â"€â"€ */
   const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
   const [selectedPlaceOrderItem, setSelectedPlaceOrderItem] = useState(null);
   const [selectedPlaceOrderReq, setSelectedPlaceOrderReq] = useState(null);
 
-  /* ── Request Order payment terms watch ── */
+  /* â"€â"€ Request Order payment terms watch â"€â"€ */
   const [requestOrderPaymentTerms, setRequestOrderPaymentTerms] = useState('');
 
-  /* ── Payment type (Immediate / Credit) in Request Order ── */
+  /* â"€â"€ Payment type (Immediate / Credit) in Request Order â"€â"€ */
   const [orderPaymentType, setOrderPaymentType] = useState('Immediate');
+
+  /* â"€â"€ Bulk Purchase modal â"€â"€ */
+  const [showBulkPurchaseModal, setShowBulkPurchaseModal] = useState(false);
+  const [bulkSupplierName, setBulkSupplierName] = useState('');
+  const [bulkItems, setBulkItems] = useState([]);
+  const [bulkPayTerms, setBulkPayTerms] = useState('');
+
+  /* â"€â"€ WhatsApp reminder tracking (30-min intervals per inventory item key) â"€â"€ */
+  const reminderIntervalsRef = useRef({});
+  const [reminderCounts, setReminderCounts] = useState({});   // { itemKey: count }
+  const [activeReminders, setActiveReminders] = useState(new Set()); // item keys with active reminders
+
+  /* â"€â"€ Inventory item notes (stock_status tab) â"€â"€ */
+  const [invItemNotes, setInvItemNotes] = useState({});    // { itemKey: [{text, ts}] }
+  const [invNoteInput, setInvNoteInput] = useState({});    // { itemKey: string }
+  const [openInvNotes, setOpenInvNotes] = useState(null);  // itemKey whose notes panel is open
+
+  /* â"€â"€ Raised-request notes â"€â"€ */
+  const [openReqNotes, setOpenReqNotes] = useState(null);  // requestKey
+  const [reqNoteInput, setReqNoteInput] = useState('');
+
+  /* â"€â"€ Inline qty edit for raised requests â"€â"€ */
+  const [editingReqKey, setEditingReqKey] = useState(null);
+  const [editQtyValue, setEditQtyValue] = useState(1);
+
+  /* â"€â"€ Finance status mock modal (demo: allow setting finance status) â"€â"€ */
+  const [showFinanceStatusModal, setShowFinanceStatusModal] = useState(false);
+  const [financeStatusTarget, setFinanceStatusTarget] = useState(null);
+  const [financeNoteInput, setFinanceNoteInput] = useState('');
+  const [financeDecision, setFinanceDecision] = useState('');
+
+  /* â"€â"€ Track keys whose qty was recently edited (show Re-request button) â"€â"€ */
+  const [recentlyEditedKeys, setRecentlyEditedKeys] = useState(new Set());
+
+  /* â"€â"€ Edit Quotation modal (general edit + resend) â"€â"€ */
+  const [showEditQuotationModal, setShowEditQuotationModal] = useState(false);
+  const [editQuotationTarget, setEditQuotationTarget] = useState(null);
+  const [editReqForm] = Form.useForm();
+
+  /* â"€â"€ Multi-select extra products for Ask Quotation modal â"€â"€ */
+  const [quotationExtraProducts, setQuotationExtraProducts] = useState([]);
+  const [quotationExtraQtys, setQuotationExtraQtys] = useState({});
+
+  /* â"€â"€ Multi-select extra products for Raise Request modal â"€â"€ */
+  const [raiseRequestExtraProducts, setRaiseRequestExtraProducts] = useState([]);
+  const [raiseRequestExtraQtys, setRaiseRequestExtraQtys] = useState({});
   const [orderCreditDate, setOrderCreditDate] = useState(null);
 
-  /* ── LR Tracking modal ── */
+  /* â"€â"€ LR Tracking modal â"€â"€ */
   const [showLRModal, setShowLRModal] = useState(false);
   const [lrOrder, setLrOrder] = useState(null);
   const [lrNumber, setLrNumber] = useState('');
   const [lrReminderDate, setLrReminderDate] = useState(null);
 
-  /* ── "Verified by" for received orders ── */
+  /* LR Upload column (stock_status table) */
+  const [lrData, setLrData] = useState({});
+  const [showLRUploadModal, setShowLRUploadModal] = useState(false);
+  const [lrUploadTarget, setLrUploadTarget] = useState(null);
+  const [lrUploadForm] = Form.useForm();
+
+  /* â"€â"€ "Verified by" for received orders â"€â"€ */
   const [verifiedByName, setVerifiedByName] = useState('');
 
-  /* ── Purchase Expense tab state ── */
+  /* â"€â"€ Purchase Expense tab state â"€â"€ */
   const [purchaseExpenses, setPurchaseExpenses] = useState([
     { key: 1, date: '2024-05-01', invoice_no: 'INV-CHEM-101', supplier: 'ChemCo India', qty: '100 Kg', paid_status: 'Paid', paid_amount: 8500, total_amount: 8500, remaining: 0 },
     { key: 2, date: '2024-05-04', invoice_no: 'INV-BIO-452', supplier: 'BioLife Ltd', qty: '200 Ltr', paid_status: 'Partially Paid', paid_amount: 22000, total_amount: 44000, remaining: 22000 },
@@ -148,13 +201,13 @@ export default function Purchase() {
   const [expenseScanLoading, setExpenseScanLoading] = useState(false);
   const [expenseForm] = Form.useForm();
 
-  /* ── Vendor bill scan state (scan & record vendor bill → purchase expense) ── */
+  /* â"€â"€ Vendor bill scan state (scan & record vendor bill â†' purchase expense) â"€â"€ */
   const [showVendorBillScanModal, setShowVendorBillScanModal] = useState(false);
   const [vendorBillFile, setVendorBillFile] = useState(null);
   const [vendorBillScanLoading, setVendorBillScanLoading] = useState(false);
   const [vendorBillForm] = Form.useForm();
 
-  /* ── Camera capture (shared across all scan sections) ── */
+  /* â"€â"€ Camera capture (shared across all scan sections) â"€â"€ */
   const [showCameraModal, setShowCameraModal] = useState(false);
   const [cameraStream, setCameraStream] = useState(null);
   const [cameraSetFile, setCameraSetFile] = useState(null);
@@ -247,10 +300,10 @@ export default function Purchase() {
       bill_no: 'PUR-8821',
       inv_no: 'INV-CHEM-101',
       items: [
-        { name: 'Soap Base (White)', qty: '100 Kg', price: '₹85', total: '₹8,500' },
+        { name: 'Soap Base (White)', qty: '100 Kg', price: 'â‚¹85', total: 'â‚¹8,500' },
       ],
       entity: 'ChemCo India',
-      amount: '₹8,500',
+      amount: 'â‚¹8,500',
       status: 'Paid',
       req_status: 'Confirmed'
     },
@@ -260,10 +313,10 @@ export default function Purchase() {
       bill_no: 'PUR-8825',
       inv_no: 'INV-BIO-452',
       items: [
-        { name: 'Shampoo Concentrate', qty: '200 Ltr', price: '₹220', total: '₹44,000' }
+        { name: 'Shampoo Concentrate', qty: '200 Ltr', price: 'â‚¹220', total: 'â‚¹44,000' }
       ],
       entity: 'BioLife Ltd',
-      amount: '₹44,000',
+      amount: 'â‚¹44,000',
       status: 'Unpaid',
       req_status: 'Pending'
     },
@@ -272,6 +325,8 @@ export default function Purchase() {
   const handleOpenRequest = (product) => {
     setSelectedProduct(product);
     setSelectedSupplier(null);
+    setQuotationExtraProducts([]);
+    setQuotationExtraQtys({});
     const suggestQty = product.min > product.current ? (product.min - product.current) * 2 : product.min;
     purchaseForm.setFieldsValue({
       product: product.name,
@@ -292,7 +347,7 @@ export default function Purchase() {
       date: dayjs().format('YYYY-MM-DD'),
     };
     dispatch(addRaisedRequest(newRequest));
-    message.success(`Purchase request for ${values.product} raised — pending financial approval`);
+    message.success(`Purchase request for ${values.product} raised â€" pending financial approval`);
     setShowAddPurchaseModal(false);
     purchaseForm.resetFields();
     setSelectedProduct(null);
@@ -341,7 +396,7 @@ export default function Purchase() {
         sup_email: 'contact@globalchem.in',
         sup_tax: '27AABCG1234F1Z5',
         sup_address: 'Andheri East, Mumbai, MH 400069',
-        sup_bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234',
+        sup_bank: 'HDFC Bank â€" A/C 50100123456789 | IFSC HDFC0001234',
         sup_notes: 'Preferred supplier for chemical raw materials. NET-30 payment terms.',
       });
       setSupplierScanLoading(false);
@@ -359,7 +414,7 @@ export default function Purchase() {
         cust_email: 'procurement@hilton.in',
         cust_tax: '27AABHH5678K1Z2',
         cust_address: 'Koregaon Park, Pune, MH 411001',
-        cust_bank: 'ICICI Bank — A/C 007601234567 | IFSC ICIC0000076',
+        cust_bank: 'ICICI Bank â€" A/C 007601234567 | IFSC ICIC0000076',
         cust_notes: 'Premium hotel chain. Monthly billing cycle.',
         cust_discount: 8,
       });
@@ -404,6 +459,8 @@ export default function Purchase() {
     setRaiseRequestSupplier(null);
     setRaiseRequestFile(null);
     setRaiseRequestPaymentTerms('');
+    setRaiseRequestExtraProducts([]);
+    setRaiseRequestExtraQtys({});
     const suggestQty = product.min > product.current ? (product.min - product.current) * 2 : product.min;
     raiseRequestForm.resetFields();
     raiseRequestForm.setFieldsValue({ product: product.name, qty: suggestQty, unit: product.unit });
@@ -427,7 +484,8 @@ export default function Purchase() {
   const handleRaiseRequestSubmit = () => {
     raiseRequestForm.validateFields().then((values) => {
       if (!raiseRequestFile) { message.warning('Please upload a quotation file to raise a request'); return; }
-      const newRequest = {
+      // Main product request
+      dispatch(addRaisedRequest({
         key: Date.now(),
         item: values.product,
         supplier: values.supplier,
@@ -436,16 +494,131 @@ export default function Purchase() {
         payment_terms: values.payment_terms || 'From Quotation',
         date: dayjs().format('YYYY-MM-DD'),
         quotation_file: raiseRequestFile.name,
-      };
-      dispatch(addRaisedRequest(newRequest));
-      message.success(`Request for ${values.product} sent to Financial Quotation Requests!`);
+      }));
+      // Additional selected products
+      raiseRequestExtraProducts.forEach(productName => {
+        const invItem = inventory.find(i => i.name === productName);
+        dispatch(addRaisedRequest({
+          key: Date.now() + Math.random(),
+          item: productName,
+          supplier: values.supplier,
+          qty: raiseRequestExtraQtys[productName] || invItem?.min || 1,
+          unit: invItem?.unit || 'Pcs',
+          payment_terms: values.payment_terms || 'From Quotation',
+          date: dayjs().format('YYYY-MM-DD'),
+          quotation_file: raiseRequestFile.name,
+        }));
+      });
+      const totalCount = 1 + raiseRequestExtraProducts.length;
+      message.success(`${totalCount} request(s) sent to Financial Quotation!`);
       setShowRaiseRequestModal(false);
       raiseRequestForm.resetFields();
       setRaiseRequestProduct(null);
       setRaiseRequestSupplier(null);
       setRaiseRequestFile(null);
       setRaiseRequestPaymentTerms('');
+      setRaiseRequestExtraProducts([]);
+      setRaiseRequestExtraQtys({});
     });
+  };
+
+  const handleBulkSupplierSelect = (supplierName) => {
+    setBulkSupplierName(supplierName);
+    const supplierItems = inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller === supplierName);
+    const otherLowStock = inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller !== supplierName);
+    const allItems = [...supplierItems, ...otherLowStock];
+    setBulkItems(allItems.map(i => ({
+      invKey: i.key,
+      name: i.name,
+      unit: i.unit,
+      currentStock: i.current,
+      minStock: i.min,
+      status: i.status,
+      fromSupplier: i.seller === supplierName,
+      selected: i.seller === supplierName,
+      qty: i.min > i.current ? Math.max((i.min - i.current) * 2, i.min) : i.min,
+    })));
+  };
+
+  const handleBulkPurchaseSubmit = () => {
+    const selected = bulkItems.filter(i => i.selected && i.qty > 0);
+    if (selected.length === 0) { message.warning('Select at least one product'); return; }
+    if (!bulkSupplierName) { message.warning('Select a supplier first'); return; }
+    if (!bulkPayTerms) { message.warning('Select payment terms'); return; }
+    dispatch(addBulkRequests(selected.map(item => ({
+      item: item.name,
+      supplier: bulkSupplierName,
+      qty: item.qty,
+      unit: item.unit,
+      payment_terms: bulkPayTerms,
+      date: dayjs().format('YYYY-MM-DD'),
+    }))));
+    message.success(`${selected.length} bulk purchase request(s) raised successfully!`);
+    setShowBulkPurchaseModal(false);
+    setBulkSupplierName('');
+    setBulkItems([]);
+    setBulkPayTerms('');
+  };
+
+  // â"€â"€ WhatsApp reminder helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  const startQuotationReminder = (itemKey, itemName, supplierName) => {
+    // Clear any existing reminder for this item
+    if (reminderIntervalsRef.current[itemKey]) {
+      clearInterval(reminderIntervalsRef.current[itemKey]);
+    }
+    setReminderCounts(prev => ({ ...prev, [itemKey]: 0 }));
+    setActiveReminders(prev => new Set([...prev, itemKey]));
+
+    const intervalId = setInterval(() => {
+      setReminderCounts(prev => {
+        const newCount = (prev[itemKey] || 0) + 1;
+        notification.warning({
+          message: 'Quotation Reminder',
+          description: `Follow up with supplier for "${itemName}" quotation. This is reminder #${newCount}.`,
+          icon: <BellOutlined style={{ color: '#fa8c16' }} />,
+          duration: 8,
+          key: `reminder_${itemKey}`,
+        });
+        return { ...prev, [itemKey]: newCount };
+      });
+    }, 30 * 60 * 1000); // 30 minutes
+
+    reminderIntervalsRef.current[itemKey] = intervalId;
+  };
+
+  const stopQuotationReminder = (itemKey) => {
+    if (reminderIntervalsRef.current[itemKey]) {
+      clearInterval(reminderIntervalsRef.current[itemKey]);
+      delete reminderIntervalsRef.current[itemKey];
+    }
+    setActiveReminders(prev => { const s = new Set(prev); s.delete(itemKey); return s; });
+    setReminderCounts(prev => { const n = { ...prev }; delete n[itemKey]; return n; });
+  };
+
+  // Cleanup all intervals on unmount
+  useEffect(() => {
+    return () => { Object.values(reminderIntervalsRef.current).forEach(clearInterval); };
+  }, []);
+
+  // â"€â"€ Add inventory-item note helper â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  const handleAddInvNote = (itemKey) => {
+    const text = (invNoteInput[itemKey] || '').trim();
+    if (!text) return;
+    const ts = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    setInvItemNotes(prev => ({
+      ...prev,
+      [itemKey]: [...(prev[itemKey] || []), { text, ts }],
+    }));
+    setInvNoteInput(prev => ({ ...prev, [itemKey]: '' }));
+  };
+
+  // â"€â"€ Add raised-request note helper â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  const handleAddReqNote = (requestKey) => {
+    const text = reqNoteInput.trim();
+    if (!text) return;
+    const ts = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    dispatch(addRequestNote({ key: requestKey, text, timestamp: ts }));
+    setReqNoteInput('');
   };
 
   return (
@@ -468,19 +641,147 @@ export default function Purchase() {
                   label: <Space><WarningOutlined /> Quotation & Raise Request</Space>,
                   children: (
                     <div style={{ marginTop: 12 }}>
-                      <div style={{ marginBottom: 16 }}>
-                        <Title level={5} style={{ margin: 0, color: textColor }}>Inventory Stock Availability</Title>
-                        <Text type="secondary">Raise purchase requests directly for low stock products</Text>
+                      {/* â"€â"€ New Product Requests from Sales â"€â"€ */}
+                      {newProductRequests.length > 0 && (
+                        <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px solid #fa8c1666', background: isDark ? '#1a1500' : '#fffbe6' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                            <Space>
+                              <WarningOutlined style={{ color: '#fa8c16', fontSize: 16 }} />
+                              <Text strong style={{ color: '#d46b08', fontSize: 13 }}>New Product Requests from Sales</Text>
+                              <Tag color="warning" style={{ borderRadius: 10 }}>{newProductRequests.length} New</Tag>
+                            </Space>
+                            <Text type="secondary" style={{ fontSize: 11 }}>Sales team listed new products â€" raise purchase requests below</Text>
+                          </div>
+                          <Table
+                            size="small"
+                            dataSource={newProductRequests}
+                            pagination={false}
+                            rowKey="key"
+                            columns={[
+                              { title: 'Product Name', dataIndex: 'productName', key: 'productName', render: v => <Text strong style={{ color: '#d46b08' }}>{v}</Text> },
+                              { title: 'Qty (from Sales)', dataIndex: 'qty', key: 'qty', render: (v) => v || 'â€"' },
+                              { title: 'Hotel / Customer', dataIndex: 'hotelName', key: 'hotelName', render: v => v || 'â€"' },
+                              { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', render: v => v || 'â€"' },
+                              { title: 'Quotation Ref', dataIndex: 'fromOrder', key: 'fromOrder', render: v => <Text style={{ color: '#B11E6A', fontSize: 11 }}>{v}</Text> },
+                              { title: 'Date', dataIndex: 'date', key: 'date' },
+                              {
+                                title: 'Action', key: 'action',
+                                render: (_, r) => (
+                                  <Space>
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      icon={<PlusOutlined />}
+                                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
+                                      onClick={() => {
+                                        const fakeProduct = { key: r.key, name: r.productName, unit: 'Pcs', current: 0, min: r.qty || 1 };
+                                        handleOpenRaiseRequest(fakeProduct);
+                                        dispatch(dismissNewProductRequest(r.key));
+                                      }}
+                                    >
+                                      Raise Request
+                                    </Button>
+                                    <Button size="small" danger onClick={() => dispatch(dismissNewProductRequest(r.key))}>Dismiss</Button>
+                                  </Space>
+                                )
+                              }
+                            ]}
+                          />
+                        </div>
+                      )}
+
+                      {/* â"€â"€ Stock Availability Header with Bulk Purchase button â"€â"€ */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                        <div>
+                          <Title level={5} style={{ margin: 0, color: textColor }}>Inventory Stock Availability</Title>
+                          <Text type="secondary">Raise purchase requests directly for low stock products</Text>
+                        </div>
+                        <Button
+                          type="primary"
+                          icon={<ShoppingOutlined />}
+                          onClick={() => { setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setShowBulkPurchaseModal(true); }}
+                          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
+                        >
+                          Bulk Purchase Request
+                        </Button>
                       </div>
                       <Table
                         size="small"
                         dataSource={INVENTORY_DATA}
                         pagination={{ pageSize: 5 }}
+                        rowKey="key"
+                        expandable={{
+                          expandedRowKeys: openInvNotes ? [openInvNotes] : [],
+                          onExpand: () => {},
+                          showExpandColumn: false,
+                          expandedRowRender: (r) => {
+                            const notes = invItemNotes[r.key] || [];
+                            return (
+                              <div style={{ padding: '10px 16px', background: isDark ? '#16192a' : '#fafcff', borderRadius: 8 }}>
+                                <Text style={{ fontSize: 12, fontWeight: 600, color: '#B11E6A', display: 'block', marginBottom: 8 }}>
+                                  <MessageOutlined style={{ marginRight: 4 }} />Notes for {r.name}
+                                </Text>
+                                {notes.length === 0 && <Text type="secondary" style={{ fontSize: 11 }}>No notes yet. Add one below.</Text>}
+                                {notes.map((n, i) => (
+                                  <div key={i} style={{ padding: '6px 10px', marginBottom: 6, borderRadius: 6, background: isDark ? '#1e2235' : '#f0f4ff', border: `1px solid ${isDark ? '#2a2d40' : '#d6e4ff'}` }}>
+                                    <Text style={{ fontSize: 12 }}>{n.text}</Text>
+                                    <br />
+                                    <Text type="secondary" style={{ fontSize: 10 }}><ClockCircleOutlined style={{ marginRight: 3 }} />{n.ts}</Text>
+                                  </div>
+                                ))}
+                                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                  <Input
+                                    size="small"
+                                    placeholder="Add a note..."
+                                    value={invNoteInput[r.key] || ''}
+                                    onChange={e => setInvNoteInput(prev => ({ ...prev, [r.key]: e.target.value }))}
+                                    onPressEnter={() => handleAddInvNote(r.key)}
+                                    style={{ flex: 1, borderRadius: 6 }}
+                                  />
+                                  <Button size="small" type="primary" onClick={() => handleAddInvNote(r.key)}
+                                    style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Add</Button>
+                                </div>
+                              </div>
+                            );
+                          },
+                        }}
                         columns={[
                           { title: 'Item Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
                           { title: 'Category', dataIndex: 'category', key: 'category' },
                           { title: 'Current Stock', dataIndex: 'current', key: 'current', render: (v, r) => <Text style={{ color: v <= r.min ? '#ff4d4f' : 'inherit' }}>{v} {r.unit}</Text> },
                           { title: 'Min. Required', dataIndex: 'min', key: 'min', render: (v, r) => `${v} ${r.unit}` },
+                          {
+                            title: 'Supplier', key: 'supplier',
+                            render: (_, r) => {
+                              const req = raisedRequests.find(req => req.item === r.name);
+                              if (!req?.supplier) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              return <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 12 }}>{req.supplier}</Text>;
+                            }
+                          },
+                          {
+                            title: 'Payment Terms', key: 'payment_terms',
+                            render: (_, r) => {
+                              const req = raisedRequests.find(req => req.item === r.name);
+                              if (!req?.payment_terms) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              return <Text style={{ fontSize: 11 }}>{req.payment_terms}</Text>;
+                            }
+                          },
+                          {
+                            title: 'Payment Doc', key: 'payment_doc',
+                            render: (_, r) => {
+                              const req = raisedRequests.find(req => req.item === r.name);
+                              const linkedOrder = req ? purchaseOrders.find(o => o.requestKey === req.key) : null;
+                              const paymentDoc = linkedOrder?.payment_proof;
+                              if (!paymentDoc) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              return (
+                                <Button size="small" icon={<FileTextOutlined />}
+                                  onClick={() => setViewApprovalDoc({ ...req, payment_doc: paymentDoc })}
+                                  style={{ color: '#52c41a', borderColor: '#52c41a', fontWeight: 600, fontSize: 11, background: 'transparent' }}>
+                                  View File
+                                </Button>
+                              );
+                            }
+                          },
                           {
                             title: 'Quotation Status',
                             key: 'req_status',
@@ -492,49 +793,148 @@ export default function Purchase() {
                             }
                           },
                           {
+                            title: 'Finance Status',
+                            key: 'finance_status',
+                            render: (_, r) => {
+                              const req = raisedRequests.find(req => req.item === r.name);
+                              if (!req?.financeStatus) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              if (req.financeStatus === 'Approved') return <Tag color="success" style={{ borderRadius: 12 }}>Approved</Tag>;
+                              if (req.financeStatus === 'ModifyRequested') return (
+                                <Tooltip title={req.financeNote || 'Modify requested by finance'}>
+                                  <Tag color="warning" style={{ borderRadius: 12, cursor: 'pointer' }}>Modify Requested</Tag>
+                                </Tooltip>
+                              );
+                              return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                            }
+                          },
+                          {
+                            title: 'Upload LR Copies',
+                            key: 'lr_copies',
+                            render: (_, r) => {
+                              const req = raisedRequests.find(req => req.item === r.name);
+                              const linkedOrder = req ? purchaseOrders.find(o => o.requestKey === req.key) : null;
+                              if (!linkedOrder) return <Text type="secondary">—</Text>;
+                              const lr = lrData[linkedOrder.key];
+                              if (lr) {
+                                return (
+                                  <Space direction="vertical" size={2}>
+                                    <Tag color={lr.paidStatus === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 8, margin: 0 }}>
+                                      {lr.paidStatus === 'Paid' ? <CheckCircleOutlined style={{ marginRight: 3 }} /> : null}{lr.paidStatus}
+                                    </Tag>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
+                                    <Text type="secondary" style={{ fontSize: 10 }}>Delivery: {lr.deliveryDate}</Text>
+                                    <Button size="small" icon={<EditOutlined />}
+                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus }); setShowLRUploadModal(true); }}
+                                      style={{ fontSize: 11, height: 22, padding: '0 8px' }}>Edit</Button>
+                                  </Space>
+                                );
+                              }
+                              return (
+                                <Button size="small" icon={<UploadOutlined />}
+                                  onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.resetFields(); setShowLRUploadModal(true); }}
+                                  style={{ borderColor: '#1890ff', color: '#1890ff' }}>
+                                  Upload
+                                </Button>
+                              );
+                            }
+                          },
+                          {
                             title: 'Action',
                             key: 'action',
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
                               const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === req?.key);
-
-                              if (orderAlreadyRaised) return null;
-
-                              if (req?.status === 'Approved') return (
-                                <Button
-                                  size="small"
-                                  type="primary"
-                                  icon={<ShoppingOutlined />}
-                                  onClick={() => { setSelectedPlaceOrderReq(req); setSelectedPlaceOrderItem(r); setShowPlaceOrderModal(true); }}
-                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
-                                >
-                                  Place Order
-                                </Button>
+                              const hasReminder = activeReminders.has(r.key);
+                              const reminderCount = reminderCounts[r.key] || 0;
+                              const noteCount = (invItemNotes[r.key] || []).length;
+                              const noteBtn = (
+                                <Badge count={noteCount} size="small" offset={[-2, 2]}>
+                                  <Button
+                                    size="small"
+                                    icon={<MessageOutlined />}
+                                    onClick={() => setOpenInvNotes(openInvNotes === r.key ? null : r.key)}
+                                    style={{ color: openInvNotes === r.key ? '#fff' : '#B11E6A', background: openInvNotes === r.key ? '#B11E6A' : 'transparent', borderColor: '#B11E6A55' }}
+                                  />
+                                </Badge>
                               );
 
-                              if (req?.status === 'Pending') return null;
+                              // Direct WA Ask Quotation button (uses raised request supplier details)
+                              const buildReqWABtn = (label = 'Ask Quotation') => {
+                                if (!req) return null;
+                                const sup = suppliersList.find(s => s.name === req.supplier);
+                                const phone = sup ? sup.phone.replace(/\D/g, '') : '';
+                                const latestNote = (req.notes || []).at(-1);
+                                const msg = `*Quotation Follow-up*\n\n*Item:* ${req.item}\n*Quantity:* ${req.qty} ${req.unit}\n*Payment Terms:* ${req.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nPlease provide a quotation at the earliest.`;
+                                return (
+                                  <Button size="small" icon={<WhatsAppOutlined />}
+                                    style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
+                                    onClick={() => window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank')}>
+                                    {label}
+                                  </Button>
+                                );
+                              };
+
+                              if (orderAlreadyRaised) return <Space>{noteCount > 0 ? buildReqWABtn() : null}{noteBtn}</Space>;
+
+                              if (req?.status === 'Approved') return (
+                                <Space wrap size={4}>
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    icon={<ShoppingOutlined />}
+                                    onClick={() => { setSelectedPlaceOrderReq(req); setSelectedPlaceOrderItem(r); setShowPlaceOrderModal(true); }}
+                                    style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
+                                  >
+                                    Place Order
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    icon={<DollarOutlined />}
+                                    onClick={() => { setSelectedApprovedRequest(req); setShowRequestOrderModal(true); }}
+                                    style={{ background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 600 }}
+                                  >
+                                    Payment Request
+                                  </Button>
+                                  {noteCount > 0 ? buildReqWABtn() : null}
+                                  {noteBtn}
+                                </Space>
+                              );
+
+                              // Pending: always show Ask Quotation so purchase team can follow up
+                              // after raising request or after Finance edits and resets to Pending
+                              if (req?.status === 'Pending') return <Space>{buildReqWABtn()}{noteBtn}</Space>;
 
                               if (whatsappSentItems.has(r.key)) return (
-                                <Button
-                                  size="small"
-                                  type="primary"
-                                  icon={<PlusOutlined />}
-                                  onClick={() => handleOpenRaiseRequest(r)}
-                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
-                                >
-                                  Raise Request
-                                </Button>
+                                <Space direction="vertical" size={4}>
+                                  {hasReminder && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 8, background: '#fff7e6', border: '1px solid #ffd591' }}>
+                                      <BellOutlined style={{ color: '#fa8c16', fontSize: 11 }} />
+                                      <Text style={{ fontSize: 10, color: '#d46b08' }}>Reminder{reminderCount > 0 ? ` Ã—${reminderCount}` : ' active'}</Text>
+                                      <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 9 }} />}
+                                        style={{ padding: '0 2px', height: 14, minWidth: 14, color: '#888' }}
+                                        onClick={() => stopQuotationReminder(r.key)} />
+                                    </div>
+                                  )}
+                                  <Space>
+                                    <Button size="small" type="primary" icon={<PlusOutlined />}
+                                      onClick={() => { handleOpenRaiseRequest(r); stopQuotationReminder(r.key); }}
+                                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}>
+                                      Raise Request
+                                    </Button>
+                                    {noteBtn}
+                                  </Space>
+                                </Space>
                               );
 
                               return (
-                                <Button
-                                  size="small"
-                                  icon={<WhatsAppOutlined />}
-                                  onClick={() => handleOpenRequest(r)}
-                                  style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
-                                >
-                                  Ask Quotation
-                                </Button>
+                                <Space>
+                                  <Button size="small" icon={<WhatsAppOutlined />} onClick={() => handleOpenRequest(r)}
+                                    style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}>
+                                    Ask Quotation
+                                  </Button>
+                                  {noteBtn}
+                                </Space>
                               );
                             }
                           }
@@ -544,228 +944,80 @@ export default function Purchase() {
                   )
                 },
                 {
-                  key: 'purchase_requests',
-                  label: <Space><ShoppingOutlined />Request Order</Space>,
+                  key: 'order_tracking',
+                  label: <Space><TruckOutlined />Order Tracking</Space>,
                   children: (
                     <div style={{ marginTop: 12 }}>
                       <div style={{ marginBottom: 16 }}>
-                        <Title level={5} style={{ margin: 0, color: textColor }}>Purchase Requests</Title>
-                        <Text type="secondary">Requests raised from Stock Status — pending financial approval. Raise an order once approved.</Text>
+                        <Title level={5} style={{ margin: 0, color: textColor }}>Order Tracking</Title>
+                        <Text type="secondary">Track purchase orders by LR number and expected delivery date</Text>
                       </div>
                       <Table
                         size="small"
-                        dataSource={raisedRequests.filter(r => r.status !== 'Rejected')}
+                        dataSource={purchaseOrders.map(o => ({ ...o, lr: lrData[o.key] || null }))}
+                        rowKey="key"
                         pagination={{ pageSize: 8 }}
-                        locale={{ emptyText: 'No purchase requests raised yet. Go to Stock Status tab to raise a request.' }}
+                        locale={{ emptyText: 'No orders yet. Orders will appear here once raised from the Purchase module.' }}
                         columns={[
-                          { title: 'Date', dataIndex: 'date', key: 'date' },
+                          { title: 'Order Date', dataIndex: 'date', key: 'date' },
+                          {
+                            title: 'Bill / Inv No', key: 'nos',
+                            render: (_, r) => (
+                              <Space direction="vertical" size={0}>
+                                <Text strong>{r.bill_no}</Text>
+                                <Text style={{ color: '#B11E6A', fontSize: 11 }}>{r.inv_no}</Text>
+                              </Space>
+                            )
+                          },
                           { title: 'Item', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
                           { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
                           { title: 'Qty', key: 'qty', render: (_, r) => `${r.qty} ${r.unit}` },
-                          { title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', render: v => <Text style={{ fontSize: 11 }}>{v}</Text> },
+                          { title: 'Amount', dataIndex: 'amount', key: 'amount', render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v?.toLocaleString()}</Text> },
                           {
-                            title: 'Quotation Status', dataIndex: 'status', key: 'status',
-                            render: v => {
-                              const colorMap = { Approved: 'success', Pending: 'processing' };
-                              return <Tag color={colorMap[v] || 'default'} style={{ borderRadius: 12 }}>{v}</Tag>;
-                            }
+                            title: 'LR Number', key: 'lr_number',
+                            render: (_, r) => r.lr
+                              ? <Text strong style={{ color: '#1890ff' }}>{r.lr.lrNumber}</Text>
+                              : <Tag color="default" style={{ borderRadius: 8 }}>Not Uploaded</Tag>
                           },
                           {
-                            title: 'Payment Doc', key: 'payment_doc',
+                            title: 'Expected Delivery', key: 'delivery',
                             render: (_, r) => {
-                              const linkedOrder = purchaseOrders.find(o => o.requestKey === r.key);
-                              const paymentDoc = linkedOrder?.payment_proof;
+                              if (!r.lr?.deliveryDate) return <Text type="secondary">—</Text>;
+                              const days = dayjs(r.lr.deliveryDate).diff(dayjs(), 'day');
+                              const color = days < 0 ? '#ff4d4f' : days <= 2 ? '#fa8c16' : '#52c41a';
                               return (
-                                <Button
-                                  size="small"
-                                  icon={<FileTextOutlined />}
-                                  disabled={!paymentDoc}
-                                  onClick={() => paymentDoc && setViewApprovalDoc({ ...r, payment_doc: paymentDoc })}
-                                  style={{
-                                    color: paymentDoc ? '#52c41a' : '#bbb',
-                                    borderColor: paymentDoc ? '#52c41a' : '#d9d9d9',
-                                    fontWeight: 600,
-                                    fontSize: 12,
-                                    background: 'transparent',
-                                  }}
-                                >
-                                  View File
-                                </Button>
+                                <Space direction="vertical" size={0}>
+                                  <Text strong style={{ color }}>{r.lr.deliveryDate}</Text>
+                                  <Text style={{ fontSize: 11, color }}>
+                                    {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `${days}d remaining`}
+                                  </Text>
+                                </Space>
                               );
                             }
                           },
                           {
-                            title: 'Action', key: 'action',
+                            title: 'Pay Status', key: 'pay_status',
                             render: (_, r) => {
-                              const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === r.key);
-                              if (orderAlreadyRaised) return <Tag color="success" style={{ borderRadius: 12 }}>Order Sent</Tag>;
+                              if (!r.lr) return <Text type="secondary">—</Text>;
+                              return <Tag color={r.lr.paidStatus === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10 }}>{r.lr.paidStatus}</Tag>;
+                            }
+                          },
+                          {
+                            title: 'LR Copy', key: 'lr_copy',
+                            render: (_, r) => {
+                              if (!r.lr) return <Text type="secondary">—</Text>;
                               return (
-                                <Button
-                                  size="small"
-                                  type="primary"
-                                  icon={<ShoppingOutlined />}
-                                  disabled={r.status !== 'Approved'}
-                                  onClick={() => { setSelectedApprovedRequest(r); setShowRequestOrderModal(true); }}
-                                  style={{
-                                    background: r.status === 'Approved' ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined,
-                                    border: 'none',
-                                  }}
-                                >
-                                  {r.status === 'Approved' ? 'Request Order' : 'Awaiting Approval'}
-                                </Button>
+                                <Space direction="vertical" size={2}>
+                                  {r.lr.fileName
+                                    ? <Button size="small" icon={<FileTextOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff' }}>View</Button>
+                                    : <Text type="secondary" style={{ fontSize: 11 }}>No file</Text>
+                                  }
+                                </Space>
                               );
                             }
-                          }
+                          },
                         ]}
                       />
-                    </div>
-                  )
-                },
-                {
-                  key: 'suppliers',
-                  label: <Space><TeamOutlined />Suppliers</Space>,
-                  children: (
-                    <div className="fade-in" style={{ marginTop: 12 }}>
-                      {viewSupplier ? (() => {
-                        const supplierHistoryRaw = [
-                          { key: 1, date: '2024-05-01', bill_no: 'BILL-1001', inv_no: 'INV-A101', items: [{ name: 'Soap Base (White)', qty: '100 Kg', price: '₹85/Kg', total: '₹8,500' }, { name: 'Glycerin', qty: '10 Kg', price: '₹120/Kg', total: '₹1,200' }], status: 'Received' },
-                          { key: 2, date: '2024-04-15', bill_no: 'BILL-982', inv_no: 'INV-B452', items: [{ name: 'Shampoo Concentrate', qty: '50 Ltr', price: '₹220/Ltr', total: '₹11,000' }], status: 'Received' },
-                        ];
-                        const filteredSupplierHistory = supplierHistorySearch
-                          ? supplierHistoryRaw.filter(r => r.items.some(i => i.name.toLowerCase().includes(supplierHistorySearch.toLowerCase())))
-                          : supplierHistoryRaw;
-                        return (
-                        <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
-                            <Space>
-                              <Button icon={<LeftOutlined />} onClick={() => { setViewSupplier(null); setSupplierHistorySearch(''); }}>Back to Suppliers</Button>
-                              <Input
-                                prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
-                                placeholder="Search by material..."
-                                value={supplierHistorySearch}
-                                onChange={e => setSupplierHistorySearch(e.target.value)}
-                                allowClear
-                                style={{ width: 240, borderRadius: 8 }}
-                                suffix={supplierHistorySearch ? <Text style={{ fontSize: 11, color: '#B11E6A' }}>{filteredSupplierHistory.length}</Text> : null}
-                              />
-                            </Space>
-                            <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewSupplier.name} - Purchase History</Title>
-                          </div>
-                          <Table
-                            size="small"
-                            dataSource={filteredSupplierHistory}
-                            columns={[
-                              { title: 'Date', dataIndex: 'date', key: 'date' },
-                              { title: 'Bill No', dataIndex: 'bill_no', key: 'bill_no', render: v => <Text strong>{v}</Text> },
-                              { title: 'Invoice No', dataIndex: 'inv_no', key: 'inv_no', render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
-                              {
-                                title: 'Materials & Quantities',
-                                key: 'items',
-                                render: (_, record) => (
-                                  <List
-                                    size="small"
-                                    dataSource={record.items}
-                                    renderItem={item => (
-                                      <List.Item style={{ padding: '4px 0', border: 'none' }}>
-                                        <Space split={<Divider type="vertical" />}>
-                                          <Text strong>{item.name}</Text>
-                                          <Text>{item.qty}</Text>
-                                          <Text type="secondary">{item.price}</Text>
-                                        </Space>
-                                      </List.Item>
-                                    )}
-                                  />
-                                )
-                              },
-                              {
-                                title: 'Total Amount',
-                                key: 'total',
-                                render: (_, r) => {
-                                  const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0);
-                                  return <Text strong>₹{total.toLocaleString()}</Text>;
-                                }
-                              },
-                              { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="green">{v}</Tag> },
-                              {
-                                title: 'Actions',
-                                key: 'actions',
-                                render: (_, record) => (
-                                  <Space>
-                                    <Button
-                                      size="small"
-                                      type="primary"
-                                      icon={<FileTextOutlined />}
-                                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
-                                      onClick={() => setViewBillDetail(record)}
-                                    >
-                                      AI Details
-                                    </Button>
-                                    <Button
-                                      size="small"
-                                      icon={<CheckOutlined />}
-                                      onClick={() => {
-                                        setSelectedOrder(record);
-                                        setUpdateType('supplier');
-                                        setCurrentStatus(record.status);
-                                        statusForm.setFieldsValue({ status: record.status });
-                                        setShowUpdateStatusModal(true);
-                                      }}
-                                    >
-                                      Update
-                                    </Button>
-                                  </Space>
-                                )
-                              },
-                            ]}
-                          />
-                        </div>
-                        );
-                      })() : (
-                        <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-                            <Title level={5} style={{ margin: 0, color: textColor }}>Supplier Management</Title>
-                            <Space wrap>
-                              <Input
-                                prefix={<SearchOutlined />}
-                                placeholder="Search supplier..."
-                                value={supplierSearch}
-                                onChange={e => setSupplierSearch(e.target.value)}
-                                style={{ width: 200 }}
-                              />
-                              <DatePicker.RangePicker
-                                value={supplierDateRange}
-                                onChange={setSupplierDateRange}
-                                style={{ width: 260 }}
-                              />
-                              <Select value={supplierFilter} onChange={setSupplierFilter} style={{ width: 140 }}>
-                                <Option value="all">All Time</Option>
-                                <Option value="this_week">This Week</Option>
-                                <Option value="this_month">This Month</Option>
-                                <Option value="last_3_months">Last 3 Months</Option>
-                                <Option value="last_6_months">Last 6 Months</Option>
-                                <Option value="last_year">Last Year</Option>
-                              </Select>
-                              <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddSupplierModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Supplier</Button>
-                            </Space>
-                          </div>
-                          <Table
-                            size="small"
-                            dataSource={filteredSuppliers}
-                            columns={[
-                              { title: 'Supplier Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
-                              { title: 'Phone', dataIndex: 'phone', key: 'phone' },
-                              { title: 'Email', dataIndex: 'email', key: 'email' },
-                              { title: 'Address', dataIndex: 'address', key: 'address' },
-                              {
-                                title: 'Action', key: 'action',
-                                render: (_, r) => (
-                                  <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewSupplier(r)} style={{ color: '#B11E6A' }}>View History</Button>
-                                )
-                              }
-                            ]}
-                          />
-                        </div>
-                      )}
                     </div>
                   )
                 },
@@ -776,8 +1028,8 @@ export default function Purchase() {
                     <div className="fade-in" style={{ marginTop: 12 }}>
                       {viewVendor ? (() => {
                         const vendorHistoryRaw = [
-                          { key: 1, date: '2024-05-02', bill_no: 'SAL-2001', inv_no: 'INV-X99', items: [{ name: 'Dental Kit Boxes', qty: '50 Pcs', price: '₹15/Pc', total: '₹750' }, { name: 'Soap Bars', qty: '20 Pcs', price: '₹10/Pc', total: '₹200' }], status: 'Dispatched' },
-                          { key: 2, date: '2024-04-20', bill_no: 'SAL-1980', inv_no: 'INV-X85', items: [{ name: 'Custom Stickers', qty: '1000 Pcs', price: '₹2/Pc', total: '₹2,000' }], status: 'Delivered' },
+                          { key: 1, date: '2024-05-02', bill_no: 'SAL-2001', inv_no: 'INV-X99', items: [{ name: 'Dental Kit Boxes', qty: '50 Pcs', price: 'â‚¹15/Pc', total: 'â‚¹750' }, { name: 'Soap Bars', qty: '20 Pcs', price: 'â‚¹10/Pc', total: 'â‚¹200' }], status: 'Dispatched' },
+                          { key: 2, date: '2024-04-20', bill_no: 'SAL-1980', inv_no: 'INV-X85', items: [{ name: 'Custom Stickers', qty: '1000 Pcs', price: 'â‚¹2/Pc', total: 'â‚¹2,000' }], status: 'Delivered' },
                         ];
                         const filteredVendorHistory = vendorHistorySearch
                           ? vendorHistoryRaw.filter(r => r.items.some(i => i.name.toLowerCase().includes(vendorHistorySearch.toLowerCase())))
@@ -830,8 +1082,8 @@ export default function Purchase() {
                                 title: 'Total Amount',
                                 key: 'total',
                                 render: (_, r) => {
-                                  const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0);
-                                  return <Text strong>₹{total.toLocaleString()}</Text>;
+                                  const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[â‚¹,]/g, '')), 0);
+                                  return <Text strong>â‚¹{total.toLocaleString()}</Text>;
                                 }
                               },
                               { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="blue">{v}</Tag> },
@@ -905,8 +1157,8 @@ export default function Purchase() {
                               { title: 'Phone', dataIndex: 'phone', key: 'phone' },
                               { title: 'Email', dataIndex: 'email', key: 'email' },
                               { title: 'Address', dataIndex: 'address', key: 'address' },
-                              { title: 'Total Paid', dataIndex: 'totalPaid', key: 'totalPaid', render: v => <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
-                              { title: 'Pending', dataIndex: 'pending', key: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
+                              { title: 'Total Paid', dataIndex: 'totalPaid', key: 'totalPaid', render: v => <Text style={{ color: '#52c41a', fontWeight: 600 }}>â‚¹{v.toLocaleString()}</Text> },
+                              { title: 'Pending', dataIndex: 'pending', key: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>â‚¹{v.toLocaleString()}</Text> },
                               {
                                 title: 'Action', key: 'action',
                                 render: (_, r) => (
@@ -967,22 +1219,22 @@ export default function Purchase() {
                                   {r.paid_status}
                                 </Tag>
                                 {r.paid_amount > 0 && (
-                                  <Text style={{ fontSize: 11, color: '#52c41a' }}>Paid: ₹{r.paid_amount.toLocaleString()}</Text>
+                                  <Text style={{ fontSize: 11, color: '#52c41a' }}>Paid: â‚¹{r.paid_amount.toLocaleString()}</Text>
                                 )}
                                 {r.remaining > 0 && (
-                                  <Text style={{ fontSize: 11, color: '#ff4d4f' }}>Remaining: ₹{r.remaining.toLocaleString()}</Text>
+                                  <Text style={{ fontSize: 11, color: '#ff4d4f' }}>Remaining: â‚¹{r.remaining.toLocaleString()}</Text>
                                 )}
                               </Space>
                             )
                           },
-                          { title: 'Total', key: 'total', render: (_, r) => <Text strong style={{ color: '#B11E6A' }}>₹{r.total_amount.toLocaleString()}</Text> },
+                          { title: 'Total', key: 'total', render: (_, r) => <Text strong style={{ color: '#B11E6A' }}>â‚¹{r.total_amount.toLocaleString()}</Text> },
                           {
                             title: 'Actions', key: 'actions',
                             render: (_, r) => (
                               <Space>
                                 <Button size="small" icon={<EyeOutlined />} />
                                 {r.paid_status !== 'Paid' && (
-                                  <Button size="small" icon={<UploadOutlined />} style={{ color: '#1890ff' }} title="Upload proof">Proof</Button>
+                                  <Button size="small" icon={<UploadOutlined />} style={{ color: '#1890ff', fontWeight: 600 }}>Payment Proof</Button>
                                 )}
                               </Space>
                             )
@@ -1033,7 +1285,7 @@ export default function Purchase() {
         </Col>
       </Row>
 
-      {/* Ask Quotation Modal — WhatsApp only */}
+      {/* Ask Quotation Modal â€" WhatsApp only */}
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
@@ -1139,25 +1391,88 @@ export default function Purchase() {
             </Row>
           </div>
 
+          {/* Multi-select additional low-stock products */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 8 }}>
+              Also include in this quotation request: <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>(optional â€" select more low-stock items)</Text>
+            </Text>
+            <Select
+              mode="multiple"
+              placeholder="Select additional products..."
+              style={{ width: '100%', borderRadius: 8 }}
+              value={quotationExtraProducts}
+              onChange={(vals) => {
+                setQuotationExtraProducts(vals);
+                const newQtys = { ...quotationExtraQtys };
+                vals.forEach(v => { if (!newQtys[v]) { const inv = inventory.find(i => i.name === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
+                setQuotationExtraQtys(newQtys);
+              }}
+              optionLabelProp="label"
+            >
+              {inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== selectedProduct?.name).map(i => (
+                <Option key={i.key} value={i.name} label={i.name}>
+                  <Space>
+                    <Tag color={i.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0 }}>{i.status}</Tag>
+                    <Text>{i.name}</Text>
+                    <Text type="secondary" style={{ fontSize: 11 }}>({i.current}/{i.min} {i.unit})</Text>
+                  </Space>
+                </Option>
+              ))}
+            </Select>
+            {quotationExtraProducts.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                {quotationExtraProducts.map(productName => {
+                  const inv = inventory.find(i => i.name === productName);
+                  return (
+                    <Row key={productName} gutter={8} align="middle" style={{ marginBottom: 6 }}>
+                      <Col flex="auto"><Text style={{ fontSize: 12 }}>{productName}</Text></Col>
+                      <Col style={{ width: 120 }}>
+                        <InputNumber
+                          size="small"
+                          min={1}
+                          value={quotationExtraQtys[productName]}
+                          onChange={v => setQuotationExtraQtys(prev => ({ ...prev, [productName]: v }))}
+                          addonAfter={<Text style={{ fontSize: 11 }}>{inv?.unit || 'Pcs'}</Text>}
+                          style={{ width: '100%' }}
+                        />
+                      </Col>
+                    </Row>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); setSelectedSupplier(null); }} style={{ flex: 1, height: 44, borderRadius: 10 }}>Cancel</Button>
+            <Button onClick={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); setSelectedSupplier(null); setQuotationExtraProducts([]); setQuotationExtraQtys({}); }} style={{ flex: 1, height: 44, borderRadius: 10 }}>Cancel</Button>
             <Button
               block
               icon={<WhatsAppOutlined />}
               onClick={() => {
                 const values = purchaseForm.getFieldsValue();
                 if (!values.supplier) { message.warning('Please select a supplier first'); return; }
-                const msg = `Hello, I would like to request a quotation for:\n\n*Product:* ${values.product}\n*Quantity:* ${values.qty || 'N/A'} ${values.unit || ''}\n\nPlease advise on pricing and availability.`;
+                const mainLine = `â€¢ *${values.product}* â€" Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
+                const extraLines = quotationExtraProducts.map(p => {
+                  const inv = inventory.find(i => i.name === p);
+                  return `â€¢ *${p}* â€" Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
+                });
+                const allLines = [mainLine, ...extraLines].join('\n');
+                const msg = `Hello, I would like to request a quotation for the following items:\n\n${allLines}\n\nPlease advise on pricing and availability.`;
                 const phone = selectedSupplier ? selectedSupplier.phone.replace(/\D/g, '') : '';
                 window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
                 if (selectedProduct?.key) {
                   setWhatsappSentItems(prev => new Set(prev).add(selectedProduct.key));
+                  // Start 30-min reminder until quotation received
+                  startQuotationReminder(selectedProduct.key, selectedProduct.name, values.supplier);
+                  message.info('30-minute quotation reminders started. You will be reminded until quotation is received.', 5);
                 }
                 setShowAddPurchaseModal(false);
                 purchaseForm.resetFields();
                 setSelectedProduct(null);
                 setSelectedSupplier(null);
+                setQuotationExtraProducts([]);
+                setQuotationExtraQtys({});
               }}
               style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#25D366,#128C7E)', border: 'none', color: '#fff', fontWeight: 700, fontSize: 14 }}
             >
@@ -1167,7 +1482,7 @@ export default function Purchase() {
         </Form>
       </Modal>
 
-      {/* Raise Request Modal — upload quotation doc + AI + send to Financial */}
+      {/* Raise Request Modal â€" upload quotation doc + AI + send to Financial */}
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
@@ -1176,7 +1491,7 @@ export default function Purchase() {
             </div>
             <div>
               <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Raise Request</div>
-              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Upload received quotation → AI extracts details → Send to Financial</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Upload received quotation â†' AI extracts details â†' Send to Financial</div>
             </div>
           </div>
         }
@@ -1246,7 +1561,7 @@ export default function Purchase() {
               </div>
               <div>
                 <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Upload Received Quotation</Text>
-                <Text style={{ fontSize: 11, color: '#aaa' }}>Upload quotation file — AI will auto-fill payment terms & quantity</Text>
+                <Text style={{ fontSize: 11, color: '#aaa' }}>Upload quotation file â€" AI will auto-fill payment terms & quantity</Text>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -1293,10 +1608,65 @@ export default function Purchase() {
             </Row>
           </div>
 
+          {/* Multi-select additional products */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 8 }}>
+              Also raise request for: <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>(optional â€" select more low-stock items for same supplier)</Text>
+            </Text>
+            <Select
+              mode="multiple"
+              placeholder="Select additional low-stock products..."
+              style={{ width: '100%', borderRadius: 8 }}
+              value={raiseRequestExtraProducts}
+              onChange={(vals) => {
+                setRaiseRequestExtraProducts(vals);
+                const newQtys = { ...raiseRequestExtraQtys };
+                vals.forEach(v => { if (!newQtys[v]) { const inv = inventory.find(i => i.name === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
+                setRaiseRequestExtraQtys(newQtys);
+              }}
+              optionLabelProp="label"
+            >
+              {inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== raiseRequestProduct?.name).map(i => (
+                <Option key={i.key} value={i.name} label={i.name}>
+                  <Space>
+                    <Tag color={i.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0 }}>{i.status}</Tag>
+                    <Text>{i.name}</Text>
+                    <Text type="secondary" style={{ fontSize: 11 }}>({i.current}/{i.min} {i.unit})</Text>
+                  </Space>
+                </Option>
+              ))}
+            </Select>
+            {raiseRequestExtraProducts.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                {raiseRequestExtraProducts.map(productName => {
+                  const inv = inventory.find(i => i.name === productName);
+                  return (
+                    <Row key={productName} gutter={8} align="middle" style={{ marginBottom: 6 }}>
+                      <Col flex="auto"><Text style={{ fontSize: 12 }}>{productName}</Text></Col>
+                      <Col style={{ width: 130 }}>
+                        <InputNumber
+                          size="small"
+                          min={1}
+                          value={raiseRequestExtraQtys[productName]}
+                          onChange={v => setRaiseRequestExtraQtys(prev => ({ ...prev, [productName]: v }))}
+                          addonAfter={<Text style={{ fontSize: 11 }}>{inv?.unit || 'Pcs'}</Text>}
+                          style={{ width: '100%' }}
+                        />
+                      </Col>
+                    </Row>
+                  );
+                })}
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {raiseRequestExtraProducts.length + 1} total request(s) will be raised
+                </Text>
+              </div>
+            )}
+          </div>
+
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: 8 }}>
             <Button
-              onClick={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestPaymentTerms(''); }}
+              onClick={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestPaymentTerms(''); setRaiseRequestExtraProducts([]); setRaiseRequestExtraQtys({}); }}
               style={{ flex: 1, height: 44, borderRadius: 10 }}
             >
               Cancel
@@ -1312,7 +1682,7 @@ export default function Purchase() {
         </Form>
       </Modal>
 
-      {/* Request Order Modal — order details filled after financial approval */}
+      {/* Payment Request Modal â€" order details filled after financial approval */}
       <Modal
         title={
           <Space>
@@ -1320,7 +1690,7 @@ export default function Purchase() {
               <ShoppingOutlined style={{ color: '#fff', fontSize: 16 }} />
             </div>
             <div>
-              <Text strong style={{ fontSize: 15 }}>Request Order</Text>
+              <Text strong style={{ fontSize: 15 }}>Payment Request</Text>
               <br />
               <Text type="secondary" style={{ fontSize: 11 }}>Fill in order details to submit to Financial for payment</Text>
             </div>
@@ -1393,7 +1763,7 @@ export default function Purchase() {
                 </div>
                 <div>
                   <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Supplier Invoice with AI</Text>
-                  <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill order details below</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera â€" AI will auto-fill order details below</Text>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1451,7 +1821,7 @@ export default function Purchase() {
                         fontSize: 13,
                       }}
                     >
-                      {type === 'Immediate' ? '⚡ Immediate Payment' : '📅 Credit Payment'}
+                      {type === 'Immediate' ? 'âš¡ Immediate Payment' : 'ðŸ"… Credit Payment'}
                     </button>
                   ))}
                 </div>
@@ -1518,13 +1888,13 @@ export default function Purchase() {
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item label="Unit Price (₹)" name="unit_price" rules={[{ required: true, message: 'Enter unit price' }]}>
-                    <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" min={0} />
+                  <Form.Item label="Unit Price (â‚¹)" name="unit_price" rules={[{ required: true, message: 'Enter unit price' }]}>
+                    <InputNumber prefix="â‚¹" style={{ width: '100%' }} placeholder="0.00" min={0} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true, message: 'Enter total amount' }]}>
-                    <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" min={0} />
+                  <Form.Item label="Total Amount (â‚¹)" name="total_amount" rules={[{ required: true, message: 'Enter total amount' }]}>
+                    <InputNumber prefix="â‚¹" style={{ width: '100%' }} placeholder="0.00" min={0} />
                   </Form.Item>
                 </Col>
               </Row>
@@ -1556,7 +1926,7 @@ export default function Purchase() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera â€" AI will auto-fill the fields below</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1644,7 +2014,7 @@ export default function Purchase() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera â€" AI will auto-fill the fields below</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1735,7 +2105,7 @@ export default function Purchase() {
             <div>
               <Text strong style={{ fontSize: 15 }}>Scan & Record Vendor Bill</Text>
               <br />
-              <Text type="secondary" style={{ fontSize: 11 }}>AI extracts details — create as Purchase Expense</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>AI extracts details â€" create as Purchase Expense</Text>
             </div>
           </Space>
         }
@@ -1819,8 +2189,8 @@ export default function Purchase() {
             </Row>
             <Row gutter={12}>
               <Col span={12}>
-                <Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true }]}>
-                  <InputNumber prefix="₹" style={{ width: '100%' }} min={0} />
+                <Form.Item label="Total Amount (â‚¹)" name="total_amount" rules={[{ required: true }]}>
+                  <InputNumber prefix="â‚¹" style={{ width: '100%' }} min={0} />
                 </Form.Item>
               </Col>
               <Col span={12}>
@@ -1847,7 +2217,7 @@ export default function Purchase() {
                     date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
                     invoice_no: values.invoice_no,
                     supplier: values.supplier,
-                    qty: values.qty || '—',
+                    qty: values.qty || 'â€"',
                     paid_status: values.paid_status,
                     paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0,
                     total_amount: values.total_amount,
@@ -1911,7 +2281,7 @@ export default function Purchase() {
               <Col span={10}><Form.Item label="Quantity" name="qty"><Input placeholder="e.g. 100 Kg" /></Form.Item></Col>
             </Row>
             <Row gutter={12}>
-              <Col span={12}><Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true }]}><InputNumber prefix="₹" style={{ width: '100%' }} min={0} /></Form.Item></Col>
+              <Col span={12}><Form.Item label="Total Amount (â‚¹)" name="total_amount" rules={[{ required: true }]}><InputNumber prefix="â‚¹" style={{ width: '100%' }} min={0} /></Form.Item></Col>
               <Col span={12}><Form.Item label="Paid Status" name="paid_status" rules={[{ required: true }]}><Select><Option value="Paid">Paid</Option><Option value="Partially Paid">Partially Paid</Option><Option value="Unpaid">Unpaid</Option></Select></Form.Item></Col>
             </Row>
           </Form>
@@ -1920,7 +2290,7 @@ export default function Purchase() {
             <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
               onClick={() => {
                 expenseForm.validateFields().then(values => {
-                  const newExp = { key: Date.now(), date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'), invoice_no: values.invoice_no, supplier: values.supplier, qty: values.qty || '—', paid_status: values.paid_status, paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0, total_amount: values.total_amount, remaining: values.paid_status === 'Paid' ? 0 : values.total_amount };
+                  const newExp = { key: Date.now(), date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'), invoice_no: values.invoice_no, supplier: values.supplier, qty: values.qty || 'â€"', paid_status: values.paid_status, paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0, total_amount: values.total_amount, remaining: values.paid_status === 'Paid' ? 0 : values.total_amount };
                   setPurchaseExpenses(prev => [newExp, ...prev]);
                   message.success('Purchase expense added');
                   setShowAddExpenseModal(false);
@@ -1964,8 +2334,8 @@ export default function Purchase() {
                 <Descriptions.Item label="Bill Number"><Text strong>{viewBillDetail.bill_no}</Text></Descriptions.Item>
                 <Descriptions.Item label="Invoice Date">{viewBillDetail.date}</Descriptions.Item>
                 <Descriptions.Item label="Vendor/Supplier">{viewSupplier?.name || viewVendor?.name}</Descriptions.Item>
-                <Descriptions.Item label="Tax Amount">₹{(parseInt(viewBillDetail.items[0].total.replace(/[₹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
-                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
+                <Descriptions.Item label="Tax Amount">â‚¹{(parseInt(viewBillDetail.items[0].total.replace(/[â‚¹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
+                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[â‚¹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
               </Descriptions>
 
               <Divider orientation="left">AI Extracted Items</Divider>
@@ -2341,6 +2711,417 @@ export default function Purchase() {
         })()}
       </Modal>
 
+      {/* â"€â"€ Bulk Purchase Request Modal â"€â"€ */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <ShoppingOutlined style={{ color: '#fff', fontSize: 20 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Bulk Purchase Request</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Select supplier â†' pick low-stock products â†' raise multiple requests at once</div>
+            </div>
+          </div>
+        }
+        open={showBulkPurchaseModal}
+        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); }}
+        footer={null}
+        width={640}
+        centered
+      >
+        <div style={{ marginTop: 4 }}>
+          {/* Step 1: Supplier Selection */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <Text style={{ fontSize: 12, fontWeight: 700, color: '#B11E6A', display: 'block', marginBottom: 8 }}>
+              Step 1 â€" Select Supplier
+            </Text>
+            <Select
+              placeholder="Select supplier name..."
+              style={{ width: '100%', borderRadius: 8 }}
+              value={bulkSupplierName || undefined}
+              onChange={handleBulkSupplierSelect}
+              showSearch
+              optionFilterProp="children"
+            >
+              {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
+            </Select>
+            {bulkSupplierName && (() => {
+              const sup = suppliersList.find(s => s.name === bulkSupplierName);
+              if (!sup) return null;
+              return (
+                <div style={{ marginTop: 10, display: 'flex', gap: 0 }}>
+                  {[{ label: 'Phone', value: sup.phone }, { label: 'Email', value: sup.email }, { label: 'Address', value: sup.address }].map((item, i) => (
+                    <div key={i} style={{ flex: 1, borderRight: i < 2 ? `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` : 'none', padding: '0 10px', paddingLeft: i === 0 ? 0 : 10 }}>
+                      <div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>{item.label}</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: textColor, wordBreak: 'break-word' }}>{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Step 2: Product Selection (only shown after supplier is selected) */}
+          {bulkItems.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Text style={{ fontSize: 12, fontWeight: 700, color: '#B11E6A', display: 'block', marginBottom: 10 }}>
+                Step 2 â€" Select Products & Quantities
+                <Text type="secondary" style={{ fontSize: 11, fontWeight: 400, marginLeft: 8 }}>
+                  (Showing low-stock items â€" supplier's products pre-selected)
+                </Text>
+              </Text>
+              <div style={{ maxHeight: 280, overflowY: 'auto', border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}`, borderRadius: 10 }}>
+                {bulkItems.map((item, idx) => (
+                  <div
+                    key={item.invKey}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '10px 14px',
+                      borderBottom: idx < bulkItems.length - 1 ? `1px solid ${isDark ? '#2a2d40' : '#f5f5f5'}` : 'none',
+                      background: item.selected ? (isDark ? '#1a0f14' : '#fff8fb') : (isDark ? '#16192a' : '#fafafa'),
+                      cursor: 'pointer',
+                      transition: 'background 0.15s',
+                    }}
+                    onClick={() => {
+                      setBulkItems(prev => prev.map((bi, i) => i === idx ? { ...bi, selected: !bi.selected } : bi));
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={item.selected}
+                      onChange={() => {}}
+                      style={{ cursor: 'pointer', accentColor: '#B11E6A', width: 16, height: 16 }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text strong style={{ fontSize: 13 }}>{item.name}</Text>
+                        <Tag color={item.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, borderRadius: 8, margin: 0 }}>{item.status}</Tag>
+                        {item.fromSupplier && <Tag color="purple" style={{ fontSize: 10, borderRadius: 8, margin: 0 }}>This Supplier</Tag>}
+                      </div>
+                      <Text type="secondary" style={{ fontSize: 11 }}>Stock: {item.currentStock} / Min: {item.minStock} {item.unit}</Text>
+                    </div>
+                    <div onClick={e => e.stopPropagation()}>
+                      <InputNumber
+                        size="small"
+                        min={1}
+                        value={item.qty}
+                        disabled={!item.selected}
+                        onChange={v => setBulkItems(prev => prev.map((bi, i) => i === idx ? { ...bi, qty: v } : bi))}
+                        addonAfter={<Text style={{ fontSize: 11 }}>{item.unit}</Text>}
+                        style={{ width: 130 }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {bulkItems.filter(i => i.selected).length} of {bulkItems.length} products selected
+                </Text>
+                <Button
+                  size="small"
+                  type="link"
+                  style={{ padding: 0, fontSize: 11, color: '#B11E6A' }}
+                  onClick={() => setBulkItems(prev => prev.map(i => ({ ...i, selected: true })))}
+                >Select All</Button>
+                <Button
+                  size="small"
+                  type="link"
+                  style={{ padding: 0, fontSize: 11, color: '#888' }}
+                  onClick={() => setBulkItems(prev => prev.map(i => ({ ...i, selected: false })))}
+                >Clear</Button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Payment Terms */}
+          {bulkItems.length > 0 && (
+            <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+              <Text style={{ fontSize: 12, fontWeight: 700, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Step 3 â€" Payment Terms</Text>
+              <Select
+                placeholder="Select payment terms..."
+                style={{ width: '100%' }}
+                value={bulkPayTerms || undefined}
+                onChange={setBulkPayTerms}
+              >
+                <Option value="100% Payment">100% Payment</Option>
+                <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
+              </Select>
+            </div>
+          )}
+
+          {/* Summary & Submit */}
+          {bulkItems.filter(i => i.selected).length > 0 && (
+            <div style={{ padding: '12px 14px', background: isDark ? '#0d1a1a' : '#f0fff4', border: '1px solid #52c41a44', borderRadius: 10, marginBottom: 16 }}>
+              <Text style={{ fontSize: 12, fontWeight: 600, color: '#389e0d' }}>
+                {bulkItems.filter(i => i.selected).length} purchase request(s) will be raised for {bulkSupplierName}:
+              </Text>
+              <div style={{ marginTop: 6 }}>
+                {bulkItems.filter(i => i.selected).map(i => (
+                  <div key={i.invKey} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                    <Text style={{ fontSize: 12 }}>{i.name}</Text>
+                    <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>{i.qty} {i.unit}</Text>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button
+              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); }}
+              style={{ flex: 1, height: 44, borderRadius: 10 }}
+            >Cancel</Button>
+            <Button
+              type="primary"
+              disabled={bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms}
+              onClick={handleBulkPurchaseSubmit}
+              style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
+            >
+              Raise {bulkItems.filter(i => i.selected).length || ''} Purchase Request(s)
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* LR Upload Modal */}
+      <Modal
+        title={<Space><TruckOutlined style={{ color: '#1890ff' }} /><Text strong style={{ fontSize: 15 }}>Upload LR Copy</Text></Space>}
+        open={showLRUploadModal}
+        onCancel={() => { setShowLRUploadModal(false); setLrUploadTarget(null); lrUploadForm.resetFields(); }}
+        footer={null}
+        width={460}
+        centered
+        destroyOnClose
+      >
+        {lrUploadTarget && (
+          <Form form={lrUploadForm} layout="vertical" style={{ marginTop: 8 }}
+            onFinish={(vals) => {
+              const deliveryDate = vals.delivery_date ? vals.delivery_date.format('YYYY-MM-DD') : '';
+              const fileName = vals.lr_file?.fileList?.[0]?.name || '';
+              const entry = { lrNumber: vals.lr_number, deliveryDate, fileName, paidStatus: vals.paid_status };
+              setLrData(prev => ({ ...prev, [lrUploadTarget.order.key]: entry }));
+              if (vals.paid_status === 'Not Paid') {
+                notification.warning({
+                  message: 'Finance Alert — Payment Pending',
+                  description: `LR uploaded for ${lrUploadTarget.order.item}. Payment is Not Paid. Finance team will be notified on receiving date (${deliveryDate}).`,
+                  duration: 8,
+                  icon: <BellOutlined style={{ color: '#fa8c16' }} />,
+                });
+              } else {
+                message.success('LR copy uploaded. Payment marked as Paid.');
+              }
+              setShowLRUploadModal(false);
+              setLrUploadTarget(null);
+              lrUploadForm.resetFields();
+            }}
+          >
+            <div style={{ marginBottom: 14, padding: '10px 14px', background: isDark ? '#16192a' : '#e6f7ff', borderRadius: 8, border: '1px solid #91d5ff' }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>ORDER</Text>
+              <div><Text strong style={{ fontSize: 14 }}>{lrUploadTarget.order.item}</Text></div>
+              <Text type="secondary" style={{ fontSize: 11 }}>Supplier: <Text strong style={{ color: '#B11E6A' }}>{lrUploadTarget.order.supplier}</Text> · Bill: {lrUploadTarget.order.bill_no}</Text>
+            </div>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="LR Number" name="lr_number" rules={[{ required: true, message: 'Enter LR number' }]}>
+                  <Input placeholder="e.g. LR-20240501-001" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Expected Delivery Date" name="delivery_date" rules={[{ required: true, message: 'Select date' }]}>
+                  <DatePicker style={{ width: '100%' }} disabledDate={d => d && d.isBefore(dayjs(), 'day')} />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item label="Payment Status" name="paid_status" rules={[{ required: true, message: 'Select status' }]}>
+              <Select placeholder="Mark as Paid or Not Paid">
+                <Option value="Paid">Paid</Option>
+                <Option value="Not Paid">Not Paid — Finance will be notified on delivery date</Option>
+              </Select>
+            </Form.Item>
+            <Form.Item label="Upload LR Copy" name="lr_file">
+              <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: isDark ? '#1a1a2e' : '#fafafa', borderRadius: 8 }}>
+                <p className="ant-upload-drag-icon"><FileTextOutlined style={{ color: '#1890ff' }} /></p>
+                <p className="ant-upload-text">Click or drag LR document to upload</p>
+                <p className="ant-upload-hint">PDF or Image of Lorry Receipt / Bilty</p>
+              </Upload.Dragger>
+            </Form.Item>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <Button style={{ flex: 1, height: 40, borderRadius: 8 }} onClick={() => { setShowLRUploadModal(false); lrUploadForm.resetFields(); }}>Cancel</Button>
+              <Button type="primary" htmlType="submit" icon={<UploadOutlined />}
+                style={{ flex: 2, height: 40, borderRadius: 8, background: '#1890ff', border: 'none', fontWeight: 700 }}>
+                Save LR Copy
+              </Button>
+            </div>
+          </Form>
+        )}
+      </Modal>
+
+      {/* Edit Quotation & Resend Modal */}
+      <Modal
+        title={
+          <Space>
+            <EditOutlined style={{ color: '#722ed1' }} />
+            <Text strong style={{ fontSize: 15 }}>Edit Quotation & Resend</Text>
+          </Space>
+        }
+        open={showEditQuotationModal}
+        onCancel={() => { setShowEditQuotationModal(false); setEditQuotationTarget(null); editReqForm.resetFields(); }}
+        footer={null}
+        width={480}
+        centered
+        destroyOnClose
+      >
+        {editQuotationTarget && (
+          <Form form={editReqForm} layout="vertical" style={{ marginTop: 8 }}>
+            <div style={{ marginBottom: 14, padding: '10px 14px', background: isDark ? '#16192a' : '#f9f0ff', borderRadius: 8, border: '1px solid #d3adf7' }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>ITEM</Text>
+              <div><Text strong style={{ fontSize: 14 }}>{editQuotationTarget.item}</Text></div>
+              <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>Supplier: <Text strong style={{ color: '#B11E6A' }}>{editQuotationTarget.supplier}</Text></Text>
+            </div>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="Quantity" name="qty" rules={[{ required: true }]}>
+                  <InputNumber min={1} style={{ width: '100%' }} addonAfter={editQuotationTarget.unit} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true }]}>
+                  <Select>
+                    <Option value="100% Payment">100% Payment</Option>
+                    <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                    <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery</Option>
+                    <Option value="Credit 30 Days">Credit 30 Days</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            {(editQuotationTarget.notes || []).length > 0 && (
+              <div style={{ marginBottom: 14, padding: '8px 12px', background: isDark ? '#1e2235' : '#f0f4ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
+                <Text style={{ fontSize: 11, color: '#722ed1', fontWeight: 600 }}>Latest Note:</Text>
+                <Text style={{ fontSize: 12, display: 'block' }}>{(editQuotationTarget.notes || []).at(-1)?.text}</Text>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <Button style={{ flex: 1, height: 40, borderRadius: 8 }} onClick={() => { setShowEditQuotationModal(false); editReqForm.resetFields(); }}>Cancel</Button>
+              <Button style={{ flex: 1, height: 40, borderRadius: 8, borderColor: '#722ed1', color: '#722ed1' }}
+                onClick={() => {
+                  editReqForm.validateFields().then(vals => {
+                    dispatch(updateQuotationDetails({ key: editQuotationTarget.key, qty: vals.qty, payment_terms: vals.payment_terms }));
+                    message.success('Quotation details updated.');
+                    setShowEditQuotationModal(false);
+                    editReqForm.resetFields();
+                  });
+                }}>Save Only</Button>
+              <Button type="primary" style={{ flex: 2, height: 40, borderRadius: 8, background: '#25D366', border: 'none', fontWeight: 700 }}
+                icon={<WhatsAppOutlined />}
+                onClick={() => {
+                  editReqForm.validateFields().then(vals => {
+                    dispatch(updateQuotationDetails({ key: editQuotationTarget.key, qty: vals.qty, payment_terms: vals.payment_terms }));
+                    const sup = suppliersList.find(s => s.name === editQuotationTarget.supplier);
+                    const phone = sup ? sup.phone.replace(/\D/g, '') : '';
+                    const latestNote = (editQuotationTarget.notes || []).at(-1);
+                    const msg = `*Updated Quotation Request*\n\n*Item:* ${editQuotationTarget.item}\n*Quantity:* ${vals.qty} ${editQuotationTarget.unit}\n*Payment Terms:* ${vals.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly provide an updated quotation at the earliest.`;
+                    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                    message.success('Updated quotation sent via WhatsApp!');
+                    setShowEditQuotationModal(false);
+                    editReqForm.resetFields();
+                  });
+                }}>Save & Send via WhatsApp</Button>
+            </div>
+          </Form>
+        )}
+      </Modal>
+
+      {/* Finance Status Demo Modal */}
+      <Modal
+        title={
+          <Space>
+            <SafetyCertificateOutlined style={{ color: '#722ed1' }} />
+            <Text strong style={{ fontSize: 15 }}>Finance: Set Approval Status</Text>
+          </Space>
+        }
+        open={showFinanceStatusModal}
+        onCancel={() => { setShowFinanceStatusModal(false); setFinanceStatusTarget(null); setFinanceNoteInput(''); setFinanceDecision(''); }}
+        footer={null}
+        width={480}
+        centered
+      >
+        <div style={{ padding: '8px 0' }}>
+          <div style={{ marginBottom: 16, padding: '8px 12px', background: isDark ? '#1a0a2a' : '#f9f0ff', borderRadius: 8, border: '1px solid #d3adf7' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              This simulates Finance team approval actions on purchase requests.
+            </Text>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <Text style={{ fontSize: 12, fontWeight: 600 }}>Select Request:</Text>
+            <Select
+              style={{ width: '100%', marginTop: 6 }}
+              placeholder="Choose a request..."
+              value={financeStatusTarget || undefined}
+              onChange={v => setFinanceStatusTarget(v)}
+              options={raisedRequests
+                .filter(r => r.status !== 'Rejected' && !purchaseOrders.some(o => o.requestKey === r.key))
+                .map(r => ({ value: r.key, label: `${r.item} â€" ${r.supplier} (${r.qty} ${r.unit})` }))}
+            />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <Text style={{ fontSize: 12, fontWeight: 600 }}>Finance Decision:</Text>
+            <Select
+              style={{ width: '100%', marginTop: 6 }}
+              placeholder="Select decision..."
+              value={financeDecision || undefined}
+              onChange={v => setFinanceDecision(v)}
+              options={[
+                { value: 'Approved', label: 'âœ…  Approved â€" proceed with order' },
+                { value: 'ModifyRequested', label: 'âš ï¸  Modify Requested â€" quantity needs revision' },
+              ]}
+            />
+          </div>
+          {financeDecision === 'ModifyRequested' && (
+            <div style={{ marginBottom: 14 }}>
+              <Text style={{ fontSize: 12, fontWeight: 600 }}>Modify Note <Text type="danger">(required)</Text>:</Text>
+              <Input.TextArea
+                rows={3}
+                placeholder="Explain what needs to be modified (e.g. reduce quantity to 50 units)..."
+                value={financeNoteInput}
+                onChange={e => setFinanceNoteInput(e.target.value)}
+                style={{ marginTop: 6, borderRadius: 8 }}
+              />
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <Button
+              onClick={() => { setShowFinanceStatusModal(false); setFinanceStatusTarget(null); setFinanceNoteInput(''); setFinanceDecision(''); }}
+              style={{ flex: 1, height: 40, borderRadius: 8 }}
+            >Cancel</Button>
+            <Button
+              type="primary"
+              disabled={!financeStatusTarget || !financeDecision || (financeDecision === 'ModifyRequested' && !financeNoteInput.trim())}
+              onClick={() => {
+                dispatch(updateFinanceStatus({
+                  key: financeStatusTarget,
+                  financeStatus: financeDecision,
+                  financeNote: financeNoteInput.trim(),
+                }));
+                message.success(financeDecision === 'Approved' ? 'Request approved by Finance!' : 'Modify note sent to Purchase team!');
+                setShowFinanceStatusModal(false);
+                setFinanceStatusTarget(null);
+                setFinanceNoteInput('');
+                setFinanceDecision('');
+              }}
+              style={{ flex: 2, height: 40, borderRadius: 8, background: financeDecision === 'Approved' ? '#52c41a' : '#fa8c16', border: 'none', fontWeight: 700 }}
+            >
+              {financeDecision === 'Approved' ? 'Approve Request' : financeDecision === 'ModifyRequested' ? 'Send Modify Note' : 'Submit'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Payment Document View Modal */}
       <Modal
         title={
@@ -2362,7 +3143,7 @@ export default function Purchase() {
             <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '12px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
               <Text type="secondary" style={{ fontSize: 11 }}>Request</Text>
               <Text strong style={{ display: 'block', marginTop: 2 }}>{viewApprovalDoc.item}</Text>
-              <Text style={{ fontSize: 12, color: '#B11E6A' }}>Supplier: {viewApprovalDoc.supplier} · Qty: {viewApprovalDoc.qty} {viewApprovalDoc.unit}</Text>
+              <Text style={{ fontSize: 12, color: '#B11E6A' }}>Supplier: {viewApprovalDoc.supplier} Â· Qty: {viewApprovalDoc.qty} {viewApprovalDoc.unit}</Text>
             </div>
 
             {viewApprovalDoc.payment_doc ? (

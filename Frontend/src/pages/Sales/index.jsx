@@ -16,7 +16,8 @@ import {
   WarningOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { addNewProductRequest } from '../../store/slices/purchaseSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 
 const { Text, Title } = Typography;
@@ -794,8 +795,15 @@ const ProductHeaders = () => (
 );
 
 // ─── Main Component ────────────────────────────────────────────────────
+const KNOWN_PRODUCT_NAMES = new Set([
+  'Soap', 'Paste', 'Brush', 'Raizer', 'Gel', 'Face Kit Combo', 'Body Kit Combo',
+  'Soap 15grm', 'Single Brush', 'Shampoo 15ml',
+  'DENTAL_KIT', 'SHAVING_KIT', 'CARE_KIT',
+]);
+
 export default function Sales() {
   const isDark = useSelector((s) => s.theme.isDark);
+  const dispatch = useDispatch();
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
@@ -1084,6 +1092,19 @@ export default function Sales() {
         if (quotationFromLead) {
           setLeadsData(prev => prev.map(l => l.key === quotationFromLead.key ? { ...l, status: 'Quotation Sent' } : l));
         }
+        // Auto-create purchase requests for new products not in standard catalog
+        (values.products || []).forEach(p => {
+          const pName = p?.name || p?.kitType;
+          if (pName && !KNOWN_PRODUCT_NAMES.has(pName)) {
+            dispatch(addNewProductRequest({
+              productName: pName,
+              qty: p.qty || 0,
+              fromOrder: newQ.qid,
+              hotelName: values.hotelName || quotationFromLead?.hotelName || '',
+              salesPerson: newQ.salesPerson,
+            }));
+          }
+        });
         setQuotationFromLead(null);
         setActiveTab('quotations');
         message.success('Quotation created');

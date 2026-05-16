@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import {
-  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, List, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, DatePicker
+  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, List, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, DatePicker, Badge, Tooltip
 } from 'antd';
 import {
   WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, CloseCircleOutlined, WalletOutlined,
   ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, InfoCircleOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined, FileTextOutlined,
-  TeamOutlined, BookOutlined, SearchOutlined
+  TeamOutlined, BookOutlined, SearchOutlined, MessageOutlined, EditOutlined
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
-import { updateRequestStatus, updateOrderPaymentStatus } from '../../store/slices/purchaseSlice';
+import { updateRequestStatus, updateOrderPaymentStatus, addRequestNote, addOrderNote, updateQuotationDetails } from '../../store/slices/purchaseSlice';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 
@@ -28,6 +28,35 @@ export default function Financial() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedForPayment, setSelectedForPayment] = useState(null);
   const [paymentForm] = Form.useForm();
+
+  /* ── Notes: Quotation Requests table (uses Redux raisedRequests.notes) ── */
+  const [openReqNotes, setOpenReqNotes] = useState(null);
+  const [reqNoteInput, setReqNoteInput] = useState('');
+
+  /* ── Notes: Purchase Payments table (Redux purchaseOrders.notes) ── */
+  const [openOrderNotes, setOpenOrderNotes] = useState(null);
+  const [orderNoteInput, setOrderNoteInput] = useState({});
+
+  /* ── Edit Quotation modal (Finance can edit & resend) ── */
+  const [showEditReqModal, setShowEditReqModal] = useState(false);
+  const [editReqTarget, setEditReqTarget] = useState(null);
+  const [editReqForm] = Form.useForm();
+
+  const handleAddReqNote = (key) => {
+    const text = reqNoteInput.trim();
+    if (!text) return;
+    const ts = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    dispatch(addRequestNote({ key, text, timestamp: ts }));
+    setReqNoteInput('');
+  };
+
+  const handleAddOrderNote = (orderKey) => {
+    const text = (orderNoteInput[orderKey] || '').trim();
+    if (!text) return;
+    const ts = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    dispatch(addOrderNote({ key: orderKey, text, timestamp: ts }));
+    setOrderNoteInput(prev => ({ ...prev, [orderKey]: '' }));
+  };
 
 
   // Parties & Ledgers tab state
@@ -106,37 +135,6 @@ export default function Financial() {
     { label: 'Total Paid (MTD)', value: '₹1,24,500', color: '#52c41a', icon: <ArrowUpOutlined /> },
   ];
 
-  const purchaseColumns = [
-    { title: 'Order Date', dataIndex: 'date', key: 'date' },
-    { title: 'Bill / Inv No', key: 'nos', render: (_, r) => (
-      <Space direction="vertical" size={0}>
-        <Text size="small" type="secondary">{r.bill_no}</Text>
-        <Text size="small" style={{ color: '#B11E6A', fontSize: 11 }}>{r.inv_no}</Text>
-      </Space>
-    )},
-    { title: 'Item', dataIndex: 'item', key: 'item', render: (v) => <Text strong>{v}</Text> },
-    { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-    { title: 'Amount', dataIndex: 'amount', key: 'amount', render: (v) => <Text strong style={{ color: '#B11E6A' }}>₹{v?.toLocaleString()}</Text> },
-    { title: 'Payment Terms', dataIndex: 'payment_terms', key: 'terms', render: (v) => <Text style={{ fontSize: 11 }}>{v}</Text> },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      render: (v) => <Tag color={getStatusColor(v)}>{v}</Tag>
-    },
-    {
-      title: 'Actions',
-      key: 'actions',
-      render: (_, r) => (
-        <Space>
-          <Button size="small" icon={<EyeOutlined />} onClick={() => setViewRequest(r)}>Details</Button>
-          {r.status !== 'Paid' && (
-            <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none' }}>Pay</Button>
-          )}
-        </Space>
-      )
-    }
-  ];
 
   const expenseColumns = [
     { title: 'Date', dataIndex: 'date', key: 'date' },
@@ -196,83 +194,191 @@ export default function Financial() {
                     size="small"
                     dataSource={raisedRequests}
                     pagination={{ pageSize: 8 }}
-                    locale={{ emptyText: 'No quotation requests yet. Requests raised from the Purchase module will appear here.' }}
+                    rowKey="key"
+                    scroll={{ x: 1400 }}
+                    locale={{ emptyText: 'No quotation requests yet.' }}
+                    expandable={{
+                      expandedRowKeys: openReqNotes ? [openReqNotes] : [],
+                      onExpand: () => {},
+                      showExpandColumn: false,
+                      expandedRowRender: (r) => {
+                        const notes = r.notes || [];
+                        const linkedOrder = purchaseOrders.find(o => o.requestKey === r.key);
+                        const orderNotes = linkedOrder?.notes || [];
+                        return (
+                          <div style={{ padding: '12px 16px', background: isDark ? '#16192a' : '#fafcff', borderRadius: 8, margin: '4px 0' }}>
+                            <Row gutter={16}>
+                              <Col xs={24} md={linkedOrder ? 12 : 24}>
+                                <Text style={{ fontSize: 12, fontWeight: 600, color: '#B11E6A', display: 'block', marginBottom: 8 }}>
+                                  <MessageOutlined style={{ marginRight: 4 }} />Quotation Notes
+                                </Text>
+                                {notes.length === 0 && <Text type="secondary" style={{ fontSize: 11 }}>No notes yet.</Text>}
+                                {notes.map((n, i) => (
+                                  <div key={i} style={{ padding: '5px 10px', marginBottom: 5, borderRadius: 6, background: isDark ? '#1e2235' : '#f0f4ff', border: `1px solid ${isDark ? '#2a2d40' : '#d6e4ff'}` }}>
+                                    <Text style={{ fontSize: 12 }}>{n.text}</Text>
+                                    <br />
+                                    <Text type="secondary" style={{ fontSize: 10 }}><ClockCircleOutlined style={{ marginRight: 3 }} />{n.timestamp}</Text>
+                                  </div>
+                                ))}
+                                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                                  <Input size="small" placeholder="Add a note..." value={reqNoteInput}
+                                    onChange={e => setReqNoteInput(e.target.value)}
+                                    onPressEnter={() => handleAddReqNote(r.key)}
+                                    style={{ flex: 1, borderRadius: 6 }} />
+                                  <Button size="small" type="primary" onClick={() => handleAddReqNote(r.key)}
+                                    style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Add</Button>
+                                </div>
+                              </Col>
+                              {linkedOrder && (
+                                <Col xs={24} md={12}>
+                                  <Text style={{ fontSize: 12, fontWeight: 600, color: '#1890ff', display: 'block', marginBottom: 8 }}>
+                                    <MessageOutlined style={{ marginRight: 4 }} />Order Notes — <Text style={{ fontSize: 11, color: '#888' }}>{linkedOrder.bill_no}</Text>
+                                  </Text>
+                                  {orderNotes.length === 0 && <Text type="secondary" style={{ fontSize: 11 }}>No order notes yet.</Text>}
+                                  {orderNotes.map((n, i) => (
+                                    <div key={i} style={{ padding: '5px 10px', marginBottom: 5, borderRadius: 6, background: isDark ? '#1e2535' : '#f0f7ff', border: `1px solid ${isDark ? '#2a3040' : '#bae0ff'}` }}>
+                                      <Text style={{ fontSize: 12 }}>{n.text}</Text>
+                                      <br />
+                                      <Text type="secondary" style={{ fontSize: 10 }}><ClockCircleOutlined style={{ marginRight: 3 }} />{n.timestamp}</Text>
+                                    </div>
+                                  ))}
+                                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                                    <Input size="small" placeholder="Add order note..."
+                                      value={orderNoteInput[linkedOrder.key] || ''}
+                                      onChange={e => setOrderNoteInput(prev => ({ ...prev, [linkedOrder.key]: e.target.value }))}
+                                      onPressEnter={() => handleAddOrderNote(linkedOrder.key)}
+                                      style={{ flex: 1, borderRadius: 6 }} />
+                                    <Button size="small" type="primary" onClick={() => handleAddOrderNote(linkedOrder.key)}
+                                      style={{ background: '#1890ff', border: 'none', borderRadius: 6 }}>Add</Button>
+                                  </div>
+                                </Col>
+                              )}
+                            </Row>
+                          </div>
+                        );
+                      },
+                    }}
                     columns={[
-                      { title: 'Date', dataIndex: 'date', key: 'date' },
-                      { title: 'Item', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
-                      { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                      { title: 'Qty', key: 'qty', render: (_, r) => `${r.qty} ${r.unit}` },
-                      { title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', render: v => <Text style={{ fontSize: 11 }}>{v}</Text> },
                       {
-                        title: 'Status', dataIndex: 'status', key: 'status',
-                        render: v => {
-                          const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
-                          return <Tag color={colorMap[v]} style={{ borderRadius: 12 }}>{v}</Tag>;
+                        title: 'Date', dataIndex: 'date', key: 'date', width: 95,
+                        render: v => <Text type="secondary">{v}</Text>
+                      },
+                      {
+                        title: 'Item & Supplier', key: 'item_sup', width: 190,
+                        render: (_, r) => (
+                          <Space direction="vertical" size={1}>
+                            <Text strong>{r.item}</Text>
+                            <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{r.supplier}</Text>
+                          </Space>
+                        )
+                      },
+                      {
+                        title: 'Qty', key: 'qty', width: 80, align: 'center',
+                        render: (_, r) => (
+                          <Space direction="vertical" size={0}>
+                            <Text strong>{r.qty}</Text>
+                            <Text type="secondary">{r.unit}</Text>
+                          </Space>
+                        )
+                      },
+                      {
+                        title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', width: 160,
+                        render: v => <Text>{v}</Text>
+                      },
+                      {
+                        title: 'Bill / Inv No', key: 'bill_inv', width: 130,
+                        render: (_, r) => {
+                          const order = purchaseOrders.find(o => o.requestKey === r.key);
+                          if (!order) return <Text type="secondary">—</Text>;
+                          return (
+                            <Space direction="vertical" size={1}>
+                              <Text strong>{order.bill_no}</Text>
+                              <Text style={{ color: '#B11E6A' }}>{order.inv_no}</Text>
+                            </Space>
+                          );
                         }
                       },
                       {
-                        title: 'Actions', key: 'actions',
-                        render: (_, r) => (
-                          <Space>
-                            {r.quotation_file && (
-                              <Button
-                                size="small"
-                                icon={<FileTextOutlined />}
-                                onClick={() => setViewQuotationFile(r)}
-                                style={{ borderColor: '#B11E6A', color: '#B11E6A' }}
-                              >
-                                View File
-                              </Button>
-                            )}
-                            {r.status === 'Pending' && (
-                              <>
-                                <Button
-                                  size="small"
-                                  type="primary"
-                                  icon={<CheckCircleOutlined />}
-                                  onClick={() => {
-                                    dispatch(updateRequestStatus({ key: r.key, status: 'Approved' }));
-                                    message.success(`Request for ${r.item} approved`);
-                                  }}
-                                  style={{ background: '#52c41a', border: 'none', color: '#fff' }}
-                                >
-                                  Approve
+                        title: 'Amount', key: 'order_amount', width: 100, align: 'right',
+                        render: (_, r) => {
+                          const order = purchaseOrders.find(o => o.requestKey === r.key);
+                          if (!order) return <Text type="secondary">—</Text>;
+                          return <Text strong style={{ color: '#B11E6A' }}>₹{order.amount?.toLocaleString()}</Text>;
+                        }
+                      },
+                      {
+                        title: 'Pay Status', key: 'payment_status', width: 110, align: 'center',
+                        render: (_, r) => {
+                          const order = purchaseOrders.find(o => o.requestKey === r.key);
+                          if (!order) return <Text type="secondary">—</Text>;
+                          return <Tag color={getStatusColor(order.status)} style={{ borderRadius: 10, margin: 0 }}>{order.status}</Tag>;
+                        }
+                      },
+                      {
+                        title: 'Quotation Status', dataIndex: 'status', key: 'status', width: 120, align: 'center',
+                        render: v => {
+                          const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
+                          return <Tag color={colorMap[v]} style={{ borderRadius: 12, margin: 0 }}>{v}</Tag>;
+                        }
+                      },
+                      {
+                        title: 'Actions', key: 'actions', width: 220, fixed: 'right',
+                        render: (_, r) => {
+                          const noteCount = (r.notes || []).length;
+                          const noteBtn = (
+                            <Badge count={noteCount} size="small" offset={[-2, 2]}>
+                              <Button size="small" icon={<MessageOutlined />}
+                                onClick={() => { setOpenReqNotes(openReqNotes === r.key ? null : r.key); setReqNoteInput(''); }}
+                                style={{ color: openReqNotes === r.key ? '#fff' : '#B11E6A', background: openReqNotes === r.key ? '#B11E6A' : 'transparent', borderColor: '#B11E6A55' }}
+                              />
+                            </Badge>
+                          );
+                          const supPhone = (suppliersData[r.supplier]?.phone || '').replace(/\D/g, '');
+                          const latestNote = (r.notes || []).at(-1);
+                          const waMsg = `*Quotation Request*\n\n*Item:* ${r.item}\n*Quantity:* ${r.qty} ${r.unit}\n*Payment Terms:* ${r.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nPlease provide a quotation at the earliest.`;
+                          const order = purchaseOrders.find(o => o.requestKey === r.key);
+                          return (
+                            <Space wrap size={[4, 4]}>
+                              {r.quotation_file && (
+                                <Button size="small" icon={<FileTextOutlined />} onClick={() => setViewQuotationFile(r)}
+                                  style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>File</Button>
+                              )}
+                              {r.status === 'Pending' && (
+                                <>
+                                  <Button size="small" type="primary" icon={<CheckCircleOutlined />}
+                                    onClick={() => { dispatch(updateRequestStatus({ key: r.key, status: 'Approved' })); message.success(`Approved`); }}
+                                    style={{ background: '#52c41a', border: 'none' }}>Approve</Button>
+                                  <Button size="small" danger icon={<CloseCircleOutlined />}
+                                    onClick={() => { dispatch(updateRequestStatus({ key: r.key, status: 'Rejected' })); message.warning(`Rejected`); }}>Reject</Button>
+                                  <Button size="small" icon={<EditOutlined />}
+                                    onClick={() => { setEditReqTarget(r); editReqForm.setFieldsValue({ qty: r.qty, payment_terms: r.payment_terms }); setShowEditReqModal(true); }}
+                                    style={{ borderColor: '#722ed1', color: '#722ed1' }}>Edit</Button>
+                                </>
+                              )}
+                              {noteCount > 0 && (
+                                <Button size="small" icon={<WhatsAppOutlined />}
+                                  style={{ borderColor: '#25D366', color: '#25D366' }}
+                                  onClick={() => window.open(`https://wa.me/${supPhone}?text=${encodeURIComponent(waMsg)}`, '_blank')}>
+                                  Ask
                                 </Button>
-                                <Button
-                                  size="small"
-                                  danger
-                                  icon={<CloseCircleOutlined />}
-                                  onClick={() => {
-                                    dispatch(updateRequestStatus({ key: r.key, status: 'Rejected' }));
-                                    message.warning(`Request for ${r.item} rejected`);
-                                  }}
-                                >
-                                  Reject
-                                </Button>
-                              </>
-                            )}
-                          </Space>
-                        )
+                              )}
+                              {order && (
+                                <>
+                                  <Button size="small" icon={<EyeOutlined />} onClick={() => setViewRequest(order)}
+                                    style={{ fontSize: 11 }}>Details</Button>
+                                  {order.status !== 'Paid' && (
+                                    <Button size="small" type="primary" icon={<DollarCircleOutlined />}
+                                      onClick={() => { setSelectedForPayment(order); setShowPaymentModal(true); }}
+                                      style={{ background: '#B11E6A', border: 'none', fontSize: 11 }}>Pay Now</Button>
+                                  )}
+                                </>
+                              )}
+                              {noteBtn}
+                            </Space>
+                          );
+                        }
                       }
                     ]}
-                  />
-                </div>
-              )
-            },
-            {
-              key: 'purchase',
-              label: <Space><ShopOutlined /> Purchase Payments</Space>,
-              children: (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ marginBottom: 12 }}>
-                    <Text type="secondary">Purchase orders raised after approval — process payments here</Text>
-                  </div>
-                  <Table
-                    size="small"
-                    dataSource={purchaseOrders}
-                    columns={purchaseColumns}
-                    pagination={{ pageSize: 8 }}
-                    locale={{ emptyText: 'No purchase orders yet. Approve a request and raise an order from the Purchase module.' }}
                   />
                 </div>
               )
@@ -378,6 +484,81 @@ export default function Financial() {
           ]}
         />
       </Card>
+
+      {/* Edit Quotation & Resend Modal (Finance) */}
+      <Modal
+        title={
+          <Space>
+            <EditOutlined style={{ color: '#722ed1' }} />
+            <Text strong style={{ fontSize: 15 }}>Edit Quotation & Resend</Text>
+          </Space>
+        }
+        open={showEditReqModal}
+        onCancel={() => { setShowEditReqModal(false); setEditReqTarget(null); editReqForm.resetFields(); }}
+        footer={null}
+        width={480}
+        centered
+        destroyOnClose
+      >
+        {editReqTarget && (
+          <Form form={editReqForm} layout="vertical" style={{ marginTop: 8 }}>
+            <div style={{ marginBottom: 14, padding: '10px 14px', background: isDark ? '#16192a' : '#f9f0ff', borderRadius: 8, border: '1px solid #d3adf7' }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>ITEM</Text>
+              <div><Text strong style={{ fontSize: 14 }}>{editReqTarget.item}</Text></div>
+              <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                Supplier: <Text strong style={{ color: '#B11E6A' }}>{editReqTarget.supplier}</Text>
+              </Text>
+            </div>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="Quantity" name="qty" rules={[{ required: true }]}>
+                  <InputNumber min={1} style={{ width: '100%' }} addonAfter={editReqTarget.unit} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true }]}>
+                  <Select>
+                    <Option value="100% Payment">100% Payment</Option>
+                    <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                    <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery</Option>
+                    <Option value="Credit 30 Days">Credit 30 Days</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            {(editReqTarget.notes || []).length > 0 && (
+              <div style={{ marginBottom: 14, padding: '8px 12px', background: isDark ? '#1e2235' : '#f0f4ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
+                <Text style={{ fontSize: 11, color: '#722ed1', fontWeight: 600 }}>Latest Note:</Text>
+                <Text style={{ fontSize: 12, display: 'block' }}>{(editReqTarget.notes || []).at(-1)?.text}</Text>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <Button style={{ flex: 1, height: 40, borderRadius: 8 }} onClick={() => { setShowEditReqModal(false); editReqForm.resetFields(); }}>Cancel</Button>
+              <Button style={{ flex: 1, height: 40, borderRadius: 8, borderColor: '#722ed1', color: '#722ed1' }}
+                onClick={() => {
+                  editReqForm.validateFields().then(vals => {
+                    dispatch(updateQuotationDetails({ key: editReqTarget.key, qty: vals.qty, payment_terms: vals.payment_terms }));
+                    message.success('Quotation details updated.');
+                    setShowEditReqModal(false); editReqForm.resetFields();
+                  });
+                }}>Save Only</Button>
+              <Button type="primary" style={{ flex: 2, height: 40, borderRadius: 8, background: '#25D366', border: 'none', fontWeight: 700 }}
+                icon={<WhatsAppOutlined />}
+                onClick={() => {
+                  editReqForm.validateFields().then(vals => {
+                    dispatch(updateQuotationDetails({ key: editReqTarget.key, qty: vals.qty, payment_terms: vals.payment_terms }));
+                    const phone = (suppliersData[editReqTarget.supplier]?.phone || '').replace(/\D/g, '');
+                    const latestNote = (editReqTarget.notes || []).at(-1);
+                    const msg = `*Updated Quotation Request*\n\n*Item:* ${editReqTarget.item}\n*Quantity:* ${vals.qty} ${editReqTarget.unit}\n*Payment Terms:* ${vals.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly provide an updated quotation at the earliest.`;
+                    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                    message.success('Updated quotation sent via WhatsApp!');
+                    setShowEditReqModal(false); editReqForm.resetFields();
+                  });
+                }}>Save & Send via WhatsApp</Button>
+            </div>
+          </Form>
+        )}
+      </Modal>
 
       {/* Payment Proof Modal */}
       <Modal
