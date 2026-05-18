@@ -178,7 +178,14 @@ export default function Tasks() {
       )
     },
     { title: 'Type', dataIndex: 'type', render: (v) => <Tag color={typeColor[v]} style={{ borderRadius: 20 }}>{v}</Tag> },
-    { title: 'Title', dataIndex: 'title' },
+    {
+      title: 'Title', dataIndex: 'title', width: 220,
+      render: (v) => (
+        <Tooltip title={v}>
+          <Text style={{ display: 'block', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</Text>
+        </Tooltip>
+      ),
+    },
     {
       title: 'Suggested Task',
       key: 'suggestedTask',
@@ -203,11 +210,11 @@ export default function Tasks() {
       },
     },
     {
-      title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'],
+      title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'], width: 180,
       render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
     },
     {
-      title: 'Assignee', dataIndex: 'assignee', responsive: ['md'],
+      title: 'Assignee', dataIndex: 'assignee', responsive: ['md'], width: 170,
       render: (v) => <Space><Avatar size={24} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>,
     },
     { title: 'Priority', dataIndex: 'priority', responsive: ['sm'], render: (v) => <Tag color={priorityColor[v]}>{v}</Tag> },
@@ -337,7 +344,7 @@ export default function Tasks() {
       {view === 'table' ? (
         <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
           <div className="table-responsive" style={{ padding: '4px' }}>
-            <Table dataSource={filtered} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+            <Table dataSource={filtered} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 'max-content' }} />
           </div>
         </Card>
       ) : (

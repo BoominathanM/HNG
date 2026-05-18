@@ -54,6 +54,25 @@ import {
 const { Text, Title } = Typography;
 const { Option } = Select;
 
+const PRINTING_VENDORS = {
+  sticker_printing: [
+    { value: 'The Lily', label: 'The Lily' },
+    { value: 'PrintZone', label: 'PrintZone' },
+    { value: 'StickerWorld', label: 'StickerWorld' },
+    { value: 'LabelCraft', label: 'LabelCraft' },
+  ],
+  box: [
+    { value: 'BoxWorld', label: 'BoxWorld' },
+    { value: 'PackMaster', label: 'PackMaster' },
+    { value: 'CartonKing', label: 'CartonKing' },
+  ],
+  frosted_ziplock: [
+    { value: 'PlastiPack', label: 'PlastiPack' },
+    { value: 'ZiplockPro', label: 'ZiplockPro' },
+    { value: 'ClearSeal', label: 'ClearSeal' },
+  ],
+};
+
 export default function OperationDetail() {
   const { id } = useParams();
   const location = useLocation();
@@ -66,6 +85,7 @@ export default function OperationDetail() {
   const [taskOptions, setTaskOptions] = useState(['Packing', 'Labeling', 'Filling']);
   const [newTaskValue, setNewTaskValue] = useState('');
   const [printingValues, setPrintingValues] = useState({});
+  const [printingVendors, setPrintingVendors] = useState({});
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignModalRecord, setAssignModalRecord] = useState(null);
   const [printingModalOpen, setPrintingModalOpen] = useState(false);
@@ -179,6 +199,7 @@ export default function OperationDetail() {
           value={printingValues[record.key]}
           onChange={(val) => {
             setPrintingValues((prev) => ({ ...prev, [record.key]: val }));
+            setPrintingVendors((prev) => ({ ...prev, [record.key]: undefined }));
             setPrintingModalType(val);
             setPrintingModalOpen(true);
           }}
@@ -190,6 +211,24 @@ export default function OperationDetail() {
           <Option value="frosted_ziplock">Frosted Ziplock</Option>
         </Select>
       ),
+    },
+    {
+      title: 'Printing Vendor',
+      key: 'printingVendor',
+      render: (_, record) => {
+        const printType = printingValues[record.key];
+        const vendors = printType ? (PRINTING_VENDORS[printType] || []) : [];
+        return (
+          <Select
+            value={printingVendors[record.key]}
+            onChange={(val) => setPrintingVendors((prev) => ({ ...prev, [record.key]: val }))}
+            placeholder={printType ? 'Select vendor' : '—'}
+            disabled={!printType}
+            style={{ width: 150 }}
+            options={vendors}
+          />
+        );
+      },
     },
     {
       title: 'Assign Task',

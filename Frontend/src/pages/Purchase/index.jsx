@@ -74,6 +74,37 @@ const initLocalPurchases = [
   { key: 'LP-003', date: '2024-05-15', invoiceNo: 'INV-LOCAL-003', invoiceFile: null, vendorName: 'ITC Grand Kolkata', vendorPhone: '+91 33 2288 9999', items: [{ name: 'Housekeeping Kit', qty: 100, unit: 'Kits', amount: 15000 }], totalAmount: 15000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null, gPayProof: null },
 ];
 
+// ── Printing Suppliers mock data ─────────────────────────────────────────────
+const initPrintingSuppliers = [
+  {
+    key: 'PRN-001', type: 'Sticker', name: 'PrintFast Solutions', phone: '+91 98765 11111',
+    email: 'info@printfast.in', taxId: 'GST29ABC123D1Z5', address: 'Mumbai, MH',
+    bank: 'HDFC Bank — A/C 50100111111 | IFSC HDFC0001234', notes: 'Reliable sticker supplier',
+    orders: [
+      { key: 'PO-S001', date: '2024-05-01', item: 'Custom Stickers (Hotel Brand)', qty: 5000, unit: 'Pcs', amount: 6000, status: 'Delivered' },
+      { key: 'PO-S002', date: '2024-05-12', item: 'Logo Stickers (Mini)', qty: 2000, unit: 'Pcs', amount: 2400, status: 'In Transit' },
+    ],
+  },
+  {
+    key: 'PRN-002', type: 'Box', name: 'BoxWorld Printers', phone: '+91 87654 22222',
+    email: 'orders@boxworld.in', taxId: 'GST27XYZ456E2Z8', address: 'Bengaluru, KA',
+    bank: 'Axis Bank — A/C 912010099999 | IFSC UTIB0000002', notes: 'Bulk box supplier',
+    orders: [
+      { key: 'PO-B001', date: '2024-04-20', item: 'Dental Kit Boxes', qty: 1000, unit: 'Pcs', amount: 12000, status: 'Delivered' },
+      { key: 'PO-B002', date: '2024-05-08', item: 'Soap Gift Boxes', qty: 500, unit: 'Pcs', amount: 7500, status: 'Pending' },
+    ],
+  },
+  {
+    key: 'PRN-003', type: 'Ziplock', name: 'ZipSeal Industries', phone: '+91 76543 33333',
+    email: 'sales@zipseal.in', taxId: 'GST24MNO789F3Z1', address: 'Delhi, DL',
+    bank: 'SBI — A/C 30199887766 | IFSC SBIN0002345', notes: 'Ziplock bag manufacturer',
+    orders: [
+      { key: 'PO-Z001', date: '2024-05-05', item: 'Ziplock Bags (Small)', qty: 10000, unit: 'Pcs', amount: 5000, status: 'Delivered' },
+      { key: 'PO-Z002', date: '2024-05-15', item: 'Ziplock Bags (Large)', qty: 5000, unit: 'Pcs', amount: 4000, status: 'In Transit' },
+    ],
+  },
+];
+
 export default function Purchase() {
   const isDark = useSelector((s) => s.theme.isDark);
   const dispatch = useDispatch();
@@ -320,6 +351,32 @@ export default function Purchase() {
   const [localPurchaseNewVendorDetected, setLocalPurchaseNewVendorDetected] = useState(false);
   const localPurchaseNotifyRef = useRef({});
   const [localPurchaseDetailView, setLocalPurchaseDetailView] = useState(null);
+
+  /* ── Printing Suppliers tab state ── */
+  const [printingSuppliers, setPrintingSuppliers] = useState(initPrintingSuppliers);
+  const [printingTypeFilter, setPrintingTypeFilter] = useState('all');
+  const [viewPrintingSupplier, setViewPrintingSupplier] = useState(null);
+  const [showAddPrintingSupplierModal, setShowAddPrintingSupplierModal] = useState(false);
+  const [printingSupplierForm] = Form.useForm();
+
+  const handleAddPrintingSupplier = (vals) => {
+    const newSup = {
+      key: `PRN-${Date.now()}`,
+      type: vals.type,
+      name: vals.name,
+      phone: vals.phone || '',
+      email: vals.email || '',
+      taxId: vals.taxId || '',
+      address: vals.address || '',
+      bank: vals.bank || '',
+      notes: vals.notes || '',
+      orders: [],
+    };
+    setPrintingSuppliers(prev => [...prev, newSup]);
+    printingSupplierForm.resetFields();
+    setShowAddPrintingSupplierModal(false);
+    message.success('Printing supplier added successfully');
+  };
 
   /* ── Inline Add Supplier / Vendor from dropdown ── */
   const [showAddSupplierInlineModal, setShowAddSupplierInlineModal] = useState(false);
@@ -1810,12 +1867,187 @@ export default function Purchase() {
                       />
                     </div>
                   )
-                }
+                },
+                {
+                  key: 'printing_suppliers',
+                  label: <Space><TeamOutlined />Printing Suppliers</Space>,
+                  children: (
+                    <div style={{ marginTop: 12 }}>
+                      {/* Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+                        <div>
+                          <Title level={5} style={{ margin: 0, color: textColor }}>Printing Suppliers</Title>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Manage sticker, box and ziplock suppliers</Text>
+                        </div>
+                        <Space wrap>
+                          <Select
+                            value={printingTypeFilter}
+                            onChange={setPrintingTypeFilter}
+                            style={{ width: 150, height: 36 }}
+                            options={[
+                              { value: 'all', label: 'All Types' },
+                              { value: 'Sticker', label: 'Sticker' },
+                              { value: 'Box', label: 'Box' },
+                              { value: 'Ziplock', label: 'Ziplock' },
+                            ]}
+                          />
+                          <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                            onClick={() => setShowAddPrintingSupplierModal(true)}
+                          >
+                            Add Supplier
+                          </Button>
+                        </Space>
+                      </div>
+
+                      {/* Suppliers Table */}
+                      <Table
+                        size="small"
+                        dataSource={printingSuppliers.filter(s => printingTypeFilter === 'all' || s.type === printingTypeFilter)}
+                        rowKey="key"
+                        scroll={{ x: 900 }}
+                        onRow={(record) => ({ onClick: () => setViewPrintingSupplier(record), style: { cursor: 'pointer' } })}
+                        columns={[
+                          {
+                            title: 'Type', dataIndex: 'type', width: 100,
+                            render: (v) => (
+                              <Tag color={v === 'Sticker' ? 'blue' : v === 'Box' ? 'green' : 'orange'} style={{ borderRadius: 10, fontWeight: 600 }}>{v}</Tag>
+                            ),
+                          },
+                          { title: 'Name', dataIndex: 'name', width: 180, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                          { title: 'Phone', dataIndex: 'phone', width: 145, render: v => <Text>{v || '—'}</Text> },
+                          { title: 'Email', dataIndex: 'email', width: 200, render: v => <Text>{v || '—'}</Text> },
+                          { title: 'Tax ID (GST/PAN)', dataIndex: 'taxId', width: 155, render: v => <Text>{v || '—'}</Text> },
+                          { title: 'Address', dataIndex: 'address', width: 160, render: v => <Text>{v || '—'}</Text> },
+                          { title: 'Bank Details', dataIndex: 'bank', width: 260, ellipsis: true, render: v => <Text style={{ color: '#888' }}>{v || '—'}</Text> },
+                          { title: 'Notes', dataIndex: 'notes', ellipsis: true, render: v => <Text style={{ color: '#888' }}>{v || '—'}</Text> },
+                          {
+                            title: 'Orders', key: 'orders', width: 80,
+                            render: (_, r) => (
+                              <Tag color="geekblue" style={{ borderRadius: 10, fontWeight: 600, cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setViewPrintingSupplier(r); }}>
+                                {r.orders?.length || 0}
+                              </Tag>
+                            ),
+                          },
+                        ]}
+                      />
+                    </div>
+                  ),
+                },
               ]}
             />
           </Card>
         </Col>
       </Row>
+
+      {/* ──────── Printing Supplier Orders Modal ──────── */}
+      <Modal
+        open={!!viewPrintingSupplier}
+        onCancel={() => setViewPrintingSupplier(null)}
+        footer={null}
+        width={680}
+        centered
+        title={
+          viewPrintingSupplier && (
+            <Space>
+              <Tag color={viewPrintingSupplier.type === 'Sticker' ? 'blue' : viewPrintingSupplier.type === 'Box' ? 'green' : 'orange'} style={{ borderRadius: 10, fontWeight: 700 }}>{viewPrintingSupplier.type}</Tag>
+              <Text strong style={{ fontSize: 16 }}>{viewPrintingSupplier.name}</Text>
+            </Space>
+          )
+        }
+      >
+        {viewPrintingSupplier && (
+          <div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 20 }}>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Phone</Text><br /><Text strong>{viewPrintingSupplier.phone || '—'}</Text></div>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Email</Text><br /><Text strong>{viewPrintingSupplier.email || '—'}</Text></div>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Tax ID</Text><br /><Text strong>{viewPrintingSupplier.taxId || '—'}</Text></div>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Address</Text><br /><Text strong>{viewPrintingSupplier.address || '—'}</Text></div>
+            </div>
+            {viewPrintingSupplier.bank && (
+              <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: isDark ? '#1a1a2e' : '#f8f8f8', fontSize: 12 }}>
+                <Text type="secondary">Bank: </Text><Text>{viewPrintingSupplier.bank}</Text>
+              </div>
+            )}
+            <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 10 }}>
+              Orders Given ({viewPrintingSupplier.orders?.length || 0})
+            </Text>
+            <Table
+              size="small"
+              dataSource={viewPrintingSupplier.orders || []}
+              rowKey="key"
+              pagination={false}
+              columns={[
+                { title: 'Order ID', dataIndex: 'key', width: 100, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text> },
+                { title: 'Date', dataIndex: 'date', width: 100 },
+                { title: 'Item', dataIndex: 'item', ellipsis: true },
+                { title: 'Qty', dataIndex: 'qty', width: 70, render: (v, r) => `${v} ${r.unit}` },
+                { title: 'Amount', dataIndex: 'amount', width: 90, render: v => <Text strong>₹{v?.toLocaleString()}</Text> },
+                { title: 'Status', dataIndex: 'status', width: 100, render: v => <Tag color={v === 'Delivered' ? 'success' : v === 'In Transit' ? 'processing' : 'warning'} style={{ borderRadius: 10, fontSize: 11 }}>{v}</Tag> },
+              ]}
+            />
+          </div>
+        )}
+      </Modal>
+
+      {/* ──────── Add Printing Supplier Modal ──────── */}
+      <Modal
+        open={showAddPrintingSupplierModal}
+        onCancel={() => { setShowAddPrintingSupplierModal(false); printingSupplierForm.resetFields(); }}
+        footer={null}
+        width={500}
+        centered
+        title={<Text strong style={{ fontSize: 16 }}>Add Printing Supplier</Text>}
+      >
+        <Form form={printingSupplierForm} layout="vertical" onFinish={handleAddPrintingSupplier} style={{ marginTop: 12 }}>
+          <Form.Item label="Supplier Type" name="type" rules={[{ required: true, message: 'Select type' }]}>
+            <Select placeholder="Select type" style={{ height: 40 }}>
+              <Option value="Sticker">Sticker</Option>
+              <Option value="Box">Box</Option>
+              <Option value="Ziplock">Ziplock</Option>
+            </Select>
+          </Form.Item>
+          <Row gutter={12}>
+            <Col xs={24} sm={14}>
+              <Form.Item label={<span>Name <span style={{ color: '#ff4d4f' }}>*</span></span>} name="name" rules={[{ required: true, message: 'Required' }]}>
+                <Input placeholder="Supplier name" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={10}>
+              <Form.Item label="Phone" name="phone">
+                <Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Email" name="email">
+                <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Tax ID (GST/PAN)" name="taxId">
+                <Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="Address" name="address">
+            <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
+          </Form.Item>
+          <Form.Item label="Bank Details" name="bank">
+            <Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} />
+          </Form.Item>
+          <Form.Item label="Notes" name="notes">
+            <Input.TextArea placeholder="Any additional info..." rows={3} style={{ borderRadius: 8 }} />
+          </Form.Item>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <Button onClick={() => { setShowAddPrintingSupplierModal(false); printingSupplierForm.resetFields(); }}>Cancel</Button>
+            <Button htmlType="submit" type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Supplier</Button>
+          </div>
+        </Form>
+      </Modal>
 
       {/* ──────── Add Local Purchase Modal ──────── */}
       <Modal

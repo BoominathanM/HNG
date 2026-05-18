@@ -138,6 +138,12 @@ export default function Operations() {
     () => Object.fromEntries(operationOrders.map((o) => [o.id, null]))
   );
 
+  const [uploadedFiles, setUploadedFiles] = useState({});
+
+  const handleUpload = (itemKey, fileList) => {
+    setUploadedFiles((prev) => ({ ...prev, [itemKey]: fileList }));
+  };
+
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const mutedBg = isDark ? '#161622' : '#faf8fb';
   const textColor = isDark ? '#ececf1' : '#1a1a2e';
@@ -384,10 +390,31 @@ export default function Operations() {
             {step === 0 && (
               <>
                 <Tag color="blue">Designing</Tag>
+                <Upload
+                  beforeUpload={() => false}
+                  fileList={uploadedFiles[record.key] || []}
+                  onChange={({ fileList }) => handleUpload(record.key, fileList)}
+                  maxCount={1}
+                  accept="image/*,.pdf"
+                  showUploadList={false}
+                >
+                  <Button
+                    size="small"
+                    icon={<UploadOutlined />}
+                    style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}
+                  >
+                    {uploadedFiles[record.key]?.length ? 'Re-upload' : 'Upload Design'}
+                  </Button>
+                </Upload>
+                {uploadedFiles[record.key]?.length > 0 && (
+                  <Tag color="green" style={{ fontSize: 11 }}>✓ Uploaded</Tag>
+                )}
                 <Button
                   size="small"
                   type="primary"
                   style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                  disabled={!uploadedFiles[record.key]?.length}
+                  title={!uploadedFiles[record.key]?.length ? 'Upload design first' : ''}
                   onClick={() => {
                     advanceStep(record.key, 1);
                     const ord = operationOrders.find((o) => o.id === record.orderId);
@@ -401,6 +428,20 @@ export default function Operations() {
             {step === 1 && (
               <>
                 <Tag color="gold">Waiting for Approval</Tag>
+                {uploadedFiles[record.key]?.length > 0 ? (
+                  <Tag color="green" style={{ fontSize: 11 }}>✓ Design Uploaded</Tag>
+                ) : (
+                  <Upload
+                    beforeUpload={() => false}
+                    fileList={[]}
+                    onChange={({ fileList }) => handleUpload(record.key, fileList)}
+                    maxCount={1}
+                    accept="image/*,.pdf"
+                    showUploadList={false}
+                  >
+                    <Button size="small" icon={<UploadOutlined />} danger>Upload Design *</Button>
+                  </Upload>
+                )}
                 <Button
                   size="small"
                   icon={<MessageOutlined />}
@@ -416,7 +457,15 @@ export default function Operations() {
                   size="small"
                   icon={<CheckCircleOutlined />}
                   style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
-                  onClick={() => advanceStep(record.key, 2)}
+                  disabled={!uploadedFiles[record.key]?.length}
+                  title={!uploadedFiles[record.key]?.length ? 'Upload design file first' : ''}
+                  onClick={() => {
+                    if (!uploadedFiles[record.key]?.length) {
+                      message.error('Please upload the design file before approving');
+                      return;
+                    }
+                    advanceStep(record.key, 2);
+                  }}
                 >
                   Approve
                 </Button>

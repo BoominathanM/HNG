@@ -17,7 +17,8 @@ export const SIZE_MAP = {
 export const PAYMENT_LABELS = {
   BEFORE_100: '100% Payment Before Dispatch',
   ON_DISPATCH: '50% Advance, 50% on Dispatch',
-  '50_ADVANCE_50_AFTER': '50% Advance, 50% After Delivery',
+  '50_ADVANCE_50_AFTER': '50% adv 50% on delivery',
+  CREDIT_10_30: 'Credit (10days to 1 month)',
 };
 
 export const DESIGN_FLOW = [

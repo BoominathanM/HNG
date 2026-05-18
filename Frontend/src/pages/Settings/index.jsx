@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Form, Input, Select, Switch, Button, Typography,
-  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber
+  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber, Empty
 } from 'antd';
 import {
   SaveOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   UserOutlined, UploadOutlined, CheckOutlined, CloseOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -16,7 +17,8 @@ const { Option } = Select;
 
 const MODULES = [
   'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
-  'Staff Management', 'Inventory', 'Billing', 'Expenses', 'Reports', 'Notifications', 'Settings',
+  'Staff Management', 'Inventory', 'Purchase', 'Billing', 'Parties & Ledger',
+  'Financial', 'Expenses', 'Reports', 'Notifications', 'Integration', 'Settings',
 ];
 
 const MODULE_PERM_TYPES = {
@@ -27,10 +29,14 @@ const MODULE_PERM_TYPES = {
   'Dispatch Team': ['read', 'add', 'edit', 'delete'],
   'Staff Management': ['read', 'add', 'edit', 'delete'],
   Inventory: ['read', 'add', 'edit', 'delete'],
+  Purchase: ['read', 'add', 'edit', 'delete'],
   Billing: ['read', 'add', 'edit', 'delete'],
+  'Parties & Ledger': ['read', 'add', 'edit', 'delete'],
+  Financial: ['read', 'add', 'edit', 'delete'],
   Expenses: ['read', 'add', 'edit', 'delete'],
-  Reports: ['read', 'add', 'edit', 'delete'],
+  Reports: ['read'],
   Notifications: ['read'],
+  Integration: ['read', 'add', 'edit', 'delete'],
   Settings: ['read', 'add', 'edit', 'delete'],
 };
 
@@ -96,6 +102,16 @@ export default function Settings() {
 
   // Logo
   const [logoUrl, setLogoUrl] = useState('/hng logo new.png');
+
+  // Deleted Records
+  const [deletedRecords, setDeletedRecords] = useState([
+    { key: 1, module: 'Parties & Ledger', name: 'Old Vendor XYZ', type: 'Supplier', deletedBy: 'Super Admin', deletedAt: '2026-05-10T10:30:00Z' },
+    { key: 2, module: 'Parties & Ledger', name: 'Hotel Sunshine', type: 'Customer', deletedBy: 'Super Admin', deletedAt: '2026-05-12T14:15:00Z' },
+    { key: 3, module: 'Sales', name: 'LEAD-1090', type: 'Lead', deletedBy: 'Super Admin', deletedAt: '2026-05-14T09:00:00Z' },
+    { key: 4, module: 'Inventory', name: 'Soap 30ml (Expired Batch)', type: 'Product', deletedBy: 'Super Admin', deletedAt: '2026-05-16T16:45:00Z' },
+  ]);
+  const [deletedSearch, setDeletedSearch] = useState('');
+  const [deletedModuleFilter, setDeletedModuleFilter] = useState('all');
 
   const addRole = (e) => {
     e.preventDefault();
@@ -251,6 +267,7 @@ export default function Settings() {
                   <Table
                     dataSource={users}
                     rowKey="key"
+                    size="small"
                     pagination={false}
                     style={{ borderRadius: 14, overflow: 'hidden' }}
                     columns={[
@@ -578,6 +595,87 @@ export default function Settings() {
                     <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
                   </div>
                 </Form>
+              </Card>
+            ),
+          },
+          {
+            key: 'deleted_records',
+            label: <Space><DeleteOutlined />Deleted Records</Space>,
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                  <Text type="secondary" style={{ fontSize: 13 }}>All records that have been deleted from the system (Super Admin only)</Text>
+                  <Space wrap>
+                    <Input
+                      prefix={<span>🔍</span>}
+                      placeholder="Search deleted records..."
+                      value={deletedSearch}
+                      onChange={e => setDeletedSearch(e.target.value)}
+                      style={{ width: 220, borderRadius: 8 }}
+                      allowClear
+                    />
+                    <Select value={deletedModuleFilter} onChange={setDeletedModuleFilter} style={{ width: 160 }}>
+                      <Option value="all">All Modules</Option>
+                      <Option value="Parties & Ledger">Parties & Ledger</Option>
+                      <Option value="Sales">Sales</Option>
+                      <Option value="Inventory">Inventory</Option>
+                      <Option value="Purchase">Purchase</Option>
+                      <Option value="Billing">Billing</Option>
+                    </Select>
+                  </Space>
+                </div>
+                {deletedRecords.length === 0 ? (
+                  <Empty description="No deleted records found" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                ) : (
+                  <Table
+                    size="small"
+                    dataSource={deletedRecords.filter(r =>
+                      (deletedModuleFilter === 'all' || r.module === deletedModuleFilter) &&
+                      (!deletedSearch || r.name.toLowerCase().includes(deletedSearch.toLowerCase()) || r.module.toLowerCase().includes(deletedSearch.toLowerCase()))
+                    )}
+                    rowKey="key"
+                    pagination={{ pageSize: 10 }}
+                    columns={[
+                      {
+                        title: 'Module', dataIndex: 'module', width: 160,
+                        render: v => <Tag style={{ borderRadius: 10, background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 12 }}>{v}</Tag>
+                      },
+                      {
+                        title: 'Record Name', dataIndex: 'name',
+                        render: v => <Text strong style={{ color: textColor, fontSize: 13 }}>{v}</Text>
+                      },
+                      {
+                        title: 'Type', dataIndex: 'type', width: 120,
+                        render: v => <Tag color="default" style={{ borderRadius: 10, fontSize: 12 }}>{v}</Tag>
+                      },
+                      {
+                        title: 'Deleted By', dataIndex: 'deletedBy', width: 140,
+                        render: v => <Text style={{ fontSize: 13, color: '#888' }}>{v}</Text>
+                      },
+                      {
+                        title: 'Deleted At', dataIndex: 'deletedAt', width: 160,
+                        render: v => <Text style={{ fontSize: 13, color: '#888' }}>{new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</Text>
+                      },
+                      {
+                        title: 'Actions', key: 'actions', width: 80,
+                        render: (_, r) => (
+                          <Tooltip title="Restore Record">
+                            <Button
+                              size="small"
+                              type="link"
+                              style={{ color: '#52c41a', padding: '0 4px', fontSize: 13 }}
+                              onClick={() => {
+                                setDeletedRecords(prev => prev.filter(rec => rec.key !== r.key));
+                              }}
+                            >
+                              Restore
+                            </Button>
+                          </Tooltip>
+                        )
+                      },
+                    ]}
+                  />
+                )}
               </Card>
             ),
           },

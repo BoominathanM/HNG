@@ -8,7 +8,7 @@ import {
   BookOutlined, ShopOutlined, ArrowUpOutlined,
   ArrowDownOutlined, WalletOutlined, TeamOutlined,
   PhoneOutlined, MailOutlined, EnvironmentOutlined,
-  FileTextOutlined, PrinterOutlined, DownloadOutlined
+  FileTextOutlined, PrinterOutlined, DownloadOutlined, DeleteOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -170,11 +170,26 @@ const ledgerByParty = {
 
 export default function PartiesLedger() {
   const isDark = useSelector((s) => s.theme.isDark);
+  const currentUser = useSelector((s) => s.auth.user);
+  const isSuperAdmin = currentUser?.role === 'Super Admin';
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
   const [activeTab, setActiveTab] = useState('all');
+  const [supplierList, setSupplierList] = useState(supplierParties);
+  const [customerList, setCustomerList] = useState(customerParties);
+  const [deletedParties, setDeletedParties] = useState([]);
+
+  const deleteParty = (party) => {
+    const now = new Date().toISOString();
+    setDeletedParties(prev => [...prev, { ...party, deletedAt: now }]);
+    if (party.type === 'Supplier') {
+      setSupplierList(prev => prev.filter(p => p.key !== party.key));
+    } else {
+      setCustomerList(prev => prev.filter(p => p.key !== party.key));
+    }
+  };
   const [supplierSearch, setSupplierSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [allSearch, setAllSearch] = useState('');
@@ -182,12 +197,12 @@ export default function PartiesLedger() {
   const [viewParty, setViewParty] = useState(null);
   const [dateRange, setDateRange] = useState(null);
 
-  const allParties = [...supplierParties, ...customerParties];
+  const allParties = [...supplierList, ...customerList];
 
-  const totalSupplierPending = supplierParties.reduce((s, p) => s + p.pending, 0);
-  const totalCustomerPending = customerParties.reduce((s, p) => s + p.pending, 0);
-  const totalSupplierPaid = supplierParties.reduce((s, p) => s + p.paid, 0);
-  const totalCustomerReceived = customerParties.reduce((s, p) => s + p.received, 0);
+  const totalSupplierPending = supplierList.reduce((s, p) => s + p.pending, 0);
+  const totalCustomerPending = customerList.reduce((s, p) => s + p.pending, 0);
+  const totalSupplierPaid = supplierList.reduce((s, p) => s + p.paid, 0);
+  const totalCustomerReceived = customerList.reduce((s, p) => s + p.received, 0);
 
   const getLedger = (party) => {
     let entries = ledgerByParty[party.key] || [];
@@ -510,7 +525,7 @@ export default function PartiesLedger() {
       }
     },
     {
-      title: 'Action', key: 'action', fixed: 'right', width: 150,
+      title: 'Action', key: 'action', fixed: 'right', width: isSuperAdmin ? 210 : 150,
       render: (_, r) => (
         <Space size={4}>
           <Button size="small" type="link" icon={<EyeOutlined />} onClick={e => { e.stopPropagation(); setViewParty(r); }} style={{ color: PRIMARY, padding: '0 4px', fontSize: FONT_SIZE }}>
@@ -519,6 +534,17 @@ export default function PartiesLedger() {
           <Button size="small" type="link" icon={<DownloadOutlined />} onClick={e => { e.stopPropagation(); downloadLedger(r); }} style={{ color: PRIMARY, padding: '0 4px', fontSize: FONT_SIZE }}>
             Download
           </Button>
+          {isSuperAdmin && (
+            <Button
+              size="small"
+              type="link"
+              icon={<DeleteOutlined />}
+              onClick={e => { e.stopPropagation(); deleteParty(r); }}
+              style={{ color: '#ff4d4f', padding: '0 4px', fontSize: FONT_SIZE }}
+            >
+              Delete
+            </Button>
+          )}
         </Space>
       )
     }
@@ -559,9 +585,9 @@ export default function PartiesLedger() {
 
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
         {[
-          { label: 'Supplier Pending', value: `₹${totalSupplierPending.toLocaleString()}`, icon: <ShopOutlined />, sub: `${supplierParties.filter(p => p.pending > 0).length} suppliers with dues` },
+          { label: 'Supplier Pending', value: `₹${totalSupplierPending.toLocaleString()}`, icon: <ShopOutlined />, sub: `${supplierList.filter(p => p.pending > 0).length} suppliers with dues` },
           { label: 'Supplier Paid', value: `₹${totalSupplierPaid.toLocaleString()}`, icon: <WalletOutlined />, sub: 'Total paid to suppliers' },
-          { label: 'Customer Pending', value: `₹${totalCustomerPending.toLocaleString()}`, icon: <TeamOutlined />, sub: `${customerParties.filter(p => p.pending > 0).length} customers with dues` },
+          { label: 'Customer Pending', value: `₹${totalCustomerPending.toLocaleString()}`, icon: <TeamOutlined />, sub: `${customerList.filter(p => p.pending > 0).length} customers with dues` },
           { label: 'Customer Received', value: `₹${totalCustomerReceived.toLocaleString()}`, icon: <ArrowUpOutlined />, sub: 'Total received from customers' },
         ].map((s, i) => (
           <Col xs={12} sm={6} key={s.label}>
@@ -635,7 +661,7 @@ export default function PartiesLedger() {
                 label: <Space><ShopOutlined /> Suppliers Ledger</Space>,
                 children: (
                   <div style={{ marginTop: 12 }}>
-                    {renderPartiesTable(supplierParties, supplierSearch, setSupplierSearch, 'Supplier')}
+                    {renderPartiesTable(supplierList, supplierSearch, setSupplierSearch, 'Supplier')}
                   </div>
                 )
               },
@@ -644,7 +670,7 @@ export default function PartiesLedger() {
                 label: <Space><TeamOutlined /> Customers Ledger</Space>,
                 children: (
                   <div style={{ marginTop: 12 }}>
-                    {renderPartiesTable(customerParties, customerSearch, setCustomerSearch, 'Customer')}
+                    {renderPartiesTable(customerList, customerSearch, setCustomerSearch, 'Customer')}
                   </div>
                 )
               },

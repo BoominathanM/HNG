@@ -499,11 +499,7 @@ export default function Staff() {
             label: <Space><UserOutlined />Staff List</Space>,
             children: <StaffList isDark={isDark} />,
           },
-          {
-            key: 'logins',
-            label: <Space><LockOutlined />Role Logins</Space>,
-            children: <RoleLogins isDark={isDark} />,
-          },
+
         ]}
       />
     </div>

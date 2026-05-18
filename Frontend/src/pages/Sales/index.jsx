@@ -29,13 +29,15 @@ const { Option } = Select;
 const PAYMENT_OPTIONS = [
   { value: 'BEFORE_100', label: '100% Payment' },
   { value: 'ON_DISPATCH', label: '50% Advance, 50% on Dispatch' },
-  { value: '50_ADVANCE_50_AFTER', label: '50% Advance, 50% After Delivery (Max 15 days)' },
+  { value: '50_ADVANCE_50_AFTER', label: '50% adv 50% on delivery' },
+  { value: 'CREDIT_10_30', label: 'Credit (10days to 1 month)' },
 ];
 
 const PAYMENT_LABELS = {
   BEFORE_100: 'PAYMENT BEFORE 100%',
   ON_DISPATCH: 'ON THE DATE OF DISPATCH',
-  '50_ADVANCE_50_AFTER': '50 ADVANCE 50% AFTER DISPATCH',
+  '50_ADVANCE_50_AFTER': '50% ADV 50% ON DELIVERY',
+  CREDIT_10_30: 'CREDIT (10 DAYS TO 1 MONTH)',
 };
 
 const STATUS_COLORS = {
@@ -549,12 +551,21 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           </div>
 
           <Row gutter={[16, 16]}>
-            {/* Row 1: Display Unit, Logo, Sticker / Printing, Packing Material */}
-            <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'unit']} label={<span style={{ fontSize: 11 }}>Display Unit</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={isItemDisabled} size="small" />
-              </Form.Item>
-            </Col>
+            {/* Row 1: Display Unit (kit only), Size (kit only), Logo, Sticker / Printing, Packing Material */}
+            {isKit && (
+              <Col xs={24} sm={6}>
+                <Form.Item {...rest} name={[name, 'unit']} label={<span style={{ fontSize: 11 }}>Display Unit</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                  <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={isItemDisabled} size="small" />
+                </Form.Item>
+              </Col>
+            )}
+            {isKit && (
+              <Col xs={24} sm={6}>
+                <Form.Item {...rest} name={[name, 'size']} label={<span style={{ fontSize: 11 }}>Size</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                  <Input placeholder="e.g. 2.5cm x 2.5cm" size="small" disabled={isItemDisabled} />
+                </Form.Item>
+              </Col>
+            )}
             <Col xs={24} sm={6}>
               <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={isItemDisabled} size="small" />
@@ -705,6 +716,7 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const paymentTerms = Form.useWatch('paymentTerms');
   const is5050 = paymentTerms === '50_ADVANCE_50_AFTER';
+  const isCredit = paymentTerms === 'CREDIT_10_30';
 
   return (
     <Row gutter={12}>
@@ -751,6 +763,26 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
       {is5050 && disabled && (
         <Col xs={24} sm={12}>
           <Form.Item label="Payment Reminder Date" name="paymentReminderDate">
+            <DatePicker style={{ width: '100%' }} disabled />
+          </Form.Item>
+        </Col>
+      )}
+
+      {/* Date picker for Credit (10days to 1 month) */}
+      {isCredit && !disabled && (
+        <Col xs={24} sm={12}>
+          <Form.Item
+            label="Credit Due Date"
+            name="creditDueDate"
+            rules={[{ required: true, message: 'Select credit due date' }]}
+          >
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+      )}
+      {isCredit && disabled && (
+        <Col xs={24} sm={12}>
+          <Form.Item label="Credit Due Date" name="creditDueDate">
             <DatePicker style={{ width: '100%' }} disabled />
           </Form.Item>
         </Col>
@@ -846,6 +878,38 @@ export default function Sales() {
   const [orderFromQuotation, setOrderFromQuotation] = useState(null);
   const [editingOrder, setEditingOrder] = useState(null);
   const [orderForm] = Form.useForm();
+
+  // Order quick-edit modal (delivery date + payment)
+  const [orderEditModalOpen, setOrderEditModalOpen] = useState(false);
+  const [orderEditTarget, setOrderEditTarget] = useState(null);
+  const [orderEditForm] = Form.useForm();
+
+  const openOrderEditModal = (order) => {
+    setOrderEditTarget(order);
+    orderEditForm.setFieldsValue({
+      expectedDelivery: order.expectedDelivery ? dayjs(order.expectedDelivery) : null,
+      advance: order.advance || 0,
+      paymentTerms: order.paymentTerms,
+      paymentReminderDate: order.paymentReminderDate ? dayjs(order.paymentReminderDate) : null,
+    });
+    setOrderEditModalOpen(true);
+  };
+
+  const saveOrderEdit = () => {
+    orderEditForm.validateFields().then(vals => {
+      const updated = {
+        ...orderEditTarget,
+        expectedDelivery: vals.expectedDelivery ? vals.expectedDelivery.format('YYYY-MM-DD') : orderEditTarget.expectedDelivery,
+        advance: vals.advance ?? orderEditTarget.advance,
+        paymentTerms: vals.paymentTerms || orderEditTarget.paymentTerms,
+        paymentReminderDate: vals.paymentReminderDate ? vals.paymentReminderDate.format('YYYY-MM-DD') : orderEditTarget.paymentReminderDate,
+      };
+      setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
+      message.success('Order updated successfully');
+      setOrderEditModalOpen(false);
+      setOrderEditTarget(null);
+    });
+  };
 
   // Watched values for conditional rendering
   const watchedBillType = Form.useWatch('billType', leadForm);
@@ -1521,8 +1585,11 @@ export default function Sales() {
           <Tooltip title="View">
             <Button size="small" icon={<EyeOutlined />} onClick={() => openOrderDetail(r)} />
           </Tooltip>
-          <Tooltip title="Download Invoice">
-            <Button size="small" icon={<FileTextOutlined />} />
+          <Tooltip title="Download Quotation">
+            <Button size="small" icon={<DownloadOutlined />} />
+          </Tooltip>
+          <Tooltip title="Edit Delivery & Payment">
+            <Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={(e) => { e.stopPropagation(); openOrderEditModal(r); }} />
           </Tooltip>
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
@@ -1531,13 +1598,6 @@ export default function Sales() {
             <Tooltip title="Record Payment">
               <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => recordPayment(r)}>
                 Record Payment
-              </Button>
-            </Tooltip>
-          )}
-          {!r.invId && (
-            <Tooltip title="Convert to Invoice">
-              <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertOrderToInvoice(r)}>
-                → Invoice
               </Button>
             </Tooltip>
           )}
@@ -2018,12 +2078,8 @@ export default function Sales() {
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('orders'); }} style={{ borderRadius: 8 }}>Back to Orders</Button>
             <Space wrap>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(o)}>WhatsApp</Button>
-              <Button icon={<FileTextOutlined />} style={{ borderRadius: 8 }}>Download Invoice</Button>
-              {!o.invId && (
-                <Button icon={<FileTextOutlined />} style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => convertOrderToInvoice(o)}>
-                  Convert to Invoice
-                </Button>
-              )}
+              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }}>Download Quotation</Button>
+              <Button icon={<EditOutlined />} style={{ borderRadius: 8, color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={() => openOrderEditModal(o)}>Edit Delivery & Payment</Button>
               <Button
                 icon={<WarningOutlined />}
                 style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
@@ -2959,7 +3015,7 @@ export default function Sales() {
                         )}
                         <Form.Item label="Follow-up Date" name="followUpDate"><DatePicker style={{ width: '100%' }} /></Form.Item>
                         <Form.Item label="Time" name="followUpTime"><Input type="time" /></Form.Item>
-                        <Form.Item label="Task" name="followUpName"><Input placeholder="e.g. Call back" /></Form.Item>
+                        <Form.Item label="Follow-up Notes" name="followUpName"><Input.TextArea rows={2} placeholder="e.g. Call back, discuss pricing, send sample..." /></Form.Item>
                       </>
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -3927,24 +3983,24 @@ export default function Sales() {
                   <Table
                     dataSource={REMINDERS_DATA}
                     columns={[
-                      { title: 'Lead ID', dataIndex: 'leadId', key: 'leadId', width: 110, render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace', fontSize: 13 }}>{v || '—'}</Text> },
-                      { title: 'Type', dataIndex: 'type', key: 'type', width: 150, render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'} style={{ fontSize: 13 }}>{t}</Tag> },
-                      { title: 'Party', dataIndex: 'customer', key: 'customer', width: 150, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
+                      { title: 'Lead ID', dataIndex: 'leadId', key: 'leadId', width: 110, render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace' }}>{v || '—'}</Text> },
+                      { title: 'Type', dataIndex: 'type', key: 'type', width: 150, render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'}>{t}</Tag> },
+                      { title: 'Party', dataIndex: 'customer', key: 'customer', width: 150, render: (v) => <Text>{v}</Text> },
                       {
                         title: 'Details', key: 'details', width: 200, render: (_, r) => (
-                          <Text style={{ fontSize: 13 }}>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days overdue)` : r.topic || `${r.occupancy} occupancy`}</Text>
+                          <Text>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days overdue)` : r.topic || `${r.occupancy} occupancy`}</Text>
                         )
                       },
                       {
                         title: 'Reminder Date & Time', key: 'reminderDateTime', width: 160, render: (_, r) => (
                           <Space direction="vertical" size={0}>
-                            <Text strong style={{ fontSize: 13, color: '#B11E6A' }}>{r.reminderDate || r.dueDate || '—'}</Text>
+                            <Text strong style={{ color: '#B11E6A' }}>{r.reminderDate || r.dueDate || '—'}</Text>
                             <Text type="secondary" style={{ fontSize: 11 }}>{r.reminderTime || '—'}</Text>
                           </Space>
                         )
                       },
-                      { title: 'Action', key: 'action', width: 140, render: (_, r) => <Text style={{ fontSize: 13 }}>{r.dueDate ? 'Review Quotation' : r.action || 'Follow Up'}</Text> },
-                      { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
+                      { title: 'Action', key: 'action', width: 140, render: (_, r) => <Text>{r.dueDate ? 'Review Quotation' : r.action || 'Follow Up'}</Text> },
+                      { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', width: 130, render: (v) => <Text>{v}</Text> },
                     ]}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
@@ -4096,6 +4152,57 @@ export default function Sales() {
               </Form.Item>
             </Col>
           </Row>
+        </Form>
+      </Modal>
+
+      {/* ── Order Edit Modal (Delivery Date & Payment) ─────────────────────── */}
+      <Modal
+        title={
+          <Space>
+            <EditOutlined style={{ color: '#B11E6A' }} />
+            <span>Edit Order — {orderEditTarget?.oid}</span>
+          </Space>
+        }
+        open={orderEditModalOpen}
+        onCancel={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); }}
+        footer={[
+          <Button key="cancel" onClick={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); }}>Cancel</Button>,
+          <Button key="save" type="primary" style={{ background: '#B11E6A', border: 'none' }} onClick={saveOrderEdit}>Save Changes</Button>,
+        ]}
+        width={Math.min(500, window.innerWidth - 32)}
+      >
+        <Form form={orderEditForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}>
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item label="Advance Paid (₹)" name="advance">
+            <InputNumber style={{ width: '100%' }} min={0} step={100} prefix="₹" />
+          </Form.Item>
+          <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
+            <Select>
+              {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+            </Select>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+            {({ getFieldValue }) => {
+              const pt = getFieldValue('paymentTerms');
+              if (pt === '50_ADVANCE_50_AFTER') {
+                return (
+                  <Form.Item label="Payment Reminder Date" name="paymentReminderDate" rules={[{ required: true, message: 'Select reminder date' }]}>
+                    <DatePicker style={{ width: '100%' }} />
+                  </Form.Item>
+                );
+              }
+              if (pt === 'CREDIT_10_30') {
+                return (
+                  <Form.Item label="Credit Due Date" name="paymentReminderDate" rules={[{ required: true, message: 'Select credit due date' }]}>
+                    <DatePicker style={{ width: '100%' }} />
+                  </Form.Item>
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
         </Form>
       </Modal>
 
