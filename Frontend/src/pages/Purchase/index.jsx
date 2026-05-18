@@ -20,19 +20,19 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const inventory = [
-  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: 'â‚¹85/Kg', status: 'OK', seller: 'ChemCo India', purchasedDate: '2024-01-15' },
-  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: 'â‚¹95/Kg', status: 'Low', seller: 'BioLife Ltd', purchasedDate: '2024-01-10' },
-  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: 'â‚¹4.5/Pc', status: 'Low', seller: 'PlastiPack', purchasedDate: '2024-01-05' },
-  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: 'â‚¹12/Pc', status: 'OK', seller: 'BoxWorld', purchasedDate: '2024-01-12' },
-  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: 'â‚¹1.2/Pc', status: 'OK', seller: 'PrintFast', purchasedDate: '2024-01-18' },
-  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: 'â‚¹220/Ltr', status: 'Out', seller: 'ChemCo India', purchasedDate: '2023-12-20' },
+  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', seller: 'ChemCo India', purchasedDate: '2024-01-15' },
+  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', seller: 'BioLife Ltd', purchasedDate: '2024-01-10' },
+  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', seller: 'PlastiPack', purchasedDate: '2024-01-05' },
+  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', seller: 'BoxWorld', purchasedDate: '2024-01-12' },
+  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', seller: 'PrintFast', purchasedDate: '2024-01-18' },
+  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', seller: 'ChemCo India', purchasedDate: '2023-12-20' },
 ];
 
 const suppliersList = [
-  { id: 1, name: 'ChemCo India', phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH', bank: 'HDFC Bank â€" A/C 50100123456789 | IFSC HDFC0001234' },
-  { id: 2, name: 'BioLife Ltd', phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN', bank: 'SBI â€" A/C 30112345678 | IFSC SBIN0001234' },
-  { id: 3, name: 'PlastiPack', phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL', bank: 'ICICI â€" A/C 007601234567 | IFSC ICIC0000076' },
-  { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA', bank: 'Axis Bank â€" A/C 912010012345678 | IFSC UTIB0000001' },
+  { id: 1, name: 'ChemCo India', phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH', bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234' },
+  { id: 2, name: 'BioLife Ltd', phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN', bank: 'SBI — A/C 30112345678 | IFSC SBIN0001234' },
+  { id: 3, name: 'PlastiPack', phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL', bank: 'ICICI — A/C 007601234567 | IFSC ICIC0000076' },
+  { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA', bank: 'Axis Bank — A/C 912010012345678 | IFSC UTIB0000001' },
 ];
 
 const vendorsList = [
@@ -511,7 +511,7 @@ export default function Purchase() {
       date: dayjs().format('YYYY-MM-DD'),
     };
     dispatch(addRaisedRequest(newRequest));
-    message.success(`Purchase request for ${values.product} raised â€" pending financial approval`);
+    message.success(`Purchase request for ${values.product} raised — pending financial approval`);
     setShowAddPurchaseModal(false);
     purchaseForm.resetFields();
     setSelectedProduct(null);
@@ -560,7 +560,7 @@ export default function Purchase() {
         sup_email: 'contact@globalchem.in',
         sup_tax: '27AABCG1234F1Z5',
         sup_address: 'Andheri East, Mumbai, MH 400069',
-        sup_bank: 'HDFC Bank â€" A/C 50100123456789 | IFSC HDFC0001234',
+        sup_bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234',
         sup_notes: 'Preferred supplier for chemical raw materials. NET-30 payment terms.',
       });
       setSupplierScanLoading(false);
@@ -578,7 +578,7 @@ export default function Purchase() {
         cust_email: 'procurement@hilton.in',
         cust_tax: '27AABHH5678K1Z2',
         cust_address: 'Koregaon Park, Pune, MH 411001',
-        cust_bank: 'ICICI Bank â€" A/C 007601234567 | IFSC ICIC0000076',
+        cust_bank: 'ICICI Bank — A/C 007601234567 | IFSC ICIC0000076',
         cust_notes: 'Premium hotel chain. Monthly billing cycle.',
         cust_discount: 8,
       });
@@ -938,7 +938,7 @@ export default function Purchase() {
                               <Text strong style={{ color: '#d46b08', fontSize: 13 }}>New Product Requests from Sales</Text>
                               <Tag color="warning" style={{ borderRadius: 10 }}>{newProductRequests.length} New</Tag>
                             </Space>
-                            <Text type="secondary" style={{ fontSize: 11 }}>Sales team listed new products â€" raise purchase requests below</Text>
+                            <Text type="secondary" style={{ fontSize: 11 }}>Sales team listed new products — raise purchase requests below</Text>
                           </div>
                           <Table
                             size="small"
@@ -948,9 +948,9 @@ export default function Purchase() {
                             scroll={{ x: 900 }}
                             columns={[
                               { title: 'Product Name', dataIndex: 'productName', key: 'productName', width: 180, render: v => <Text strong style={{ color: '#d46b08', fontSize: 13 }}>{v}</Text> },
-                              { title: 'Qty (from Sales)', dataIndex: 'qty', key: 'qty', render: (v) => v || 'â€"' },
-                              { title: 'Hotel / Customer', dataIndex: 'hotelName', key: 'hotelName', render: v => v || 'â€"' },
-                              { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', render: v => v || 'â€"' },
+                              { title: 'Qty (from Sales)', dataIndex: 'qty', key: 'qty', render: (v) => v || '—' },
+                              { title: 'Hotel / Customer', dataIndex: 'hotelName', key: 'hotelName', render: v => v || '—' },
+                              { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', render: v => v || '—' },
                               { title: 'Quotation Ref', dataIndex: 'fromOrder', key: 'fromOrder', render: v => <Text style={{ color: '#B11E6A', fontSize: 11 }}>{v}</Text> },
                               { title: 'Date', dataIndex: 'date', key: 'date' },
                               {
@@ -1544,8 +1544,8 @@ export default function Purchase() {
                     <div className="fade-in" style={{ marginTop: 12 }}>
                       {viewVendor ? (() => {
                         const vendorHistoryRaw = [
-                          { key: 1, date: '2024-05-02', bill_no: 'SAL-2001', inv_no: 'INV-X99', items: [{ name: 'Dental Kit Boxes', qty: '50 Pcs', price: 'â‚¹15/Pc', total: 'â‚¹750' }, { name: 'Soap Bars', qty: '20 Pcs', price: 'â‚¹10/Pc', total: 'â‚¹200' }], status: 'Dispatched' },
-                          { key: 2, date: '2024-04-20', bill_no: 'SAL-1980', inv_no: 'INV-X85', items: [{ name: 'Custom Stickers', qty: '1000 Pcs', price: 'â‚¹2/Pc', total: 'â‚¹2,000' }], status: 'Delivered' },
+                          { key: 1, date: '2024-05-02', bill_no: 'SAL-2001', inv_no: 'INV-X99', items: [{ name: 'Dental Kit Boxes', qty: '50 Pcs', price: '₹15/Pc', total: '₹750' }, { name: 'Soap Bars', qty: '20 Pcs', price: '₹10/Pc', total: '₹200' }], status: 'Dispatched' },
+                          { key: 2, date: '2024-04-20', bill_no: 'SAL-1980', inv_no: 'INV-X85', items: [{ name: 'Custom Stickers', qty: '1000 Pcs', price: '₹2/Pc', total: '₹2,000' }], status: 'Delivered' },
                         ];
                         const filteredVendorHistory = vendorHistorySearch
                           ? vendorHistoryRaw.filter(r => r.items.some(i => i.name.toLowerCase().includes(vendorHistorySearch.toLowerCase())))
@@ -1598,8 +1598,8 @@ export default function Purchase() {
                                 title: 'Total Amount',
                                 key: 'total',
                                 render: (_, r) => {
-                                  const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[â‚¹,]/g, '')), 0);
-                                  return <Text strong>â‚¹{total.toLocaleString()}</Text>;
+                                  const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0);
+                                  return <Text strong>₹{total.toLocaleString()}</Text>;
                                 }
                               },
                               { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="blue">{v}</Tag> },
@@ -1673,8 +1673,8 @@ export default function Purchase() {
                               { title: 'Phone', dataIndex: 'phone', key: 'phone' },
                               { title: 'Email', dataIndex: 'email', key: 'email' },
                               { title: 'Address', dataIndex: 'address', key: 'address' },
-                              { title: 'Total Paid', dataIndex: 'totalPaid', key: 'totalPaid', render: v => <Text style={{ color: '#52c41a', fontWeight: 600 }}>â‚¹{v.toLocaleString()}</Text> },
-                              { title: 'Pending', dataIndex: 'pending', key: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>â‚¹{v.toLocaleString()}</Text> },
+                              { title: 'Total Paid', dataIndex: 'totalPaid', key: 'totalPaid', render: v => <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
+                              { title: 'Pending', dataIndex: 'pending', key: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
                               {
                                 title: 'Action', key: 'action',
                                 render: (_, r) => (
@@ -2116,7 +2116,7 @@ export default function Purchase() {
         </Form>
       </Modal>
 
-      {/* Ask Quotation Modal â€" WhatsApp only */}
+      {/* Ask Quotation Modal — WhatsApp only */}
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
@@ -2248,7 +2248,7 @@ export default function Purchase() {
           {/* Multi-select additional low-stock products */}
           <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
             <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 8 }}>
-              Also include in this quotation request: <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>(optional â€" select more low-stock items)</Text>
+              Also include in this quotation request: <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>(optional — select more low-stock items)</Text>
             </Text>
             <Select
               mode="multiple"
@@ -2306,10 +2306,10 @@ export default function Purchase() {
               onClick={() => {
                 const values = purchaseForm.getFieldsValue();
                 if (!values.supplier) { message.warning('Please select a supplier first'); return; }
-                const mainLine = `â€¢ *${values.product}* â€" Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
+                const mainLine = `â€¢ *${values.product}* — Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
                 const extraLines = quotationExtraProducts.map(p => {
                   const inv = inventory.find(i => i.name === p);
-                  return `â€¢ *${p}* â€" Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
+                  return `â€¢ *${p}* — Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
                 });
                 const allLines = [mainLine, ...extraLines].join('\n');
                 const msg = `Hello, I would like to request a quotation for the following items:\n\n${allLines}\n\nPlease advise on pricing and availability.`;
@@ -2336,7 +2336,7 @@ export default function Purchase() {
         </Form>
       </Modal>
 
-      {/* Raise Request Modal â€" upload quotation doc + AI + send to Financial */}
+      {/* Raise Request Modal — upload quotation doc + AI + send to Financial */}
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
@@ -2438,7 +2438,7 @@ export default function Purchase() {
               </div>
               <div>
                 <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Upload Received Quotation</Text>
-                <Text style={{ fontSize: 11, color: '#aaa' }}>Upload quotation file â€" AI will auto-fill payment terms & quantity</Text>
+                <Text style={{ fontSize: 11, color: '#aaa' }}>Upload quotation file — AI will auto-fill payment terms & quantity</Text>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -2510,7 +2510,7 @@ export default function Purchase() {
           {/* Multi-select additional products */}
           <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
             <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 8 }}>
-              Also raise request for: <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>(optional â€" select more low-stock items for same supplier)</Text>
+              Also raise request for: <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>(optional — select more low-stock items for same supplier)</Text>
             </Text>
             <Select
               mode="multiple"
@@ -2581,7 +2581,7 @@ export default function Purchase() {
         </Form>
       </Modal>
 
-      {/* Payment Request Modal â€" order details filled after financial approval */}
+      {/* Payment Request Modal — order details filled after financial approval */}
       <Modal
         title={
           <Space>
@@ -2662,7 +2662,7 @@ export default function Purchase() {
                 </div>
                 <div>
                   <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Supplier Invoice with AI</Text>
-                  <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera â€" AI will auto-fill order details below</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill order details below</Text>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -2787,13 +2787,13 @@ export default function Purchase() {
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item label="Unit Price (â‚¹)" name="unit_price" rules={[{ required: true, message: 'Enter unit price' }]}>
-                    <InputNumber prefix="â‚¹" style={{ width: '100%' }} placeholder="0.00" min={0} />
+                  <Form.Item label="Unit Price (₹)" name="unit_price" rules={[{ required: true, message: 'Enter unit price' }]}>
+                    <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" min={0} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item label="Total Amount (â‚¹)" name="total_amount" rules={[{ required: true, message: 'Enter total amount' }]}>
-                    <InputNumber prefix="â‚¹" style={{ width: '100%' }} placeholder="0.00" min={0} />
+                  <Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true, message: 'Enter total amount' }]}>
+                    <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" min={0} />
                   </Form.Item>
                 </Col>
               </Row>
@@ -2825,7 +2825,7 @@ export default function Purchase() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera â€" AI will auto-fill the fields below</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -2913,7 +2913,7 @@ export default function Purchase() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera â€" AI will auto-fill the fields below</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -3004,7 +3004,7 @@ export default function Purchase() {
             <div>
               <Text strong style={{ fontSize: 15 }}>Scan & Record Vendor Bill</Text>
               <br />
-              <Text type="secondary" style={{ fontSize: 11 }}>AI extracts details â€" create as Purchase Expense</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>AI extracts details — create as Purchase Expense</Text>
             </div>
           </Space>
         }
@@ -3088,8 +3088,8 @@ export default function Purchase() {
             </Row>
             <Row gutter={12}>
               <Col span={12}>
-                <Form.Item label="Total Amount (â‚¹)" name="total_amount" rules={[{ required: true }]}>
-                  <InputNumber prefix="â‚¹" style={{ width: '100%' }} min={0} />
+                <Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true }]}>
+                  <InputNumber prefix="₹" style={{ width: '100%' }} min={0} />
                 </Form.Item>
               </Col>
               <Col span={12}>
@@ -3116,7 +3116,7 @@ export default function Purchase() {
                     date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
                     invoice_no: values.invoice_no,
                     supplier: values.supplier,
-                    qty: values.qty || 'â€"',
+                    qty: values.qty || '—',
                     paid_status: values.paid_status,
                     paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0,
                     total_amount: values.total_amount,
@@ -3180,7 +3180,7 @@ export default function Purchase() {
               <Col span={10}><Form.Item label="Quantity" name="qty"><Input placeholder="e.g. 100 Kg" /></Form.Item></Col>
             </Row>
             <Row gutter={12}>
-              <Col span={12}><Form.Item label="Total Amount (â‚¹)" name="total_amount" rules={[{ required: true }]}><InputNumber prefix="â‚¹" style={{ width: '100%' }} min={0} /></Form.Item></Col>
+              <Col span={12}><Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true }]}><InputNumber prefix="₹" style={{ width: '100%' }} min={0} /></Form.Item></Col>
               <Col span={12}><Form.Item label="Paid Status" name="paid_status" rules={[{ required: true }]}><Select><Option value="Paid">Paid</Option><Option value="Partially Paid">Partially Paid</Option><Option value="Unpaid">Unpaid</Option></Select></Form.Item></Col>
             </Row>
           </Form>
@@ -3189,7 +3189,7 @@ export default function Purchase() {
             <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
               onClick={() => {
                 expenseForm.validateFields().then(values => {
-                  const newExp = { key: Date.now(), date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'), invoice_no: values.invoice_no, supplier: values.supplier, qty: values.qty || 'â€"', paid_status: values.paid_status, paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0, total_amount: values.total_amount, remaining: values.paid_status === 'Paid' ? 0 : values.total_amount };
+                  const newExp = { key: Date.now(), date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'), invoice_no: values.invoice_no, supplier: values.supplier, qty: values.qty || '—', paid_status: values.paid_status, paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0, total_amount: values.total_amount, remaining: values.paid_status === 'Paid' ? 0 : values.total_amount };
                   setPurchaseExpenses(prev => [newExp, ...prev]);
                   message.success('Purchase expense added');
                   setShowAddExpenseModal(false);
@@ -3233,8 +3233,8 @@ export default function Purchase() {
                 <Descriptions.Item label="Bill Number"><Text strong>{viewBillDetail.bill_no}</Text></Descriptions.Item>
                 <Descriptions.Item label="Invoice Date">{viewBillDetail.date}</Descriptions.Item>
                 <Descriptions.Item label="Vendor/Supplier">{viewSupplier?.name || viewVendor?.name}</Descriptions.Item>
-                <Descriptions.Item label="Tax Amount">â‚¹{(parseInt(viewBillDetail.items[0].total.replace(/[â‚¹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
-                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[â‚¹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
+                <Descriptions.Item label="Tax Amount">₹{(parseInt(viewBillDetail.items[0].total.replace(/[₹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
+                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
               </Descriptions>
 
               <Divider orientation="left">AI Extracted Items</Divider>
@@ -3651,7 +3651,7 @@ export default function Purchase() {
           {/* Step 1: Supplier Selection */}
           <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
             <Text style={{ fontSize: 12, fontWeight: 700, color: '#B11E6A', display: 'block', marginBottom: 8 }}>
-              Step 1 â€" Select Supplier
+              Step 1 — Select Supplier
             </Text>
             <Select
               placeholder="Select supplier name..."
@@ -3701,9 +3701,9 @@ export default function Purchase() {
           {bulkItems.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <Text style={{ fontSize: 12, fontWeight: 700, color: '#B11E6A', display: 'block', marginBottom: 10 }}>
-                Step 2 â€" Select Products & Quantities
+                Step 2 — Select Products & Quantities
                 <Text type="secondary" style={{ fontSize: 11, fontWeight: 400, marginLeft: 8 }}>
-                  (Showing low-stock items â€" supplier's products pre-selected)
+                  (Showing low-stock items — supplier's products pre-selected)
                 </Text>
               </Text>
               <div style={{ maxHeight: 280, overflowY: 'auto', border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}`, borderRadius: 10 }}>
@@ -3775,7 +3775,7 @@ export default function Purchase() {
           {/* Step 3: Payment Terms */}
           {bulkItems.length > 0 && (
             <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-              <Text style={{ fontSize: 12, fontWeight: 700, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Step 3 â€" Payment Terms</Text>
+              <Text style={{ fontSize: 12, fontWeight: 700, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Step 3 — Payment Terms</Text>
               <Select
                 placeholder="Select payment terms..."
                 style={{ width: '100%' }}
@@ -4001,7 +4001,7 @@ export default function Purchase() {
               onChange={v => setFinanceStatusTarget(v)}
               options={raisedRequests
                 .filter(r => r.status !== 'Rejected' && !purchaseOrders.some(o => o.requestKey === r.key))
-                .map(r => ({ value: r.key, label: `${r.item} â€" ${r.supplier} (${r.qty} ${r.unit})` }))}
+                .map(r => ({ value: r.key, label: `${r.item} — ${r.supplier} (${r.qty} ${r.unit})` }))}
             />
           </div>
           <div style={{ marginBottom: 14 }}>
@@ -4012,8 +4012,8 @@ export default function Purchase() {
               value={financeDecision || undefined}
               onChange={v => setFinanceDecision(v)}
               options={[
-                { value: 'Approved', label: 'âœ…  Approved â€" proceed with order' },
-                { value: 'ModifyRequested', label: 'âš ï¸  Modify Requested â€" quantity needs revision' },
+                { value: 'Approved', label: 'âœ…  Approved — proceed with order' },
+                { value: 'ModifyRequested', label: 'âš ï¸  Modify Requested — quantity needs revision' },
               ]}
             />
           </div>
