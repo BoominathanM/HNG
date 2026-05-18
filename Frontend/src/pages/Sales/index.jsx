@@ -460,6 +460,8 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
         background: isDark ? '#1a1a2e' : '#fff',
       }}
     >
+      {/* Hidden field to register isKit so Form.useWatch can read it */}
+      <Form.Item {...rest} name={[name, 'isKit']} hidden noStyle><Input /></Form.Item>
       {/* Card Header (Editable) */}
       <div style={{
         background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)',
