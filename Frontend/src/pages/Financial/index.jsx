@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, List, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, DatePicker, Badge, Tooltip
+  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, List, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, DatePicker, Badge, Tooltip, Alert
 } from 'antd';
 import {
   WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, CloseCircleOutlined, WalletOutlined,
   ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, InfoCircleOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined, FileTextOutlined,
-  TeamOutlined, BookOutlined, SearchOutlined, MessageOutlined, EditOutlined
+  TeamOutlined, BookOutlined, SearchOutlined, MessageOutlined, EditOutlined,
+  CarOutlined, UserOutlined, PhoneOutlined, SendOutlined, ShoppingOutlined, ThunderboltOutlined
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
 import { updateRequestStatus, updateOrderPaymentStatus, addRequestNote, addOrderNote, updateQuotationDetails } from '../../store/slices/purchaseSlice';
@@ -14,6 +15,13 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+
+const MOCK_PICKUP_EXPENSES = [
+  { key: 'DT-001', orderId: 'PO-2501', date: '2024-05-20', supplier: 'ChemCo India', item: 'Soap Base (White)', amount: 42500, pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', category: 'PICKUP', gPayNumber: '9876543210', proof: 'pickup_proof_PO2501.jpg', paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
+  { key: 'DT-002', orderId: 'PO-2502', date: '2024-05-18', supplier: 'BioLife Ltd', item: 'Shampoo Concentrate', amount: 44000, pickupEmpId: 'EMP-102', pickupEmpName: 'Suresh Babu', category: 'PICKUP', gPayNumber: '9123456789', proof: 'proof_biolife.jpg', paymentStatus: 'Paid', paymentProof: 'payment_biolife.pdf', paidDate: '2024-05-19', paidBy: 'Finance Team' },
+  { key: 'DT-003', orderId: 'PO-2503', date: '2024-05-22', supplier: 'PlastiPack', item: 'Shampoo Bottles (Flip 30ml)', amount: 22500, pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', category: 'PICKUP', gPayNumber: '9876543210', proof: null, paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
+  { key: 'DT-004', orderId: 'PO-2504', date: '2024-05-15', supplier: 'BoxWorld', item: 'Dental Kit Boxes', amount: 12000, pickupEmpId: 'EMP-103', pickupEmpName: 'Vijay Anand', category: 'PICKUP', gPayNumber: '8765432109', proof: 'proof_boxworld.jpg', paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
+];
 
 export default function Financial() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -58,6 +66,92 @@ export default function Financial() {
     setOrderNoteInput(prev => ({ ...prev, [orderKey]: '' }));
   };
 
+
+  // ── Reimbursement Expense tab state ──
+  const [reimbursementExpenses, setReimbursementExpenses] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
+      if (stored.length === 0) { localStorage.setItem('hng_pickup_expenses', JSON.stringify(MOCK_PICKUP_EXPENSES)); return MOCK_PICKUP_EXPENSES; }
+      return stored;
+    } catch { return MOCK_PICKUP_EXPENSES; }
+  });
+  useEffect(() => {
+    const handler = () => {
+      try { setReimbursementExpenses(JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]')); } catch {}
+    };
+    window.addEventListener('storage', handler);
+    // Also poll for changes from same-tab updates
+    const interval = setInterval(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
+        setReimbursementExpenses(prev => JSON.stringify(prev) !== JSON.stringify(stored) ? stored : prev);
+      } catch {}
+    }, 1000);
+    return () => { window.removeEventListener('storage', handler); clearInterval(interval); };
+  }, []);
+
+  const [showReimbPaymentModal, setShowReimbPaymentModal] = useState(false);
+  const [reimbPayTarget, setReimbPayTarget] = useState(null);
+  const [reimbPayForm] = Form.useForm();
+
+  // ── Local Purchase Expense sub-tab state ──
+  const [localPurchaseExpenses, setLocalPurchaseExpenses] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('hng_local_purchases') || '[]');
+      if (stored.length > 0) return stored;
+      const fallback = [
+        { key: 'LP-001', date: '2024-05-10', invoiceNo: 'INV-LOCAL-001', invoiceFile: 'invoice_local_001.pdf', vendorName: 'Marriott Mumbai', vendorPhone: '+91 22 6651 1234', items: [{ name: 'Cleaning Supplies', qty: 50, unit: 'Pcs', amount: 5000 }], totalAmount: 5000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null },
+        { key: 'LP-002', date: '2024-05-12', invoiceNo: 'INV-LOCAL-002', invoiceFile: 'invoice_local_002.jpg', vendorName: 'Taj Hotels Delhi', vendorPhone: '+91 11 6600 7777', items: [{ name: 'Paper Towels', qty: 200, unit: 'Rolls', amount: 8000 }, { name: 'Liquid Soap', qty: 50, unit: 'Ltr', amount: 6000 }], totalAmount: 14000, paymentType: 'instant', paymentStatus: 'Paid', paymentProof: 'gpay_proof_LP002.jpg', gPayNumber: '9876543210' },
+        { key: 'LP-003', date: '2024-05-15', invoiceNo: 'INV-LOCAL-003', invoiceFile: null, vendorName: 'ITC Grand Kolkata', vendorPhone: '+91 33 2288 9999', items: [{ name: 'Housekeeping Kit', qty: 100, unit: 'Kits', amount: 15000 }], totalAmount: 15000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null },
+      ];
+      return fallback;
+    } catch { return []; }
+  });
+  useEffect(() => {
+    const interval = setInterval(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('hng_local_purchases') || '[]');
+        if (stored.length > 0) setLocalPurchaseExpenses(prev => JSON.stringify(prev) !== JSON.stringify(stored) ? stored : prev);
+      } catch {}
+    }, 1500);
+    return () => clearInterval(interval);
+  }, []);
+
+  const [showLocalPaymentModal, setShowLocalPaymentModal] = useState(false);
+  const [localPayTarget, setLocalPayTarget] = useState(null);
+  const [localPayForm] = Form.useForm();
+
+  const handleLocalPayment = (vals) => {
+    const proofFile = vals.payment_proof?.fileList?.[0]?.name || null;
+    const updated = localPurchaseExpenses.map(r => r.key === localPayTarget.key
+      ? { ...r, paymentStatus: 'Paid', paymentProof: proofFile, paidDate: new Date().toISOString().slice(0, 10), paidBy: vals.paid_by || 'Finance Team' }
+      : r);
+    setLocalPurchaseExpenses(updated);
+    localStorage.setItem('hng_local_purchases', JSON.stringify(updated));
+    message.success('Local purchase payment processed!');
+    setShowLocalPaymentModal(false);
+    setLocalPayTarget(null);
+    localPayForm.resetFields();
+  };
+
+  const handleReimbPayment = (vals) => {
+    const proofFile = vals.payment_proof?.fileList?.[0]?.name || null;
+    const updated = reimbursementExpenses.map(r => r.key === reimbPayTarget.key
+      ? { ...r, paymentStatus: 'Paid', paymentProof: proofFile, paidDate: new Date().toISOString().slice(0, 10), paidBy: vals.paid_by || 'Finance Team' }
+      : r);
+    setReimbursementExpenses(updated);
+    localStorage.setItem('hng_pickup_expenses', JSON.stringify(updated));
+    // Also update dispatch tracking
+    const tracking = JSON.parse(localStorage.getItem('hng_dispatch_tracking') || '[]');
+    const updatedTracking = tracking.map(o => o.key === reimbPayTarget.key
+      ? { ...o, paymentStatus: 'Paid', paymentProof: proofFile }
+      : o);
+    localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedTracking));
+    message.success('Reimbursement payment recorded and dispatch order tracking updated!');
+    setShowReimbPaymentModal(false);
+    setReimbPayTarget(null);
+    reimbPayForm.resetFields();
+  };
 
   // Parties & Ledgers tab state
   const [partiesSearch, setPartiesSearch] = useState('');
@@ -137,16 +231,15 @@ export default function Financial() {
 
 
   const expenseColumns = [
-    { title: 'Date', dataIndex: 'date', key: 'date' },
-    { title: 'Bill No', dataIndex: 'bill_no' },
-    { title: 'Description', dataIndex: 'desc', key: 'desc' },
-    { title: 'Amount', dataIndex: 'amount', key: 'amount', render: (v) => <Text strong style={{ color: '#B11E6A' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color={getStatusColor(v)}>{v}</Tag> },
+    { title: 'Date', dataIndex: 'date', key: 'date', width: 100, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Bill No', dataIndex: 'bill_no', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Description', dataIndex: 'desc', key: 'desc', render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 120, align: 'right', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Status', dataIndex: 'status', key: 'status', width: 100, render: (v) => <Tag color={getStatusColor(v)} style={{ fontSize: 13 }}>{v}</Tag> },
     {
-      title: 'Actions',
-      key: 'actions',
+      title: 'Actions', key: 'actions', width: 115,
       render: (_, r) => (
-        <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none' }}>Pay Now</Button>
+        <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }}>Pay Now</Button>
       )
     }
   ];
@@ -388,96 +481,157 @@ export default function Financial() {
               label: <Space><ContainerOutlined /> Expense Payments</Space>,
               children: (
                 <div style={{ marginTop: 12 }}>
-                  <Table size="small" dataSource={expenseRequests} columns={expenseColumns} pagination={{ pageSize: 8 }} />
+                  <Table size="small" dataSource={expenseRequests} columns={expenseColumns} pagination={{ pageSize: 8 }} scroll={{ x: 700 }} />
                 </div>
               )
             },
             {
-              key: 'parties_ledger',
-              label: <Space><BookOutlined /> Parties & Ledgers</Space>,
+              key: 'reimbursement',
+              label: <Space><WalletOutlined /> Reimbursement Expense</Space>,
               children: (
                 <div style={{ marginTop: 12 }}>
-                  {viewPartyLedger ? (
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-                        <Space>
-                          <Button icon={<CloseCircleOutlined />} onClick={() => setViewPartyLedger(null)}>Back to Parties</Button>
-                          <Text strong style={{ color: '#B11E6A', fontSize: 15 }}>{viewPartyLedger.name} — Ledger</Text>
-                        </Space>
-                        <DatePicker.RangePicker style={{ width: 260 }} />
-                      </div>
-                      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
-                        {[
-                          { label: 'Total Debit (We Owe)', val: `₹${partyLedgerData.reduce((s, r) => s + r.debit, 0).toLocaleString()}`, color: '#ff4d4f' },
-                          { label: 'Total Credit (They Paid)', val: `₹${partyLedgerData.reduce((s, r) => s + r.credit, 0).toLocaleString()}`, color: '#52c41a' },
-                          { label: 'Net Balance', val: `₹${partyLedgerData.at(-1)?.balance.toLocaleString() || '0'}`, color: '#B11E6A' },
-                        ].map(s => (
-                          <Col xs={8} key={s.label}>
-                            <Card style={{ borderRadius: 10, border: 'none', background: `${s.color}10` }} styles={{ body: { padding: '10px 14px' } }}>
-                              <Text style={{ fontSize: 11, color: '#888', display: 'block' }}>{s.label}</Text>
-                              <Text strong style={{ color: s.color, fontSize: 16 }}>{s.val}</Text>
-                            </Card>
-                          </Col>
-                        ))}
-                      </Row>
-                      <Table
-                        size="small"
-                        dataSource={partyLedgerData}
-                        pagination={{ pageSize: 10 }}
-                        columns={[
-                          { title: 'Date', dataIndex: 'date' },
-                          { title: 'Type', dataIndex: 'type', render: t => <Tag color={t === 'Purchase' ? 'blue' : 'green'}>{t}</Tag> },
-                          { title: 'Document #', dataIndex: 'doc', render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
-                          { title: 'Debit (Dr)', dataIndex: 'debit', render: v => v > 0 ? <Text style={{ color: '#ff4d4f' }}>₹{v.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
-                          { title: 'Credit (Cr)', dataIndex: 'credit', render: v => v > 0 ? <Text style={{ color: '#52c41a' }}>₹{v.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
-                          { title: 'Running Balance', dataIndex: 'balance', render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v.toLocaleString()}</Text> },
-                        ]}
-                      />
-                    </div>
-                  ) : (
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-                        <Text type="secondary">Credit and Debit ledger per party — click a party to view full history</Text>
-                        <Input
-                          prefix={<SearchOutlined />}
-                          placeholder="Search parties..."
-                          value={partiesSearch}
-                          onChange={e => setPartiesSearch(e.target.value)}
-                          style={{ width: 220, borderRadius: 8 }}
-                          allowClear
-                        />
-                      </div>
-                      <Table
-                        size="small"
-                        dataSource={partiesData.filter(p => !partiesSearch || p.name.toLowerCase().includes(partiesSearch.toLowerCase()))}
-                        pagination={{ pageSize: 8 }}
-                        columns={[
-                          { title: 'Party Name', dataIndex: 'name', render: v => <Text strong>{v}</Text> },
-                          { title: 'Type', dataIndex: 'type', render: v => <Tag color={v === 'Supplier' ? 'blue' : 'purple'} style={{ borderRadius: 10 }}>{v}</Tag> },
-                          {
-                            title: 'Total Transaction', key: 'total',
-                            render: (_, r) => <Text strong>₹{(r.totalPurchase || r.totalSales || 0).toLocaleString()}</Text>
-                          },
-                          {
-                            title: 'Paid / Received', key: 'paid',
-                            render: (_, r) => <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{(r.paid || r.received || 0).toLocaleString()}</Text>
-                          },
-                          {
-                            title: 'Pending', dataIndex: 'pending',
-                            render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text>
-                          },
-                          {
-                            title: 'Action', key: 'action',
-                            render: (_, r) => (
-                              <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewPartyLedger(r)} style={{ color: '#B11E6A' }}>
-                                View Ledger
-                              </Button>
-                            )
-                          }
-                        ]}
-                      />
-                    </div>
-                  )}
+                  <Tabs
+                    defaultActiveKey="pickup_expense"
+                    type="card"
+                    items={[
+                      {
+                        key: 'pickup_expense',
+                        label: <Space><CarOutlined />Pickup Expense</Space>,
+                        children: (
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ marginBottom: 12 }}>
+                              <Title level={5} style={{ margin: 0, color: textColor }}>Pickup Expense Reimbursement</Title>
+                              <Text type="secondary">Pickup employee expenses from dispatch order taken workflow — review and process payments</Text>
+                            </div>
+                            {reimbursementExpenses.length === 0 ? (
+                              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                                <WalletOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
+                                <Text type="secondary">No pickup reimbursement expenses yet.</Text>
+                              </div>
+                            ) : (
+                              <Table
+                                size="small"
+                                dataSource={reimbursementExpenses}
+                                rowKey="key"
+                                pagination={{ pageSize: 8 }}
+                                scroll={{ x: 1100 }}
+                                columns={[
+                                  { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
+                                  { title: 'Order ID', dataIndex: 'orderId', key: 'orderId', width: 90, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                                  { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', width: 130, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                                  { title: 'Item', dataIndex: 'item', key: 'item', width: 160, render: v => <Text strong>{v}</Text> },
+                                  { title: 'Category', dataIndex: 'category', key: 'category', width: 90, render: v => <Tag color="blue" style={{ borderRadius: 8, fontSize: 13 }}>{v}</Tag> },
+                                  {
+                                    title: 'Pickup Employee', key: 'employee', width: 165,
+                                    render: (_, r) => (
+                                      <Space direction="vertical" size={0}>
+                                        <Space size={4}><UserOutlined style={{ color: '#B11E6A', fontSize: 13 }} /><Text strong style={{ fontSize: 13 }}>{r.pickupEmpName}</Text></Space>
+                                        <Text type="secondary" style={{ fontSize: 11 }}>{r.pickupEmpId}</Text>
+                                      </Space>
+                                    )
+                                  },
+                                  { title: 'G Pay Number', dataIndex: 'gPayNumber', key: 'gpay', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
+                                  { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
+                                  { title: 'Pickup Proof', dataIndex: 'proof', key: 'proof', width: 115, render: v => v ? <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button> : <Tag color="default" style={{ borderRadius: 8, fontSize: 12 }}>None</Tag> },
+                                  {
+                                    title: 'Payment Status', dataIndex: 'paymentStatus', key: 'pay_status', width: 125, align: 'center',
+                                    render: (v, r) => (
+                                      <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
+                                        <Tag color={v === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, margin: 0, fontSize: 13 }}>{v || 'Unpaid'}</Tag>
+                                        {r.paidDate && <Text type="secondary" style={{ fontSize: 11 }}>{r.paidDate}</Text>}
+                                      </Space>
+                                    )
+                                  },
+                                  { title: 'Payment Proof', dataIndex: 'paymentProof', key: 'pay_proof', width: 125, render: v => v ? <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View</Button> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text> },
+                                  {
+                                    title: 'Actions', key: 'actions', fixed: 'right', width: 115,
+                                    render: (_, r) => r.paymentStatus === 'Paid' ? (
+                                      <Tag color="success" style={{ borderRadius: 8, fontSize: 13 }}>Paid</Tag>
+                                    ) : (
+                                      <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { setReimbPayTarget(r); setShowReimbPaymentModal(true); }}>
+                                        Pay Now
+                                      </Button>
+                                    )
+                                  },
+                                ]}
+                              />
+                            )}
+                          </div>
+                        )
+                      },
+                      {
+                        key: 'local_purchase_expense',
+                        label: <Space><ShoppingOutlined />Local Purchase Expense</Space>,
+                        children: (
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ marginBottom: 12 }}>
+                              <Title level={5} style={{ margin: 0, color: textColor }}>Local Purchase Payments</Title>
+                              <Text type="secondary">Local purchases from vendors — review and process credit payments, upload proof</Text>
+                            </div>
+                            {localPurchaseExpenses.length === 0 ? (
+                              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                                <ShoppingOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
+                                <Text type="secondary">No local purchase expenses yet.</Text>
+                              </div>
+                            ) : (
+                              <Table
+                                size="small"
+                                dataSource={localPurchaseExpenses}
+                                rowKey="key"
+                                pagination={{ pageSize: 8 }}
+                                scroll={{ x: 1200 }}
+                                columns={[
+                                  { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
+                                  { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', width: 145, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
+                                  {
+                                    title: 'Invoice File', dataIndex: 'invoiceFile', key: 'invoiceFile', width: 115,
+                                    render: v => v ? <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => window.open('#', '_blank')}>Open</Button> : <Tag color="default" style={{ fontSize: 12 }}>None</Tag>
+                                  },
+                                  { title: 'Vendor', dataIndex: 'vendorName', key: 'vendorName', width: 155, render: v => <Text style={{ fontWeight: 600, fontSize: 13 }}>{v}</Text> },
+                                  { title: 'Vendor Phone', dataIndex: 'vendorPhone', key: 'vendorPhone', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
+                                  {
+                                    title: 'Items', key: 'items', width: 185,
+                                    render: (_, r) => (r.items || []).map((it, i) => (
+                                      <div key={i}><Text strong style={{ fontSize: 13 }}>{it.name}</Text><Text type="secondary" style={{ fontSize: 12 }}> — {it.qty} {it.unit}</Text></div>
+                                    ))
+                                  },
+                                  { title: 'Total', dataIndex: 'totalAmount', key: 'totalAmount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{v?.toLocaleString()}</Text> },
+                                  { title: 'Payment Type', dataIndex: 'paymentType', key: 'paymentType', width: 115, align: 'center', render: v => <Tag color={v === 'instant' ? 'green' : 'orange'} style={{ borderRadius: 8, fontSize: 13 }}>{v === 'instant' ? 'Instant' : 'Credit'}</Tag> },
+                                  {
+                                    title: 'GPay Number', dataIndex: 'gPayNumber', key: 'gPayNumber', width: 135,
+                                    render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text>
+                                  },
+                                  {
+                                    title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 125, align: 'center',
+                                    render: (v, r) => (
+                                      <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
+                                        <Tag color={v === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, margin: 0, fontSize: 13 }}>{v || 'Pending'}</Tag>
+                                        {r.paidDate && <Text type="secondary" style={{ fontSize: 11 }}>{r.paidDate}</Text>}
+                                      </Space>
+                                    )
+                                  },
+                                  {
+                                    title: 'Payment Proof', dataIndex: 'paymentProof', key: 'paymentProof', width: 125,
+                                    render: v => v ? <Button size="small" icon={<CheckCircleOutlined />} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                  },
+                                  {
+                                    title: 'Actions', key: 'actions', fixed: 'right', width: 115,
+                                    render: (_, r) => r.paymentStatus === 'Paid' ? (
+                                      <Tag color="success" style={{ borderRadius: 8, fontSize: 13 }}>Paid</Tag>
+                                    ) : (
+                                      <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { setLocalPayTarget(r); setShowLocalPaymentModal(true); }}>
+                                        Pay Now
+                                      </Button>
+                                    )
+                                  },
+                                ]}
+                              />
+                            )}
+                          </div>
+                        )
+                      }
+                    ]}
+                  />
                 </div>
               )
             }
@@ -740,6 +894,93 @@ export default function Financial() {
             </div>
           );
         })()}
+      </Modal>
+
+      {/* ── Reimbursement Payment Modal ── */}
+      <Modal
+        title={<Space><WalletOutlined style={{ color: '#B11E6A' }} /><Text strong>Process Reimbursement Payment</Text></Space>}
+        open={showReimbPaymentModal}
+        onCancel={() => { setShowReimbPaymentModal(false); setReimbPayTarget(null); reimbPayForm.resetFields(); }}
+        footer={null}
+        width={500}
+        centered
+      >
+        {reimbPayTarget && (
+          <Form form={reimbPayForm} layout="vertical" onFinish={handleReimbPayment}>
+            <div style={{ background: isDark ? '#1a1a2e' : '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#e8f4ff'}` }}>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>{reimbPayTarget.item}</Text>
+              <Text style={{ color: '#B11E6A' }}>{reimbPayTarget.supplier}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Order: {reimbPayTarget.orderId} · Pickup: {reimbPayTarget.pickupEmpName} ({reimbPayTarget.pickupEmpId})</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Category: {reimbPayTarget.category} · Amount: &#8377;{reimbPayTarget.amount?.toLocaleString()}</Text>
+              {reimbPayTarget.gPayNumber && (
+                <Text style={{ display: 'block', fontSize: 12, color: '#52c41a', marginTop: 4 }}>
+                  G Pay: {reimbPayTarget.gPayNumber}
+                </Text>
+              )}
+            </div>
+            <Form.Item label="Paid By" name="paid_by" initialValue="Finance Team">
+              <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
+            </Form.Item>
+            <Form.Item label="Upload Payment Proof" name="payment_proof" rules={[{ required: true, message: 'Please upload payment proof' }]}>
+              <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+                <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
+              </Upload>
+            </Form.Item>
+            <div style={{ padding: '10px 12px', background: isDark ? '#1e2235' : '#f0f7ff', borderRadius: 8, border: `1px solid ${isDark ? '#2a3040' : '#bae0ff'}`, marginBottom: 14, fontSize: 12 }}>
+              <SendOutlined style={{ color: '#1890ff', marginRight: 6 }} />
+              After submission, payment status will be updated in <Text strong>Dispatch Order Tracking</Text> and <Text strong>Dispatch Pick Up Order</Text> pages.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button block onClick={() => { setShowReimbPaymentModal(false); reimbPayForm.resetFields(); }}>Cancel</Button>
+              <Button block type="primary" htmlType="submit" style={{ background: '#B11E6A', border: 'none' }}>Confirm Payment Done</Button>
+            </div>
+          </Form>
+        )}
+      </Modal>
+
+      {/* ── Local Purchase Payment Modal ── */}
+      <Modal
+        title={<Space><ShoppingOutlined style={{ color: '#B11E6A' }} /><Text strong>Process Local Purchase Payment</Text></Space>}
+        open={showLocalPaymentModal}
+        onCancel={() => { setShowLocalPaymentModal(false); setLocalPayTarget(null); localPayForm.resetFields(); }}
+        footer={null}
+        width={500}
+        centered
+      >
+        {localPayTarget && (
+          <Form form={localPayForm} layout="vertical" onFinish={handleLocalPayment}>
+            <div style={{ background: isDark ? '#1a1a2e' : '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#e8f4ff'}` }}>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>{localPayTarget.invoiceNo}</Text>
+              <Text style={{ color: '#B11E6A' }}>{localPayTarget.vendorName}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Date: {localPayTarget.date} · Payment Type: {localPayTarget.paymentType === 'credit' ? 'Credit' : 'Instant'}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Total Amount: ₹{localPayTarget.totalAmount?.toLocaleString()}</Text>
+              {(localPayTarget.items || []).map((item, i) => (
+                <Text key={i} style={{ display: 'block', fontSize: 11, color: '#888' }}>• {item.name} — {item.qty} {item.unit}</Text>
+              ))}
+              {localPayTarget.gPayNumber && (
+                <Text style={{ display: 'block', fontSize: 12, color: '#52c41a', marginTop: 4 }}>
+                  <PhoneOutlined style={{ marginRight: 4 }} />GPay: {localPayTarget.gPayNumber}
+                </Text>
+              )}
+            </div>
+            <Form.Item label="Paid By" name="paid_by" initialValue="Finance Team">
+              <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
+            </Form.Item>
+            <Form.Item label="Upload Payment Proof" name="payment_proof" rules={[{ required: true, message: 'Please upload payment proof' }]}>
+              <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+                <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
+              </Upload>
+            </Form.Item>
+            <div style={{ padding: '10px 12px', background: isDark ? '#1e2235' : '#f6fff8', borderRadius: 8, border: `1px solid #52c41a33`, marginBottom: 14, fontSize: 12 }}>
+              <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 6 }} />
+              After submission, payment status and proof will be updated in the <Text strong>Local Purchase</Text> tab in Purchase page.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button block onClick={() => { setShowLocalPaymentModal(false); localPayForm.resetFields(); }}>Cancel</Button>
+              <Button block type="primary" htmlType="submit" style={{ background: '#B11E6A', border: 'none' }}>Confirm Payment Done</Button>
+            </div>
+          </Form>
+        )}
       </Modal>
     </div>
   );

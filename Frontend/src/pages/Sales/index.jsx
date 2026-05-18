@@ -1354,30 +1354,30 @@ export default function Sales() {
   // ─── Table columns ────────────────────────────────────────────────
   const leadColumns = [
     {
-      title: 'Lead ID', dataIndex: 'leadId',
-      render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace' }}>{v || '—'}</Text>,
+      title: 'Lead ID', dataIndex: 'leadId', width: 105,
+      render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace', fontSize: 13 }}>{v || '—'}</Text>,
     },
     {
-      title: 'Hotel / Company', dataIndex: 'hotelName',
-      render: (v) => <Text strong style={{ color: textColor }}>{v}</Text>,
+      title: 'Hotel / Company', dataIndex: 'hotelName', width: 175,
+      render: (v) => <Text strong style={{ color: textColor, fontSize: 13 }}>{v}</Text>,
     },
-    { title: 'Source', dataIndex: 'source', render: (v) => v || '—' },
-    { title: 'Assigned To', dataIndex: 'salesPerson', render: (v) => v || '—' },
-    { title: 'Follow Up Name', dataIndex: 'followUpName', render: (v) => v || '—' },
+    { title: 'Source', dataIndex: 'source', width: 110, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+    { title: 'Assigned To', dataIndex: 'salesPerson', width: 115, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+    { title: 'Follow Up Name', dataIndex: 'followUpName', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
-      title: 'Follow Up Date/Time', dataIndex: 'followUpDate',
-      render: (v, r) => v ? `${v} ${r.followUpTime || ''}` : '—',
-    },
-    {
-      title: 'Status', dataIndex: 'status',
-      render: (v) => <Tag color={STATUS_COLORS[v] || '#ccc'}>{v}</Tag>
+      title: 'Follow Up Date/Time', dataIndex: 'followUpDate', width: 165,
+      render: (v, r) => <Text style={{ fontSize: 13 }}>{v ? `${v} ${r.followUpTime || ''}` : '—'}</Text>,
     },
     {
-      title: 'Created At', dataIndex: 'createdAt',
-      render: (v) => fmtDateTimeShort(v),
+      title: 'Status', dataIndex: 'status', width: 130,
+      render: (v) => <Tag color={STATUS_COLORS[v] || '#ccc'} style={{ fontSize: 13 }}>{v}</Tag>
     },
     {
-      title: 'Actions', key: 'actions',
+      title: 'Created At', dataIndex: 'createdAt', width: 140,
+      render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text>,
+    },
+    {
+      title: 'Actions', key: 'actions', width: 200,
       render: (_, r) => (
         <Space size={4}>
           <Tooltip title="View Detail">
@@ -1391,11 +1391,11 @@ export default function Sales() {
             <Button size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); openAddLead(r); }} />
           </Tooltip>
           <Tooltip title="Convert to Quotation">
-            <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 11 }}
+            <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 13 }}
               onClick={(e) => { e.stopPropagation(); startQuotationFromLead(r); }}>→ Quotation</Button>
           </Tooltip>
           <Tooltip title="Convert to Negotiation">
-            <Button size="small" style={{ background: '#722ed1', color: '#fff', border: 'none', fontSize: 11 }}
+            <Button size="small" style={{ background: '#722ed1', color: '#fff', border: 'none', fontSize: 13 }}
               onClick={(e) => { e.stopPropagation(); convertLeadToNegotiation(r); }}>→ Negotiation</Button>
           </Tooltip>
         </Space>
@@ -1404,12 +1404,12 @@ export default function Sales() {
   ];
 
   const customerColumns = [
-    { title: 'Customer ID', dataIndex: 'customerId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Hotel / Company', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
-    { title: 'Location', dataIndex: 'location' },
-    { title: 'Phone', dataIndex: 'phone' },
-    { title: 'Assigned To', dataIndex: 'salesPerson' },
-    { title: 'Created At', dataIndex: 'createdAt', render: (v) => fmtDateTimeShort(v) },
+    { title: 'Customer ID', dataIndex: 'customerId', width: 115, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'Hotel / Company', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Phone', dataIndex: 'phone', width: 130, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Created At', dataIndex: 'createdAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -1426,11 +1426,11 @@ export default function Sales() {
   ];
 
   const negotiationColumns = [
-    { title: 'Hotel', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
-    { title: 'Location', dataIndex: 'location' },
-    { title: 'Assigned To', dataIndex: 'salesPerson' },
-    { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v] || 'orange'}>{v}</Tag> },
-    { title: 'Created At', dataIndex: 'createdAt', render: (v) => fmtDateTimeShort(v) },
+    { title: 'Hotel', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag color={STATUS_COLORS[v] || 'orange'} style={{ fontSize: 13 }}>{v}</Tag> },
+    { title: 'Created At', dataIndex: 'createdAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -1447,29 +1447,29 @@ export default function Sales() {
   ];
 
   const quotationColumns = [
-    { title: 'Quote ID', dataIndex: 'qid', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Hotel', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
-    { title: 'Location', dataIndex: 'location' },
-    { title: 'GST Number', dataIndex: 'gstNumber', render: (v) => v || '—' },
+    { title: 'Quote ID', dataIndex: 'qid', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'Hotel', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'GST Number', dataIndex: 'gstNumber', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
-      title: 'Items / Amount', key: 'amt', responsive: ['sm'],
+      title: 'Items / Amount', key: 'amt', width: 140, responsive: ['sm'],
       render: (_, r) => (
         <div>
-          <Text style={{ fontSize: 12 }}>{r.products?.length || 0} items</Text><br />
-          <Text strong style={{ color: '#B11E6A' }}>₹{(r.totalAmount || calcTotal(r.products)).toLocaleString()}</Text>
+          <Text style={{ fontSize: 13 }}>{r.products?.length || 0} items</Text><br />
+          <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{(r.totalAmount || calcTotal(r.products)).toLocaleString()}</Text>
         </div>
       ),
     },
     {
-      title: 'Bill', dataIndex: 'billType', responsive: ['md'],
-      render: (v) => <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', fontSize: 11 }}>{v === 'GST' ? 'GST' : 'Non-GST'}</Tag>,
+      title: 'Bill', dataIndex: 'billType', width: 90, responsive: ['md'],
+      render: (v) => <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', fontSize: 13 }}>{v === 'GST' ? 'GST' : 'Non-GST'}</Tag>,
     },
-    { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v]}>{v}</Tag> },
+    { title: 'Status', dataIndex: 'status', width: 120, render: (v) => <Tag color={STATUS_COLORS[v]} style={{ fontSize: 13 }}>{v}</Tag> },
     {
-      title: 'Created At', dataIndex: 'createdAt', responsive: ['md'],
-      render: (v) => fmtDateTime(v),
+      title: 'Created At', dataIndex: 'createdAt', width: 145, responsive: ['md'],
+      render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTime(v)}</Text>,
     },
-    { title: 'Assigned To', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
+    { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, responsive: ['lg'], render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -1496,24 +1496,24 @@ export default function Sales() {
   ];
 
   const orderColumns = [
-    { title: 'Order ID', dataIndex: 'oid', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Hotel', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
-    { title: 'Location', dataIndex: 'location' },
-    { title: 'GST Number', dataIndex: 'gstNumber', render: (v) => v || '—' },
+    { title: 'Order ID', dataIndex: 'oid', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'Hotel', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'GST Number', dataIndex: 'gstNumber', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
-      title: 'Amount', dataIndex: 'totalAmount', responsive: ['sm'],
-      render: (v) => <Text strong>₹{(v || 0).toLocaleString()}</Text>,
+      title: 'Amount', dataIndex: 'totalAmount', width: 120, responsive: ['sm'],
+      render: (v) => <Text strong style={{ fontSize: 13 }}>₹{(v || 0).toLocaleString()}</Text>,
     },
     {
-      title: 'Advance', dataIndex: 'advance', responsive: ['md'],
-      render: (v) => <Text style={{ color: '#52c41a' }}>₹{(v || 0).toLocaleString()}</Text>,
+      title: 'Advance', dataIndex: 'advance', width: 115, responsive: ['md'],
+      render: (v) => <Text style={{ color: '#52c41a', fontSize: 13 }}>₹{(v || 0).toLocaleString()}</Text>,
     },
-    { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={STATUS_COLORS[v]}>{v}</Tag> },
+    { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag color={STATUS_COLORS[v]} style={{ fontSize: 13 }}>{v}</Tag> },
     {
-      title: 'Created At', dataIndex: 'createdAt', responsive: ['md'],
-      render: (v) => fmtDateTime(v),
+      title: 'Created At', dataIndex: 'createdAt', width: 145, responsive: ['md'],
+      render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTime(v)}</Text>,
     },
-    { title: 'Assigned To', dataIndex: 'salesPerson', responsive: ['lg'], render: (v) => v || '—' },
+    { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, responsive: ['lg'], render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -1547,13 +1547,13 @@ export default function Sales() {
   ];
 
   const complaintColumns = [
-    { title: 'Complaint ID', dataIndex: 'key', render: (v) => <Text strong style={{ color: '#ff4d4f' }}>CMP-{v.toString().slice(-4)}</Text> },
-    { title: 'Order ID', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Hotel / Company', dataIndex: 'hotelName', render: (v) => <Text strong>{v}</Text> },
-    { title: 'Description', dataIndex: 'description', ellipsis: true },
-    { title: 'Raised At', dataIndex: 'raisedAt', render: (v) => fmtDateTimeShort(v) },
-    { title: 'Sales Person', dataIndex: 'salesPerson' },
-    { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={v === 'Open' ? 'error' : 'success'}>{v}</Tag> },
+    { title: 'Complaint ID', dataIndex: 'key', width: 120, render: (v) => <Text strong style={{ color: '#ff4d4f', fontSize: 13 }}>CMP-{v.toString().slice(-4)}</Text> },
+    { title: 'Order ID', dataIndex: 'orderId', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'Hotel / Company', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Description', dataIndex: 'description', ellipsis: true, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Raised At', dataIndex: 'raisedAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
+    { title: 'Sales Person', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Status', dataIndex: 'status', width: 95, render: (v) => <Tag color={v === 'Open' ? 'error' : 'success'} style={{ fontSize: 13 }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
@@ -3437,10 +3437,10 @@ export default function Sales() {
                     </Row>
                   ) : (
                     <>
-                  {/* Order Delivery Date */}
+                  {/* Tentative Date */}
                   <Row gutter={12} style={{ marginBottom: 4 }}>
                     <Col xs={24} sm={12}>
-                      <Form.Item label="Order Delivery Date" name="orderDeliveryDate">
+                      <Form.Item label="Tentative Date" name="orderDeliveryDate">
                         <DatePicker style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
@@ -3912,6 +3912,7 @@ export default function Sales() {
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
                     rowKey="key"
+                    scroll={{ x: 'max-content' }}
                     onRow={(record) => ({ onClick: () => openDetailNextScreen(record) })}
                     style={{ cursor: 'pointer' }}
                   />
@@ -3926,28 +3927,29 @@ export default function Sales() {
                   <Table
                     dataSource={REMINDERS_DATA}
                     columns={[
-                      { title: 'Lead ID', dataIndex: 'leadId', key: 'leadId', render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace', fontSize: 12 }}>{v || '—'}</Text> },
-                      { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'}>{t}</Tag> },
-                      { title: 'Party', dataIndex: 'customer', key: 'customer' },
+                      { title: 'Lead ID', dataIndex: 'leadId', key: 'leadId', width: 110, render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace', fontSize: 13 }}>{v || '—'}</Text> },
+                      { title: 'Type', dataIndex: 'type', key: 'type', width: 150, render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'} style={{ fontSize: 13 }}>{t}</Tag> },
+                      { title: 'Party', dataIndex: 'customer', key: 'customer', width: 150, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
                       {
-                        title: 'Details', key: 'details', render: (_, r) => (
-                          <Text>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days overdue)` : r.topic || `${r.occupancy} occupancy`}</Text>
+                        title: 'Details', key: 'details', width: 200, render: (_, r) => (
+                          <Text style={{ fontSize: 13 }}>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days overdue)` : r.topic || `${r.occupancy} occupancy`}</Text>
                         )
                       },
                       {
-                        title: 'Reminder Date & Time', key: 'reminderDateTime', render: (_, r) => (
+                        title: 'Reminder Date & Time', key: 'reminderDateTime', width: 160, render: (_, r) => (
                           <Space direction="vertical" size={0}>
-                            <Text strong style={{ fontSize: 12, color: '#B11E6A' }}>{r.reminderDate || r.dueDate || '—'}</Text>
+                            <Text strong style={{ fontSize: 13, color: '#B11E6A' }}>{r.reminderDate || r.dueDate || '—'}</Text>
                             <Text type="secondary" style={{ fontSize: 11 }}>{r.reminderTime || '—'}</Text>
                           </Space>
                         )
                       },
-                      { title: 'Action', key: 'action', render: (_, r) => <Text style={{ fontSize: 12 }}>{r.dueDate ? 'Review Quotation' : r.action || 'Follow Up'}</Text> },
-                      { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson' },
+                      { title: 'Action', key: 'action', width: 140, render: (_, r) => <Text style={{ fontSize: 13 }}>{r.dueDate ? 'Review Quotation' : r.action || 'Follow Up'}</Text> },
+                      { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
                     ]}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
                     rowKey="key"
+                    scroll={{ x: 'max-content' }}
                   />
                 </div>
               ),
@@ -3960,12 +3962,12 @@ export default function Sales() {
                   <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
                     <SectionDivider title="Current Quotations" />
                     <Table dataSource={filtered(quotationsData)} columns={quotationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
-                      onRow={(record) => ({ onClick: () => openQuotationDetail(record) })} style={{ cursor: 'pointer' }} />
+                      scroll={{ x: 'max-content' }} onRow={(record) => ({ onClick: () => openQuotationDetail(record) })} style={{ cursor: 'pointer' }} />
                   </div>
                   <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
                     <SectionDivider title="Negotiations In Progress" />
                     <Table dataSource={filtered(negotiationsData)} columns={negotiationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
-                      onRow={(record) => ({ onClick: () => openNegotiationDetail(record) })} style={{ cursor: 'pointer' }} />
+                      scroll={{ x: 'max-content' }} onRow={(record) => ({ onClick: () => openNegotiationDetail(record) })} style={{ cursor: 'pointer' }} />
                   </div>
                 </div>
               ),
@@ -3981,6 +3983,7 @@ export default function Sales() {
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
                     rowKey="key"
+                    scroll={{ x: 'max-content' }}
                     onRow={(record) => ({ onClick: () => openOrderDetail(record) })}
                     style={{ cursor: 'pointer' }}
                   />
@@ -3998,6 +4001,7 @@ export default function Sales() {
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
                     rowKey="key"
+                    scroll={{ x: 'max-content' }}
                     onRow={(record) => ({ onClick: () => openDetailNextScreen(record) })}
                     style={{ cursor: 'pointer' }}
                   />
@@ -4024,6 +4028,7 @@ export default function Sales() {
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
                     rowKey="key"
+                    scroll={{ x: 'max-content' }}
                   />
                 </div>
               ),

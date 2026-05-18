@@ -77,7 +77,7 @@ export default function Billing() {
   // Data state (mutable)
   const [invoiceList, setInvoiceList] = useState(initialInvoices);
   const [quotationList, setQuotationList] = useState(initialQuotations);
-  const [activeTab, setActiveTab] = useState('quotation-in-process');
+  const [activeTab, setActiveTab] = useState('order-in-process');
 
   // View invoice / quotation
   const [viewModal, setViewModal] = useState(false);
@@ -144,6 +144,13 @@ export default function Billing() {
   const [payAmount, setPayAmount] = useState(0);
   const [payMode, setPayMode] = useState('Cash');
   const [payBankAccount, setPayBankAccount] = useState(null);
+  const [payUpiRef, setPayUpiRef] = useState('');
+  const [payCardLast4, setPayCardLast4] = useState('');
+  const [payTransactionRef, setPayTransactionRef] = useState('');
+  const [payChequeNo, setPayChequeNo] = useState('');
+  const [payChequeBank, setPayChequeBank] = useState('');
+  const [payChequeDate, setPayChequeDate] = useState(null);
+  const [quotStatusFilter, setQuotStatusFilter] = useState('all');
   const [payNote, setPayNote] = useState('');
   const [payNoteVisible, setPayNoteVisible] = useState(false);
   const [payDiscountVisible, setPayDiscountVisible] = useState(false);
@@ -264,6 +271,12 @@ export default function Billing() {
     setPayLinkedInvoices([inv]);
     setPayMode('Cash');
     setPayBankAccount(null);
+    setPayUpiRef('');
+    setPayCardLast4('');
+    setPayTransactionRef('');
+    setPayChequeNo('');
+    setPayChequeBank('');
+    setPayChequeDate(null);
     setPayDiscount(0);
     setPayNote('');
     setPayNoteVisible(false);
@@ -374,30 +387,31 @@ export default function Billing() {
     letterSpacing: 0.8,
   };
 
+  const colText = (v) => <Text style={{ fontSize: 13 }}>{v}</Text>;
+  const colMoney = (v, color) => <Text style={{ fontSize: 13, fontWeight: 600, color: color || 'inherit' }}>₹{v.toLocaleString()}</Text>;
+
   const columns = [
-    { title: 'Invoice', dataIndex: 'inv', width: 110, fixed: 'left', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Billing Date', dataIndex: 'date', width: 160, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Client', dataIndex: 'client', width: 160 },
-    { title: 'Order', dataIndex: 'order', width: 110, render: (v) => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
-    { title: 'Total', dataIndex: 'total', width: 110, render: (v) => <Text strong>₹{v.toLocaleString()}</Text> },
-    { title: 'Advance', dataIndex: 'advance', width: 110, render: (v) => <Text style={{ color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Balance', dataIndex: 'balance', width: 110, render: (v) => <Text style={{ color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Status', dataIndex: 'status', width: 120, render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag> },
+    { title: 'Invoice #', dataIndex: 'inv', width: 120, fixed: 'left', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'Date', dataIndex: 'date', width: 155, render: (v) => <Text style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{v}</Text> },
+    { title: 'Client', dataIndex: 'client', width: 165, render: colText },
+    { title: 'Order', dataIndex: 'order', width: 115, render: (v) => <Text style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
+    { title: 'Total', dataIndex: 'total', width: 115, render: (v) => colMoney(v) },
+    { title: 'Advance', dataIndex: 'advance', width: 115, render: (v) => colMoney(v, '#8a1652') },
+    { title: 'Balance', dataIndex: 'balance', width: 115, render: (v) => colMoney(v, v > 0 ? '#B11E6A' : '#52c41a') },
+    { title: 'Status', dataIndex: 'status', width: 125, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag> },
     {
-      title: 'Actions', key: 'actions', width: 300, fixed: 'right',
+      title: 'Actions', key: 'actions', width: 280, fixed: 'right',
       render: (_, r) => (
-        <Space wrap>
+        <Space size={4} wrap>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); }} /></Tooltip>
-          <Tooltip title="Share on WhatsApp">
-            <Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Invoice shared on WhatsApp')} />
-          </Tooltip>
+          <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Invoice shared on WhatsApp')} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           {r.balance > 0 && (
             <>
-              <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none' }} onClick={() => openRecordPay(r)}>Record Manually</Button>
-              <Button size="small" icon={<CalendarOutlined />} onClick={() => message.success('Reminder sent to client')} style={{ color: '#fa8c16' }}>Reminder</Button>
+              <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
+              <Button size="small" icon={<CalendarOutlined />} onClick={() => message.success('Reminder sent to client')} style={{ color: '#fa8c16', fontSize: 12 }}>Reminder</Button>
             </>
           )}
         </Space>
@@ -405,68 +419,45 @@ export default function Billing() {
     },
   ];
 
-  // tabType: 'in-process' | 'paid' | 'partially-paid' | 'unpaid'
   const makeQuotationColumns = (tabType) => [
-    { title: 'Quotation #', dataIndex: 'quot', width: 120, fixed: 'left', render: (v) => <Text strong style={{ color: '#7c3aed' }}>{v}</Text> },
-    { title: 'Date', dataIndex: 'date', width: 160, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Client', dataIndex: 'client', width: 160 },
-    { title: 'Order', dataIndex: 'order', width: 110, render: (v) => <Text style={{ color: '#7c3aed' }}>{v}</Text> },
-    { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, background: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44' }}>{v}</Tag> },
-    { title: 'Total', dataIndex: 'total', width: 110, render: (v) => <Text strong>₹{v.toLocaleString()}</Text> },
-    { title: 'Advance', dataIndex: 'advance', width: 110, render: (v) => <Text style={{ color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Balance', dataIndex: 'balance', width: 110, render: (v) => <Text style={{ color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Status', dataIndex: 'status', width: 120, render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, background: `${quotStatusColor[v]}22`, color: quotStatusColor[v], border: `1px solid ${quotStatusColor[v]}44` }}>{v}</Tag> },
+    { title: 'Quotation #', dataIndex: 'quot', width: 120, fixed: 'left', render: (v) => <Text strong style={{ color: '#7c3aed', fontSize: 13 }}>{v}</Text> },
+    { title: 'Date', dataIndex: 'date', width: 155, render: (v) => <Text style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{v}</Text> },
+    { title: 'Client', dataIndex: 'client', width: 165, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Order', dataIndex: 'order', width: 115, render: (v) => <Text style={{ color: '#7c3aed', fontSize: 13 }}>{v}</Text> },
+    { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, background: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44' }}>{v}</Tag> },
+    { title: 'Total', dataIndex: 'total', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Advance', dataIndex: 'advance', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600, color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Balance', dataIndex: 'balance', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600, color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${quotStatusColor[v]}22`, color: quotStatusColor[v], border: `1px solid ${quotStatusColor[v]}44` }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions',
-      width: tabType === 'in-process' ? 360 : tabType === 'paid' ? 340 : tabType === 'partially-paid' ? 240 : 190,
+      width: tabType === 'in-process' ? 400 : 190,
       fixed: 'right',
       render: (_, r) => (
-        <Space wrap>
+        <Space size={4} wrap>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType('quotation'); setViewModal(true); }} /></Tooltip>
-          <Tooltip title="Share on WhatsApp">
-            <Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Quotation shared on WhatsApp')} />
-          </Tooltip>
+          <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Quotation shared on WhatsApp')} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
-          {tabType === 'in-process' && (
-            <Button
-              size="small"
-              type="primary"
-              icon={<FileDoneOutlined />}
-              style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none' }}
-              onClick={() => openConvertModal(r)}
-            >
+          {tabType === 'in-process' && r.status === 'In Process' && (
+            <Button size="small" type="primary" icon={<FileDoneOutlined />} style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontSize: 12 }} onClick={() => openConvertModal(r)}>
               Convert to Invoice
             </Button>
           )}
-          {(tabType === 'paid' || tabType === 'partially-paid') && (
-            <Button
-              size="small"
-              icon={<BellOutlined />}
-              style={{ color: '#fa8c16', borderColor: '#fa8c1644' }}
-              onClick={() => { setReminderQuot(r); setReminderDate(null); setReminderTime(null); setReminderMode('WhatsApp'); setReminderOpen(true); }}
-            >
+          {tabType === 'in-process' && r.balance > 0 && (
+            <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay({ ...r, inv: r.quot })}>
+              Record Manually
+            </Button>
+          )}
+          {tabType === 'in-process' && (r.status === 'Paid' || r.status === 'Partially Paid') && (
+            <Button size="small" icon={<BellOutlined />} style={{ color: '#fa8c16', borderColor: '#fa8c1644', fontSize: 12 }} onClick={() => { setReminderQuot(r); setReminderDate(null); setReminderTime(null); setReminderMode('WhatsApp'); setReminderOpen(true); }}>
               Set Reminder
             </Button>
           )}
-          {tabType === 'paid' && (
+          {tabType === 'in-process' && r.status === 'Paid' && (
             <>
-              <Button
-                size="small"
-                icon={<UploadOutlined />}
-                style={{ color: '#1890ff', borderColor: '#1890ff44' }}
-                onClick={() => { setProofQuot(r); setProofOpen(true); }}
-              >
-                Upload Proof
-              </Button>
-              <Button
-                size="small"
-                icon={<SafetyCertificateOutlined />}
-                style={{ color: '#52c41a', borderColor: '#52c41a44' }}
-                onClick={() => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); }}
-              >
-                Verify
-              </Button>
+              <Button size="small" icon={<UploadOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff44', fontSize: 12 }} onClick={() => { setProofQuot(r); setProofOpen(true); }}>Upload Proof</Button>
+              <Button size="small" icon={<SafetyCertificateOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', fontSize: 12 }} onClick={() => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); }}>Verify</Button>
             </>
           )}
         </Space>
@@ -510,48 +501,38 @@ export default function Billing() {
       {/* Table */}
       <Tabs
         activeKey={activeTab}
-        onChange={setActiveTab}
+        onChange={(k) => { setActiveTab(k); setQuotStatusFilter('all'); }}
         items={[
           {
-            key: 'quotation-in-process',
-            label: 'Quotation in Process',
+            key: 'order-in-process',
+            label: 'Order in Process',
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(124,58,237,0.06)' }} styles={{ body: { padding: 0 } }}>
-                <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={quotationList.filter(q => q.status === 'In Process')} columns={makeQuotationColumns('in-process')} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1400 }} />
+                <div style={{ padding: '12px 16px 8px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderBottom: `1px solid ${borderColor}` }}>
+                  <Text style={{ fontSize: 13, fontWeight: 600, color: '#555' }}>Filter by Type:</Text>
+                  <Select
+                    value={quotStatusFilter}
+                    onChange={setQuotStatusFilter}
+                    size="small"
+                    style={{ width: 180 }}
+                  >
+                    <Option value="all">All</Option>
+                    <Option value="In Process">In Process</Option>
+                    <Option value="Paid">Paid</Option>
+                    <Option value="Partially Paid">Partially Paid</Option>
+                  </Select>
                 </div>
-              </Card>
-            ),
-          },
-          {
-            key: 'paid-quotation',
-            label: 'Paid Quotation',
-            children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(107,18,64,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={quotationList.filter(q => q.status === 'Paid')} columns={makeQuotationColumns('paid')} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1400 }} />
-                </div>
-              </Card>
-            ),
-          },
-          {
-            key: 'partially-paid-quotation',
-            label: 'Partially Paid Quotation',
-            children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
-                <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={quotationList.filter(q => q.status === 'Partially Paid')} columns={makeQuotationColumns('partially-paid')} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1300 }} />
-                </div>
-              </Card>
-            ),
-          },
-          {
-            key: 'unpaid-quotations',
-            label: 'Unpaid Quotations',
-            children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(201,79,138,0.06)' }} styles={{ body: { padding: 0 } }}>
-                <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={quotationList.filter(q => q.status === 'Unpaid')} columns={makeQuotationColumns('unpaid')} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1200 }} />
+                  <Table
+                    dataSource={quotationList
+                      .filter(q => ['In Process', 'Paid', 'Partially Paid'].includes(q.status))
+                      .filter(q => quotStatusFilter === 'all' || q.status === quotStatusFilter)}
+                    columns={makeQuotationColumns('in-process')}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    scroll={{ x: 'max-content' }}
+                    style={{ fontSize: 13 }}
+                  />
                 </div>
               </Card>
             ),
@@ -562,101 +543,18 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
-                  <Table dataSource={invoiceList} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1300 }} />
+                  <Table
+                    dataSource={invoiceList}
+                    columns={columns}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    scroll={{ x: 'max-content' }}
+                    style={{ fontSize: 13 }}
+                  />
                 </div>
               </Card>
             ),
           },
-          {
-            key: 'ledger',
-            label: <Space>Parties &amp; Ledgers</Space>,
-            children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                {viewBillingPartyLedger ? (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-                      <Space>
-                        <Button icon={<LeftOutlined />} onClick={() => setViewBillingPartyLedger(null)}>Back to Parties</Button>
-                        <Text strong style={{ color: '#B11E6A', fontSize: 15 }}>{viewBillingPartyLedger.name} — Ledger</Text>
-                      </Space>
-                      <DatePicker.RangePicker style={{ width: 260 }} />
-                    </div>
-                    {(() => {
-                      const entries = ledgerEntries.filter(e => e.client === viewBillingPartyLedger.name);
-                      const totalDebit  = entries.reduce((s, r) => s + r.debit, 0);
-                      const totalCredit = entries.reduce((s, r) => s + r.credit, 0);
-                      const netBalance  = entries.at(-1)?.balance ?? 0;
-                      return (
-                        <>
-                          <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
-                            {[
-                              { label: 'Total Invoiced (Dr)', val: `₹${totalDebit.toLocaleString()}`,  color: '#ff4d4f' },
-                              { label: 'Total Received (Cr)', val: `₹${totalCredit.toLocaleString()}`, color: '#52c41a' },
-                              { label: 'Net Balance',         val: `₹${netBalance.toLocaleString()}`,  color: '#B11E6A' },
-                            ].map(s => (
-                              <Col xs={8} key={s.label}>
-                                <Card style={{ borderRadius: 10, border: 'none', background: `${s.color}10` }} styles={{ body: { padding: '10px 14px' } }}>
-                                  <Text style={{ fontSize: 11, color: '#888', display: 'block' }}>{s.label}</Text>
-                                  <Text strong style={{ color: s.color, fontSize: 16 }}>{s.val}</Text>
-                                </Card>
-                              </Col>
-                            ))}
-                          </Row>
-                          <Table
-                            size="small"
-                            dataSource={entries}
-                            pagination={{ pageSize: 10 }}
-                            columns={[
-                              { title: 'Date', dataIndex: 'date' },
-                              { title: 'Type', dataIndex: 'type', render: t => <Tag color={t === 'Invoice' ? 'blue' : t === 'Payment' ? 'green' : 'orange'}>{t}</Tag> },
-                              { title: 'Document #', dataIndex: 'doc', render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
-                              { title: 'Debit (Dr)', dataIndex: 'debit', render: v => v > 0 ? <Text style={{ color: '#ff4d4f' }}>₹{v.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
-                              { title: 'Credit (Cr)', dataIndex: 'credit', render: v => v > 0 ? <Text style={{ color: '#52c41a' }}>₹{v.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
-                              { title: 'Running Balance', dataIndex: 'balance', render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v.toLocaleString()}</Text> },
-                            ]}
-                          />
-                        </>
-                      );
-                    })()}
-                  </div>
-                ) : (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-                      <Text type="secondary">Debit and Credit ledger per client — click a party to view full history</Text>
-                      <Input
-                        prefix={<SearchOutlined />}
-                        placeholder="Search clients..."
-                        value={billingPartiesSearch}
-                        onChange={e => setBillingPartiesSearch(e.target.value)}
-                        style={{ width: 220, borderRadius: 8 }}
-                        allowClear
-                      />
-                    </div>
-                    <Table
-                      size="small"
-                      dataSource={billingPartiesData.filter(p => !billingPartiesSearch || p.name.toLowerCase().includes(billingPartiesSearch.toLowerCase()))}
-                      pagination={{ pageSize: 8 }}
-                      columns={[
-                        { title: 'Party Name', dataIndex: 'name', render: v => <Text strong>{v}</Text> },
-                        { title: 'Type', dataIndex: 'type', render: v => <Tag color="purple" style={{ borderRadius: 10 }}>{v}</Tag> },
-                        { title: 'Total Invoiced', key: 'total', render: (_, r) => <Text strong>₹{r.totalSales.toLocaleString()}</Text> },
-                        { title: 'Received', key: 'received', render: (_, r) => <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{r.received.toLocaleString()}</Text> },
-                        { title: 'Pending', dataIndex: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
-                        {
-                          title: 'Action', key: 'action',
-                          render: (_, r) => (
-                            <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewBillingPartyLedger(r)} style={{ color: '#B11E6A' }}>
-                              View Ledger
-                            </Button>
-                          )
-                        },
-                      ]}
-                    />
-                  </div>
-                )}
-              </Card>
-            ),
-          }
         ]}
       />
 
@@ -1425,31 +1323,114 @@ export default function Billing() {
           {/* ── Payment Mode ── */}
           <div style={{ background: '#fff', padding: '16px', borderBottom: '1px solid #ebebeb' }}>
             <Text style={{ fontSize: 14, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 10 }}>Payment Mode</Text>
-            <Row gutter={12}>
-              <Col span={payMode !== 'Cash' && payMode !== 'UPI' ? 12 : 24}>
-                <Select
-                  value={payMode}
-                  onChange={(v) => { setPayMode(v); setPayBankAccount(null); }}
-                  style={{ width: '100%', height: 44 }}
-                >
-                  {['Cash', 'UPI', 'Card', 'Net Banking', 'Bank Transfer', 'Cheque'].map(m => (
-                    <Option key={m} value={m}>{m}</Option>
-                  ))}
-                </Select>
-              </Col>
-              {payMode !== 'Cash' && payMode !== 'UPI' && (
+            <Select
+              value={payMode}
+              onChange={(v) => { setPayMode(v); setPayBankAccount(null); setPayUpiRef(''); setPayCardLast4(''); setPayTransactionRef(''); setPayChequeNo(''); setPayChequeBank(''); setPayChequeDate(null); }}
+              style={{ width: '100%', height: 44, marginBottom: 12 }}
+            >
+              {['Cash', 'UPI', 'Card', 'Net Banking', 'Bank Transfer', 'Cheque'].map(m => (
+                <Option key={m} value={m}>{m}</Option>
+              ))}
+            </Select>
+            {payMode === 'UPI' && (
+              <div>
+                <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>UPI Reference / Transaction ID <span style={{ color: '#e53935' }}>*</span></Text>
+                <Input
+                  placeholder="Enter UPI reference number"
+                  value={payUpiRef}
+                  onChange={(e) => setPayUpiRef(e.target.value)}
+                  style={{ borderRadius: 8, height: 40 }}
+                />
+              </div>
+            )}
+            {payMode === 'Card' && (
+              <Row gutter={12}>
                 <Col span={12}>
+                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Card Last 4 Digits <span style={{ color: '#e53935' }}>*</span></Text>
+                  <Input
+                    placeholder="e.g. 4321"
+                    maxLength={4}
+                    value={payCardLast4}
+                    onChange={(e) => setPayCardLast4(e.target.value.replace(/\D/g, ''))}
+                    style={{ borderRadius: 8, height: 40 }}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Auth / Reference Code</Text>
+                  <Input
+                    placeholder="Auth code"
+                    value={payTransactionRef}
+                    onChange={(e) => setPayTransactionRef(e.target.value)}
+                    style={{ borderRadius: 8, height: 40 }}
+                  />
+                </Col>
+              </Row>
+            )}
+            {(payMode === 'Net Banking' || payMode === 'Bank Transfer') && (
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Transaction Reference No. <span style={{ color: '#e53935' }}>*</span></Text>
+                  <Input
+                    placeholder="UTR / Reference No."
+                    value={payTransactionRef}
+                    onChange={(e) => setPayTransactionRef(e.target.value)}
+                    style={{ borderRadius: 8, height: 40 }}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Bank Account <span style={{ color: '#e53935' }}>*</span></Text>
                   <Select
-                    placeholder="Select Bank Acco..."
+                    placeholder="Select Bank Account"
                     value={payBankAccount}
                     onChange={(v) => setPayBankAccount(v)}
-                    style={{ width: '100%', height: 44 }}
+                    style={{ width: '100%', height: 40 }}
                   >
                     {bankAccounts.map(b => <Option key={b} value={b}>{b}</Option>)}
                   </Select>
                 </Col>
-              )}
-            </Row>
+              </Row>
+            )}
+            {payMode === 'Cheque' && (
+              <Row gutter={[12, 10]}>
+                <Col span={12}>
+                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Cheque Number <span style={{ color: '#e53935' }}>*</span></Text>
+                  <Input
+                    placeholder="Enter cheque number"
+                    value={payChequeNo}
+                    onChange={(e) => setPayChequeNo(e.target.value)}
+                    style={{ borderRadius: 8, height: 40 }}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Bank Name <span style={{ color: '#e53935' }}>*</span></Text>
+                  <Input
+                    placeholder="e.g. HDFC Bank"
+                    value={payChequeBank}
+                    onChange={(e) => setPayChequeBank(e.target.value)}
+                    style={{ borderRadius: 8, height: 40 }}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Cheque Date <span style={{ color: '#e53935' }}>*</span></Text>
+                  <DatePicker
+                    value={payChequeDate}
+                    onChange={(d) => setPayChequeDate(d)}
+                    style={{ width: '100%', height: 40, borderRadius: 8 }}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Bank Account</Text>
+                  <Select
+                    placeholder="Select Bank Account"
+                    value={payBankAccount}
+                    onChange={(v) => setPayBankAccount(v)}
+                    style={{ width: '100%', height: 40 }}
+                  >
+                    {bankAccounts.map(b => <Option key={b} value={b}>{b}</Option>)}
+                  </Select>
+                </Col>
+              </Row>
+            )}
           </div>
 
           {/* ── Note ── */}
@@ -1543,6 +1524,20 @@ export default function Billing() {
                 Confirm & Convert
               </Button>
             </div>
+            <Divider style={{ margin: '14px 0 10px' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>or</Text>
+            </Divider>
+            <Button
+              block
+              icon={<CheckCircleOutlined />}
+              style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', color: '#fff', fontWeight: 700, height: 40, borderRadius: 8 }}
+              onClick={() => {
+                setConvertOpen(false);
+                openRecordPay({ ...convertQuot, inv: convertQuot.quot });
+              }}
+            >
+              Record Manually
+            </Button>
           </div>
         )}
       </Modal>

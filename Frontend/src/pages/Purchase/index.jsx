@@ -1,13 +1,14 @@
 ﻿import React, { useState, useRef, useEffect } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, Tooltip, Badge, notification, Popover
+  Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, Tooltip, Badge, notification, Popover, Dropdown, Checkbox, Alert
 } from 'antd';
 import {
   PlusOutlined, DownloadOutlined, ShoppingOutlined, SearchOutlined,
   UploadOutlined, EyeOutlined, EditOutlined, FileTextOutlined, WarningOutlined, InfoCircleOutlined, WhatsAppOutlined,
   TeamOutlined, ContactsOutlined, DollarOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined,
-  ThunderboltOutlined, RobotOutlined, MessageOutlined, BellOutlined, CloseOutlined, ClockCircleOutlined, ReloadOutlined, SaveOutlined, TruckOutlined, CheckCircleOutlined
+  ThunderboltOutlined, RobotOutlined, MessageOutlined, BellOutlined, CloseOutlined, ClockCircleOutlined, ReloadOutlined, SaveOutlined, TruckOutlined, CheckCircleOutlined,
+  MoreOutlined, MinusOutlined, QrcodeOutlined, ExclamationCircleOutlined, PhoneOutlined, CarOutlined, SyncOutlined, SendOutlined
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
 import { addRaisedRequest, raiseOrder, addBulkRequests, dismissNewProductRequest, updateFinanceStatus, updateRequestQty, addRequestNote, updateQuotationDetails } from '../../store/slices/purchaseSlice';
@@ -46,6 +47,31 @@ const INVENTORY_DATA = [
   { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', current: 45, min: 100, unit: 'Kg', category: 'Raw Materials' },
   { key: 3, code: 'PK-010', name: 'Amber Bottles 100ml', current: 120, min: 500, unit: 'Pcs', category: 'Packaging' },
   { key: 4, code: 'PK-012', name: 'Flip Top Caps', current: 800, min: 1000, unit: 'Pcs', category: 'Packaging' },
+];
+
+// ── Dispatch Order Tracking mock data ────────────────────────────────────────
+const initDispatchTrackingOrders = [
+  { key: 'DT-001', orderId: 'PO-2501', date: '2024-05-20', supplier: 'ChemCo India', item: 'Soap Base (White)', qty: 500, unit: 'Kg', amount: 42500, lrNumber: 'LR-78921', lorryNo: 'TN-09-AB-1234', transportCompany: 'Fast Cargo Pvt Ltd', lrCopyFile: 'LR_78921_ChemCo.pdf', expectedDelivery: '2024-05-28', pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', paymentStatus: 'Unpaid', takenStatus: null, takenProof: null, gPayNumber: null, receivedStatus: null, paymentProof: null, deliveryStatus: 'In Transit' },
+  { key: 'DT-002', orderId: 'PO-2502', date: '2024-05-18', supplier: 'BioLife Ltd', item: 'Shampoo Concentrate', qty: 200, unit: 'Ltr', amount: 44000, lrNumber: 'LR-78915', lorryNo: 'KA-05-CD-5678', transportCompany: 'Blue Dart Logistics', lrCopyFile: 'LR_78915_BioLife.pdf', expectedDelivery: '2024-05-23', pickupEmpId: 'EMP-102', pickupEmpName: 'Suresh Babu', paymentStatus: 'Paid', takenStatus: 'taken', takenProof: 'proof_biolife.jpg', gPayNumber: '9876543210', receivedStatus: 'received', paymentProof: 'payment_biolife.pdf', deliveryStatus: 'Delivered' },
+  { key: 'DT-003', orderId: 'PO-2503', date: '2024-05-22', supplier: 'PlastiPack', item: 'Shampoo Bottles (Flip 30ml)', qty: 5000, unit: 'Pcs', amount: 22500, lrNumber: 'LR-78930', lorryNo: 'DL-01-EF-9012', transportCompany: 'VRL Logistics', lrCopyFile: null, expectedDelivery: '2024-05-30', pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', paymentStatus: 'Unpaid', takenStatus: null, takenProof: null, gPayNumber: null, receivedStatus: null, paymentProof: null, deliveryStatus: 'In Transit' },
+  { key: 'DT-004', orderId: 'PO-2504', date: '2024-05-15', supplier: 'BoxWorld', item: 'Dental Kit Boxes', qty: 1000, unit: 'Pcs', amount: 12000, lrNumber: 'LR-78900', lorryNo: 'KA-09-GH-3456', transportCompany: 'DTDC Express', lrCopyFile: 'LR_78900_BoxWorld.pdf', expectedDelivery: '2024-05-20', pickupEmpId: 'EMP-103', pickupEmpName: 'Vijay Anand', paymentStatus: 'Unpaid', takenStatus: 'taken', takenProof: 'proof_boxworld.jpg', gPayNumber: '8765432109', receivedStatus: 'partial', paymentProof: null, deliveryStatus: 'Partial Delivery', missingItems: [{ key: 1, name: 'Dental Kit Boxes', ordered: 1000, received: 780, missing: 220 }] },
+];
+
+const MOCK_INVOICE_PRODUCTS = {
+  'ChemCo India': [{ key: 1, name: 'Soap Base (White)', hsn: '3401', gst: '18%', originalQty: 500, unit: 'Kg', rate: 85, amount: 42500 }],
+  'BioLife Ltd': [{ key: 1, name: 'Shampoo Concentrate', hsn: '3305', gst: '12%', originalQty: 200, unit: 'Ltr', rate: 220, amount: 44000 }],
+  'PlastiPack': [
+    { key: 1, name: 'Shampoo Bottles (Flip 30ml)', hsn: '3923', gst: '12%', originalQty: 3000, unit: 'Pcs', rate: 4.5, amount: 13500 },
+    { key: 2, name: 'Flip Top Caps', hsn: '3923', gst: '12%', originalQty: 2000, unit: 'Pcs', rate: 4.5, amount: 9000 },
+  ],
+  'BoxWorld': [{ key: 1, name: 'Dental Kit Boxes', hsn: '4819', gst: '18%', originalQty: 1000, unit: 'Pcs', rate: 12, amount: 12000 }],
+};
+
+// ── Local Purchase mock data ─────────────────────────────────────────────────
+const initLocalPurchases = [
+  { key: 'LP-001', date: '2024-05-10', invoiceNo: 'INV-LOCAL-001', invoiceFile: 'invoice_local_001.pdf', vendorName: 'Marriott Mumbai', vendorPhone: '+91 22 6651 1234', items: [{ name: 'Cleaning Supplies', qty: 50, unit: 'Pcs', amount: 5000 }], totalAmount: 5000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null, gPayProof: null },
+  { key: 'LP-002', date: '2024-05-12', invoiceNo: 'INV-LOCAL-002', invoiceFile: 'invoice_local_002.jpg', vendorName: 'Taj Hotels Delhi', vendorPhone: '+91 11 6600 7777', items: [{ name: 'Paper Towels', qty: 200, unit: 'Rolls', amount: 8000 }, { name: 'Liquid Soap', qty: 50, unit: 'Ltr', amount: 6000 }], totalAmount: 14000, paymentType: 'instant', paymentStatus: 'Paid', paymentProof: 'gpay_proof_LP002.jpg', gPayNumber: '9876543210', gPayProof: 'gpay_proof_LP002.jpg' },
+  { key: 'LP-003', date: '2024-05-15', invoiceNo: 'INV-LOCAL-003', invoiceFile: null, vendorName: 'ITC Grand Kolkata', vendorPhone: '+91 33 2288 9999', items: [{ name: 'Housekeeping Kit', qty: 100, unit: 'Kits', amount: 15000 }], totalAmount: 15000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null, gPayProof: null },
 ];
 
 export default function Purchase() {
@@ -174,6 +200,7 @@ export default function Purchase() {
   const [raiseRequestExtraProducts, setRaiseRequestExtraProducts] = useState([]);
   const [raiseRequestExtraQtys, setRaiseRequestExtraQtys] = useState({});
   const [orderCreditDate, setOrderCreditDate] = useState(null);
+  const [placeOrderFiftyDate, setPlaceOrderFiftyDate] = useState(null);
 
   /* â"€â"€ LR Tracking modal â"€â"€ */
   const [showLRModal, setShowLRModal] = useState(false);
@@ -190,7 +217,80 @@ export default function Purchase() {
   /* â"€â"€ "Verified by" for received orders â"€â"€ */
   const [verifiedByName, setVerifiedByName] = useState('');
 
-  /* â"€â"€ Purchase Expense tab state â"€â"€ */
+  /* ── Dispatch Order Tracking tab state ── */
+  const [dispatchTrackingOrders, setDispatchTrackingOrders] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('hng_dispatch_tracking') || 'null') || initDispatchTrackingOrders; } catch { return initDispatchTrackingOrders; }
+  });
+  useEffect(() => { localStorage.setItem('hng_dispatch_tracking', JSON.stringify(dispatchTrackingOrders)); }, [dispatchTrackingOrders]);
+
+  const [showTakenModal, setShowTakenModal] = useState(false);
+  const [takenTarget, setTakenTarget] = useState(null);
+  const [takenForm] = Form.useForm();
+
+  const [showReceivedModal, setShowReceivedModal] = useState(false);
+  const [receivedTarget, setReceivedTarget] = useState(null);
+  const [invoiceScanLoading, setInvoiceScanLoading] = useState(false);
+  const [invoiceScanned, setInvoiceScanned] = useState(false);
+  const [invoiceProducts, setInvoiceProducts] = useState([]);
+  const [productQtys, setProductQtys] = useState({});
+  const [productNotes, setProductNotes] = useState({});
+  const [partialReceived, setPartialReceived] = useState(false);
+  const [missedBy, setMissedBy] = useState(null);
+  const [vendorMissedAction, setVendorMissedAction] = useState(null);
+  const [prevOrdersDelivered, setPrevOrdersDelivered] = useState(null);
+  const [viewLRCopyModal, setViewLRCopyModal] = useState(null);
+
+  const openReceivedModal = (record) => {
+    setReceivedTarget(record);
+    setInvoiceScanned(false);
+    setInvoiceProducts([]);
+    setProductQtys({});
+    setProductNotes({});
+    setPartialReceived(false);
+    setMissedBy(null);
+    setVendorMissedAction(null);
+    setPrevOrdersDelivered(null);
+    setShowReceivedModal(true);
+  };
+
+  const handleInvoiceScan = () => {
+    if (!receivedTarget) return;
+    setInvoiceScanLoading(true);
+    setTimeout(() => {
+      const products = MOCK_INVOICE_PRODUCTS[receivedTarget.supplier] || [{ key: 1, name: receivedTarget.item, hsn: '3401', gst: '18%', originalQty: receivedTarget.qty, unit: receivedTarget.unit, rate: Math.round(receivedTarget.amount / receivedTarget.qty), amount: receivedTarget.amount }];
+      setInvoiceProducts(products);
+      const qtys = {};
+      products.forEach(p => { qtys[p.key] = p.originalQty; });
+      setProductQtys(qtys);
+      setInvoiceScanned(true);
+      setInvoiceScanLoading(false);
+      message.success('Invoice scanned — products fetched successfully!');
+    }, 1800);
+  };
+
+  const getMissingItems = () => invoiceProducts.filter(p => (productQtys[p.key] || 0) < p.originalQty)
+    .map(p => ({ ...p, receivedQty: productQtys[p.key] || 0, missingQty: p.originalQty - (productQtys[p.key] || 0) }));
+
+  const handleConfirmReceived = () => {
+    if (!receivedTarget) return;
+    const missing = getMissingItems();
+    const isPartial = missing.length > 0;
+    const newStatus = isPartial ? 'partial' : 'received';
+    const newDelivery = isPartial ? 'Partial Delivery' : 'Delivered';
+    setDispatchTrackingOrders(prev => prev.map(o => o.key === receivedTarget.key ? {
+      ...o,
+      receivedStatus: newStatus,
+      deliveryStatus: newDelivery,
+      missingItems: missing.length > 0 ? missing.map(m => ({ key: m.key, name: m.name, ordered: m.originalQty, received: m.receivedQty, missing: m.missingQty })) : [],
+      partialVendorAction: vendorMissedAction,
+      partialMissedBy: missedBy,
+    } : o));
+    message.success(missing.length > 0 ? 'Partial delivery recorded!' : 'Order marked as Received!');
+    setShowReceivedModal(false);
+    setReceivedTarget(null);
+  };
+
+  /* ── Purchase Expense tab state ── */
   const [purchaseExpenses, setPurchaseExpenses] = useState([
     { key: 1, date: '2024-05-01', invoice_no: 'INV-CHEM-101', supplier: 'ChemCo India', qty: '100 Kg', paid_status: 'Paid', paid_amount: 8500, total_amount: 8500, remaining: 0 },
     { key: 2, date: '2024-05-04', invoice_no: 'INV-BIO-452', supplier: 'BioLife Ltd', qty: '200 Ltr', paid_status: 'Partially Paid', paid_amount: 22000, total_amount: 44000, remaining: 22000 },
@@ -206,6 +306,27 @@ export default function Purchase() {
   const [vendorBillFile, setVendorBillFile] = useState(null);
   const [vendorBillScanLoading, setVendorBillScanLoading] = useState(false);
   const [vendorBillForm] = Form.useForm();
+
+  /* ── Local Purchase tab state ── */
+  const [localPurchases, setLocalPurchases] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('hng_local_purchases') || 'null') || initLocalPurchases; } catch { return initLocalPurchases; }
+  });
+  const [showAddLocalPurchaseModal, setShowAddLocalPurchaseModal] = useState(false);
+  const [localPurchaseForm] = Form.useForm();
+  const [localPurchasePaymentType, setLocalPurchasePaymentType] = useState('credit');
+  const [localPurchaseScanLoading, setLocalPurchaseScanLoading] = useState(false);
+  const [localPurchaseInvoiceFile, setLocalPurchaseInvoiceFile] = useState(null);
+  const [localPurchaseScannedDetails, setLocalPurchaseScannedDetails] = useState(null);
+  const [localPurchaseNewVendorDetected, setLocalPurchaseNewVendorDetected] = useState(false);
+  const localPurchaseNotifyRef = useRef({});
+  const [localPurchaseDetailView, setLocalPurchaseDetailView] = useState(null);
+
+  /* ── Inline Add Supplier / Vendor from dropdown ── */
+  const [showAddSupplierInlineModal, setShowAddSupplierInlineModal] = useState(false);
+  const [addSupplierInlineForm] = Form.useForm();
+  const [showAddVendorInlineModal, setShowAddVendorInlineModal] = useState(false);
+  const [addVendorInlineForm] = Form.useForm();
+  const [inlineDropdownContext, setInlineDropdownContext] = useState(''); // which dropdown triggered it
 
   /* â"€â"€ Camera capture (shared across all scan sections) â"€â"€ */
   const [showCameraModal, setShowCameraModal] = useState(false);
@@ -299,11 +420,15 @@ export default function Purchase() {
       date: '2024-05-01',
       bill_no: 'PUR-8821',
       inv_no: 'INV-CHEM-101',
+      invoice_file: 'INV-CHEM-101.pdf',
       items: [
-        { name: 'Soap Base (White)', qty: '100 Kg', price: 'â‚¹85', total: 'â‚¹8,500' },
+        { name: 'Soap Base (White)', qty: '100 Kg', price: '₹85/Kg', total: '₹8,500' },
       ],
       entity: 'ChemCo India',
-      amount: 'â‚¹8,500',
+      amount: '₹8,500',
+      paid_status: 'Paid',
+      paid_amount: 8500,
+      remaining: 0,
       status: 'Paid',
       req_status: 'Confirmed'
     },
@@ -312,13 +437,52 @@ export default function Purchase() {
       date: '2024-05-04',
       bill_no: 'PUR-8825',
       inv_no: 'INV-BIO-452',
+      invoice_file: 'INV-BIO-452.pdf',
       items: [
-        { name: 'Shampoo Concentrate', qty: '200 Ltr', price: 'â‚¹220', total: 'â‚¹44,000' }
+        { name: 'Shampoo Concentrate', qty: '200 Ltr', price: '₹220/Ltr', total: '₹44,000' }
       ],
       entity: 'BioLife Ltd',
-      amount: 'â‚¹44,000',
+      amount: '₹44,000',
+      paid_status: 'Partially Paid',
+      paid_amount: 22000,
+      remaining: 22000,
       status: 'Unpaid',
       req_status: 'Pending'
+    },
+    {
+      key: 3,
+      date: '2024-05-06',
+      bill_no: 'PUR-8830',
+      inv_no: 'INV-PP-203',
+      invoice_file: null,
+      items: [
+        { name: 'Shampoo Bottles (Flip 30ml)', qty: '500 Pcs', price: '₹4.5/Pc', total: '₹2,250' },
+        { name: 'Flip Top Caps', qty: '500 Pcs', price: '₹2/Pc', total: '₹1,000' },
+      ],
+      entity: 'PlastiPack',
+      amount: '₹3,250',
+      paid_status: 'Unpaid',
+      paid_amount: 0,
+      remaining: 3250,
+      status: 'Unpaid',
+      req_status: 'Confirmed'
+    },
+    {
+      key: 4,
+      date: '2024-05-08',
+      bill_no: 'PUR-8835',
+      inv_no: 'INV-BW-101',
+      invoice_file: 'INV-BW-101.jpg',
+      items: [
+        { name: 'Dental Kit Boxes', qty: '1000 Pcs', price: '₹12/Pc', total: '₹12,000' },
+      ],
+      entity: 'BoxWorld',
+      amount: '₹12,000',
+      paid_status: 'Paid',
+      paid_amount: 12000,
+      remaining: 0,
+      status: 'Paid',
+      req_status: 'Confirmed'
     },
   ];
 
@@ -522,6 +686,122 @@ export default function Purchase() {
     });
   };
 
+  /* ── Local Purchase handlers ── */
+  const handleLocalPurchaseInvoiceScan = () => {
+    if (!localPurchaseInvoiceFile) { message.warning('Please upload an invoice first'); return; }
+    setLocalPurchaseScanLoading(true);
+    setTimeout(() => {
+      const mockVendorNames = ['Marriott Mumbai', 'Taj Hotels Delhi', 'ITC Grand Kolkata', 'Hyatt Chennai'];
+      const isKnownVendor = Math.random() > 0.3;
+      const vendorName = isKnownVendor ? mockVendorNames[Math.floor(Math.random() * mockVendorNames.length)] : 'New Vendor Pvt. Ltd.';
+      const knownVendor = vendors.find(v => v.name === vendorName);
+      const scanned = {
+        invoiceNo: 'INV-' + Math.floor(Math.random() * 90000 + 10000),
+        vendorName,
+        vendorPhone: knownVendor?.phone || '+91 99000 ' + Math.floor(Math.random() * 89999 + 10000),
+        vendorAddress: knownVendor?.address || 'New City, India',
+        vendorGST: '27AAB' + Math.random().toString(36).substring(2, 7).toUpperCase() + '1Z5',
+        items: [
+          { name: 'Office Supplies', qty: 20, unit: 'Pcs', amount: 3000 },
+          { name: 'Cleaning Materials', qty: 10, unit: 'Kg', amount: 2500 },
+        ],
+        totalAmount: 5500,
+        isNewVendor: !knownVendor,
+      };
+      setLocalPurchaseScannedDetails(scanned);
+      setLocalPurchaseNewVendorDetected(!knownVendor);
+      localPurchaseForm.setFieldsValue({
+        invoiceNo: scanned.invoiceNo,
+        vendorName: scanned.vendorName,
+        vendorPhone: scanned.vendorPhone,
+        totalAmount: scanned.totalAmount,
+      });
+      setLocalPurchaseScanLoading(false);
+      message.success(!knownVendor
+        ? 'AI scanned invoice — New vendor detected! Review and add to vendors list.'
+        : 'AI scanned invoice — vendor matched in existing vendors list.');
+    }, 2000);
+  };
+
+  const handleAddLocalPurchase = (values) => {
+    const newLP = {
+      key: 'LP-' + Date.now(),
+      date: dayjs().format('YYYY-MM-DD'),
+      invoiceNo: values.invoiceNo || localPurchaseScannedDetails?.invoiceNo || 'INV-' + Date.now(),
+      invoiceFile: localPurchaseInvoiceFile?.name || null,
+      vendorName: values.vendorName || localPurchaseScannedDetails?.vendorName || '',
+      vendorPhone: values.vendorPhone || localPurchaseScannedDetails?.vendorPhone || '',
+      items: localPurchaseScannedDetails?.items || [{ name: values.itemName || 'Item', qty: values.qty || 1, unit: values.unit || 'Pcs', amount: values.totalAmount || 0 }],
+      totalAmount: values.totalAmount || localPurchaseScannedDetails?.totalAmount || 0,
+      paymentType: values.paymentType || 'credit',
+      paymentStatus: values.paymentType === 'instant' ? 'Paid' : 'Pending',
+      paymentProof: values.paymentType === 'instant' ? (values.proof?.fileList?.[0]?.name || null) : null,
+      gPayNumber: values.paymentType === 'instant' ? (values.gPayNumber || null) : null,
+    };
+
+    if (localPurchaseNewVendorDetected && values.addToVendors) {
+      const newVendor = {
+        id: Date.now(),
+        name: newLP.vendorName,
+        phone: newLP.vendorPhone,
+        email: '',
+        address: localPurchaseScannedDetails?.vendorAddress || '',
+        totalPaid: 0,
+        pending: newLP.paymentStatus === 'Pending' ? newLP.totalAmount : 0,
+      };
+      setVendors(prev => [...prev, newVendor]);
+      message.success('New vendor added to vendors list!');
+    }
+
+    if (newLP.paymentType === 'credit') {
+      // Notify financial team every 30 minutes
+      const intervalId = setInterval(() => {
+        notification.info({
+          message: 'Local Purchase Pending Payment',
+          description: `Local purchase ${newLP.invoiceNo} from ${newLP.vendorName} of ₹${newLP.totalAmount.toLocaleString()} is pending. Please process payment.`,
+          placement: 'topRight',
+          duration: 8,
+        });
+      }, 30 * 60 * 1000);
+      localPurchaseNotifyRef.current[newLP.key] = intervalId;
+      // Save to localStorage for Financial page
+      const pending = JSON.parse(localStorage.getItem('hng_local_purchase_pending') || '[]');
+      localStorage.setItem('hng_local_purchase_pending', JSON.stringify([...pending, newLP]));
+      message.info('Credit purchase created — financial team will be notified every 30 minutes.', 5);
+    }
+
+    const updated = [...localPurchases, newLP];
+    setLocalPurchases(updated);
+    localStorage.setItem('hng_local_purchases', JSON.stringify(updated));
+    setShowAddLocalPurchaseModal(false);
+    localPurchaseForm.resetFields();
+    setLocalPurchaseInvoiceFile(null);
+    setLocalPurchaseScannedDetails(null);
+    setLocalPurchaseNewVendorDetected(false);
+    setLocalPurchasePaymentType('credit');
+    message.success('Local purchase recorded successfully!');
+  };
+
+  const handleAddSupplierInline = () => {
+    addSupplierInlineForm.validateFields().then(vals => {
+      const newSup = { id: Date.now(), name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', bank: vals.bank || '' };
+      setSuppliers(prev => [...prev, newSup]);
+      setShowAddSupplierInlineModal(false);
+      addSupplierInlineForm.resetFields();
+      message.success(`Supplier "${vals.name}" added!`);
+    });
+  };
+
+  const handleAddVendorInline = () => {
+    addVendorInlineForm.validateFields().then(vals => {
+      const newVend = { id: Date.now(), name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', totalPaid: 0, pending: 0 };
+      setVendors(prev => [...prev, newVend]);
+      setShowAddVendorInlineModal(false);
+      addVendorInlineForm.resetFields();
+      message.success(`Vendor "${vals.name}" added!`);
+    });
+  };
+
   const handleBulkSupplierSelect = (supplierName) => {
     setBulkSupplierName(supplierName);
     const supplierItems = inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller === supplierName);
@@ -553,7 +833,15 @@ export default function Purchase() {
       payment_terms: bulkPayTerms,
       date: dayjs().format('YYYY-MM-DD'),
     }))));
-    message.success(`${selected.length} bulk purchase request(s) raised successfully!`);
+    // Notify vendor via WhatsApp
+    const supplierInfo = suppliers.find(s => s.name === bulkSupplierName);
+    if (supplierInfo?.phone) {
+      const itemLines = selected.map(i => `• ${i.name} — Qty: ${i.qty} ${i.unit}`).join('\n');
+      const waMsg = `Hello ${bulkSupplierName},\n\nWe would like to place a bulk purchase order for the following items:\n\n${itemLines}\n\nPayment Terms: ${bulkPayTerms}\n\nPlease confirm availability and pricing at your earliest convenience.\n\nThank you.`;
+      const phone = supplierInfo.phone.replace(/\D/g, '');
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}`, '_blank');
+    }
+    message.success(`${selected.length} bulk purchase request(s) raised — vendor notified via WhatsApp!`);
     setShowBulkPurchaseModal(false);
     setBulkSupplierName('');
     setBulkItems([]);
@@ -657,8 +945,9 @@ export default function Purchase() {
                             dataSource={newProductRequests}
                             pagination={false}
                             rowKey="key"
+                            scroll={{ x: 900 }}
                             columns={[
-                              { title: 'Product Name', dataIndex: 'productName', key: 'productName', render: v => <Text strong style={{ color: '#d46b08' }}>{v}</Text> },
+                              { title: 'Product Name', dataIndex: 'productName', key: 'productName', width: 180, render: v => <Text strong style={{ color: '#d46b08', fontSize: 13 }}>{v}</Text> },
                               { title: 'Qty (from Sales)', dataIndex: 'qty', key: 'qty', render: (v) => v || 'â€"' },
                               { title: 'Hotel / Customer', dataIndex: 'hotelName', key: 'hotelName', render: v => v || 'â€"' },
                               { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', render: v => v || 'â€"' },
@@ -710,6 +999,7 @@ export default function Purchase() {
                         dataSource={INVENTORY_DATA}
                         pagination={{ pageSize: 5 }}
                         rowKey="key"
+                        scroll={{ x: 1200 }}
                         expandable={{
                           expandedRowKeys: openInvNotes ? [openInvNotes] : [],
                           onExpand: () => {},
@@ -754,16 +1044,16 @@ export default function Purchase() {
                             title: 'Supplier', key: 'supplier',
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
-                              if (!req?.supplier) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-                              return <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 12 }}>{req.supplier}</Text>;
+                              if (!req?.supplier) return <Text type="secondary">—</Text>;
+                              return <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{req.supplier}</Text>;
                             }
                           },
                           {
                             title: 'Payment Terms', key: 'payment_terms',
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
-                              if (!req?.payment_terms) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-                              return <Text style={{ fontSize: 11 }}>{req.payment_terms}</Text>;
+                              if (!req?.payment_terms) return <Text type="secondary">—</Text>;
+                              return <Text style={{ fontSize: 13 }}>{req.payment_terms}</Text>;
                             }
                           },
                           {
@@ -945,79 +1235,305 @@ export default function Purchase() {
                 },
                 {
                   key: 'order_tracking',
-                  label: <Space><TruckOutlined />Order Tracking</Space>,
+                  label: <Space><TruckOutlined />Dispatch Order Tracking</Space>,
                   children: (
                     <div style={{ marginTop: 12 }}>
-                      <div style={{ marginBottom: 16 }}>
-                        <Title level={5} style={{ margin: 0, color: textColor }}>Order Tracking</Title>
-                        <Text type="secondary">Track purchase orders by LR number and expected delivery date</Text>
+                      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+                        <div>
+                          <Title level={5} style={{ margin: 0, color: textColor }}>Dispatch Order Tracking</Title>
+                          <Text type="secondary">Track dispatch orders — LR details, pickup proof, payment status, and delivery confirmation</Text>
+                        </div>
                       </div>
                       <Table
                         size="small"
-                        dataSource={purchaseOrders.map(o => ({ ...o, lr: lrData[o.key] || null }))}
+                        dataSource={dispatchTrackingOrders}
                         rowKey="key"
                         pagination={{ pageSize: 8 }}
-                        locale={{ emptyText: 'No orders yet. Orders will appear here once raised from the Purchase module.' }}
+                        scroll={{ x: 1400 }}
+                        locale={{ emptyText: 'No dispatch tracking orders yet.' }}
                         columns={[
-                          { title: 'Order Date', dataIndex: 'date', key: 'date' },
+                          { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
                           {
-                            title: 'Bill / Inv No', key: 'nos',
+                            title: 'Order ID', dataIndex: 'orderId', key: 'orderId', width: 90,
+                            render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text>
+                          },
+                          { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', width: 130, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                          { title: 'Item', dataIndex: 'item', key: 'item', width: 160, render: v => <Text strong>{v}</Text> },
+                          {
+                            title: 'Qty / Amt', key: 'qty_amt', width: 110,
                             render: (_, r) => (
                               <Space direction="vertical" size={0}>
-                                <Text strong>{r.bill_no}</Text>
-                                <Text style={{ color: '#B11E6A', fontSize: 11 }}>{r.inv_no}</Text>
+                                <Text strong>{r.qty} {r.unit}</Text>
+                                <Text style={{ color: '#B11E6A', fontSize: 11 }}>&#8377;{r.amount?.toLocaleString()}</Text>
                               </Space>
                             )
                           },
-                          { title: 'Item', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
-                          { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                          { title: 'Qty', key: 'qty', render: (_, r) => `${r.qty} ${r.unit}` },
-                          { title: 'Amount', dataIndex: 'amount', key: 'amount', render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v?.toLocaleString()}</Text> },
                           {
-                            title: 'LR Number', key: 'lr_number',
-                            render: (_, r) => r.lr
-                              ? <Text strong style={{ color: '#1890ff' }}>{r.lr.lrNumber}</Text>
-                              : <Tag color="default" style={{ borderRadius: 8 }}>Not Uploaded</Tag>
+                            title: 'LR Number & Lorry', key: 'lr_lorry', width: 180,
+                            render: (_, r) => r.lrNumber ? (
+                              <Space direction="vertical" size={1}>
+                                <Text strong style={{ color: '#1890ff', fontSize: 12 }}>{r.lrNumber}</Text>
+                                <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#555' }}><CarOutlined style={{ marginRight: 3 }} />{r.lorryNo}</Text>
+                                <Text style={{ fontSize: 10, color: isDark ? '#888' : '#888' }}>{r.transportCompany}</Text>
+                              </Space>
+                            ) : <Tag color="default" style={{ borderRadius: 8 }}>Not Assigned</Tag>
                           },
                           {
-                            title: 'Expected Delivery', key: 'delivery',
+                            title: 'Expected Delivery', key: 'expected_del', width: 120,
                             render: (_, r) => {
-                              if (!r.lr?.deliveryDate) return <Text type="secondary">—</Text>;
-                              const days = dayjs(r.lr.deliveryDate).diff(dayjs(), 'day');
+                              if (!r.expectedDelivery) return <Text type="secondary">—</Text>;
+                              const days = dayjs(r.expectedDelivery).diff(dayjs(), 'day');
                               const color = days < 0 ? '#ff4d4f' : days <= 2 ? '#fa8c16' : '#52c41a';
                               return (
                                 <Space direction="vertical" size={0}>
-                                  <Text strong style={{ color }}>{r.lr.deliveryDate}</Text>
-                                  <Text style={{ fontSize: 11, color }}>
-                                    {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `${days}d remaining`}
+                                  <Text strong style={{ color, fontSize: 11 }}>{r.expectedDelivery}</Text>
+                                  <Text style={{ fontSize: 10, color }}>
+                                    {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `${days}d left`}
                                   </Text>
                                 </Space>
                               );
                             }
                           },
                           {
-                            title: 'Pay Status', key: 'pay_status',
+                            title: 'LR Copy', key: 'lr_copy', width: 100,
+                            render: (_, r) => r.lrCopyFile ? (
+                              <Button size="small" icon={<FileTextOutlined />}
+                                style={{ color: '#1890ff', borderColor: '#1890ff', fontSize: 11 }}
+                                onClick={() => setViewLRCopyModal(r)}>
+                                View File
+                              </Button>
+                            ) : <Text type="secondary" style={{ fontSize: 11 }}>No file</Text>
+                          },
+                          {
+                            title: 'Payment Status', key: 'payment_status', width: 120, align: 'center',
                             render: (_, r) => {
-                              if (!r.lr) return <Text type="secondary">—</Text>;
-                              return <Tag color={r.lr.paidStatus === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10 }}>{r.lr.paidStatus}</Tag>;
+                              const status = r.paymentStatus || 'Unpaid';
+                              return (
+                                <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
+                                  <Tag color={status === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, margin: 0 }}>{status}</Tag>
+                                  {r.paymentProof && (
+                                    <Text style={{ fontSize: 10, color: '#52c41a' }}><CheckCircleOutlined /> Proof uploaded</Text>
+                                  )}
+                                </Space>
+                              );
                             }
                           },
                           {
-                            title: 'LR Copy', key: 'lr_copy',
+                            title: 'Delivery Status', key: 'delivery_status', width: 120, align: 'center',
                             render: (_, r) => {
-                              if (!r.lr) return <Text type="secondary">—</Text>;
+                              const statusColorMap = { 'Delivered': 'success', 'Partial Delivery': 'warning', 'In Transit': 'processing' };
+                              return <Tag color={statusColorMap[r.deliveryStatus] || 'default'} style={{ borderRadius: 10 }}>{r.deliveryStatus || 'Pending'}</Tag>;
+                            }
+                          },
+                          {
+                            title: 'Action', key: 'action', fixed: 'right', width: 100,
+                            render: (_, r) => {
+                              const menuItems = [
+                                {
+                                  key: 'taken',
+                                  label: (
+                                    <Space>
+                                      <CarOutlined style={{ color: '#B11E6A' }} />
+                                      <span>Taken</span>
+                                      {r.takenStatus === 'taken' && <Tag color="success" style={{ borderRadius: 8, margin: 0, fontSize: 10 }}>Done</Tag>}
+                                    </Space>
+                                  ),
+                                  onClick: () => { setTakenTarget(r); takenForm.setFieldsValue({ gpay_number: r.gPayNumber || '' }); setShowTakenModal(true); }
+                                },
+                                {
+                                  key: 'received',
+                                  label: (
+                                    <Space>
+                                      <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                      <span>Received Order</span>
+                                      {r.receivedStatus && <Tag color={r.receivedStatus === 'partial' ? 'warning' : 'success'} style={{ borderRadius: 8, margin: 0, fontSize: 10 }}>{r.receivedStatus === 'partial' ? 'Partial' : 'Done'}</Tag>}
+                                    </Space>
+                                  ),
+                                  onClick: () => openReceivedModal(r)
+                                },
+                              ];
                               return (
-                                <Space direction="vertical" size={2}>
-                                  {r.lr.fileName
-                                    ? <Button size="small" icon={<FileTextOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff' }}>View</Button>
-                                    : <Text type="secondary" style={{ fontSize: 11 }}>No file</Text>
-                                  }
-                                </Space>
+                                <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
+                                  <Button size="small" icon={<MoreOutlined />} style={{ borderRadius: 6 }}>More</Button>
+                                </Dropdown>
                               );
                             }
                           },
                         ]}
                       />
+                    </div>
+                  )
+                },
+                {
+                  key: 'local_purchase',
+                  label: <Space><ShoppingOutlined />Local Purchase</Space>,
+                  children: (
+                    <div style={{ marginTop: 12 }}>
+                      {localPurchaseDetailView ? (
+                        /* ── Detail View ── */
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                            <Space>
+                              <Button icon={<LeftOutlined />} onClick={() => setLocalPurchaseDetailView(null)}>Back to List</Button>
+                              <Text strong style={{ color: '#B11E6A', fontSize: 15 }}>Local Purchase — {localPurchaseDetailView.invoiceNo}</Text>
+                            </Space>
+                            <Tag color={localPurchaseDetailView.paymentStatus === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, fontWeight: 700, fontSize: 13 }}>
+                              {localPurchaseDetailView.paymentStatus}
+                            </Tag>
+                          </div>
+                          <Row gutter={[16, 16]}>
+                            <Col xs={24} md={12}>
+                              <Card size="small" style={{ borderRadius: 10, background: isDark ? '#16192a' : '#fafbff', border: `1px solid ${isDark ? '#2a2d40' : '#e8eeff'}` }}>
+                                <Text strong style={{ display: 'block', marginBottom: 10, color: '#B11E6A' }}>Vendor Details</Text>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Vendor Name: </Text><Text strong>{localPurchaseDetailView.vendorName}</Text></div>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Phone: </Text><Text>{localPurchaseDetailView.vendorPhone}</Text></div>
+                                </div>
+                              </Card>
+                            </Col>
+                            <Col xs={24} md={12}>
+                              <Card size="small" style={{ borderRadius: 10, background: isDark ? '#16192a' : '#fafbff', border: `1px solid ${isDark ? '#2a2d40' : '#e8eeff'}` }}>
+                                <Text strong style={{ display: 'block', marginBottom: 10, color: '#B11E6A' }}>Payment Details</Text>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Type: </Text><Tag color={localPurchaseDetailView.paymentType === 'instant' ? 'green' : 'orange'}>{localPurchaseDetailView.paymentType === 'instant' ? 'Instant' : 'Credit'}</Tag></div>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Status: </Text><Tag color={localPurchaseDetailView.paymentStatus === 'Paid' ? 'success' : 'error'}>{localPurchaseDetailView.paymentStatus}</Tag></div>
+                                  {localPurchaseDetailView.gPayNumber && <div><Text type="secondary" style={{ fontSize: 12 }}>GPay: </Text><Text>{localPurchaseDetailView.gPayNumber}</Text></div>}
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Total: </Text><Text strong style={{ color: '#B11E6A' }}>₹{localPurchaseDetailView.totalAmount?.toLocaleString()}</Text></div>
+                                </div>
+                              </Card>
+                            </Col>
+                            <Col xs={24}>
+                              <Card size="small" style={{ borderRadius: 10, background: isDark ? '#16192a' : '#fafbff', border: `1px solid ${isDark ? '#2a2d40' : '#e8eeff'}` }}>
+                                <Text strong style={{ display: 'block', marginBottom: 10, color: '#B11E6A' }}>Items</Text>
+                                <Table
+                                  size="small"
+                                  dataSource={localPurchaseDetailView.items || []}
+                                  pagination={false}
+                                  columns={[
+                                    { title: 'Item', dataIndex: 'name', render: v => <Text strong>{v}</Text> },
+                                    { title: 'Qty', dataIndex: 'qty' },
+                                    { title: 'Unit', dataIndex: 'unit' },
+                                    { title: 'Amount', dataIndex: 'amount', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>₹{v?.toLocaleString()}</Text> },
+                                  ]}
+                                />
+                              </Card>
+                            </Col>
+                            {localPurchaseDetailView.invoiceFile && (
+                              <Col xs={24}>
+                                <Card size="small" style={{ borderRadius: 10 }}>
+                                  <Space>
+                                    <FileTextOutlined style={{ color: '#B11E6A', fontSize: 16 }} />
+                                    <Text strong>Invoice File: </Text>
+                                    <Button type="link" style={{ color: '#1890ff', padding: 0 }}
+                                      onClick={() => window.open(URL.createObjectURL(new Blob([], { type: 'application/pdf' })), '_blank')}
+                                    >{localPurchaseDetailView.invoiceFile}</Button>
+                                  </Space>
+                                </Card>
+                              </Col>
+                            )}
+                            {localPurchaseDetailView.paymentProof && (
+                              <Col xs={24}>
+                                <Card size="small" style={{ borderRadius: 10 }}>
+                                  <Space>
+                                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                                    <Text strong>Payment Proof: </Text>
+                                    <Button type="link" style={{ color: '#52c41a', padding: 0 }}
+                                      onClick={() => message.info('Opening payment proof: ' + localPurchaseDetailView.paymentProof)}
+                                    >{localPurchaseDetailView.paymentProof}</Button>
+                                  </Space>
+                                </Card>
+                              </Col>
+                            )}
+                          </Row>
+                        </div>
+                      ) : (
+                        /* ── List View ── */
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+                            <div>
+                              <Title level={5} style={{ margin: 0, color: textColor }}>Local Purchase Records</Title>
+                              <Text type="secondary">Local purchases made directly from vendors — track invoices, payment type and status</Text>
+                            </div>
+                            <Button
+                              type="primary"
+                              icon={<PlusOutlined />}
+                              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
+                              onClick={() => {
+                                localPurchaseForm.resetFields();
+                                setLocalPurchaseInvoiceFile(null);
+                                setLocalPurchaseScannedDetails(null);
+                                setLocalPurchaseNewVendorDetected(false);
+                                setLocalPurchasePaymentType('credit');
+                                setShowAddLocalPurchaseModal(true);
+                              }}
+                            >
+                              Add Local Purchase
+                            </Button>
+                          </div>
+                          <Table
+                            size="small"
+                            dataSource={localPurchases}
+                            rowKey="key"
+                            pagination={{ pageSize: 8 }}
+                            scroll={{ x: 1200 }}
+                            onRow={r => ({ onClick: () => setLocalPurchaseDetailView(r), style: { cursor: 'pointer' } })}
+                            columns={[
+                              { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
+                              {
+                                title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', width: 140,
+                                render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text>
+                              },
+                              {
+                                title: 'Invoice', dataIndex: 'invoiceFile', key: 'invoiceFile', width: 110,
+                                render: v => v ? (
+                                  <Button
+                                    size="small"
+                                    icon={<FileTextOutlined />}
+                                    style={{ color: '#1890ff', borderColor: '#1890ff', fontSize: 11 }}
+                                    onClick={e => { e.stopPropagation(); window.open('#', '_blank'); }}
+                                  >View</Button>
+                                ) : <Tag color="default" style={{ borderRadius: 8, fontSize: 10 }}>No File</Tag>
+                              },
+                              { title: 'Vendor', dataIndex: 'vendorName', key: 'vendorName', width: 150, render: v => <Text style={{ fontWeight: 600 }}>{v}</Text> },
+                              {
+                                title: 'Items', key: 'items', width: 200,
+                                render: (_, r) => (
+                                  <div>
+                                    {(r.items || []).map((item, idx) => (
+                                      <div key={idx} style={{ fontSize: 11 }}>
+                                        <Text strong>{item.name}</Text>
+                                        <Text type="secondary"> — {item.qty} {item.unit}</Text>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )
+                              },
+                              {
+                                title: 'Total', dataIndex: 'totalAmount', key: 'totalAmount', width: 100, align: 'right',
+                                render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v?.toLocaleString()}</Text>
+                              },
+                              {
+                                title: 'Payment Type', dataIndex: 'paymentType', key: 'paymentType', width: 110, align: 'center',
+                                render: v => <Tag color={v === 'instant' ? 'green' : 'orange'} style={{ borderRadius: 8 }}>{v === 'instant' ? 'Instant' : 'Credit'}</Tag>
+                              },
+                              {
+                                title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 120, align: 'center',
+                                render: v => <Tag color={v === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10 }}>{v}</Tag>
+                              },
+                              {
+                                title: 'Payment Proof', dataIndex: 'paymentProof', key: 'paymentProof', width: 120,
+                                render: v => v ? (
+                                  <Button size="small" icon={<CheckCircleOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}>View Proof</Button>
+                                ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                              },
+                              {
+                                title: 'Action', key: 'action', fixed: 'right', width: 70,
+                                render: (_, r) => <Button size="small" type="link" icon={<EyeOutlined />} onClick={e => { e.stopPropagation(); setLocalPurchaseDetailView(r); }} style={{ color: '#B11E6A' }}>View</Button>
+                              },
+                            ]}
+                          />
+                        </div>
+                      )}
                     </div>
                   )
                 },
@@ -1173,106 +1689,122 @@ export default function Purchase() {
                   )
                 },
                 {
-                  key: 'purchase_expense',
-                  label: <Space><DollarOutlined /> Purchase Expense</Space>,
-                  children: (
-                    <div style={{ marginTop: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-                        <Title level={5} style={{ margin: 0, color: textColor }}>Purchase Expenses</Title>
-                        <Space wrap>
-                          <Button
-                            icon={<CameraOutlined />}
-                            style={{ borderColor: '#B11E6A66', color: '#B11E6A' }}
-                            onClick={() => { setVendorBillFile(null); vendorBillForm.resetFields(); setShowVendorBillScanModal(true); }}
-                          >
-                            Scan & Record Bill
-                          </Button>
-                          <Button
-                            type="primary"
-                            icon={<PlusOutlined />}
-                            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                            onClick={() => { setExpenseScanFile(null); expenseForm.resetFields(); setShowAddExpenseModal(true); }}
-                          >
-                            Add Expense
-                          </Button>
-                          <Button icon={<DownloadOutlined />}>Export</Button>
-                        </Space>
-                      </div>
-                      <Table
-                        size="small"
-                        dataSource={purchaseExpenses}
-                        pagination={{ pageSize: 8 }}
-                        columns={[
-                          { title: 'Purchase Date', dataIndex: 'date', key: 'date', render: v => <Text strong>{v}</Text> },
-                          { title: 'Invoice Number', dataIndex: 'invoice_no', key: 'invoice_no', render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
-                          { title: 'Quantity', dataIndex: 'qty', key: 'qty' },
-                          { title: 'Supplier Name', dataIndex: 'supplier', key: 'supplier', render: v => <Text style={{ fontWeight: 600 }}>{v}</Text> },
-                          {
-                            title: 'Paid Status',
-                            key: 'paid_status',
-                            render: (_, r) => (
-                              <Space direction="vertical" size={0}>
-                                <Tag
-                                  color={r.paid_status === 'Paid' ? 'success' : r.paid_status === 'Partially Paid' ? 'warning' : 'error'}
-                                  style={{ borderRadius: 10 }}
-                                >
-                                  {r.paid_status}
-                                </Tag>
-                                {r.paid_amount > 0 && (
-                                  <Text style={{ fontSize: 11, color: '#52c41a' }}>Paid: â‚¹{r.paid_amount.toLocaleString()}</Text>
-                                )}
-                                {r.remaining > 0 && (
-                                  <Text style={{ fontSize: 11, color: '#ff4d4f' }}>Remaining: â‚¹{r.remaining.toLocaleString()}</Text>
-                                )}
-                              </Space>
-                            )
-                          },
-                          { title: 'Total', key: 'total', render: (_, r) => <Text strong style={{ color: '#B11E6A' }}>â‚¹{r.total_amount.toLocaleString()}</Text> },
-                          {
-                            title: 'Actions', key: 'actions',
-                            render: (_, r) => (
-                              <Space>
-                                <Button size="small" icon={<EyeOutlined />} />
-                                {r.paid_status !== 'Paid' && (
-                                  <Button size="small" icon={<UploadOutlined />} style={{ color: '#1890ff', fontWeight: 600 }}>Payment Proof</Button>
-                                )}
-                              </Space>
-                            )
-                          }
-                        ]}
-                      />
-                    </div>
-                  )
-                },
-                {
                   key: 'history',
                   label: <Space><FileTextOutlined /> Purchase Order History</Space>,
                   children: (
                     <div style={{ marginTop: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                        <Title level={5} style={{ margin: 0, color: textColor }}>Order History</Title>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                        <div>
+                          <Title level={5} style={{ margin: 0, color: textColor }}>Purchase Order History</Title>
+                          <Text type="secondary">Complete purchase order history with invoices, items, quantities and payment status</Text>
+                        </div>
                         <Button icon={<DownloadOutlined />}>Export</Button>
                       </div>
                       <Table
                         size="small"
                         dataSource={purchases}
+                        rowKey="key"
+                        scroll={{ x: 1400 }}
+                        expandable={{
+                          expandedRowRender: (record) => (
+                            <div style={{ padding: '12px 16px', background: isDark ? '#16192a' : '#fafcff', borderRadius: 8, margin: '4px 0' }}>
+                              <Row gutter={[16, 12]}>
+                                <Col xs={24} md={12}>
+                                  <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 8 }}>Order Details</Text>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div><Text type="secondary" style={{ fontSize: 12 }}>Purchase Date: </Text><Text strong>{record.date}</Text></div>
+                                    <div><Text type="secondary" style={{ fontSize: 12 }}>Bill No: </Text><Text strong>{record.bill_no}</Text></div>
+                                    <div><Text type="secondary" style={{ fontSize: 12 }}>Invoice No: </Text><Text style={{ color: '#B11E6A', fontWeight: 600 }}>{record.inv_no}</Text></div>
+                                    <div><Text type="secondary" style={{ fontSize: 12 }}>Supplier: </Text><Text strong>{record.entity}</Text></div>
+                                    <div><Text type="secondary" style={{ fontSize: 12 }}>Total Amount: </Text><Text strong style={{ color: '#B11E6A' }}>{record.amount}</Text></div>
+                                    <div><Text type="secondary" style={{ fontSize: 12 }}>Paid Status: </Text>
+                                      <Tag color={record.paid_status === 'Paid' ? 'success' : record.paid_status === 'Partially Paid' ? 'warning' : 'error'} style={{ borderRadius: 8 }}>
+                                        {record.paid_status || 'Unpaid'}
+                                      </Tag>
+                                    </div>
+                                  </div>
+                                </Col>
+                                <Col xs={24} md={12}>
+                                  <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 8 }}>Items & Quantities</Text>
+                                  <Table
+                                    size="small"
+                                    dataSource={record.items}
+                                    pagination={false}
+                                    columns={[
+                                      { title: 'Item Name', dataIndex: 'name', render: v => <Text strong>{v}</Text> },
+                                      { title: 'Quantity', dataIndex: 'qty' },
+                                      { title: 'Unit Price', dataIndex: 'price' },
+                                      { title: 'Total', dataIndex: 'total', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                                    ]}
+                                  />
+                                </Col>
+                              </Row>
+                            </div>
+                          ),
+                        }}
                         columns={[
-                          { title: 'Date', dataIndex: 'date', key: 'date' },
+                          { title: 'Purchase Date', dataIndex: 'date', key: 'date', width: 100, render: v => <Text strong>{v}</Text> },
                           {
-                            title: 'Bill / Inv No', key: 'nos', render: (_, r) => (
+                            title: 'Invoice No', key: 'inv', width: 140,
+                            render: (_, r) => (
+                              <Button
+                                type="link"
+                                style={{ color: '#B11E6A', padding: 0, fontWeight: 700 }}
+                                onClick={() => window.open('#', '_blank')}
+                                title="Click to open invoice"
+                              >{r.inv_no}</Button>
+                            )
+                          },
+                          {
+                            title: 'Invoice File', key: 'inv_file', width: 110,
+                            render: (_, r) => r.invoice_file ? (
+                              <Button
+                                size="small"
+                                icon={<FileTextOutlined />}
+                                style={{ color: '#1890ff', borderColor: '#1890ff', fontSize: 11 }}
+                                onClick={() => window.open('#', '_blank')}
+                              >Open</Button>
+                            ) : <Tag color="default" style={{ borderRadius: 8, fontSize: 10 }}>No File</Tag>
+                          },
+                          {
+                            title: 'Items', key: 'items', width: 200,
+                            render: (_, r) => (
+                              <div>
+                                {r.items.map((item, idx) => (
+                                  <div key={idx} style={{ fontSize: 11, marginBottom: 2 }}>
+                                    <Text strong>{item.name}</Text>
+                                    <Text type="secondary"> — {item.qty}</Text>
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          },
+                          { title: 'Supplier', dataIndex: 'entity', key: 'entity', width: 130, render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                          { title: 'Total Amount', dataIndex: 'amount', key: 'amount', width: 110, render: (v) => <Text strong>{v}</Text> },
+                          {
+                            title: 'Paid Status', key: 'paid_status', width: 140,
+                            render: (_, r) => (
                               <Space direction="vertical" size={0}>
-                                <Text size="small" type="secondary">{r.bill_no}</Text>
-                                <Text size="small" style={{ color: '#B11E6A', fontSize: 11 }}>{r.inv_no}</Text>
+                                <Tag
+                                  color={r.paid_status === 'Paid' ? 'success' : r.paid_status === 'Partially Paid' ? 'warning' : 'error'}
+                                  style={{ borderRadius: 10 }}
+                                >{r.paid_status || 'Unpaid'}</Tag>
+                                {r.paid_amount > 0 && <Text style={{ fontSize: 10, color: '#52c41a' }}>Paid: ₹{r.paid_amount?.toLocaleString()}</Text>}
+                                {r.remaining > 0 && <Text style={{ fontSize: 10, color: '#ff4d4f' }}>Due: ₹{r.remaining?.toLocaleString()}</Text>}
                               </Space>
                             )
                           },
-                          { title: 'Items', key: 'items', render: (_, r) => r.items.map(i => i.name).join(', ') },
-                          { title: 'Supplier', dataIndex: 'entity', key: 'entity', render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                          { title: 'Total Amount', dataIndex: 'amount', key: 'amount', render: (v) => <Text strong>{v}</Text> },
-                          { title: 'Status', dataIndex: 'req_status', key: 'status', render: (v) => <Tag color={v === 'Confirmed' ? 'success' : 'processing'}>{v}</Tag> },
+                          { title: 'Order Status', dataIndex: 'req_status', key: 'status', width: 110, render: (v) => <Tag color={v === 'Confirmed' ? 'success' : 'processing'}>{v}</Tag> },
                           {
-                            title: 'Actions', key: 'actions',
-                            render: () => <Button size="small" type="text" icon={<EyeOutlined />} />
+                            title: 'Actions', key: 'actions', fixed: 'right', width: 120,
+                            render: (_, r) => (
+                              <Space>
+                                <Button size="small" type="link" icon={<EyeOutlined />} style={{ color: '#B11E6A' }}>View</Button>
+                                {r.paid_status !== 'Paid' && (
+                                  <Button size="small" icon={<UploadOutlined />} style={{ color: '#1890ff', fontSize: 11 }}>Proof</Button>
+                                )}
+                              </Space>
+                            )
                           }
                         ]}
                       />
@@ -1284,6 +1816,305 @@ export default function Purchase() {
           </Card>
         </Col>
       </Row>
+
+      {/* ──────── Add Local Purchase Modal ──────── */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <ShoppingOutlined style={{ color: '#fff', fontSize: 18 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>Add Local Purchase</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Scan invoice → AI fetches details → Choose payment type</div>
+            </div>
+          </div>
+        }
+        open={showAddLocalPurchaseModal}
+        onCancel={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); }}
+        footer={null}
+        width={580}
+        centered
+      >
+        <Form form={localPurchaseForm} layout="vertical" onFinish={handleAddLocalPurchase} style={{ marginTop: 8 }}>
+
+          {/* Invoice Scan Section */}
+          <div style={{ marginBottom: 16, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <RobotOutlined style={{ color: '#fff', fontSize: 15 }} />
+              </div>
+              <div>
+                <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice with AI</Text>
+                <Text style={{ fontSize: 11, color: '#aaa' }}>Upload invoice — AI will extract vendor, items, and amount</Text>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Upload
+                maxCount={1}
+                beforeUpload={file => { setLocalPurchaseInvoiceFile(file); return false; }}
+                onRemove={() => setLocalPurchaseInvoiceFile(null)}
+                accept=".pdf,.jpg,.jpeg,.png"
+              >
+                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A' }}>Upload Invoice</Button>
+              </Upload>
+              <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setLocalPurchaseInvoiceFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A' }}>Scan</Button>
+              <Button
+                icon={<ThunderboltOutlined />}
+                loading={localPurchaseScanLoading}
+                onClick={handleLocalPurchaseInvoiceScan}
+                style={{ borderRadius: 8, background: localPurchaseInvoiceFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: localPurchaseInvoiceFile ? '#fff' : '#bbb', fontWeight: 700 }}
+              >
+                {localPurchaseScanLoading ? 'Scanning...' : 'Fetch with AI'}
+              </Button>
+            </div>
+          </div>
+
+          {/* Scanned Vendor Details */}
+          {localPurchaseScannedDetails && (
+            <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: isDark ? '#0f1a0f' : '#f6fff8', border: '1px solid #52c41a33' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Space size={4}>
+                  <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                  <Text style={{ fontWeight: 700, color: '#52c41a', fontSize: 13 }}>Vendor Detected</Text>
+                  {localPurchaseNewVendorDetected ? (
+                    <Tag color="orange" style={{ borderRadius: 8 }}>New Vendor</Tag>
+                  ) : (
+                    <Tag color="success" style={{ borderRadius: 8 }}>Existing Vendor</Tag>
+                  )}
+                </Space>
+              </div>
+              <Row gutter={8}>
+                {[
+                  { label: 'Vendor Name', val: localPurchaseScannedDetails.vendorName },
+                  { label: 'Phone', val: localPurchaseScannedDetails.vendorPhone },
+                  { label: 'Address', val: localPurchaseScannedDetails.vendorAddress },
+                  { label: 'Total Amount', val: `₹${localPurchaseScannedDetails.totalAmount?.toLocaleString()}` },
+                ].map((d, i) => (
+                  <Col xs={12} key={i} style={{ marginBottom: 4 }}>
+                    <Text style={{ fontSize: 10, color: '#888', display: 'block' }}>{d.label}</Text>
+                    <Text strong style={{ fontSize: 12 }}>{d.val}</Text>
+                  </Col>
+                ))}
+              </Row>
+              {localPurchaseScannedDetails.items?.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Items Detected:</Text>
+                  {localPurchaseScannedDetails.items.map((item, i) => (
+                    <div key={i} style={{ fontSize: 11, padding: '2px 0' }}>
+                      <Text strong>{item.name}</Text><Text type="secondary"> — {item.qty} {item.unit} × ₹{item.amount?.toLocaleString()}</Text>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {localPurchaseNewVendorDetected && (
+                <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: isDark ? '#1a1500' : '#fffbe6', border: '1px solid #fa8c1644' }}>
+                  <Space>
+                    <WarningOutlined style={{ color: '#fa8c16' }} />
+                    <Text style={{ fontSize: 12, color: '#d46b08' }}>New vendor detected — add to vendors list?</Text>
+                  </Space>
+                  <Form.Item name="addToVendors" valuePropName="checked" style={{ margin: '8px 0 0' }}>
+                    <Checkbox>Yes, add "{localPurchaseScannedDetails.vendorName}" to Vendors List</Checkbox>
+                  </Form.Item>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Manual fields if not scanned */}
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Invoice Number" name="invoiceNo" rules={[{ required: true, message: 'Required' }]}>
+                <Input placeholder="INV-XXXX" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Vendor Name" name="vendorName" rules={[{ required: true, message: 'Required' }]}>
+                <Select
+                  placeholder="Select or type vendor"
+                  showSearch
+                  optionFilterProp="children"
+                  dropdownRender={menu => (
+                    <>
+                      {menu}
+                      <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0' }}>
+                        <Button type="link" icon={<PlusOutlined />} style={{ color: '#B11E6A', padding: 0, fontWeight: 600 }}
+                          onClick={() => { setInlineDropdownContext('local_purchase'); setShowAddVendorInlineModal(true); }}>
+                          Add New Vendor
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                >
+                  {vendors.map(v => <Option key={v.id} value={v.name}>{v.name}</Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Vendor Phone" name="vendorPhone">
+                <Input placeholder="+91 00000 00000" prefix={<PhoneOutlined />} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Total Amount (₹)" name="totalAmount" rules={[{ required: true, message: 'Required' }]}>
+                <InputNumber prefix="₹" style={{ width: '100%' }} min={0} placeholder="0.00" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          {/* Payment Type */}
+          <Form.Item label="Payment Type" name="paymentType" initialValue="credit" rules={[{ required: true }]}>
+            <Select
+              onChange={val => setLocalPurchasePaymentType(val)}
+            >
+              <Option value="credit">
+                <Space><ClockCircleOutlined style={{ color: '#fa8c16' }} /><span>Credit (Pay Later)</span></Space>
+              </Option>
+              <Option value="instant">
+                <Space><ThunderboltOutlined style={{ color: '#52c41a' }} /><span>Instant (Pay Now)</span></Space>
+              </Option>
+            </Select>
+          </Form.Item>
+
+          {localPurchasePaymentType === 'credit' && (
+            <Alert
+              message="Credit Payment — Pending"
+              description="Payment will be set as Pending. Financial team will be notified every 30 minutes until payment is processed."
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16, borderRadius: 8 }}
+            />
+          )}
+
+          {localPurchasePaymentType === 'instant' && (
+            <div style={{ padding: '14px 16px', borderRadius: 10, background: isDark ? '#0a1a10' : '#f6fff8', border: '1px solid #52c41a33', marginBottom: 16 }}>
+              <Text style={{ fontWeight: 700, color: '#52c41a', display: 'block', marginBottom: 12, fontSize: 13 }}>
+                <ThunderboltOutlined style={{ marginRight: 6 }} />Instant Payment Details
+              </Text>
+              <Form.Item label="GPay Number" name="gPayNumber" rules={[{ required: true, message: 'Enter GPay number for instant payment' }]}>
+                <Input placeholder="GPay / UPI Number" prefix={<PhoneOutlined style={{ color: '#52c41a' }} />} />
+              </Form.Item>
+              <Form.Item label="Upload Payment Proof" name="proof">
+                <Upload.Dragger maxCount={1} beforeUpload={() => false} accept=".jpg,.jpeg,.png,.pdf" style={{ borderRadius: 8 }}>
+                  <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#52c41a', fontSize: 20 }} /></p>
+                  <p className="ant-upload-text" style={{ fontSize: 12 }}>Upload GPay/UPI Screenshot</p>
+                  <p className="ant-upload-hint" style={{ fontSize: 10 }}>JPG, PNG, or PDF</p>
+                </Upload.Dragger>
+              </Form.Item>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); }}>
+              Cancel
+            </Button>
+            <Button
+              type="primary"
+              htmlType="submit"
+              style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
+            >
+              Save Local Purchase
+            </Button>
+          </div>
+        </Form>
+      </Modal>
+
+      {/* ──────── Inline Add Supplier Modal ──────── */}
+      <Modal
+        title={<Space><PlusOutlined style={{ color: '#B11E6A' }} /><Text strong>Add New Supplier</Text></Space>}
+        open={showAddSupplierInlineModal}
+        onCancel={() => { setShowAddSupplierInlineModal(false); addSupplierInlineForm.resetFields(); }}
+        footer={null}
+        width={440}
+        centered
+      >
+        <Form form={addSupplierInlineForm} layout="vertical" style={{ marginTop: 12 }}>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Supplier Name" name="name" rules={[{ required: true, message: 'Required' }]}>
+                <Input placeholder="Company / Supplier name" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Phone / WhatsApp" name="phone" rules={[{ required: true, message: 'Required' }]}>
+                <Input placeholder="+91 00000 00000" prefix={<PhoneOutlined />} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Email" name="email">
+                <Input placeholder="email@supplier.com" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="City / Address" name="address">
+                <Input placeholder="City, State" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="GST / Tax ID" name="tax">
+            <Input placeholder="GSTIN" />
+          </Form.Item>
+          <Form.Item label="Bank Details" name="bank">
+            <Input.TextArea rows={2} placeholder="Bank, A/C, IFSC" />
+          </Form.Item>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowAddSupplierInlineModal(false); addSupplierInlineForm.resetFields(); }}>Cancel</Button>
+            <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }} onClick={handleAddSupplierInline}>
+              Add Supplier
+            </Button>
+          </div>
+        </Form>
+      </Modal>
+
+      {/* ──────── Inline Add Vendor Modal ──────── */}
+      <Modal
+        title={<Space><PlusOutlined style={{ color: '#1890ff' }} /><Text strong>Add New Vendor</Text></Space>}
+        open={showAddVendorInlineModal}
+        onCancel={() => { setShowAddVendorInlineModal(false); addVendorInlineForm.resetFields(); }}
+        footer={null}
+        width={440}
+        centered
+      >
+        <Form form={addVendorInlineForm} layout="vertical" style={{ marginTop: 12 }}>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Vendor / Hotel Name" name="name" rules={[{ required: true, message: 'Required' }]}>
+                <Input placeholder="Hotel / Vendor name" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Phone / WhatsApp" name="phone" rules={[{ required: true, message: 'Required' }]}>
+                <Input placeholder="+91 00000 00000" prefix={<PhoneOutlined />} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Email" name="email">
+                <Input placeholder="email@vendor.com" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="City / Address" name="address">
+                <Input placeholder="City, State" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="GST / Tax ID" name="tax">
+            <Input placeholder="GSTIN" />
+          </Form.Item>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowAddVendorInlineModal(false); addVendorInlineForm.resetFields(); }}>Cancel</Button>
+            <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#1890ff,#096dd9)', border: 'none', fontWeight: 700 }} onClick={handleAddVendorInline}>
+              Add Vendor
+            </Button>
+          </div>
+        </Form>
+      </Modal>
 
       {/* Ask Quotation Modal â€" WhatsApp only */}
       <Modal
@@ -1319,9 +2150,32 @@ export default function Purchase() {
                   <Select
                     placeholder="Select supplier"
                     style={{ borderRadius: 8 }}
-                    onChange={(val) => setSelectedSupplier(suppliers.find(s => s.name === val) || null)}
+                    onChange={(val) => {
+                      if (val === '__add_new__') {
+                        setInlineDropdownContext('quotation');
+                        setShowAddSupplierInlineModal(true);
+                        purchaseForm.setFieldValue('supplier', undefined);
+                        return;
+                      }
+                      setSelectedSupplier(suppliers.find(s => s.name === val) || null);
+                    }}
+                    dropdownRender={menu => (
+                      <>
+                        {menu}
+                        <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0' }}>
+                          <Button
+                            type="link"
+                            icon={<PlusOutlined />}
+                            style={{ color: '#B11E6A', padding: 0, fontWeight: 600 }}
+                            onClick={() => { setInlineDropdownContext('quotation'); setShowAddSupplierInlineModal(true); }}
+                          >
+                            Add New Supplier
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   >
-                    {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
+                    {suppliers.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
                   </Select>
                 </Form.Item>
               </Col>
@@ -1532,9 +2386,32 @@ export default function Purchase() {
               <Select
                 placeholder="Select supplier"
                 style={{ borderRadius: 8 }}
-                onChange={(val) => setRaiseRequestSupplier(suppliers.find(s => s.name === val) || null)}
+                onChange={(val) => {
+                  if (val === '__add_new__') {
+                    setInlineDropdownContext('raise_request');
+                    setShowAddSupplierInlineModal(true);
+                    raiseRequestForm.setFieldValue('supplier', undefined);
+                    return;
+                  }
+                  setRaiseRequestSupplier(suppliers.find(s => s.name === val) || null);
+                }}
+                dropdownRender={menu => (
+                  <>
+                    {menu}
+                    <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0' }}>
+                      <Button
+                        type="link"
+                        icon={<PlusOutlined />}
+                        style={{ color: '#B11E6A', padding: 0, fontWeight: 600 }}
+                        onClick={() => { setInlineDropdownContext('raise_request'); setShowAddSupplierInlineModal(true); }}
+                      >
+                        Add New Supplier
+                      </Button>
+                    </div>
+                  </>
+                )}
               >
-                {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
+                {suppliers.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
               </Select>
             </Form.Item>
             {raiseRequestSupplier && (
@@ -1606,6 +2483,28 @@ export default function Purchase() {
                 </Form.Item>
               </Col>
             </Row>
+          </div>
+
+          {/* Payment Terms */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Select payment terms' }]} style={{ marginBottom: 0 }}>
+              <Select placeholder="Select payment terms" onChange={(val) => setRaiseRequestPaymentTerms(val)}>
+                <Option value="100% Payment">100% Payment</Option>
+                <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
+                <Option value="From Quotation">From Quotation</Option>
+              </Select>
+            </Form.Item>
+            {(raiseRequestPaymentTerms === '50% Advance, 50% on Dispatch' || raiseRequestPaymentTerms === '50% Advance, 50% After Delivery (Max 15 days)') && (
+              <Form.Item
+                label={<span style={{ color: '#B11E6A', fontWeight: 600 }}>Second Payment Reminder Date</span>}
+                name="payment_reminder_date"
+                rules={[{ required: true, message: 'Select reminder date for 2nd payment' }]}
+                style={{ marginTop: 12, marginBottom: 0 }}
+              >
+                <DatePicker style={{ width: '100%', borderRadius: 8 }} placeholder="Pick reminder date for 2nd payment" disabledDate={(d) => d && d.isBefore(dayjs(), 'day')} />
+              </Form.Item>
+            )}
           </div>
 
           {/* Multi-select additional products */}
@@ -2614,7 +3513,7 @@ export default function Purchase() {
           </div>
         }
         open={showPlaceOrderModal}
-        onCancel={() => { setShowPlaceOrderModal(false); setSelectedPlaceOrderItem(null); setSelectedPlaceOrderReq(null); }}
+        onCancel={() => { setShowPlaceOrderModal(false); setSelectedPlaceOrderItem(null); setSelectedPlaceOrderReq(null); setPlaceOrderFiftyDate(null); }}
         footer={null}
         width={540}
         centered
@@ -2649,6 +3548,22 @@ export default function Purchase() {
                   </Col>
                 </Row>
               </div>
+
+              {/* 50% Payment date picker */}
+              {selectedPlaceOrderReq.payment_terms?.includes('50%') && (
+                <div style={{ padding: '12px 16px', background: isDark ? '#1a0f14' : '#fff8fb', border: '1px solid #B11E6A33', borderRadius: 10, marginBottom: 16 }}>
+                  <Text style={{ fontSize: 11, color: '#B11E6A', fontWeight: 600, display: 'block', marginBottom: 8 }}>
+                    SECOND PAYMENT REMINDER DATE
+                  </Text>
+                  <DatePicker
+                    style={{ width: '100%', borderRadius: 8 }}
+                    value={placeOrderFiftyDate}
+                    onChange={setPlaceOrderFiftyDate}
+                    placeholder="Select reminder date for 2nd payment"
+                    disabledDate={d => d && d.isBefore(dayjs(), 'day')}
+                  />
+                </div>
+              )}
 
               {/* Supplier / Vendor Details */}
               {sup && (
@@ -2685,7 +3600,7 @@ export default function Purchase() {
               {/* Send via WhatsApp */}
               <div style={{ display: 'flex', gap: 8 }}>
                 <Button
-                  onClick={() => { setShowPlaceOrderModal(false); setSelectedPlaceOrderItem(null); setSelectedPlaceOrderReq(null); }}
+                  onClick={() => { setShowPlaceOrderModal(false); setSelectedPlaceOrderItem(null); setSelectedPlaceOrderReq(null); setPlaceOrderFiftyDate(null); }}
                   style={{ flex: 1, height: 44, borderRadius: 10 }}
                 >
                   Cancel
@@ -2694,13 +3609,15 @@ export default function Purchase() {
                   icon={<WhatsAppOutlined />}
                   style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#25D366,#128C7E)', border: 'none', color: '#fff', fontWeight: 700, fontSize: 14 }}
                   onClick={() => {
-                    const msg = `*Purchase Order*\n\n*Item:* ${selectedPlaceOrderReq.item}\n*Quantity:* ${selectedPlaceOrderReq.qty} ${selectedPlaceOrderReq.unit}\n*Payment Terms:* ${selectedPlaceOrderReq.payment_terms}\n*Date:* ${selectedPlaceOrderReq.date}\n\nKindly confirm the order and advise on delivery timeline.`;
+                    const reminderLine = placeOrderFiftyDate ? `\n*2nd Payment Due:* ${placeOrderFiftyDate.format('DD-MM-YYYY')}` : '';
+                    const msg = `*Purchase Order*\n\n*Item:* ${selectedPlaceOrderReq.item}\n*Quantity:* ${selectedPlaceOrderReq.qty} ${selectedPlaceOrderReq.unit}\n*Payment Terms:* ${selectedPlaceOrderReq.payment_terms}${reminderLine}\n*Date:* ${selectedPlaceOrderReq.date}\n\nKindly confirm the order and advise on delivery timeline.`;
                     const phone = sup ? sup.phone.replace(/\D/g, '') : '';
                     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
                     message.success('Order sent via WhatsApp');
                     setShowPlaceOrderModal(false);
                     setSelectedPlaceOrderItem(null);
                     setSelectedPlaceOrderReq(null);
+                    setPlaceOrderFiftyDate(null);
                   }}
                 >
                   Send Order via WhatsApp
@@ -2740,14 +3657,32 @@ export default function Purchase() {
               placeholder="Select supplier name..."
               style={{ width: '100%', borderRadius: 8 }}
               value={bulkSupplierName || undefined}
-              onChange={handleBulkSupplierSelect}
+              onChange={val => {
+                if (val === '__add_new__') {
+                  setInlineDropdownContext('bulk');
+                  setShowAddSupplierInlineModal(true);
+                  return;
+                }
+                handleBulkSupplierSelect(val);
+              }}
               showSearch
               optionFilterProp="children"
+              dropdownRender={menu => (
+                <>
+                  {menu}
+                  <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0' }}>
+                    <Button type="link" icon={<PlusOutlined />} style={{ color: '#B11E6A', padding: 0, fontWeight: 600 }}
+                      onClick={() => { setInlineDropdownContext('bulk'); setShowAddSupplierInlineModal(true); }}>
+                      Add New Supplier
+                    </Button>
+                  </div>
+                </>
+              )}
             >
-              {suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
+              {suppliers.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
             </Select>
             {bulkSupplierName && (() => {
-              const sup = suppliersList.find(s => s.name === bulkSupplierName);
+              const sup = suppliers.find(s => s.name === bulkSupplierName);
               if (!sup) return null;
               return (
                 <div style={{ marginTop: 10, display: 'flex', gap: 0 }}>
@@ -3159,6 +4094,358 @@ export default function Purchase() {
               </div>
             ) : (
               <div style={{ textAlign: 'center', padding: '16px 0', color: '#aaa', fontSize: 13 }}>No payment document attached</div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── LR Copy View Modal ── */}
+      <Modal
+        title={<Space><FileTextOutlined style={{ color: '#1890ff' }} /><Text strong>LR Copy</Text></Space>}
+        open={!!viewLRCopyModal}
+        onCancel={() => setViewLRCopyModal(null)}
+        footer={[<Button key="close" onClick={() => setViewLRCopyModal(null)}>Close</Button>]}
+        width={460}
+        centered
+      >
+        {viewLRCopyModal && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 10, background: 'linear-gradient(135deg,#1890ff12,#1890ff08)', border: '1.5px solid #1890ff33', marginBottom: 16 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#1890ff,#40a9ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <FileTextOutlined style={{ color: '#fff', fontSize: 20 }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text strong style={{ color: '#1890ff', fontSize: 13, display: 'block' }}>{viewLRCopyModal.lrCopyFile}</Text>
+                <Text type="secondary" style={{ fontSize: 11 }}>LR {viewLRCopyModal.lrNumber} · {viewLRCopyModal.transportCompany}</Text>
+              </div>
+              <Button size="small" icon={<DownloadOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff' }}>Download</Button>
+            </div>
+            <Descriptions bordered size="small" column={2}>
+              <Descriptions.Item label="LR Number"><Text strong style={{ color: '#1890ff' }}>{viewLRCopyModal.lrNumber}</Text></Descriptions.Item>
+              <Descriptions.Item label="Lorry No"><Text strong>{viewLRCopyModal.lorryNo}</Text></Descriptions.Item>
+              <Descriptions.Item label="Transport Co." span={2}>{viewLRCopyModal.transportCompany}</Descriptions.Item>
+              <Descriptions.Item label="Supplier">{viewLRCopyModal.supplier}</Descriptions.Item>
+              <Descriptions.Item label="Expected Delivery">{viewLRCopyModal.expectedDelivery}</Descriptions.Item>
+            </Descriptions>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Taken Modal ── */}
+      <Modal
+        title={<Space><CarOutlined style={{ color: '#B11E6A' }} /><Text strong>Mark as Taken — Upload Proof</Text></Space>}
+        open={showTakenModal}
+        onCancel={() => { setShowTakenModal(false); setTakenTarget(null); takenForm.resetFields(); }}
+        footer={null}
+        width={480}
+        centered
+      >
+        {takenTarget && (
+          <Form form={takenForm} layout="vertical" onFinish={(vals) => {
+            const proofFile = vals.pickup_proof?.fileList?.[0]?.name || (takenTarget.takenProof || null);
+            setDispatchTrackingOrders(prev => prev.map(o => o.key === takenTarget.key ? {
+              ...o, takenStatus: 'taken', takenProof: proofFile, gPayNumber: vals.gpay_number || null
+            } : o));
+            // Notify dispatch & financial pages via localStorage
+            const pickupList = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
+            const exists = pickupList.find(x => x.orderId === takenTarget.orderId);
+            if (!exists) {
+              pickupList.push({
+                key: takenTarget.key, orderId: takenTarget.orderId, date: new Date().toISOString().slice(0, 10),
+                supplier: takenTarget.supplier, item: takenTarget.item, amount: takenTarget.amount,
+                pickupEmpId: takenTarget.pickupEmpId, pickupEmpName: takenTarget.pickupEmpName,
+                category: 'PICKUP', gPayNumber: vals.gpay_number || null, proof: proofFile,
+                paymentStatus: 'Unpaid',
+              });
+              localStorage.setItem('hng_pickup_expenses', JSON.stringify(pickupList));
+            }
+            message.success('Marked as Taken successfully!');
+            setShowTakenModal(false);
+            setTakenTarget(null);
+            takenForm.resetFields();
+          }}>
+            <div style={{ background: isDark ? '#1a1a2e' : '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#e8f4ff'}` }}>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>{takenTarget.item}</Text>
+              <Text style={{ color: '#B11E6A' }}>{takenTarget.supplier}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Order: {takenTarget.orderId} · LR: {takenTarget.lrNumber}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Pickup: {takenTarget.pickupEmpName} ({takenTarget.pickupEmpId})</Text>
+            </div>
+            <Form.Item label="Pickup Person Payment — Upload Proof" name="pickup_proof">
+              <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+                <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
+              </Upload>
+            </Form.Item>
+            {takenTarget.takenProof && (
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: '#52c41a10', border: '1px solid #52c41a33', borderRadius: 8 }}>
+                <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 6 }} />
+                <Text style={{ fontSize: 12, color: '#52c41a' }}>Already uploaded: {takenTarget.takenProof}</Text>
+              </div>
+            )}
+            <Form.Item label="G Pay Number" name="gpay_number" rules={[{ required: true, message: 'Enter G Pay number' }]}>
+              <Input prefix={<PhoneOutlined />} placeholder="Enter G Pay number for payment" style={{ borderRadius: 8 }} maxLength={15} />
+            </Form.Item>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <Button block onClick={() => { setShowTakenModal(false); takenForm.resetFields(); }}>Cancel</Button>
+              <Button block type="primary" htmlType="submit" style={{ background: '#B11E6A', border: 'none' }}>Confirm Taken</Button>
+            </div>
+          </Form>
+        )}
+      </Modal>
+
+      {/* ── Received Order Modal ── */}
+      <Modal
+        title={<Space><CheckCircleOutlined style={{ color: '#52c41a' }} /><Text strong>Received Order — Invoice Verification</Text></Space>}
+        open={showReceivedModal}
+        onCancel={() => { setShowReceivedModal(false); setReceivedTarget(null); }}
+        footer={null}
+        width={760}
+        centered
+        style={{ top: 20 }}
+      >
+        {receivedTarget && (
+          <div>
+            {/* Order info */}
+            <div style={{ background: isDark ? '#1a1a2e' : '#fafcff', borderRadius: 10, padding: '10px 14px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#e8f4ff'}` }}>
+              <Space wrap>
+                <Text strong style={{ color: '#B11E6A' }}>{receivedTarget.orderId}</Text>
+                <Text strong>{receivedTarget.item}</Text>
+                <Text type="secondary">{receivedTarget.supplier}</Text>
+                <Text type="secondary">LR: {receivedTarget.lrNumber} · {receivedTarget.lorryNo}</Text>
+              </Space>
+            </div>
+
+            {/* Previous orders delivered check */}
+            {dispatchTrackingOrders.filter(o => o.supplier === receivedTarget.supplier && o.receivedStatus === 'partial' && o.key !== receivedTarget.key).length > 0 && (
+              <Alert
+                type="warning"
+                showIcon
+                icon={<ExclamationCircleOutlined />}
+                style={{ marginBottom: 12, borderRadius: 8 }}
+                message={
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    <Text strong style={{ fontSize: 13 }}>Pending Partial Deliveries from {receivedTarget.supplier}</Text>
+                    {dispatchTrackingOrders.filter(o => o.supplier === receivedTarget.supplier && o.receivedStatus === 'partial' && o.key !== receivedTarget.key).map(o => (
+                      <Text key={o.key} style={{ fontSize: 12 }}>· {o.orderId} — {o.item} (Partial)</Text>
+                    ))}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                      <Text style={{ fontSize: 12 }}>Are all previous orders from this vendor delivered/received?</Text>
+                      <Select size="small" placeholder="Select" value={prevOrdersDelivered} onChange={setPrevOrdersDelivered} style={{ width: 80 }}>
+                        <Option value="yes">Yes</Option>
+                        <Option value="no">No</Option>
+                      </Select>
+                      {prevOrdersDelivered === 'yes' && <Tag color="success" style={{ borderRadius: 8 }}>All Good</Tag>}
+                      {prevOrdersDelivered === 'no' && <Tag color="warning" style={{ borderRadius: 8 }}>Partial Pending</Tag>}
+                    </div>
+                  </Space>
+                }
+              />
+            )}
+
+            {/* Invoice upload + scan */}
+            <div style={{ background: isDark ? '#161622' : '#f8f9ff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px dashed ${isDark ? '#3a3a5a' : '#d6e4ff'}` }}>
+              <Text strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>Invoice Upload & Scan</Text>
+              <Space wrap>
+                <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+                  <Button icon={<UploadOutlined />} style={{ borderColor: '#1890ff', color: '#1890ff' }}>Upload Invoice</Button>
+                </Upload>
+                <Button icon={<QrcodeOutlined />} style={{ borderColor: '#722ed1', color: '#722ed1' }} onClick={() => openCameraCapture(() => {})} >
+                  Scan Invoice
+                </Button>
+                <Button
+                  type="primary"
+                  icon={invoiceScanLoading ? <SyncOutlined spin /> : <ThunderboltOutlined />}
+                  loading={invoiceScanLoading}
+                  onClick={handleInvoiceScan}
+                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                >
+                  {invoiceScanned ? 'Re-Scan Invoice' : 'AI Scan & Fetch Products'}
+                </Button>
+              </Space>
+            </div>
+
+            {/* Products table */}
+            {invoiceScanned && invoiceProducts.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text strong style={{ fontSize: 13 }}>Products from Invoice — {invoiceProducts.length} item(s)</Text>
+                  <Text style={{ fontSize: 12, color: getMissingItems().length > 0 ? '#fa8c16' : '#52c41a' }}>
+                    {getMissingItems().length > 0 ? `${getMissingItems().length} item(s) with shortfall` : 'All items fully received'}
+                  </Text>
+                </div>
+                <Table
+                  size="small"
+                  dataSource={invoiceProducts}
+                  rowKey="key"
+                  pagination={false}
+                  columns={[
+                    { title: 'Product', dataIndex: 'name', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'HSN', dataIndex: 'hsn', width: 70, render: v => <Text type="secondary" style={{ fontSize: 11 }}>{v}</Text> },
+                    { title: 'GST', dataIndex: 'gst', width: 60, render: v => <Tag color="blue" style={{ fontSize: 10, padding: '0 4px' }}>{v}</Tag> },
+                    { title: 'Ordered', dataIndex: 'originalQty', width: 80, render: (v, r) => <Text>{v} {r.unit}</Text> },
+                    {
+                      title: 'Received Qty', key: 'received_qty', width: 130,
+                      render: (_, r) => (
+                        <Space size={4}>
+                          <Button
+                            size="small" icon={<MinusOutlined />}
+                            style={{ width: 24, height: 24, padding: 0, minWidth: 24, borderRadius: 4, borderColor: (productQtys[r.key] || 0) <= 0 ? '#d9d9d9' : '#ff4d4f', color: (productQtys[r.key] || 0) <= 0 ? '#d9d9d9' : '#ff4d4f' }}
+                            disabled={(productQtys[r.key] || 0) <= 0}
+                            onClick={() => setProductQtys(prev => ({ ...prev, [r.key]: Math.max(0, (prev[r.key] || r.originalQty) - 1) }))}
+                          />
+                          <InputNumber
+                            size="small"
+                            min={0} max={r.originalQty}
+                            value={productQtys[r.key] ?? r.originalQty}
+                            onChange={v => setProductQtys(prev => ({ ...prev, [r.key]: v || 0 }))}
+                            style={{ width: 60, textAlign: 'center' }}
+                          />
+                          <Button
+                            size="small" icon={<PlusOutlined />}
+                            style={{ width: 24, height: 24, padding: 0, minWidth: 24, borderRadius: 4, borderColor: (productQtys[r.key] || 0) >= r.originalQty ? '#d9d9d9' : '#52c41a', color: (productQtys[r.key] || 0) >= r.originalQty ? '#d9d9d9' : '#52c41a' }}
+                            disabled={(productQtys[r.key] || 0) >= r.originalQty}
+                            onClick={() => setProductQtys(prev => ({ ...prev, [r.key]: Math.min(r.originalQty, (prev[r.key] || r.originalQty) + 1) }))}
+                          />
+                        </Space>
+                      )
+                    },
+                    {
+                      title: 'Status / Notes', key: 'notes', width: 180,
+                      render: (_, r) => {
+                        const received = productQtys[r.key] ?? r.originalQty;
+                        const isFull = received >= r.originalQty;
+                        return (
+                          <Space direction="vertical" size={3} style={{ width: '100%' }}>
+                            <Tag color={isFull ? 'success' : 'warning'} style={{ borderRadius: 8, fontSize: 10 }}>
+                              {isFull ? 'Full' : `Missing ${r.originalQty - received}`}
+                            </Tag>
+                            {!isFull && (
+                              <Input
+                                size="small"
+                                placeholder="Reason for shortfall..."
+                                value={productNotes[r.key] || ''}
+                                onChange={e => setProductNotes(prev => ({ ...prev, [r.key]: e.target.value }))}
+                                style={{ fontSize: 11, borderRadius: 6 }}
+                              />
+                            )}
+                          </Space>
+                        );
+                      }
+                    },
+                  ]}
+                />
+
+                {/* Total summary */}
+                <div style={{ marginTop: 10, padding: '8px 12px', background: isDark ? '#1e2235' : '#f0f7ff', borderRadius: 8, border: `1px solid ${isDark ? '#2a3040' : '#bae0ff'}`, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  <Text style={{ fontSize: 12 }}>Total Items: <Text strong>{invoiceProducts.length}</Text></Text>
+                  <Text style={{ fontSize: 12 }}>Total Qty Ordered: <Text strong>{invoiceProducts.reduce((s, p) => s + p.originalQty, 0)}</Text></Text>
+                  <Text style={{ fontSize: 12 }}>Total Received: <Text strong style={{ color: '#52c41a' }}>{invoiceProducts.reduce((s, p) => s + (productQtys[p.key] ?? p.originalQty), 0)}</Text></Text>
+                  {getMissingItems().length > 0 && <Text style={{ fontSize: 12 }}>Missing: <Text strong style={{ color: '#fa8c16' }}>{getMissingItems().reduce((s, m) => s + m.missingQty, 0)}</Text></Text>}
+                </div>
+              </div>
+            )}
+
+            {/* Missing items summary */}
+            {invoiceScanned && getMissingItems().length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <Text strong style={{ display: 'block', marginBottom: 8, color: '#fa8c16', fontSize: 13 }}>
+                  <ExclamationCircleOutlined style={{ marginRight: 6 }} />Missing Items Summary
+                </Text>
+                <Table
+                  size="small"
+                  dataSource={getMissingItems()}
+                  rowKey="key"
+                  pagination={false}
+                  style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid #fa8c1633' }}
+                  columns={[
+                    { title: 'Item', dataIndex: 'name', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'Ordered', dataIndex: 'originalQty' },
+                    { title: 'Received', dataIndex: 'receivedQty', render: v => <Text style={{ color: '#52c41a' }}>{v}</Text> },
+                    { title: 'Missing', dataIndex: 'missingQty', render: v => <Text strong style={{ color: '#ff4d4f' }}>{v}</Text> },
+                    {
+                      title: 'Reason', key: 'reason',
+                      render: (_, r) => <Text type="secondary" style={{ fontSize: 11 }}>{productNotes[r.key] || '—'}</Text>
+                    },
+                  ]}
+                />
+
+                {/* Partial received section */}
+                <div style={{ marginTop: 10, padding: '12px 14px', background: isDark ? '#1e1a10' : '#fffbe6', borderRadius: 8, border: '1px solid #fa8c1633' }}>
+                  <Checkbox
+                    checked={partialReceived}
+                    onChange={e => { setPartialReceived(e.target.checked); if (!e.target.checked) { setMissedBy(null); setVendorMissedAction(null); } }}
+                    style={{ fontWeight: 600, marginBottom: partialReceived ? 10 : 0 }}
+                  >
+                    Partially Received
+                  </Checkbox>
+                  {partialReceived && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Text style={{ fontSize: 12, marginRight: 8 }}>Missed by:</Text>
+                        <Select size="small" placeholder="Select cause" value={missedBy} onChange={v => { setMissedBy(v); setVendorMissedAction(null); }} style={{ width: 140 }}>
+                          <Option value="vendor">Vendor</Option>
+                          <Option value="lorry">Lorry</Option>
+                        </Select>
+                      </div>
+                      {missedBy === 'vendor' && (
+                        <div style={{ padding: '10px 12px', background: isDark ? '#1e2235' : '#f0f4ff', borderRadius: 8, border: `1px solid ${isDark ? '#2a3040' : '#d6e4ff'}` }}>
+                          <Text style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>Vendor Responsibility — Choose action for missing items:</Text>
+                          <Select
+                            size="small"
+                            placeholder="Select vendor action"
+                            value={vendorMissedAction}
+                            onChange={setVendorMissedAction}
+                            style={{ width: '100%', marginBottom: 6 }}
+                          >
+                            <Option value="new_order">Send Immediately as a New Order</Option>
+                            <Option value="attach_upcoming">Attach with Upcoming Order</Option>
+                          </Select>
+                          {vendorMissedAction && (
+                            <Alert
+                              type="info"
+                              showIcon
+                              style={{ borderRadius: 6, fontSize: 11 }}
+                              message={vendorMissedAction === 'new_order'
+                                ? `Dispatch team will be reminded to raise a new order for missing items from ${receivedTarget.supplier}.`
+                                : `Missing items will be attached to the next order from ${receivedTarget.supplier}. Dispatch team will be notified.`}
+                            />
+                          )}
+                        </div>
+                      )}
+                      {missedBy === 'lorry' && (
+                        <div style={{ padding: '10px 12px', background: isDark ? '#1a1022' : '#f9f0ff', borderRadius: 8, border: `1px solid ${isDark ? '#3a1a5a' : '#d3adf7'}` }}>
+                          <Space>
+                            <SyncOutlined style={{ color: '#722ed1' }} />
+                            <Text style={{ fontSize: 12 }}>Lorry Responsibility — The order will be <Text strong style={{ color: '#722ed1' }}>reopened and restarted</Text> from the order stage. The same delivery process will continue for the partial order.</Text>
+                          </Space>
+                          <div style={{ marginTop: 6, padding: '6px 10px', background: '#722ed120', borderRadius: 6 }}>
+                            <Text style={{ fontSize: 11, color: '#722ed1' }}>Status will be set to: <Text strong>Partial Delivery — Restarted</Text></Text>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Confirm button */}
+            {invoiceScanned && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <Button block onClick={() => { setShowReceivedModal(false); setReceivedTarget(null); }}>Cancel</Button>
+                <Button
+                  block type="primary"
+                  style={{ background: getMissingItems().length > 0 ? '#fa8c16' : '#52c41a', border: 'none' }}
+                  onClick={handleConfirmReceived}
+                >
+                  {getMissingItems().length > 0 ? 'Confirm Partial Receipt' : 'Confirm Full Receipt'}
+                </Button>
+              </div>
+            )}
+            {!invoiceScanned && (
+              <div style={{ textAlign: 'center', padding: '16px 0', color: isDark ? '#aaa' : '#888', fontSize: 13 }}>
+                <QrcodeOutlined style={{ fontSize: 32, display: 'block', marginBottom: 8, color: '#B11E6A55' }} />
+                Upload invoice or use AI Scan to fetch product details
+              </div>
             )}
           </div>
         )}

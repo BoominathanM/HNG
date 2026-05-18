@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Typography, Space,
@@ -8,7 +8,8 @@ import {
   CarOutlined, CheckCircleOutlined, UploadOutlined, EyeOutlined,
   SearchOutlined, PrinterOutlined, SaveOutlined, EditOutlined,
   ThunderboltOutlined, InboxOutlined, FilterOutlined, GlobalOutlined,
-  ExportOutlined, CheckSquareOutlined,
+  ExportOutlined, CheckSquareOutlined, WalletOutlined, UserOutlined,
+  PhoneOutlined, FileTextOutlined, DollarCircleOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -99,6 +100,13 @@ const exportCSV = (data, filename) => {
   URL.revokeObjectURL(url);
 };
 
+const MOCK_PICKUP_EXPENSES = [
+  { key: 'DT-001', orderId: 'PO-2501', date: '2024-05-20', supplier: 'ChemCo India', item: 'Soap Base (White)', amount: 42500, pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', category: 'PICKUP', gPayNumber: '9876543210', proof: 'pickup_proof_PO2501.jpg', paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
+  { key: 'DT-002', orderId: 'PO-2502', date: '2024-05-18', supplier: 'BioLife Ltd', item: 'Shampoo Concentrate', amount: 44000, pickupEmpId: 'EMP-102', pickupEmpName: 'Suresh Babu', category: 'PICKUP', gPayNumber: '9123456789', proof: 'proof_biolife.jpg', paymentStatus: 'Paid', paymentProof: 'payment_biolife.pdf', paidDate: '2024-05-19', paidBy: 'Finance Team' },
+  { key: 'DT-003', orderId: 'PO-2503', date: '2024-05-22', supplier: 'PlastiPack', item: 'Shampoo Bottles (Flip 30ml)', amount: 22500, pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', category: 'PICKUP', gPayNumber: '9876543210', proof: null, paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
+  { key: 'DT-004', orderId: 'PO-2504', date: '2024-05-15', supplier: 'BoxWorld', item: 'Dental Kit Boxes', amount: 12000, pickupEmpId: 'EMP-103', pickupEmpName: 'Vijay Anand', category: 'PICKUP', gPayNumber: '8765432109', proof: 'proof_boxworld.jpg', paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 export default function Dispatch() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -123,6 +131,36 @@ export default function Dispatch() {
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
+
+  // ── Pick Up Order tab state ────────────────────────────────────────────────
+  const [pickupOrders, setPickupOrders] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('hng_dispatch_tracking') || '[]');
+      // Show all dispatch tracking orders (today + taken) — for demo show all
+      return stored.length > 0 ? stored : [];
+    } catch { return []; }
+  });
+  const [pickupSubTab, setPickupSubTab] = useState('pickup_orders');
+  const [reimbExpenses, setReimbExpenses] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
+      if (stored.length === 0) { localStorage.setItem('hng_pickup_expenses', JSON.stringify(MOCK_PICKUP_EXPENSES)); return MOCK_PICKUP_EXPENSES; }
+      return stored;
+    } catch { return MOCK_PICKUP_EXPENSES; }
+  });
+
+  useEffect(() => {
+    const reload = () => {
+      try {
+        const tracking = JSON.parse(localStorage.getItem('hng_dispatch_tracking') || '[]');
+        if (tracking.length > 0) setPickupOrders(tracking);
+        const expenses = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
+        if (expenses.length > 0) setReimbExpenses(expenses);
+      } catch {}
+    };
+    const interval = setInterval(reload, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const openPrintModal = (order) => {
@@ -275,39 +313,39 @@ export default function Dispatch() {
 
   // ── Columns ────────────────────────────────────────────────────────────────
   const buildColumns = (showTodayActions = false) => [
-    { title: 'Order', dataIndex: 'id', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Client', dataIndex: 'client' },
-    { title: 'Destination', dataIndex: 'destination', responsive: ['md'], render: (v) => v || '—' },
-    { title: 'Location', dataIndex: 'address', responsive: ['lg'] },
-    { title: 'Created Date', dataIndex: 'createdAt', responsive: ['md'], render: (v) => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
-    { title: 'Sales Person', dataIndex: 'salesPerson', responsive: ['lg'] },
-    { title: 'Product', dataIndex: 'product', responsive: ['md'] },
+    { title: 'Order', dataIndex: 'id', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'Client', dataIndex: 'client', width: 150, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Destination', dataIndex: 'destination', width: 120, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+    { title: 'Location', dataIndex: 'address', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Created Date', dataIndex: 'createdAt', width: 160, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</Text> },
+    { title: 'Sales Person', dataIndex: 'salesPerson', width: 115, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Product', dataIndex: 'product', width: 145, responsive: ['md'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
-      title: 'Boxes', dataIndex: 'boxes', responsive: ['sm'],
-      render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text strong>{v}</Text></Space>,
+      title: 'Boxes', dataIndex: 'boxes', width: 80, responsive: ['sm'],
+      render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ fontSize: 13 }}>{v}</Text></Space>,
     },
-    { title: 'Weight', dataIndex: 'weight', responsive: ['lg'] },
+    { title: 'Weight', dataIndex: 'weight', width: 90, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
-      title: 'Payment', dataIndex: 'payment',
+      title: 'Payment', dataIndex: 'payment', width: 115,
       render: (v) => (
-        <Tag style={{ borderRadius: 20, background: v === 'Confirmed' ? '#6b124022' : '#B11E6A22', color: v === 'Confirmed' ? '#6b1240' : '#B11E6A', border: `1px solid ${v === 'Confirmed' ? '#6b124044' : '#B11E6A44'}` }}>
+        <Tag style={{ borderRadius: 20, fontSize: 13, background: v === 'Confirmed' ? '#6b124022' : '#B11E6A22', color: v === 'Confirmed' ? '#6b1240' : '#B11E6A', border: `1px solid ${v === 'Confirmed' ? '#6b124044' : '#B11E6A44'}` }}>
           {v}
         </Tag>
       ),
     },
-    { title: 'Transport', dataIndex: 'transport', responsive: ['lg'] },
+    { title: 'Transport', dataIndex: 'transport', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
-      title: 'Status', dataIndex: 'status',
-      render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag>,
+      title: 'Status', dataIndex: 'status', width: 140,
+      render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, fontSize: 13, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag>,
     },
     {
-      title: 'Dispatch Type', key: 'dispatchType',
+      title: 'Dispatch Type', key: 'dispatchType', width: 160,
       render: (_, r) => (
         <Select
           size="small"
           value={productVerify[r.id]?.dispatchType || undefined}
           placeholder="Select type"
-          style={{ width: 140 }}
+          style={{ width: 145 }}
           onClick={(e) => e.stopPropagation()}
           onChange={(v) => setDispatchType(r.id, v)}
         >
@@ -317,7 +355,7 @@ export default function Dispatch() {
       ),
     },
     {
-      title: 'Actions', key: 'actions',
+      title: 'Actions', key: 'actions', width: 110,
       render: (_, r) => (
         <Space onClick={(e) => e.stopPropagation()}>
           <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/dispatch/${r.id}`)} />
@@ -332,15 +370,15 @@ export default function Dispatch() {
   ];
 
   const transportColumns = [
-    { title: 'LR Number', dataIndex: 'lrNumber', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-    { title: 'Order', dataIndex: 'orderId' },
-    { title: 'Client', dataIndex: 'client' },
-    { title: 'Transport Co.', dataIndex: 'transport' },
-    { title: 'Boxes', dataIndex: 'boxes', render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space> },
-    { title: 'Weight', dataIndex: 'weight' },
-    { title: 'Freight', dataIndex: 'freight' },
-    { title: 'Dispatch Date', dataIndex: 'dispatchDate' },
-    { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={v === 'Delivered' ? 'success' : 'processing'}>{v}</Tag> },
+    { title: 'LR Number', dataIndex: 'lrNumber', width: 115, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'Order', dataIndex: 'orderId', width: 100, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Client', dataIndex: 'client', width: 145, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Transport Co.', dataIndex: 'transport', width: 135, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Boxes', dataIndex: 'boxes', width: 80, render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> },
+    { title: 'Weight', dataIndex: 'weight', width: 95, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Freight', dataIndex: 'freight', width: 95, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Dispatch Date', dataIndex: 'dispatchDate', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Status', dataIndex: 'status', width: 105, render: (v) => <Tag color={v === 'Delivered' ? 'success' : 'processing'} style={{ fontSize: 13 }}>{v}</Tag> },
   ];
 
   const filteredOrders = dispatchOrders.filter((o) => {
@@ -439,6 +477,7 @@ export default function Dispatch() {
                               rowKey="id"
                               pagination={{ pageSize: 8, size: 'small' }}
                               size="small"
+                              scroll={{ x: 1400 }}
                               onRow={(record) => ({
                                 onClick: () => navigate(`/dispatch/${record.id}`),
                                 style: { cursor: 'pointer' },
@@ -491,6 +530,7 @@ export default function Dispatch() {
                                 rowKey="id"
                                 pagination={{ pageSize: 8, size: 'small' }}
                                 size="small"
+                                scroll={{ x: 1400 }}
                                 onRow={(record) => ({
                                   onClick: () => navigate(`/dispatch/${record.id}`),
                                   style: { cursor: 'pointer' },
@@ -504,6 +544,167 @@ export default function Dispatch() {
                   },
                 ]}
               />
+            ),
+          },
+          {
+            key: 'pickup',
+            label: <Space><CarOutlined />Pick Up Order</Space>,
+            children: (
+              <div>
+                <Tabs
+                  activeKey={pickupSubTab}
+                  onChange={setPickupSubTab}
+                  size="small"
+                  tabBarStyle={{ marginBottom: 12 }}
+                  items={[
+                    {
+                      key: 'pickup_orders',
+                      label: 'Today\'s Pickup Orders',
+                      children: (
+                        <div>
+                          <div style={{ marginBottom: 12 }}>
+                            <Text strong style={{ color: textColor }}>Current Day Pickup Orders</Text>
+                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Orders assigned for pickup today</Text>
+                          </div>
+                          {pickupOrders.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
+                              <CarOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
+                              <Text type="secondary">No pickup orders for today.</Text>
+                            </div>
+                          ) : (
+                            <Table
+                              size="small"
+                              dataSource={pickupOrders}
+                              rowKey="key"
+                              pagination={{ pageSize: 8, size: 'small' }}
+                              scroll={{ x: 1000 }}
+                              columns={[
+                                { title: 'Date', dataIndex: 'date', width: 95 },
+                                { title: 'Order ID', dataIndex: 'orderId', width: 95, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+                                { title: 'Supplier', dataIndex: 'supplier', width: 135, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
+                                { title: 'Item', dataIndex: 'item', width: 165, render: v => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+                                {
+                                  title: 'Pickup Employee', key: 'emp', width: 155,
+                                  render: (_, r) => (
+                                    <div>
+                                      <Text strong style={{ fontSize: 13 }}>{r.pickupEmpName || '—'}</Text>
+                                      <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>{r.pickupEmpId}</Text>
+                                    </div>
+                                  )
+                                },
+                                { title: 'LR Number', dataIndex: 'lrNumber', width: 115, render: v => v ? <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> : <Text type="secondary">—</Text> },
+                                {
+                                  title: 'Taken Status', key: 'taken', width: 130,
+                                  render: (_, r) => (
+                                    <div>
+                                      <Tag color={r.takenStatus === 'taken' ? 'success' : 'default'} style={{ borderRadius: 8 }}>
+                                        {r.takenStatus === 'taken' ? 'Taken' : 'Pending'}
+                                      </Tag>
+                                      {r.takenProof && (
+                                        <div style={{ marginTop: 4 }}>
+                                          <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 10, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                },
+                                {
+                                  title: 'Delivery Status', dataIndex: 'deliveryStatus', width: 120,
+                                  render: v => {
+                                    const colorMap = { 'Delivered': 'success', 'Partial Delivery': 'warning', 'In Transit': 'processing' };
+                                    return <Tag color={colorMap[v] || 'default'} style={{ borderRadius: 8 }}>{v || 'Pending'}</Tag>;
+                                  }
+                                },
+                              ]}
+                            />
+                          )}
+                        </div>
+                      ),
+                    },
+                    {
+                      key: 'reimbursement_claims',
+                      label: (
+                        <Space>
+                          Reimbursement Claims
+                          {reimbExpenses.filter(r => r.paymentStatus !== 'Paid').length > 0 && (
+                            <Tag style={{ borderRadius: 20, background: '#ff4d4f22', color: '#ff4d4f', border: '1px solid #ff4d4f44', fontSize: 10, padding: '0 5px' }}>
+                              {reimbExpenses.filter(r => r.paymentStatus !== 'Paid').length} Pending
+                            </Tag>
+                          )}
+                        </Space>
+                      ),
+                      children: (
+                        <div>
+                          <div style={{ marginBottom: 12 }}>
+                            <Text strong style={{ color: textColor }}>Reimbursement Claims</Text>
+                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Pickup expenses — payment status from Finance team</Text>
+                          </div>
+                          {reimbExpenses.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
+                              <WalletOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
+                              <Text type="secondary">No reimbursement claims yet.</Text>
+                            </div>
+                          ) : (
+                            <Table
+                              size="small"
+                              dataSource={reimbExpenses}
+                              rowKey="key"
+                              pagination={{ pageSize: 8, size: 'small' }}
+                              scroll={{ x: 1100 }}
+                              columns={[
+                                { title: 'Date', dataIndex: 'date', width: 95 },
+                                { title: 'Order ID', dataIndex: 'orderId', width: 95, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+                                { title: 'Supplier', dataIndex: 'supplier', width: 135, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
+                                { title: 'Item', dataIndex: 'item', width: 155, render: v => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+                                {
+                                  title: 'Employee', key: 'emp', width: 145,
+                                  render: (_, r) => (
+                                    <div>
+                                      <Text strong style={{ fontSize: 13 }}>{r.pickupEmpName}</Text>
+                                      <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>{r.pickupEmpId}</Text>
+                                    </div>
+                                  )
+                                },
+                                {
+                                  title: 'G Pay', dataIndex: 'gPayNumber', width: 125,
+                                  render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text>
+                                },
+                                {
+                                  title: 'Amount', dataIndex: 'amount', width: 95, align: 'right',
+                                  render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text>
+                                },
+                                {
+                                  title: 'Taken Proof', dataIndex: 'proof', width: 115,
+                                  render: v => v ? (
+                                    <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button>
+                                  ) : <Tag color="default" style={{ borderRadius: 8, fontSize: 12 }}>Not Uploaded</Tag>
+                                },
+                                {
+                                  title: 'Payment Status', dataIndex: 'paymentStatus', width: 135, align: 'center',
+                                  render: (v, r) => (
+                                    <div>
+                                      <Tag color={v === 'Paid' ? 'success' : 'warning'} style={{ borderRadius: 10, fontSize: 13 }}>
+                                        {v === 'Paid' ? 'Paid' : 'Unpaid / Pending'}
+                                      </Tag>
+                                      {r.paidDate && <Text type="secondary" style={{ display: 'block', fontSize: 11, marginTop: 2 }}>{r.paidDate}</Text>}
+                                    </div>
+                                  )
+                                },
+                                {
+                                  title: 'Payment Proof', dataIndex: 'paymentProof', width: 125,
+                                  render: v => v ? (
+                                    <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>
+                                  ) : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                },
+                              ]}
+                            />
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
+              </div>
             ),
           },
           {
@@ -532,7 +733,7 @@ export default function Dispatch() {
                   styles={{ body: { padding: 0 } }}
                 >
                   <div className="table-responsive" style={{ padding: '4px' }}>
-                    <Table dataSource={initTransportData} columns={transportColumns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+                    <Table dataSource={initTransportData} columns={transportColumns} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1000 }} />
                   </div>
                 </Card>
               </div>
