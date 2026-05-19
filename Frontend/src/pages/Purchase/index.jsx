@@ -54,7 +54,7 @@ const initDispatchTrackingOrders = [
   { key: 'DT-001', orderId: 'PO-2501', date: '2024-05-20', supplier: 'ChemCo India', item: 'Soap Base (White)', qty: 500, unit: 'Kg', amount: 42500, lrNumber: 'LR-78921', lorryNo: 'TN-09-AB-1234', transportCompany: 'Fast Cargo Pvt Ltd', lrCopyFile: 'LR_78921_ChemCo.pdf', expectedDelivery: '2024-05-28', pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', paymentStatus: 'Unpaid', takenStatus: null, takenProof: null, gPayNumber: null, receivedStatus: null, paymentProof: null, deliveryStatus: 'In Transit' },
   { key: 'DT-002', orderId: 'PO-2502', date: '2024-05-18', supplier: 'BioLife Ltd', item: 'Shampoo Concentrate', qty: 200, unit: 'Ltr', amount: 44000, lrNumber: 'LR-78915', lorryNo: 'KA-05-CD-5678', transportCompany: 'Blue Dart Logistics', lrCopyFile: 'LR_78915_BioLife.pdf', expectedDelivery: '2024-05-23', pickupEmpId: 'EMP-102', pickupEmpName: 'Suresh Babu', paymentStatus: 'Paid', takenStatus: 'taken', takenProof: 'proof_biolife.jpg', gPayNumber: '9876543210', receivedStatus: 'received', paymentProof: 'payment_biolife.pdf', deliveryStatus: 'Delivered' },
   { key: 'DT-003', orderId: 'PO-2503', date: '2024-05-22', supplier: 'PlastiPack', item: 'Shampoo Bottles (Flip 30ml)', qty: 5000, unit: 'Pcs', amount: 22500, lrNumber: 'LR-78930', lorryNo: 'DL-01-EF-9012', transportCompany: 'VRL Logistics', lrCopyFile: null, expectedDelivery: '2024-05-30', pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', paymentStatus: 'Unpaid', takenStatus: null, takenProof: null, gPayNumber: null, receivedStatus: null, paymentProof: null, deliveryStatus: 'In Transit' },
-  { key: 'DT-004', orderId: 'PO-2504', date: '2024-05-15', supplier: 'BoxWorld', item: 'Dental Kit Boxes', qty: 1000, unit: 'Pcs', amount: 12000, lrNumber: 'LR-78900', lorryNo: 'KA-09-GH-3456', transportCompany: 'DTDC Express', lrCopyFile: 'LR_78900_BoxWorld.pdf', expectedDelivery: '2024-05-20', pickupEmpId: 'EMP-103', pickupEmpName: 'Vijay Anand', paymentStatus: 'Unpaid', takenStatus: 'taken', takenProof: 'proof_boxworld.jpg', gPayNumber: '8765432109', receivedStatus: 'partial', paymentProof: null, deliveryStatus: 'Partial Delivery', missingItems: [{ key: 1, name: 'Dental Kit Boxes', ordered: 1000, received: 780, missing: 220 }] },
+  { key: 'DT-004', orderId: 'PO-2504', date: '2024-05-15', supplier: 'BoxWorld', item: 'Dental Kit Boxes', qty: 1000, unit: 'Pcs', amount: 12000, lrNumber: 'LR-78900', lorryNo: 'KA-09-GH-3456', transportCompany: 'DTDC Express', lrCopyFile: 'LR_78900_BoxWorld.pdf', expectedDelivery: '2024-05-20', pickupEmpId: 'EMP-103', pickupEmpName: 'Vijay Anand', paymentStatus: 'Unpaid', takenStatus: 'taken', takenProof: 'proof_boxworld.jpg', gPayNumber: '8765432109', receivedStatus: 'partial', paymentProof: null, deliveryStatus: 'Partial Delivery', missingItems: [{ key: 1, name: 'Dental Kit Boxes', ordered: 1000, received: 780, missing: 220 }], partialMissedBy: 'supplier', partialVendorAction: 'new_order', actionTakenStatus: null },
 ];
 
 const MOCK_INVOICE_PRODUCTS = {
@@ -271,6 +271,8 @@ export default function Purchase() {
   const [partialReceived, setPartialReceived] = useState(false);
   const [missedBy, setMissedBy] = useState(null);
   const [vendorMissedAction, setVendorMissedAction] = useState(null);
+  const [customActionOptions, setCustomActionOptions] = useState(['Completely Received']);
+  const [newActionInput, setNewActionInput] = useState('');
   const [prevOrdersDelivered, setPrevOrdersDelivered] = useState(null);
   const [viewLRCopyModal, setViewLRCopyModal] = useState(null);
 
@@ -1713,17 +1715,58 @@ export default function Purchase() {
                                   title: 'Missed By', key: 'missed_by', width: 120,
                                   render: (_, r) => r.partialMissedBy ? (
                                     <Tag color={r.partialMissedBy === 'supplier' ? 'red' : 'orange'} style={{ borderRadius: 8 }}>
-                                      {r.partialMissedBy === 'supplier' ? 'Supplier' : 'Transport'}
+                                      {r.partialMissedBy === 'supplier' ? 'Vendor' : 'Lorry'}
                                     </Tag>
                                   ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
                                 },
                                 {
-                                  title: 'Action Taken', key: 'vendor_action', width: 150,
-                                  render: (_, r) => r.partialVendorAction ? (
-                                    <Text style={{ fontSize: 11, color: r.partialVendorAction === 'new_order' ? '#1890ff' : '#fa8c16' }}>
-                                      {r.partialVendorAction === 'new_order' ? 'New order to be raised' : 'Attach to next order'}
-                                    </Text>
-                                  ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                                  title: 'Action Taken', key: 'vendor_action', width: 190,
+                                  render: (_, r) => (
+                                    <Select
+                                      size="small"
+                                      placeholder="Select action"
+                                      value={r.actionTakenStatus || undefined}
+                                      style={{ width: '100%', minWidth: 165 }}
+                                      onChange={(val) => setDispatchTrackingOrders(prev => prev.map(o => o.key === r.key ? { ...o, actionTakenStatus: val } : o))}
+                                      dropdownRender={menu => (
+                                        <>
+                                          {menu}
+                                          <Divider style={{ margin: '6px 0' }} />
+                                          <Space style={{ padding: '0 8px 6px' }}>
+                                            <Input
+                                              placeholder="Custom action"
+                                              size="small"
+                                              value={newActionInput}
+                                              onChange={e => setNewActionInput(e.target.value)}
+                                              onKeyDown={e => e.stopPropagation()}
+                                              style={{ width: 120 }}
+                                            />
+                                            <Button
+                                              type="text"
+                                              icon={<PlusOutlined />}
+                                              size="small"
+                                              onClick={() => {
+                                                const trimmed = newActionInput.trim();
+                                                if (trimmed && !customActionOptions.includes(trimmed)) {
+                                                  setCustomActionOptions(prev => [...prev, trimmed]);
+                                                  setNewActionInput('');
+                                                }
+                                              }}
+                                            >Add</Button>
+                                          </Space>
+                                        </>
+                                      )}
+                                      options={customActionOptions.map(opt => ({ value: opt, label: opt }))}
+                                    />
+                                  )
+                                },
+                                {
+                                  title: 'Status', key: 'action_status', width: 150, align: 'center',
+                                  render: (_, r) => {
+                                    if (!r.actionTakenStatus) return <Tag color="warning" style={{ borderRadius: 8 }}>Pending</Tag>;
+                                    if (r.actionTakenStatus === 'Completely Received') return <Tag color="success" style={{ borderRadius: 8, fontWeight: 600 }}>Completely Received</Tag>;
+                                    return <Tag color="blue" style={{ borderRadius: 8 }}>{r.actionTakenStatus}</Tag>;
+                                  }
                                 },
                               ]}
                             />
