@@ -13,7 +13,7 @@ import {
   BankOutlined, EnvironmentOutlined, TeamOutlined, CalendarOutlined,
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
-  WarningOutlined, ExclamationCircleOutlined,
+  WarningOutlined, ExclamationCircleOutlined, DollarOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector, useDispatch } from 'react-redux';
@@ -39,6 +39,16 @@ const PAYMENT_LABELS = {
   '50_ADVANCE_50_AFTER': '50% ADV 50% ON DELIVERY',
   CREDIT_10_30: 'CREDIT (10 DAYS TO 1 MONTH)',
 };
+
+const COLLECTION_METHODS = [
+  { value: 'UPI', label: 'UPI' },
+  { value: 'CARD', label: 'Card' },
+  { value: 'CASH', label: 'Cash' },
+  { value: 'CHEQUE', label: 'Cheque' },
+  { value: 'BANK_TRANSFER', label: 'Bank Transfer' },
+  { value: 'NEFT_RTGS', label: 'NEFT / RTGS' },
+  { value: 'OTHER', label: 'Other' },
+];
 
 const STATUS_COLORS = {
   New: '#C94F8A', Interested: '#D85C9E', 'Quotation Sent': '#B11E6A', Converted: '#52c41a',
@@ -2778,11 +2788,32 @@ export default function Sales() {
                   </div>
                 ) : (
                   <Row gutter={16}>
-                    <Col xs={24} sm={8}>
+                    <Col xs={24} sm={6}>
+                      <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
+                        <Select placeholder="Select hotel type">
+                          <Option value="OLD">Old Hotel</Option>
+                          <Option value="NEW">New Hotel</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={6}>
                       <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
                         <Input placeholder="e.g. Hotel Blue Star" prefix={<BankOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
+                    <Col xs={24} sm={6}>
+                      <Form.Item label="Branch" name="branch">
+                        <Input placeholder="e.g. Main Branch" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={6}>
+                      <Form.Item label="Hotel Logo" name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
+                        <Upload beforeUpload={() => false} accept="image/*,.pdf,.svg,.ai" maxCount={1} listType="picture">
+                          <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Logo</Button>
+                        </Upload>
+                      </Form.Item>
+                    </Col>
+
                     <Col xs={24} sm={8}>
                       <Form.Item label="No. of Rooms" name="rowsInHotel" rules={[{ required: true }]}>
                         <InputNumber placeholder="50" style={{ width: '100%' }} />
@@ -2791,22 +2822,6 @@ export default function Sales() {
                     <Col xs={24} sm={8}>
                       <Form.Item label="General Occupancy (%)" name="generalOccupancy" rules={[{ required: true }]}>
                         <InputNumber placeholder="e.g. 75" style={{ width: '100%' }} min={0} max={100} addonAfter="%" />
-                      </Form.Item>
-                    </Col>
-
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="Hotel Logo" name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
-                        <Upload beforeUpload={() => false} accept="image/*,.pdf,.svg,.ai" maxCount={1} listType="picture">
-                          <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Logo</Button>
-                        </Upload>
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
-                        <Select placeholder="Select hotel type">
-                          <Option value="OLD">Old Hotel</Option>
-                          <Option value="NEW">New Hotel</Option>
-                        </Select>
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -3575,6 +3590,45 @@ export default function Sales() {
                           Add Urgent / Emergency Delivery (Partial)
                         </Button>
                       </div>
+                    )}
+                  </Form.List>
+
+                  <Divider style={{ margin: '16px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+                    <Space><DollarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Collection</span></Space>
+                  </Divider>
+                  <Form.List name="paymentCollection">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name, ...rest }) => (
+                          <div key={key} style={{ background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
+                            <Row gutter={[8, 0]} align="middle">
+                              <Col xs={24} sm={7}>
+                                <Form.Item {...rest} name={[name, 'paymentMethod']} label="Payment Method" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Select method' }]}>
+                                  <Select placeholder="Select method" size="small">
+                                    {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                                  </Select>
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={7}>
+                                <Form.Item {...rest} name={[name, 'paidAmount']} label="Paid Amount (₹)" style={{ marginBottom: 0 }}>
+                                  <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="e.g. 5000" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Form.Item {...rest} name={[name, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
+                                  <Input size="small" placeholder="e.g. UPI ref no." />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 20 }}>
+                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                              </Col>
+                            </Row>
+                          </div>
+                        ))}
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 12 }}>
+                          + Add Payment Entry
+                        </Button>
+                      </>
                     )}
                   </Form.List>
 
