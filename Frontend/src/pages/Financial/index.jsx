@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, List, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, DatePicker, Badge, Tooltip, Alert
+  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, List, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, DatePicker, Badge, Tooltip, Alert, Image
 } from 'antd';
 import {
   WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, CloseCircleOutlined, WalletOutlined,
@@ -67,6 +67,11 @@ export default function Financial() {
   };
 
 
+  // ── Proof data (base64) — shared via hng_proofs localStorage cross-page ──
+  const [proofData, setProofData] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('hng_proofs') || '{}'); } catch { return {}; }
+  });
+
   // ── Reimbursement Expense tab state ──
   const [reimbursementExpenses, setReimbursementExpenses] = useState(() => {
     try {
@@ -80,11 +85,13 @@ export default function Financial() {
       try { setReimbursementExpenses(JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]')); } catch {}
     };
     window.addEventListener('storage', handler);
-    // Also poll for changes from same-tab updates
+    // Poll for changes from same-tab updates (expenses + proofs)
     const interval = setInterval(() => {
       try {
         const stored = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
         setReimbursementExpenses(prev => JSON.stringify(prev) !== JSON.stringify(stored) ? stored : prev);
+        const proofs = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
+        setProofData(prev => JSON.stringify(prev) !== JSON.stringify(proofs) ? proofs : prev);
       } catch {}
     }, 1000);
     return () => { window.removeEventListener('storage', handler); clearInterval(interval); };
@@ -134,14 +141,35 @@ export default function Financial() {
     localPayForm.resetFields();
   };
 
-  const handleReimbPayment = (vals) => {
-    const proofFile = vals.payment_proof?.fileList?.[0]?.name || null;
+  const handleReimbPayment = async (vals) => {
+    const fileItem = vals.payment_proof?.fileList?.[0];
+    const proofFile = fileItem?.name || null;
+
+    let base64 = null;
+    if (fileItem?.originFileObj) {
+      base64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.readAsDataURL(fileItem.originFileObj);
+      });
+    }
+
     const updated = reimbursementExpenses.map(r => r.key === reimbPayTarget.key
       ? { ...r, paymentStatus: 'Paid', paymentProof: proofFile, paidDate: new Date().toISOString().slice(0, 10), paidBy: vals.paid_by || 'Finance Team' }
       : r);
     setReimbursementExpenses(updated);
     localStorage.setItem('hng_pickup_expenses', JSON.stringify(updated));
-    // Also update dispatch tracking
+
+    if (base64) {
+      const existing = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
+      existing[reimbPayTarget.key] = { ...(existing[reimbPayTarget.key] || {}), paymentProof: base64 };
+      localStorage.setItem('hng_proofs', JSON.stringify(existing));
+      setProofData(prev => ({
+        ...prev,
+        [reimbPayTarget.key]: { ...(prev[reimbPayTarget.key] || {}), paymentProof: base64 },
+      }));
+    }
+
     const tracking = JSON.parse(localStorage.getItem('hng_dispatch_tracking') || '[]');
     const updatedTracking = tracking.map(o => o.key === reimbPayTarget.key
       ? { ...o, paymentStatus: 'Paid', paymentProof: proofFile }
@@ -423,7 +451,7 @@ export default function Financial() {
                               <Button size="small" icon={<MessageOutlined />}
                                 onClick={() => { setOpenReqNotes(openReqNotes === r.key ? null : r.key); setReqNoteInput(''); }}
                                 style={{ color: openReqNotes === r.key ? '#fff' : '#B11E6A', background: openReqNotes === r.key ? '#B11E6A' : 'transparent', borderColor: '#B11E6A55' }}
-                              />
+                              >Modify</Button>
                             </Badge>
                           );
                           const supPhone = (suppliersData[r.supplier]?.phone || '').replace(/\D/g, '');
@@ -443,9 +471,6 @@ export default function Financial() {
                                     style={{ background: '#52c41a', border: 'none' }}>Approve</Button>
                                   <Button size="small" danger icon={<CloseCircleOutlined />}
                                     onClick={() => { dispatch(updateRequestStatus({ key: r.key, status: 'Rejected' })); message.warning(`Rejected`); }}>Reject</Button>
-                                  <Button size="small" icon={<EditOutlined />}
-                                    onClick={() => { setEditReqTarget(r); editReqForm.setFieldsValue({ qty: r.qty, payment_terms: r.payment_terms }); setShowEditReqModal(true); }}
-                                    style={{ borderColor: '#722ed1', color: '#722ed1' }}>Edit</Button>
                                 </>
                               )}
                               {noteCount > 0 && (
@@ -514,13 +539,21 @@ export default function Financial() {
                                 dataSource={reimbursementExpenses}
                                 rowKey="key"
                                 pagination={{ pageSize: 8 }}
-                                scroll={{ x: 1100 }}
+                                scroll={{ x: 1450 }}
                                 columns={[
                                   { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
                                   { title: 'Order ID', dataIndex: 'orderId', key: 'orderId', width: 90, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
                                   { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', width: 130, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
                                   { title: 'Item', dataIndex: 'item', key: 'item', width: 160, render: v => <Text strong>{v}</Text> },
                                   { title: 'Category', dataIndex: 'category', key: 'category', width: 90, render: v => <Tag color="blue" style={{ borderRadius: 8, fontSize: 13 }}>{v}</Tag> },
+                                  {
+                                    title: 'Payment Source', dataIndex: 'paymentSource', key: 'paymentSource', width: 130, align: 'center',
+                                    render: (v, r) => {
+                                      const src = v || (r.paidBy === 'Pickup Team' ? 'Pickup Team' : r.paidBy ? 'Finance' : null);
+                                      if (!src) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+                                      return <Tag color={src === 'Finance' ? 'blue' : 'green'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{src}</Tag>;
+                                    }
+                                  },
                                   {
                                     title: 'Pickup Employee', key: 'employee', width: 165,
                                     render: (_, r) => (
@@ -532,7 +565,20 @@ export default function Financial() {
                                   },
                                   { title: 'G Pay Number', dataIndex: 'gPayNumber', key: 'gpay', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
                                   { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
-                                  { title: 'Pickup Proof', dataIndex: 'proof', key: 'proof', width: 115, render: v => v ? <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button> : <Tag color="default" style={{ borderRadius: 8, fontSize: 12 }}>None</Tag> },
+                                  {
+                                    title: 'Uploaded Proof', dataIndex: 'proof', key: 'proof', width: 130,
+                                    render: (v, r) => {
+                                      const url = proofData[r.key]?.proof;
+                                      if (url) {
+                                        const isImg = url.startsWith('data:image');
+                                        return isImg
+                                          ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #B11E6A33' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
+                                          : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A', fontSize: 12 }}>View File</Button>;
+                                      }
+                                      if (v) return <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button>;
+                                      return <Tag color="warning" style={{ borderRadius: 8, fontSize: 11 }}>Not Uploaded</Tag>;
+                                    }
+                                  },
                                   {
                                     title: 'Payment Status', dataIndex: 'paymentStatus', key: 'pay_status', width: 125, align: 'center',
                                     render: (v, r) => (
@@ -542,7 +588,26 @@ export default function Financial() {
                                       </Space>
                                     )
                                   },
-                                  { title: 'Payment Proof', dataIndex: 'paymentProof', key: 'pay_proof', width: 125, render: v => v ? <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View</Button> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text> },
+                                  {
+                                    title: 'Paid By', dataIndex: 'paidBy', key: 'paidBy', width: 120, align: 'center',
+                                    render: v => v
+                                      ? <Tag color={v === 'Pickup Team' ? 'green' : 'blue'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{v}</Tag>
+                                      : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                  },
+                                  {
+                                    title: 'Finance Payment Proof', dataIndex: 'paymentProof', key: 'pay_proof', width: 155,
+                                    render: (v, r) => {
+                                      const url = proofData[r.key]?.paymentProof;
+                                      if (url) {
+                                        const isImg = url.startsWith('data:image');
+                                        return isImg
+                                          ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #52c41a55' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
+                                          : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 12 }}>View File</Button>;
+                                      }
+                                      if (v) return <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>;
+                                      return <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Uploaded</Tag>;
+                                    }
+                                  },
                                   {
                                     title: 'Actions', key: 'actions', fixed: 'right', width: 115,
                                     render: (_, r) => r.paymentStatus === 'Paid' ? (

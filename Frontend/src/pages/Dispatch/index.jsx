@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Typography, Space,
-  Descriptions, Alert, Select, Tabs, Divider, Collapse, Checkbox,
+  Descriptions, Alert, Select, Tabs, Divider, Collapse, Checkbox, Upload, message, InputNumber, Image,
 } from 'antd';
 import {
   CarOutlined, CheckCircleOutlined, UploadOutlined, EyeOutlined,
@@ -141,6 +141,21 @@ export default function Dispatch() {
     } catch { return []; }
   });
   const [pickupSubTab, setPickupSubTab] = useState('pickup_orders');
+
+  // ── Proof data (base64) — shared via hng_proofs localStorage cross-page ──
+  const [proofData, setProofData] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('hng_proofs') || '{}'); } catch { return {}; }
+  });
+
+  // ── Taken Status / Payment By modal state ────────────────────────────────
+  const [pickupStatusMap, setPickupStatusMap] = useState({});
+  const [pickupPayByMap, setPickupPayByMap] = useState({});
+  const [showPickupPayModal, setShowPickupPayModal] = useState(false);
+  const [pickupPayTarget, setPickupPayTarget] = useState(null);
+  const [pickupPayForm] = Form.useForm();
+  const [showReceivedModal, setShowReceivedModal] = useState(false);
+  const [receivedTarget, setReceivedTarget] = useState(null);
+
   const [reimbExpenses, setReimbExpenses] = useState(() => {
     try {
       const stored = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
@@ -156,11 +171,119 @@ export default function Dispatch() {
         if (tracking.length > 0) setPickupOrders(tracking);
         const expenses = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
         if (expenses.length > 0) setReimbExpenses(expenses);
+        const proofs = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
+        if (Object.keys(proofs).length > 0) setProofData(prev => JSON.stringify(prev) !== JSON.stringify(proofs) ? proofs : prev);
       } catch {}
     };
     const interval = setInterval(reload, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // ── Pickup Status / Payment handlers ──────────────────────────────────────
+  const handlePickupStatusChange = (record, status) => {
+    setPickupStatusMap(prev => ({ ...prev, [record.key]: status }));
+    if (status === 'pickup_dropped') {
+      setReceivedTarget(record);
+      setShowReceivedModal(true);
+    }
+  };
+
+  const handlePickupPayByChange = (record, payBy) => {
+    setPickupPayByMap(prev => ({ ...prev, [record.key]: payBy }));
+    setPickupPayTarget({ ...record, payBy });
+    pickupPayForm.resetFields();
+    setShowPickupPayModal(true);
+  };
+
+  const handlePickupPaySubmit = async (vals) => {
+    const fileItem = vals.proof?.fileList?.[0];
+    const proofFile = fileItem?.name || null;
+    const payBy = pickupPayTarget.payBy;
+    const gPayNum = vals.gPayNumber || null;
+    const amt = vals.amount || 0;
+    const expenseKey = `DT-${Date.now()}`;
+
+    let base64 = null;
+    if (fileItem?.originFileObj) {
+      base64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.readAsDataURL(fileItem.originFileObj);
+      });
+    }
+
+    const newExpense = {
+      key: expenseKey,
+      orderId: pickupPayTarget.orderId || pickupPayTarget.id || '—',
+      date: new Date().toISOString().slice(0, 10),
+      supplier: pickupPayTarget.supplier || '—',
+      item: pickupPayTarget.item || '—',
+      amount: amt,
+      pickupEmpId: pickupPayTarget.pickupEmpId || '—',
+      pickupEmpName: pickupPayTarget.pickupEmpName || '—',
+      category: 'PICKUP',
+      gPayNumber: gPayNum,
+      proof: proofFile,
+      paymentSource: payBy === 'finance' ? 'Finance' : 'Pickup Team',
+      paymentStatus: payBy === 'pickup_team' ? 'Paid' : 'Pending',
+      paymentProof: payBy === 'pickup_team' ? proofFile : null,
+      paidDate: payBy === 'pickup_team' ? new Date().toISOString().slice(0, 10) : null,
+      paidBy: payBy === 'pickup_team' ? 'Pickup Team' : null,
+    };
+
+    const updatedExpenses = [...reimbExpenses, newExpense];
+    setReimbExpenses(updatedExpenses);
+    localStorage.setItem('hng_pickup_expenses', JSON.stringify(updatedExpenses));
+
+    const proofEntry = {
+      proof: base64,
+      ...(payBy === 'pickup_team' ? { paymentProof: base64 } : {}),
+    };
+    if (base64) {
+      const existing = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
+      existing[expenseKey] = proofEntry;
+      existing[pickupPayTarget.key] = proofEntry; // also keyed by tracking order key
+      localStorage.setItem('hng_proofs', JSON.stringify(existing));
+      setProofData(prev => ({
+        ...prev,
+        [expenseKey]: proofEntry,
+        [pickupPayTarget.key]: proofEntry,
+      }));
+    }
+
+    const updatedOrders = pickupOrders.map(o => o.key === pickupPayTarget.key
+      ? {
+          ...o,
+          takenStatus: 'taken',
+          takenProof: proofFile,
+          paymentBy: payBy,
+          expenseKey,
+          paymentStatus: payBy === 'pickup_team' ? 'Paid' : 'Pending',
+          paymentProof: payBy === 'pickup_team' ? proofFile : null,
+          paidBy: payBy === 'pickup_team' ? 'Pickup Team' : null,
+        }
+      : o);
+    setPickupOrders(updatedOrders);
+    localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedOrders));
+
+    message.success(payBy === 'pickup_team'
+      ? 'Payment proof uploaded — visible to Finance team as Paid.'
+      : 'Sent to Finance team with GPay number and proof.');
+    setShowPickupPayModal(false);
+    setPickupPayTarget(null);
+    pickupPayForm.resetFields();
+  };
+
+  const handlePickupDroppedConfirm = () => {
+    const updatedOrders = pickupOrders.map(o => o.key === receivedTarget?.key
+      ? { ...o, takenStatus: 'pickup_dropped', deliveryStatus: 'Received' }
+      : o);
+    setPickupOrders(updatedOrders);
+    localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedOrders));
+    message.success(`Order ${receivedTarget?.orderId} marked as Pickup Dropped — received order process started.`);
+    setShowReceivedModal(false);
+    setReceivedTarget(null);
+  };
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const openPrintModal = (order) => {
@@ -577,7 +700,7 @@ export default function Dispatch() {
                               dataSource={pickupOrders}
                               rowKey="key"
                               pagination={{ pageSize: 8, size: 'small' }}
-                              scroll={{ x: 1000 }}
+                              scroll={{ x: 1650 }}
                               columns={[
                                 { title: 'Date', dataIndex: 'date', width: 95 },
                                 { title: 'Order ID', dataIndex: 'orderId', width: 95, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
@@ -594,24 +717,94 @@ export default function Dispatch() {
                                 },
                                 { title: 'LR Number', dataIndex: 'lrNumber', width: 115, render: v => v ? <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> : <Text type="secondary">—</Text> },
                                 {
-                                  title: 'Taken Status', key: 'taken', width: 130,
-                                  render: (_, r) => (
-                                    <div>
-                                      <Tag color={r.takenStatus === 'taken' ? 'success' : 'default'} style={{ borderRadius: 8 }}>
-                                        {r.takenStatus === 'taken' ? 'Taken' : 'Pending'}
-                                      </Tag>
-                                      {r.takenProof && (
-                                        <div style={{ marginTop: 4 }}>
-                                          <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 10, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )
+                                  title: 'Taken Status', key: 'taken', width: 165,
+                                  render: (_, r) => {
+                                    const currentStatus = pickupStatusMap[r.key] ?? r.takenStatus ?? undefined;
+                                    const alreadyDone = !pickupStatusMap[r.key] && r.paymentBy;
+                                    return (
+                                      <Select
+                                        size="small"
+                                        value={currentStatus}
+                                        placeholder="Select status"
+                                        style={{ width: 152 }}
+                                        onClick={e => e.stopPropagation()}
+                                        onChange={v => handlePickupStatusChange(r, v)}
+                                        disabled={!!alreadyDone}
+                                      >
+                                        <Option value="taken">Taken</Option>
+                                        <Option value="pickup_dropped">Pickup Dropped</Option>
+                                      </Select>
+                                    );
+                                  }
+                                },
+                                {
+                                  title: 'Payment By', key: 'paymentBy', width: 185,
+                                  render: (_, r) => {
+                                    const currentStatus = pickupStatusMap[r.key] ?? r.takenStatus ?? undefined;
+                                    const currentPayBy = pickupPayByMap[r.key] ?? r.paymentBy ?? undefined;
+                                    if (currentStatus !== 'taken') return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+                                    if (currentPayBy) {
+                                      return (
+                                        <Tag
+                                          color={currentPayBy === 'finance' ? 'blue' : 'green'}
+                                          style={{ borderRadius: 8, fontWeight: 600 }}
+                                        >
+                                          {currentPayBy === 'finance' ? 'Finance' : 'Pickup Team'}
+                                        </Tag>
+                                      );
+                                    }
+                                    return (
+                                      <Select
+                                        size="small"
+                                        placeholder="Select payer"
+                                        style={{ width: 170 }}
+                                        onClick={e => e.stopPropagation()}
+                                        onChange={v => handlePickupPayByChange(r, v)}
+                                      >
+                                        <Option value="finance">Payment by Finance</Option>
+                                        <Option value="pickup_team">Payment by Pickup Team</Option>
+                                      </Select>
+                                    );
+                                  }
+                                },
+                                {
+                                  title: 'Finance Payment Proof', key: 'finProof', width: 155,
+                                  render: (_, r) => {
+                                    const lookupKey = r.key;
+                                    const altKey = r.expenseKey;
+                                    const url = proofData[lookupKey]?.paymentProof || proofData[altKey]?.paymentProof;
+                                    if (url) {
+                                      const isImg = url.startsWith('data:image');
+                                      return isImg
+                                        ? <Image src={url} width={46} height={46} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #52c41a55' }} preview={{ mask: <EyeOutlined style={{ fontSize: 13 }} /> }} />
+                                        : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 12 }}>View File</Button>;
+                                    }
+                                    if (r.paymentProof) return <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>;
+                                    return <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Paid</Tag>;
+                                  }
+                                },
+                                {
+                                  title: 'Payment Status', key: 'payStatus', width: 130, align: 'center',
+                                  render: (_, r) => {
+                                    const status = r.paymentStatus;
+                                    if (!status) return <Tag style={{ borderRadius: 8, fontSize: 12 }}>—</Tag>;
+                                    return (
+                                      <div>
+                                        <Tag
+                                          color={status === 'Paid' ? 'success' : 'warning'}
+                                          style={{ borderRadius: 10, fontWeight: 600, fontSize: 12 }}
+                                        >
+                                          {status === 'Paid' ? 'Paid' : 'Pending'}
+                                        </Tag>
+                                        {r.paidBy && <Text type="secondary" style={{ display: 'block', fontSize: 10, marginTop: 2 }}>{r.paidBy}</Text>}
+                                      </div>
+                                    );
+                                  }
                                 },
                                 {
                                   title: 'Delivery Status', dataIndex: 'deliveryStatus', width: 120,
                                   render: v => {
-                                    const colorMap = { 'Delivered': 'success', 'Partial Delivery': 'warning', 'In Transit': 'processing' };
+                                    const colorMap = { 'Delivered': 'success', 'Partial Delivery': 'warning', 'In Transit': 'processing', 'Received': 'success' };
                                     return <Tag color={colorMap[v] || 'default'} style={{ borderRadius: 8 }}>{v || 'Pending'}</Tag>;
                                   }
                                 },
@@ -650,7 +843,7 @@ export default function Dispatch() {
                               dataSource={reimbExpenses}
                               rowKey="key"
                               pagination={{ pageSize: 8, size: 'small' }}
-                              scroll={{ x: 1100 }}
+                              scroll={{ x: 1450 }}
                               columns={[
                                 { title: 'Date', dataIndex: 'date', width: 95 },
                                 { title: 'Order ID', dataIndex: 'orderId', width: 95, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
@@ -666,6 +859,14 @@ export default function Dispatch() {
                                   )
                                 },
                                 {
+                                  title: 'Payment Source', dataIndex: 'paymentSource', width: 130, align: 'center',
+                                  render: (v, r) => {
+                                    const src = v || (r.paidBy === 'Pickup Team' ? 'Pickup Team' : r.paidBy ? 'Finance' : null);
+                                    if (!src) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+                                    return <Tag color={src === 'Finance' ? 'blue' : 'green'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{src}</Tag>;
+                                  }
+                                },
+                                {
                                   title: 'G Pay', dataIndex: 'gPayNumber', width: 125,
                                   render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text>
                                 },
@@ -674,27 +875,49 @@ export default function Dispatch() {
                                   render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text>
                                 },
                                 {
-                                  title: 'Taken Proof', dataIndex: 'proof', width: 115,
-                                  render: v => v ? (
-                                    <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button>
-                                  ) : <Tag color="default" style={{ borderRadius: 8, fontSize: 12 }}>Not Uploaded</Tag>
+                                  title: 'Uploaded Proof', dataIndex: 'proof', width: 130,
+                                  render: (v, r) => {
+                                    const url = proofData[r.key]?.proof;
+                                    if (url) {
+                                      const isImg = url.startsWith('data:image');
+                                      return isImg
+                                        ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #B11E6A33' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
+                                        : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A', fontSize: 12 }}>View File</Button>;
+                                    }
+                                    if (v) return <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button>;
+                                    return <Tag color="warning" style={{ borderRadius: 8, fontSize: 11 }}>Not Uploaded</Tag>;
+                                  }
                                 },
                                 {
                                   title: 'Payment Status', dataIndex: 'paymentStatus', width: 135, align: 'center',
                                   render: (v, r) => (
                                     <div>
                                       <Tag color={v === 'Paid' ? 'success' : 'warning'} style={{ borderRadius: 10, fontSize: 13 }}>
-                                        {v === 'Paid' ? 'Paid' : 'Unpaid / Pending'}
+                                        {v === 'Paid' ? 'Paid' : 'Pending (Finance)'}
                                       </Tag>
                                       {r.paidDate && <Text type="secondary" style={{ display: 'block', fontSize: 11, marginTop: 2 }}>{r.paidDate}</Text>}
                                     </div>
                                   )
                                 },
                                 {
-                                  title: 'Payment Proof', dataIndex: 'paymentProof', width: 125,
-                                  render: v => v ? (
-                                    <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>
-                                  ) : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                  title: 'Paid By', key: 'paidBy', width: 115,
+                                  render: (_, r) => r.paidBy
+                                    ? <Tag color={r.paidBy === 'Pickup Team' ? 'green' : 'blue'} style={{ borderRadius: 8, fontSize: 12 }}>{r.paidBy}</Tag>
+                                    : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                },
+                                {
+                                  title: 'Finance Payment Proof', dataIndex: 'paymentProof', width: 155,
+                                  render: (v, r) => {
+                                    const url = proofData[r.key]?.paymentProof;
+                                    if (url) {
+                                      const isImg = url.startsWith('data:image');
+                                      return isImg
+                                        ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #52c41a55' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
+                                        : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 12 }}>View File</Button>;
+                                    }
+                                    if (v) return <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>;
+                                    return <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Paid</Tag>;
+                                  }
                                 },
                               ]}
                             />
@@ -741,6 +964,121 @@ export default function Dispatch() {
           },
         ]}
       />
+
+      {/* ── Pickup Payment Modal ─────────────────────────────────────────────── */}
+      <Modal
+        title={
+          <Space>
+            <WalletOutlined style={{ color: '#B11E6A' }} />
+            <span>{pickupPayTarget?.payBy === 'finance' ? 'Send to Finance — GPay & Proof' : 'Pickup Team Payment — Upload Proof'}</span>
+          </Space>
+        }
+        open={showPickupPayModal}
+        onCancel={() => { setShowPickupPayModal(false); setPickupPayTarget(null); pickupPayForm.resetFields(); }}
+        footer={null}
+        width={480}
+        centered
+        destroyOnClose
+      >
+        {pickupPayTarget && (
+          <Form form={pickupPayForm} layout="vertical" onFinish={handlePickupPaySubmit}>
+            <div style={{ background: '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: '1px solid #e8f4ff' }}>
+              <Text strong style={{ display: 'block' }}>{pickupPayTarget.item || '—'}</Text>
+              <Text style={{ color: '#B11E6A' }}>{pickupPayTarget.supplier || '—'}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>
+                Order: {pickupPayTarget.orderId || pickupPayTarget.id || '—'} &nbsp;·&nbsp; Pickup: {pickupPayTarget.pickupEmpName || '—'}
+              </Text>
+              <Tag color={pickupPayTarget.payBy === 'finance' ? 'blue' : 'green'} style={{ marginTop: 6, borderRadius: 8 }}>
+                {pickupPayTarget.payBy === 'finance' ? 'Payment by Finance' : 'Payment by Pickup Team'}
+              </Tag>
+            </div>
+
+            <Form.Item label="Expense Amount (₹)" name="amount" rules={[{ required: true, message: 'Enter expense amount' }]}>
+              <InputNumber
+                prefix="₹"
+                style={{ width: '100%' }}
+                min={0}
+                formatter={v => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                parser={v => v.replace(/₹\s?|(,*)/g, '')}
+                placeholder="0"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label={pickupPayTarget.payBy === 'finance' ? 'GPay Number (Finance will send payment here)' : 'GPay Number (Pickup employee who paid)'}
+              name="gPayNumber"
+              rules={[{ required: true, message: 'Enter GPay / UPI number' }]}
+            >
+              <Input prefix={<PhoneOutlined />} placeholder="Enter G Pay / UPI number" style={{ borderRadius: 8 }} />
+            </Form.Item>
+
+            <Form.Item
+              label={pickupPayTarget.payBy === 'finance' ? 'Upload Proof (Bill / Supplier Receipt)' : 'Upload Payment Proof (Payment Screenshot / Receipt)'}
+              name="proof"
+              rules={[{ required: true, message: 'Please upload proof' }]}
+            >
+              <Upload.Dragger maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+                <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#B11E6A' }} /></p>
+                <p className="ant-upload-text" style={{ fontSize: 13 }}>
+                  {pickupPayTarget.payBy === 'finance'
+                    ? 'Click or drag supplier bill / receipt'
+                    : 'Click or drag payment screenshot / receipt'}
+                </p>
+              </Upload.Dragger>
+            </Form.Item>
+
+            {pickupPayTarget.payBy === 'finance' ? (
+              <Alert
+                type="info"
+                showIcon
+                style={{ borderRadius: 8, marginBottom: 14, fontSize: 12 }}
+                message="This will appear in Finance team's Reimbursement Expense tab with GPay number and proof. Finance will process and send payment."
+              />
+            ) : (
+              <Alert
+                type="success"
+                showIcon
+                style={{ borderRadius: 8, marginBottom: 14, fontSize: 12 }}
+                message="This will appear in Finance team's Reimbursement Expense tab as Paid with GPay number and uploaded proof."
+              />
+            )}
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button block onClick={() => { setShowPickupPayModal(false); pickupPayForm.resetFields(); }}>Cancel</Button>
+              <Button block type="primary" htmlType="submit" style={{ background: '#B11E6A', border: 'none', fontWeight: 600 }}>
+                {pickupPayTarget.payBy === 'finance' ? 'Send to Finance' : 'Submit Payment Proof'}
+              </Button>
+            </div>
+          </Form>
+        )}
+      </Modal>
+
+      {/* ── Pickup Dropped — Received Confirmation Modal ──────────────────────── */}
+      <Modal
+        title={<Space><CheckCircleOutlined style={{ color: '#fa8c16' }} /><span>Pickup Dropped — Received Order Process</span></Space>}
+        open={showReceivedModal}
+        onCancel={() => { setShowReceivedModal(false); setReceivedTarget(null); setPickupStatusMap(prev => { const n = { ...prev }; if (receivedTarget) delete n[receivedTarget.key]; return n; }); }}
+        onOk={handlePickupDroppedConfirm}
+        okText="Confirm — Mark as Received"
+        okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
+        centered
+        width={440}
+      >
+        {receivedTarget && (
+          <div>
+            <Alert
+              type="warning"
+              showIcon
+              message="Pickup Dropped"
+              description={`Order ${receivedTarget.orderId || '—'} from ${receivedTarget.supplier || '—'} will be marked as Pickup Dropped and the received order process will be initiated.`}
+              style={{ borderRadius: 8, marginBottom: 14 }}
+            />
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              The order delivery status will be updated to <Text strong>Received</Text> and will be visible in the tracking view.
+            </Text>
+          </div>
+        )}
+      </Modal>
 
       {/* ── Dispatch Label Modal ──────────────────────────────────────────────── */}
       <Modal

@@ -80,7 +80,7 @@ const purchaseSlice = createSlice({
     },
     addBulkRequests(state, action) {
       action.payload.forEach(req => {
-        state.raisedRequests.push({ ...req, key: Date.now() + Math.random(), status: 'Pending' });
+        state.raisedRequests.push({ ...req, key: Date.now() + Math.random(), status: 'Pending', requestType: 'bulk' });
       });
     },
     dismissNewProductRequest(state, action) {

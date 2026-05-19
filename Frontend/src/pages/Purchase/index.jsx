@@ -190,6 +190,9 @@ export default function Purchase() {
   const [bulkSupplierName, setBulkSupplierName] = useState('');
   const [bulkItems, setBulkItems] = useState([]);
   const [bulkPayTerms, setBulkPayTerms] = useState('');
+  const [bulkQuotationAsked, setBulkQuotationAsked] = useState(false);
+  const [bulkRaiseFile, setBulkRaiseFile] = useState(null);
+  const [bulkRaiseScanLoading, setBulkRaiseScanLoading] = useState(false);
 
   /* â"€â"€ WhatsApp reminder tracking (30-min intervals per inventory item key) â"€â"€ */
   const reminderIntervalsRef = useRef({});
@@ -861,6 +864,8 @@ export default function Purchase() {
 
   const handleBulkSupplierSelect = (supplierName) => {
     setBulkSupplierName(supplierName);
+    setBulkQuotationAsked(false);
+    setBulkRaiseFile(null);
     const supplierItems = inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller === supplierName);
     const otherLowStock = inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller !== supplierName);
     const allItems = [...supplierItems, ...otherLowStock];
@@ -868,6 +873,7 @@ export default function Purchase() {
       invKey: i.key,
       name: i.name,
       unit: i.unit,
+      category: i.category || 'Other',
       currentStock: i.current,
       minStock: i.min,
       status: i.status,
@@ -877,7 +883,24 @@ export default function Purchase() {
     })));
   };
 
-  const handleBulkPurchaseSubmit = () => {
+  const handleBulkAskQuotation = () => {
+    const selected = bulkItems.filter(i => i.selected && i.qty > 0);
+    if (selected.length === 0) { message.warning('Select at least one product'); return; }
+    if (!bulkSupplierName) { message.warning('Select a supplier first'); return; }
+    if (!bulkPayTerms) { message.warning('Select payment terms'); return; }
+    const supplierInfo = suppliers.find(s => s.name === bulkSupplierName);
+    if (supplierInfo?.phone) {
+      const itemLines = selected.map(i => `• ${i.name} — Qty: ${i.qty} ${i.unit}`).join('\n');
+      const waMsg = `Hello ${bulkSupplierName},\n\nWe would like to request a quotation for the following items:\n\n${itemLines}\n\nPayment Terms: ${bulkPayTerms}\n\nKindly share your best prices at the earliest convenience.\n\nThank you.`;
+      const phone = supplierInfo.phone.replace(/\D/g, '');
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}`, '_blank');
+    }
+    setBulkQuotationAsked(true);
+    message.success('Quotation request sent to supplier via WhatsApp!');
+  };
+
+  const handleBulkRaiseRequest = () => {
+    if (!bulkRaiseFile) { message.warning('Please upload the quotation file received from the supplier'); return; }
     const selected = bulkItems.filter(i => i.selected && i.qty > 0);
     if (selected.length === 0) { message.warning('Select at least one product'); return; }
     if (!bulkSupplierName) { message.warning('Select a supplier first'); return; }
@@ -887,22 +910,18 @@ export default function Purchase() {
       supplier: bulkSupplierName,
       qty: item.qty,
       unit: item.unit,
+      category: item.category || 'Other',
       payment_terms: bulkPayTerms,
       date: dayjs().format('YYYY-MM-DD'),
+      quotation_file: bulkRaiseFile.name,
     }))));
-    // Notify vendor via WhatsApp
-    const supplierInfo = suppliers.find(s => s.name === bulkSupplierName);
-    if (supplierInfo?.phone) {
-      const itemLines = selected.map(i => `• ${i.name} — Qty: ${i.qty} ${i.unit}`).join('\n');
-      const waMsg = `Hello ${bulkSupplierName},\n\nWe would like to place a bulk purchase order for the following items:\n\n${itemLines}\n\nPayment Terms: ${bulkPayTerms}\n\nPlease confirm availability and pricing at your earliest convenience.\n\nThank you.`;
-      const phone = supplierInfo.phone.replace(/\D/g, '');
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}`, '_blank');
-    }
-    message.success(`${selected.length} bulk purchase request(s) raised — vendor notified via WhatsApp!`);
+    message.success(`${selected.length} bulk purchase request(s) raised — sent to Financial for approval!`);
     setShowBulkPurchaseModal(false);
     setBulkSupplierName('');
     setBulkItems([]);
     setBulkPayTerms('');
+    setBulkQuotationAsked(false);
+    setBulkRaiseFile(null);
   };
 
   // â"€â"€ WhatsApp reminder helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -1062,6 +1081,42 @@ export default function Purchase() {
                           onExpand: () => {},
                           showExpandColumn: false,
                           expandedRowRender: (r) => {
+                            const linkedReq = raisedRequests.find(req => req.item === r.name);
+                            if (linkedReq) {
+                              // 2-way shared notes with Financial page (stored in Redux)
+                              const reqNotes = linkedReq.notes || [];
+                              return (
+                                <div style={{ padding: '12px 16px', background: isDark ? '#16192a' : '#fafcff', borderRadius: 8 }}>
+                                  <Text style={{ fontSize: 12, fontWeight: 600, color: '#B11E6A', display: 'block', marginBottom: 4 }}>
+                                    <MessageOutlined style={{ marginRight: 4 }} />Shared Notes — {r.name}
+                                  </Text>
+                                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+                                    Notes added here are visible to the Financial team and vice versa.
+                                  </Text>
+                                  {reqNotes.length === 0 && <Text type="secondary" style={{ fontSize: 11 }}>No notes yet. Add one below.</Text>}
+                                  {reqNotes.map((n, i) => (
+                                    <div key={i} style={{ padding: '6px 10px', marginBottom: 6, borderRadius: 6, background: isDark ? '#1e2235' : '#f0f4ff', border: `1px solid ${isDark ? '#2a2d40' : '#d6e4ff'}` }}>
+                                      <Text style={{ fontSize: 12 }}>{n.text}</Text>
+                                      <br />
+                                      <Text type="secondary" style={{ fontSize: 10 }}><ClockCircleOutlined style={{ marginRight: 3 }} />{n.timestamp}</Text>
+                                    </div>
+                                  ))}
+                                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                    <Input
+                                      size="small"
+                                      placeholder="Add a shared note (visible to Finance)..."
+                                      value={reqNoteInput}
+                                      onChange={e => setReqNoteInput(e.target.value)}
+                                      onPressEnter={() => handleAddReqNote(linkedReq.key)}
+                                      style={{ flex: 1, borderRadius: 6 }}
+                                    />
+                                    <Button size="small" type="primary" onClick={() => handleAddReqNote(linkedReq.key)}
+                                      style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Add</Button>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            // Local inventory notes (no linked request yet)
                             const notes = invItemNotes[r.key] || [];
                             return (
                               <div style={{ padding: '10px 16px', background: isDark ? '#16192a' : '#fafcff', borderRadius: 8 }}>
@@ -1193,7 +1248,7 @@ export default function Purchase() {
                               const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === req?.key);
                               const hasReminder = activeReminders.has(r.key);
                               const reminderCount = reminderCounts[r.key] || 0;
-                              const noteCount = (invItemNotes[r.key] || []).length;
+                              const noteCount = req ? (req.notes || []).length : (invItemNotes[r.key] || []).length;
                               const noteBtn = (
                                 <Badge count={noteCount} size="small" offset={[-2, 2]}>
                                   <Button
@@ -1201,7 +1256,7 @@ export default function Purchase() {
                                     icon={<MessageOutlined />}
                                     onClick={() => setOpenInvNotes(openInvNotes === r.key ? null : r.key)}
                                     style={{ color: openInvNotes === r.key ? '#fff' : '#B11E6A', background: openInvNotes === r.key ? '#B11E6A' : 'transparent', borderColor: '#B11E6A55' }}
-                                  />
+                                  >{req ? 'Modify' : ''}</Button>
                                 </Badge>
                               );
 
@@ -1287,6 +1342,168 @@ export default function Purchase() {
                           }
                         ]}
                       />
+
+                      {/* ── Bulk Purchase Requests Table (category-separated) ── */}
+                      {(() => {
+                        const bulkReqs = raisedRequests.filter(r => r.requestType === 'bulk');
+                        if (bulkReqs.length === 0) return null;
+
+                        // Group by category
+                        const categoryMap = {};
+                        bulkReqs.forEach(req => {
+                          const cat = req.category || 'Other';
+                          if (!categoryMap[cat]) categoryMap[cat] = [];
+                          categoryMap[cat].push(req);
+                        });
+
+                        const bulkTableColumns = [
+                          {
+                            title: 'Item', dataIndex: 'item', key: 'item', width: 180,
+                            render: v => <Text strong>{v}</Text>
+                          },
+                          {
+                            title: 'Supplier', dataIndex: 'supplier', key: 'supplier', width: 140,
+                            render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text>
+                          },
+                          {
+                            title: 'Qty', key: 'qty', width: 90,
+                            render: (_, r) => <Text strong>{r.qty} {r.unit}</Text>
+                          },
+                          {
+                            title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', width: 200,
+                            render: v => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>
+                          },
+                          {
+                            title: 'Date', dataIndex: 'date', key: 'date', width: 100,
+                            render: v => <Text style={{ fontSize: 12 }}>{v}</Text>
+                          },
+                          {
+                            title: 'Quotation Status', key: 'status', width: 120,
+                            render: (_, r) => {
+                              const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
+                              return <Tag color={colorMap[r.status] || 'default'} style={{ borderRadius: 12 }}>{r.status}</Tag>;
+                            }
+                          },
+                          {
+                            title: 'Finance Status', key: 'finance_status', width: 130,
+                            render: (_, r) => {
+                              if (!r.financeStatus) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              if (r.financeStatus === 'Approved') return <Tag color="success" style={{ borderRadius: 12 }}>Approved</Tag>;
+                              if (r.financeStatus === 'ModifyRequested') return (
+                                <Tooltip title={r.financeNote || 'Modify requested by finance'}>
+                                  <Tag color="warning" style={{ borderRadius: 12, cursor: 'pointer' }}>Modify Requested</Tag>
+                                </Tooltip>
+                              );
+                              return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                            }
+                          },
+                          {
+                            title: 'Quotation File', key: 'quotation_file', width: 130,
+                            render: (_, r) => r.quotation_file
+                              ? <Space size={4}><FileTextOutlined style={{ color: '#B11E6A' }} /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{r.quotation_file}</Text></Space>
+                              : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                          },
+                          {
+                            title: 'Action', key: 'action', fixed: 'right', width: 200,
+                            render: (_, r) => {
+                              const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === r.key);
+                              if (orderAlreadyRaised) return <Tag color="success" style={{ borderRadius: 10 }}>Order Placed</Tag>;
+
+                              if (r.status === 'Approved') return (
+                                <Space wrap size={4}>
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    icon={<ShoppingOutlined />}
+                                    onClick={() => {
+                                      setSelectedPlaceOrderReq(r);
+                                      setSelectedPlaceOrderItem({ name: r.item, unit: r.unit, key: r.key });
+                                      setShowPlaceOrderModal(true);
+                                    }}
+                                    style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
+                                  >
+                                    Place Order
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    icon={<DollarOutlined />}
+                                    onClick={() => { setSelectedApprovedRequest(r); setShowRequestOrderModal(true); }}
+                                    style={{ background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 600 }}
+                                  >
+                                    Payment Request
+                                  </Button>
+                                </Space>
+                              );
+
+                              if (r.status === 'Pending') {
+                                const sup = suppliersList.find(s => s.name === r.supplier);
+                                const phone = sup ? sup.phone.replace(/\D/g, '') : '';
+                                const latestNote = (r.notes || []).at(-1);
+                                const msg = `*Bulk Order Follow-up*\n\n*Item:* ${r.item}\n*Quantity:* ${r.qty} ${r.unit}\n*Payment Terms:* ${r.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly share the quotation at the earliest.`;
+                                return (
+                                  <Button
+                                    size="small"
+                                    icon={<WhatsAppOutlined />}
+                                    style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
+                                    onClick={() => window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank')}
+                                  >
+                                    Ask Quotation
+                                  </Button>
+                                );
+                              }
+
+                              return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                            }
+                          }
+                        ];
+
+                        return (
+                          <div style={{ marginTop: 28 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                              <div>
+                                <Title level={5} style={{ margin: 0, color: textColor }}>Bulk Purchase Requests</Title>
+                                <Text type="secondary">Requests raised via Bulk Purchase — grouped by category</Text>
+                              </div>
+                              <Tag color="pink" style={{ borderRadius: 10, fontWeight: 600, fontSize: 12 }}>{bulkReqs.length} Total</Tag>
+                            </div>
+                            {Object.entries(categoryMap).map(([cat, items]) => (
+                              <div key={cat} style={{ marginBottom: 20 }}>
+                                <div style={{
+                                  padding: '8px 14px',
+                                  background: isDark ? 'linear-gradient(135deg,#2a0d1a,#1a0f1e)' : 'linear-gradient(135deg,#fff0f6,#fce4f0)',
+                                  borderRadius: '10px 10px 0 0',
+                                  borderBottom: '2px solid #B11E6A',
+                                  display: 'flex', alignItems: 'center', gap: 10
+                                }}>
+                                  <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{cat}</Text>
+                                  <Tag color="magenta" style={{ borderRadius: 10, margin: 0, fontSize: 11 }}>
+                                    {items.length} item{items.length > 1 ? 's' : ''}
+                                  </Tag>
+                                  <Tag color={items.some(i => i.status === 'Approved') ? 'success' : items.some(i => i.status === 'Rejected') ? 'error' : 'processing'} style={{ borderRadius: 10, margin: 0, fontSize: 11 }}>
+                                    {items.some(i => i.status === 'Approved') ? 'Approved' : items.some(i => i.status === 'Rejected') ? 'Rejected' : 'Pending'}
+                                  </Tag>
+                                </div>
+                                <Table
+                                  size="small"
+                                  dataSource={items}
+                                  rowKey="key"
+                                  pagination={false}
+                                  scroll={{ x: 1100 }}
+                                  columns={bulkTableColumns}
+                                  style={{
+                                    border: `1px solid ${isDark ? '#2a2d40' : '#f0d4e4'}`,
+                                    borderTop: 'none',
+                                    borderRadius: '0 0 10px 10px',
+                                    overflow: 'hidden'
+                                  }}
+                                  locale={{ emptyText: 'No bulk requests in this category.' }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )
                 },
@@ -1362,18 +1579,21 @@ export default function Purchase() {
                             ) : <Text type="secondary" style={{ fontSize: 11 }}>No file</Text>
                           },
                           {
-                            title: 'Payment Status', key: 'payment_status', width: 120, align: 'center',
+                            title: 'Payment Status', key: 'payment_status', width: 110, align: 'center',
                             render: (_, r) => {
                               const status = r.paymentStatus || 'Unpaid';
-                              return (
-                                <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
-                                  <Tag color={status === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, margin: 0 }}>{status}</Tag>
-                                  {r.paymentProof && (
-                                    <Text style={{ fontSize: 10, color: '#52c41a' }}><CheckCircleOutlined /> Proof uploaded</Text>
-                                  )}
-                                </Space>
-                              );
+                              return <Tag color={status === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, margin: 0 }}>{status}</Tag>;
                             }
+                          },
+                          {
+                            title: 'Payment Proof', key: 'payment_proof', width: 130, align: 'center',
+                            render: (_, r) => r.paymentProof ? (
+                              <Button size="small" icon={<EyeOutlined />}
+                                style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}
+                                onClick={() => message.info('Viewing payment proof: ' + r.paymentProof)}>
+                                View Proof
+                              </Button>
+                            ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
                           },
                           {
                             title: 'Delivery Status', key: 'delivery_status', width: 120, align: 'center',
@@ -1418,6 +1638,98 @@ export default function Purchase() {
                           },
                         ]}
                       />
+
+                      {/* ── Missing / Short-Received Orders ── */}
+                      {(() => {
+                        const missingOrders = dispatchTrackingOrders.filter(o => o.missingItems && o.missingItems.length > 0);
+                        if (missingOrders.length === 0) return null;
+                        return (
+                          <div style={{ marginTop: 28 }}>
+                            <div style={{ marginBottom: 12 }}>
+                              <Space align="center">
+                                <ExclamationCircleOutlined style={{ color: '#fa8c16', fontSize: 16 }} />
+                                <Title level={5} style={{ margin: 0, color: '#fa8c16' }}>Missing / Short-Received Orders</Title>
+                                <Tag color="warning" style={{ borderRadius: 10, fontWeight: 600 }}>{missingOrders.length} order{missingOrders.length > 1 ? 's' : ''}</Tag>
+                              </Space>
+                              <Text type="secondary" style={{ display: 'block', marginTop: 2 }}>Orders with items that were not fully received — partial delivery recorded</Text>
+                            </div>
+                            <Table
+                              size="small"
+                              dataSource={missingOrders}
+                              rowKey="key"
+                              pagination={false}
+                              scroll={{ x: 1200 }}
+                              style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid #fa8c1633' }}
+                              expandable={{
+                                expandedRowRender: (record) => (
+                                  <div style={{ padding: '10px 16px', background: isDark ? '#1a1200' : '#fffbe6', borderRadius: 8 }}>
+                                    <Text strong style={{ color: '#fa8c16', display: 'block', marginBottom: 8, fontSize: 12 }}>
+                                      <ExclamationCircleOutlined style={{ marginRight: 6 }} />Missing Items Detail — {record.orderId}
+                                    </Text>
+                                    <Table
+                                      size="small"
+                                      dataSource={record.missingItems}
+                                      rowKey="key"
+                                      pagination={false}
+                                      style={{ borderRadius: 8, border: '1px solid #fa8c1644' }}
+                                      columns={[
+                                        { title: 'Item Name', dataIndex: 'name', key: 'name', render: v => <Text strong>{v}</Text> },
+                                        { title: 'Ordered Qty', dataIndex: 'ordered', key: 'ordered', align: 'center', render: v => <Text>{v}</Text> },
+                                        { title: 'Received Qty', dataIndex: 'received', key: 'received', align: 'center', render: v => <Text style={{ color: '#52c41a' }}>{v}</Text> },
+                                        { title: 'Missing Qty', dataIndex: 'missing', key: 'missing', align: 'center', render: v => <Text strong style={{ color: '#ff4d4f' }}>{v}</Text> },
+                                      ]}
+                                    />
+                                  </div>
+                                ),
+                                defaultExpandAllRows: true,
+                              }}
+                              columns={[
+                                { title: 'Order ID', dataIndex: 'orderId', key: 'orderId', width: 100, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                                { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
+                                { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', width: 140, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                                { title: 'Item', dataIndex: 'item', key: 'item', width: 180, render: v => <Text strong>{v}</Text> },
+                                {
+                                  title: 'Qty / Amount', key: 'qty_amt', width: 120,
+                                  render: (_, r) => (
+                                    <Space direction="vertical" size={0}>
+                                      <Text strong>{r.qty} {r.unit}</Text>
+                                      <Text style={{ color: '#B11E6A', fontSize: 11 }}>&#8377;{r.amount?.toLocaleString()}</Text>
+                                    </Space>
+                                  )
+                                },
+                                {
+                                  title: 'Missing Items', key: 'missing_count', width: 120, align: 'center',
+                                  render: (_, r) => (
+                                    <Tag color="error" style={{ borderRadius: 10, fontWeight: 600 }}>
+                                      {r.missingItems?.length || 0} item{(r.missingItems?.length || 0) !== 1 ? 's' : ''} missing
+                                    </Tag>
+                                  )
+                                },
+                                {
+                                  title: 'Delivery Status', dataIndex: 'deliveryStatus', key: 'delivery_status', width: 130, align: 'center',
+                                  render: v => <Tag color="warning" style={{ borderRadius: 10 }}>{v}</Tag>
+                                },
+                                {
+                                  title: 'Missed By', key: 'missed_by', width: 120,
+                                  render: (_, r) => r.partialMissedBy ? (
+                                    <Tag color={r.partialMissedBy === 'supplier' ? 'red' : 'orange'} style={{ borderRadius: 8 }}>
+                                      {r.partialMissedBy === 'supplier' ? 'Supplier' : 'Transport'}
+                                    </Tag>
+                                  ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                                },
+                                {
+                                  title: 'Action Taken', key: 'vendor_action', width: 150,
+                                  render: (_, r) => r.partialVendorAction ? (
+                                    <Text style={{ fontSize: 11, color: r.partialVendorAction === 'new_order' ? '#1890ff' : '#fa8c16' }}>
+                                      {r.partialVendorAction === 'new_order' ? 'New order to be raised' : 'Attach to next order'}
+                                    </Text>
+                                  ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                                },
+                              ]}
+                            />
+                          </div>
+                        );
+                      })()}
                     </div>
                   )
                 },
@@ -3874,7 +4186,7 @@ export default function Purchase() {
           </div>
         }
         open={showBulkPurchaseModal}
-        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); }}
+        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkQuotationAsked(false); setBulkRaiseFile(null); }}
         footer={null}
         width={640}
         centered
@@ -4021,7 +4333,7 @@ export default function Purchase() {
             </div>
           )}
 
-          {/* Summary & Submit */}
+          {/* Summary */}
           {bulkItems.filter(i => i.selected).length > 0 && (
             <div style={{ padding: '12px 14px', background: isDark ? '#0d1a1a' : '#f0fff4', border: '1px solid #52c41a44', borderRadius: 10, marginBottom: 16 }}>
               <Text style={{ fontSize: 12, fontWeight: 600, color: '#389e0d' }}>
@@ -4038,18 +4350,83 @@ export default function Purchase() {
             </div>
           )}
 
+          {/* Step 4: Action Flow — Ask Quotation → Raise Request */}
+          {bulkItems.filter(i => i.selected).length > 0 && bulkPayTerms && (
+            <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+              <Text style={{ fontSize: 12, fontWeight: 700, color: '#B11E6A', display: 'block', marginBottom: 10 }}>Step 4 — Action</Text>
+              {!bulkQuotationAsked ? (
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+                    First, send a WhatsApp quotation request to the supplier. Once you receive the quotation, upload it and raise the formal request to Finance.
+                  </Text>
+                  <Button
+                    icon={<WhatsAppOutlined />}
+                    onClick={handleBulkAskQuotation}
+                    style={{ width: '100%', height: 40, borderColor: '#25D366', color: '#25D366', fontWeight: 600, borderRadius: 8, fontSize: 13 }}
+                  >
+                    Ask Quotation via WhatsApp
+                  </Button>
+                </div>
+              ) : (
+                <div>
+                  <Alert
+                    type="success"
+                    message="Quotation request sent via WhatsApp"
+                    description="Upload the received quotation document to raise the formal request."
+                    showIcon
+                    style={{ marginBottom: 12, borderRadius: 8 }}
+                  />
+                  <div style={{ marginBottom: 10 }}>
+                    <Upload
+                      maxCount={1}
+                      beforeUpload={(file) => { setBulkRaiseFile(file); return false; }}
+                      onRemove={() => setBulkRaiseFile(null)}
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      fileList={bulkRaiseFile ? [{ uid: '1', name: bulkRaiseFile.name, status: 'done' }] : []}
+                    >
+                      <Button icon={<UploadOutlined />} style={{ borderRadius: 8, width: '100%', marginBottom: 8 }}>
+                        {bulkRaiseFile ? `✓ ${bulkRaiseFile.name}` : 'Upload Received Quotation Document'}
+                      </Button>
+                    </Upload>
+                    {bulkRaiseFile && (
+                      <Button
+                        icon={<RobotOutlined />}
+                        loading={bulkRaiseScanLoading}
+                        onClick={() => {
+                          setBulkRaiseScanLoading(true);
+                          setTimeout(() => { setBulkRaiseScanLoading(false); message.success('AI extracted details from quotation!'); }, 2000);
+                        }}
+                        style={{ width: '100%', borderRadius: 8, borderColor: '#722ed1', color: '#722ed1', marginBottom: 8 }}
+                      >
+                        Scan with AI
+                      </Button>
+                    )}
+                  </div>
+                  <Button
+                    size="small"
+                    icon={<WhatsAppOutlined />}
+                    onClick={handleBulkAskQuotation}
+                    style={{ borderColor: '#25D366', color: '#25D366', fontSize: 11 }}
+                  >
+                    Re-ask / Follow-up
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8 }}>
             <Button
-              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); }}
+              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkQuotationAsked(false); setBulkRaiseFile(null); }}
               style={{ flex: 1, height: 44, borderRadius: 10 }}
             >Cancel</Button>
             <Button
               type="primary"
-              disabled={bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms}
-              onClick={handleBulkPurchaseSubmit}
+              disabled={!bulkQuotationAsked || !bulkRaiseFile || bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms}
+              onClick={handleBulkRaiseRequest}
               style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
             >
-              Raise {bulkItems.filter(i => i.selected).length || ''} Purchase Request(s)
+              Raise {bulkItems.filter(i => i.selected).length || ''} Request(s) to Financial
             </Button>
           </div>
         </div>
