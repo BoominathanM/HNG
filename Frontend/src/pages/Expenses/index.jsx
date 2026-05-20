@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import dayjs from 'dayjs';
 import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs } from 'antd';
-import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined } from '@ant-design/icons';
+import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined, SearchOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
@@ -45,11 +45,24 @@ export default function Expenses() {
   const [historyItem, setHistoryItem] = useState(null);
   const [historyDateRange, setHistoryDateRange] = useState(null);
 
+  /* ── Search & Filter state ── */
+  const [expSearch, setExpSearch] = useState('');
+  const [expCategory, setExpCategory] = useState('all');
+  const [expStatus, setExpStatus] = useState(null);
+
   // Combined expense list for "All Expenses" tab
   const allExpenses = [
     ...expenses.map(e => ({ ...e, source: 'other' })),
     ...purchaseExpenses.map(e => ({ ...e, source: 'purchase' })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const applyExpFilter = (list) => list.filter((e) => {
+    const q = expSearch.toLowerCase();
+    const matchSearch = !q || (e.desc || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q) || (e.invoice_no || '').toLowerCase().includes(q);
+    const matchCategory = expCategory === 'all' || e.category === expCategory;
+    const matchStatus = !expStatus || e.status === expStatus;
+    return matchSearch && matchCategory && matchStatus;
+  });
 
   const handleAddExpense = (values) => {
     const newExpense = {
@@ -165,21 +178,26 @@ export default function Expenses() {
               size="small"
               style={{ padding: '0 16px' }}
               tabBarExtraContent={
-                <Space>
-                  <DatePicker size="small" style={{ borderRadius: 6, width: 120 }} />
-                  <Select defaultValue="all" size="small" style={{ width: 120 }}>
+                <Space wrap>
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search desc, vendor..." allowClear size="small" value={expSearch} onChange={(e) => setExpSearch(e.target.value)} style={{ width: 200, borderRadius: 6 }} />
+                  <Select value={expCategory} onChange={setExpCategory} size="small" style={{ width: 140 }}>
                     <Option value="all">All Categories</Option>
                     {EXPENSE_CATEGORIES.map(c => <Option key={c.value} value={c.value}>{c.label}</Option>)}
+                  </Select>
+                  <Select allowClear placeholder="Status" value={expStatus} onChange={setExpStatus} size="small" style={{ width: 130 }}>
+                    <Option value="Paid">Paid</Option>
+                    <Option value="Partially Paid">Partially Paid</Option>
+                    <Option value="Unpaid">Unpaid</Option>
                   </Select>
                 </Space>
               }
               items={[
                 {
                   key: 'all',
-                  label: `All Expenses (${allExpenses.length})`,
+                  label: `All Expenses (${applyExpFilter(allExpenses).length})`,
                   children: (
                     <Table
-                      dataSource={allExpenses}
+                      dataSource={applyExpFilter(allExpenses)}
                       columns={makeExpenseColumns(true)}
                       size="small"
                       pagination={{ pageSize: 8 }}
@@ -189,10 +207,10 @@ export default function Expenses() {
                 },
                 {
                   key: 'other',
-                  label: `Other Expenses (${expenses.length})`,
+                  label: `Other Expenses (${applyExpFilter(expenses).length})`,
                   children: (
                     <Table
-                      dataSource={expenses}
+                      dataSource={applyExpFilter(expenses)}
                       columns={columns}
                       size="small"
                       pagination={{ pageSize: 8 }}
@@ -202,10 +220,10 @@ export default function Expenses() {
                 },
                 {
                   key: 'purchase',
-                  label: `Purchase Expenses (${purchaseExpenses.length})`,
+                  label: `Purchase Expenses (${applyExpFilter(purchaseExpenses).length})`,
                   children: (
                     <Table
-                      dataSource={purchaseExpenses}
+                      dataSource={applyExpFilter(purchaseExpenses)}
                       columns={makeExpenseColumns(false)}
                       size="small"
                       pagination={{ pageSize: 8 }}

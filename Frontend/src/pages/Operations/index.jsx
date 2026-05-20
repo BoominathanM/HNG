@@ -99,6 +99,9 @@ export default function Operations() {
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('orders');
   const [checkStates] = useState(getCheckStateMap());
+  const [queueSearch, setQueueSearch] = useState('');
+  const [queueStatusFilter, setQueueStatusFilter] = useState(null);
+  const [orderStatusFilter, setOrderStatusFilter] = useState(null);
   const [requestOpen, setRequestOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
@@ -151,16 +154,12 @@ export default function Operations() {
   const filteredOrders = useMemo(() => {
     const result = operationOrders.filter((order) => {
       const query = searchText.trim().toLowerCase();
-      if (!query) return true;
-      return (
-        order.id.toLowerCase().includes(query) ||
-        order.hotelLogo.toLowerCase().includes(query) ||
-        order.specsSummary.toLowerCase().includes(query) ||
-        order.items.some((item) => item.product.toLowerCase().includes(query))
-      );
+      const matchSearch = !query || order.id.toLowerCase().includes(query) || order.hotelLogo.toLowerCase().includes(query) || order.specsSummary.toLowerCase().includes(query) || order.items.some((item) => item.product.toLowerCase().includes(query));
+      const matchStatus = !orderStatusFilter || (orderStatusFilter === 'urgent' ? order.isUrgent : !order.isUrgent);
+      return matchSearch && matchStatus;
     });
     return [...result].sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
-  }, [searchText]);
+  }, [searchText, orderStatusFilter]);
 
   const teamSendItems = useMemo(() => {
     const queueMap = {
@@ -527,11 +526,17 @@ export default function Operations() {
   };
 
   const renderQueueCard = (type, rows, label) => {
-    const activeRows = rows.filter((r) => getQueueStep(r) < 6);
+    const allActive = rows.filter((r) => getQueueStep(r) < 6);
     const closedRows = rows.filter((r) => getQueueStep(r) === 6);
+    const activeRows = allActive.filter((r) => {
+      const q = queueSearch.toLowerCase();
+      const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.hotelLogo || '').toLowerCase().includes(q) || (r.product || '').toLowerCase().includes(q);
+      const matchStatus = !queueStatusFilter || (r.status || '') === queueStatusFilter;
+      return matchSearch && matchStatus;
+    });
     return (
       <div>
-        {renderQueueSummary(activeRows)}
+        {renderQueueSummary(allActive)}
         <Card
           title={<Text strong style={{ color: textColor }}>{label}</Text>}
           extra={
@@ -552,6 +557,12 @@ export default function Operations() {
           style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
           styles={{ body: { padding: 0 } }}
         >
+          <div style={{ padding: '8px 12px', borderBottom: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order, hotel, product..." allowClear value={queueSearch} onChange={(e) => setQueueSearch(e.target.value)} style={{ width: 230, borderRadius: 8 }} />
+            <Select allowClear placeholder="Queue Status" value={queueStatusFilter} onChange={setQueueStatusFilter} style={{ width: 170, borderRadius: 8 }}>
+              {queueStatuses.map((s) => <Option key={s} value={s}>{s}</Option>)}
+            </Select>
+          </div>
           <div className="table-responsive" style={{ padding: 4 }}>
             <Table
               dataSource={activeRows}
@@ -696,14 +707,20 @@ export default function Operations() {
                 <Card
                   title={<Text strong style={{ color: textColor }}>Order Approval Queue</Text>}
                   extra={
-                    <Input
-                      prefix={<SearchOutlined />}
-                      placeholder="Search order, hotel logo, product"
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                      allowClear
-                      style={{ width: 280, borderRadius: 8 }}
-                    />
+                    <Space wrap>
+                      <Input
+                        prefix={<SearchOutlined />}
+                        placeholder="Search order, hotel logo, product"
+                        value={searchText}
+                        onChange={(e) => setSearchText(e.target.value)}
+                        allowClear
+                        style={{ width: 240, borderRadius: 8 }}
+                      />
+                      <Select allowClear placeholder="Priority" value={orderStatusFilter} onChange={setOrderStatusFilter} style={{ width: 140, borderRadius: 8 }}>
+                        <Option value="urgent">Urgent</Option>
+                        <Option value="normal">Normal</Option>
+                      </Select>
+                    </Space>
                   }
                   style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
                   styles={{ body: { padding: 0 } }}

@@ -21,12 +21,12 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const inventory = [
-  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', value: 85, valueTax: 'without_gst', defaultSize: '2.5cm x 2.5cm', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', seller: 'ChemCo India', purchasedDate: '2024-01-15' },
-  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', value: 95, valueTax: 'without_gst', defaultSize: '2.5cm x 2.5cm', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', seller: 'BioLife Ltd', purchasedDate: '2024-01-10' },
-  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', value: 4.5, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', seller: 'PlastiPack', purchasedDate: '2024-01-05' },
-  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', value: 12, valueTax: 'without_gst', defaultSize: 'PVK', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', seller: 'BoxWorld', purchasedDate: '2024-01-12' },
-  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', value: 1.2, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', seller: 'PrintFast', purchasedDate: '2024-01-18' },
-  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', value: 220, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', seller: 'ChemCo India', purchasedDate: '2023-12-20' },
+  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', value: 85, valueTax: 'without_gst', defaultSize: '2.5cm x 2.5cm', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', sellers: [{ name: 'ChemCo India', stock: 300 }, { name: 'BioLife Ltd', stock: 150 }], purchasedDate: '2024-01-15' },
+  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', value: 95, valueTax: 'without_gst', defaultSize: '2.5cm x 2.5cm', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', sellers: [{ name: 'BioLife Ltd', stock: 45 }], purchasedDate: '2024-01-10' },
+  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', value: 4.5, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', sellers: [{ name: 'PlastiPack', stock: 200 }], purchasedDate: '2024-01-05' },
+  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', value: 12, valueTax: 'without_gst', defaultSize: 'PVK', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', sellers: [{ name: 'BoxWorld', stock: 700 }, { name: 'PlastiPack', stock: 150 }], purchasedDate: '2024-01-12' },
+  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', value: 1.2, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', sellers: [{ name: 'PrintFast', stock: 3000 }], purchasedDate: '2024-01-18' },
+  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', value: 220, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', sellers: [{ name: 'ChemCo India', stock: 0 }], purchasedDate: '2023-12-20' },
 ];
 
 const stockChartData = inventory.map((i) => ({
@@ -92,6 +92,47 @@ export default function Inventory() {
 
   const [categories, setCategories] = useState(['Chemicals', 'Ready Stock']);
   const [newCategoryName, setNewCategoryName] = useState('');
+
+  /* ── Search & Filter state ── */
+  const [invSearch, setInvSearch] = useState('');
+  const [invCategory, setInvCategory] = useState(null);
+  const [invStatus, setInvStatus] = useState(null);
+  const [approvalSearch, setApprovalSearch] = useState('');
+  const [approvalType, setApprovalType] = useState(null);
+  const [approvalStatus, setApprovalStatus] = useState(null);
+  const [docSearch, setDocSearch] = useState('');
+  const [docMovement, setDocMovement] = useState('all');
+  const [docDateRange, setDocDateRange] = useState(null);
+
+  const filteredInventory = inventoryList.filter((i) => {
+    const q = invSearch.toLowerCase();
+    const matchSearch = !q || i.name.toLowerCase().includes(q) || (i.code || '').toLowerCase().includes(q) || (i.sellers || []).map(s => (s.name || s)).join(' ').toLowerCase().includes(q);
+    const matchCategory = !invCategory || i.category === invCategory;
+    const matchStatus = !invStatus || i.status === invStatus;
+    return matchSearch && matchCategory && matchStatus;
+  });
+
+  const filteredApprovals = pendingAdjustments.filter((a) => {
+    const q = approvalSearch.toLowerCase();
+    const matchSearch = !q || (a.item || '').toLowerCase().includes(q) || (a.person || '').toLowerCase().includes(q);
+    const matchType = !approvalType || a.type === approvalType;
+    const matchStatus = !approvalStatus || a.status === approvalStatus;
+    return matchSearch && matchType && matchStatus;
+  });
+
+  const allDocuments = [
+    { key: 1, date: '2024-05-01', invoiceNumber: 'INV-2024-001', type: 'Incoming', item: 'Soap Base (White)', qty: '+100 Kg', entity: 'ChemCo India', person: 'Admin' },
+    { key: 2, date: '2024-05-02', invoiceNumber: 'INV-2024-002', type: 'Outgoing', item: 'Dental Kit Boxes', qty: '-50 Pcs', entity: 'Marriott Mumbai', person: 'Priya' },
+    { key: 3, date: '2024-05-03', invoiceNumber: 'INV-2024-003', type: 'Stock Taken', item: 'Shampoo Bottles', qty: '-2 Pcs', entity: 'Internal Audit', person: 'Admin' },
+    { key: 4, date: '2024-05-04', invoiceNumber: 'INV-2024-004', type: 'Incoming', item: 'Shampoo Concentrate', qty: '+200 Ltr', entity: 'BioLife Ltd', person: 'Admin' },
+  ];
+
+  const filteredDocuments = allDocuments.filter((d) => {
+    const q = docSearch.toLowerCase();
+    const matchSearch = !q || d.item.toLowerCase().includes(q) || d.entity.toLowerCase().includes(q) || (d.invoiceNumber || '').toLowerCase().includes(q);
+    const matchMovement = docMovement === 'all' || (docMovement === 'incoming' && d.type === 'Incoming') || (docMovement === 'outgoing' && d.type === 'Outgoing') || (docMovement === 'adjustment' && d.type === 'Stock Taken');
+    return matchSearch && matchMovement;
+  });
 
   const onCategoryChange = (event) => {
     setNewCategoryName(event.target.value);
@@ -191,10 +232,29 @@ export default function Inventory() {
       if (item.name === adj.item) {
         const change = adj.type === 'Addition' ? adj.qty : -adj.qty;
         const newCurrent = item.current + change;
+        const currentSellers = item.sellers || [];
+        const qty = adj.qty || 0;
+        const isExternalAdd = adj.type === 'Addition' && adj.entity && !['Manual Adj', 'Internal', 'Manual Add'].includes(adj.entity);
+        const isDeduction = adj.type === 'Deduction';
+        let newSellers = currentSellers;
+        if (isExternalAdd) {
+          newSellers = currentSellers.some(s => s.name === adj.entity)
+            ? currentSellers.map(s => s.name === adj.entity ? { ...s, stock: (s.stock || 0) + qty } : s)
+            : [...currentSellers, { name: adj.entity, stock: qty }];
+        } else if (isDeduction && currentSellers.length > 0) {
+          let remaining = qty;
+          newSellers = currentSellers.map(s => {
+            if (remaining <= 0) return s;
+            const deduct = Math.min(s.stock || 0, remaining);
+            remaining -= deduct;
+            return { ...s, stock: (s.stock || 0) - deduct };
+          }).filter(s => s.stock > 0 || currentSellers.length === 1);
+        }
         return {
           ...item,
           current: newCurrent,
-          status: newCurrent <= 0 ? 'Out' : newCurrent <= item.min ? 'Low' : 'OK'
+          status: newCurrent <= 0 ? 'Out' : newCurrent <= item.min ? 'Low' : 'OK',
+          sellers: newSellers,
         };
       }
       return item;
@@ -372,7 +432,29 @@ export default function Inventory() {
       )
     },
     { title: 'Price', dataIndex: 'price', responsive: ['md'] },
-    { title: 'Vendor', dataIndex: 'seller', responsive: ['lg'] },
+    {
+      title: 'Vendors', dataIndex: 'sellers', key: 'sellers', responsive: ['lg'],
+      render: (v, r) => {
+        const list = Array.isArray(v) ? v : (v ? [{ name: v, stock: r.current }] : []);
+        if (list.length === 0) return <Text type="secondary">—</Text>;
+        return (
+          <Space size={4} wrap>
+            {list.map((s, i) => {
+              const name = s.name || s;
+              const stock = s.stock ?? 0;
+              return (
+                <Tag key={i} style={{ borderRadius: 20, fontSize: 10, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 0, padding: '0 6px 0 8px' }}>
+                  <span>{name}</span>
+                  <span style={{ background: '#B11E6A', color: '#fff', borderRadius: 10, padding: '0 6px', fontSize: 9, fontWeight: 700, lineHeight: '16px', marginLeft: 6 }}>
+                    {stock} {r.unit}
+                  </span>
+                </Tag>
+              );
+            })}
+          </Space>
+        );
+      }
+    },
     { title: 'Purchased', dataIndex: 'purchasedDate', responsive: ['lg'] },
     {
       title: 'Status', dataIndex: 'status',
@@ -477,8 +559,19 @@ export default function Inventory() {
             label: <Space><ShoppingOutlined />Stock Inventory</Space>,
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                <div style={{ padding: '10px 16px 8px', borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item, code, vendor..." allowClear value={invSearch} onChange={(e) => setInvSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                  <Select allowClear placeholder="Category" value={invCategory} onChange={setInvCategory} style={{ width: 160, borderRadius: 8 }}>
+                    {[...new Set(inventoryList.map(i => i.category))].map(c => <Option key={c} value={c}>{c}</Option>)}
+                  </Select>
+                  <Select allowClear placeholder="Stock Status" value={invStatus} onChange={setInvStatus} style={{ width: 150, borderRadius: 8 }}>
+                    <Option value="OK">OK</Option>
+                    <Option value="Low">Low Stock</Option>
+                    <Option value="Out">Out of Stock</Option>
+                  </Select>
+                </div>
                 <div className="table-responsive" style={{ padding: '4px' }}>
-                  <Table dataSource={inventoryList} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+                  <Table dataSource={filteredInventory} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
                 </div>
               </Card>
             )
@@ -492,9 +585,21 @@ export default function Inventory() {
                   <Title level={5} style={{ margin: 0, color: textColor }}>Operation Head Approval Center</Title>
                   <Text type="secondary">Review and approve manual stock adjustments (+ / -)</Text>
                 </div>
+                <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item or person..." allowClear value={approvalSearch} onChange={(e) => setApprovalSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
+                  <Select allowClear placeholder="Type" value={approvalType} onChange={setApprovalType} style={{ width: 140, borderRadius: 8 }}>
+                    <Option value="Addition">Addition</Option>
+                    <Option value="Deduction">Deduction</Option>
+                  </Select>
+                  <Select allowClear placeholder="Status" value={approvalStatus} onChange={setApprovalStatus} style={{ width: 140, borderRadius: 8 }}>
+                    <Option value="Pending">Pending</Option>
+                    <Option value="Approved">Approved</Option>
+                    <Option value="Rejected">Rejected</Option>
+                  </Select>
+                </div>
                 <Table
                   size="small"
-                  dataSource={pendingAdjustments}
+                  dataSource={filteredApprovals}
                   columns={[
                     { title: 'Date', dataIndex: 'date', key: 'date' },
                     { title: 'Item', dataIndex: 'item', key: 'item', render: (v) => <Text strong>{v}</Text> },
@@ -536,26 +641,22 @@ export default function Inventory() {
             label: <Space><FileTextOutlined />Stock Documents</Space>,
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
-                  <Space>
-                    <Select defaultValue="all" style={{ width: 180 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                  <Space wrap>
+                    <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item, supplier..." allowClear value={docSearch} onChange={(e) => setDocSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
+                    <Select value={docMovement} onChange={setDocMovement} style={{ width: 180 }}>
                       <Option value="all">All Movements</Option>
                       <Option value="incoming">Incoming Stocks</Option>
                       <Option value="outgoing">Outgoing Stocks</Option>
                       <Option value="adjustment">Stock Taken (Adj)</Option>
                     </Select>
-                    <DatePicker.RangePicker style={{ width: 280 }} />
+                    <DatePicker.RangePicker style={{ width: 280 }} onChange={setDocDateRange} />
                   </Space>
                   <Button icon={<DownloadOutlined />} type="primary" style={{ background: '#B11E6A', border: 'none' }}>Download Report</Button>
                 </div>
                 <Table
                   size="small"
-                  dataSource={[
-                    { key: 1, date: '2024-05-01', invoiceNumber: 'INV-2024-001', type: 'Incoming', item: 'Soap Base (White)', qty: '+100 Kg', entity: 'ChemCo India', person: 'Admin' },
-                    { key: 2, date: '2024-05-02', invoiceNumber: 'INV-2024-002', type: 'Outgoing', item: 'Dental Kit Boxes', qty: '-50 Pcs', entity: 'Marriott Mumbai', person: 'Priya' },
-                    { key: 3, date: '2024-05-03', invoiceNumber: 'INV-2024-003', type: 'Stock Taken', item: 'Shampoo Bottles', qty: '-2 Pcs', entity: 'Internal Audit', person: 'Admin' },
-                    { key: 4, date: '2024-05-04', invoiceNumber: 'INV-2024-004', type: 'Incoming', item: 'Shampoo Concentrate', qty: '+200 Ltr', entity: 'BioLife Ltd', person: 'Admin' },
-                  ]}
+                  dataSource={filteredDocuments}
                   columns={[
                     { title: 'Arrival/Departure Date', dataIndex: 'date', key: 'date', render: (v) => <Text strong>{v}</Text> },
                     { title: 'Invoice Number', dataIndex: 'invoiceNumber', key: 'invoiceNumber', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v || '—'}</Text> },

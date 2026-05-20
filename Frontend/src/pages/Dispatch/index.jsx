@@ -116,6 +116,14 @@ export default function Dispatch() {
   const [activeTab, setActiveTab] = useState('dispatch');
   const [dispatchSubTab, setDispatchSubTab] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('All');
+  const [dispatchStatusFilter, setDispatchStatusFilter] = useState(null);
+  const [pickupSearch, setPickupSearch] = useState('');
+  const [pickupTakenFilter, setPickupTakenFilter] = useState(null);
+  const [pickupPayFilter, setPickupPayFilter] = useState(null);
+  const [reimbSearch, setReimbSearch] = useState('');
+  const [reimbPayFilter, setReimbPayFilter] = useState(null);
+  const [transportSearch, setTransportSearch] = useState('');
+  const [transportStatusFilter, setTransportStatusFilter] = useState(null);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [selectedPrintOrder, setSelectedPrintOrder] = useState(null);
   const [printEditMode, setPrintEditMode] = useState(false);
@@ -507,7 +515,8 @@ export default function Dispatch() {
   const filteredOrders = dispatchOrders.filter((o) => {
     const s = !searchText || o.id.toLowerCase().includes(searchText.toLowerCase()) || o.client.toLowerCase().includes(searchText.toLowerCase()) || o.address.toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
     const p = paymentFilter === 'All' || o.payment === paymentFilter;
-    return s && p;
+    const st = !dispatchStatusFilter || o.status === dispatchStatusFilter;
+    return s && p && st;
   });
 
   const todayOrders = filteredOrders.filter(o => isToday(o.createdAt));
@@ -533,12 +542,18 @@ export default function Dispatch() {
         allowClear
         style={{ flex: 1, minWidth: 200, borderRadius: 8 }}
       />
-      <Space>
+      <Space wrap>
         <FilterOutlined style={{ color: '#B11E6A' }} />
         <Select value={paymentFilter} onChange={setPaymentFilter} style={{ width: 160, borderRadius: 8 }}>
           <Option value="All">All Payments</Option>
           <Option value="Confirmed">Confirmed</Option>
           <Option value="Pending">Pending</Option>
+        </Select>
+        <Select allowClear placeholder="Status" value={dispatchStatusFilter} onChange={setDispatchStatusFilter} style={{ width: 180, borderRadius: 8 }}>
+          <Option value="Ready to Dispatch">Ready to Dispatch</Option>
+          <Option value="Payment Pending">Payment Pending</Option>
+          <Option value="Dispatched">Dispatched</Option>
+          <Option value="Packing">Packing</Option>
         </Select>
       </Space>
     </div>
@@ -689,7 +704,26 @@ export default function Dispatch() {
                             <Text strong style={{ color: textColor }}>Current Day Pickup Orders</Text>
                             <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Orders assigned for pickup today</Text>
                           </div>
-                          {pickupOrders.length === 0 ? (
+                          <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order ID, supplier, item..." allowClear value={pickupSearch} onChange={(e) => setPickupSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                            <Select allowClear placeholder="Taken Status" value={pickupTakenFilter} onChange={setPickupTakenFilter} style={{ width: 160, borderRadius: 8 }}>
+                              <Option value="taken">Taken</Option>
+                              <Option value="pickup_dropped">Pickup Dropped</Option>
+                            </Select>
+                            <Select allowClear placeholder="Payment Status" value={pickupPayFilter} onChange={setPickupPayFilter} style={{ width: 160, borderRadius: 8 }}>
+                              <Option value="Paid">Paid</Option>
+                              <Option value="Unpaid">Unpaid</Option>
+                            </Select>
+                          </div>
+                          {pickupOrders.filter((r) => {
+                            const q = pickupSearch.toLowerCase();
+                            const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q);
+                            const matchTaken = !pickupTakenFilter || (r.takenStatus || pickupStatusMap[r.key] || '') === pickupTakenFilter;
+                            const matchPay = !pickupPayFilter || r.paymentStatus === pickupPayFilter;
+                            return matchSearch && matchTaken && matchPay;
+                          }).length === 0 && pickupOrders.length > 0 ? (
+                            <div style={{ textAlign: 'center', padding: '24px', color: isDark ? '#aaa' : '#888' }}>No results match your filters.</div>
+                          ) : pickupOrders.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
                               <CarOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
                               <Text type="secondary">No pickup orders for today.</Text>
@@ -697,7 +731,13 @@ export default function Dispatch() {
                           ) : (
                             <Table
                               size="small"
-                              dataSource={pickupOrders}
+                              dataSource={pickupOrders.filter((r) => {
+                                const q = pickupSearch.toLowerCase();
+                                const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q);
+                                const matchTaken = !pickupTakenFilter || (r.takenStatus || pickupStatusMap[r.key] || '') === pickupTakenFilter;
+                                const matchPay = !pickupPayFilter || r.paymentStatus === pickupPayFilter;
+                                return matchSearch && matchTaken && matchPay;
+                              })}
                               rowKey="key"
                               pagination={{ pageSize: 8, size: 'small' }}
                               scroll={{ x: 1650 }}
@@ -832,6 +872,13 @@ export default function Dispatch() {
                             <Text strong style={{ color: textColor }}>Reimbursement Claims</Text>
                             <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Pickup expenses — payment status from Finance team</Text>
                           </div>
+                          <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order, supplier, item..." allowClear value={reimbSearch} onChange={(e) => setReimbSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                            <Select allowClear placeholder="Payment Status" value={reimbPayFilter} onChange={setReimbPayFilter} style={{ width: 160, borderRadius: 8 }}>
+                              <Option value="Paid">Paid</Option>
+                              <Option value="Unpaid">Unpaid</Option>
+                            </Select>
+                          </div>
                           {reimbExpenses.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
                               <WalletOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
@@ -840,7 +887,12 @@ export default function Dispatch() {
                           ) : (
                             <Table
                               size="small"
-                              dataSource={reimbExpenses}
+                              dataSource={reimbExpenses.filter((r) => {
+                                const q = reimbSearch.toLowerCase();
+                                const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
+                                const matchPay = !reimbPayFilter || r.paymentStatus === reimbPayFilter;
+                                return matchSearch && matchPay;
+                              })}
                               rowKey="key"
                               pagination={{ pageSize: 8, size: 'small' }}
                               scroll={{ x: 1450 }}
@@ -955,8 +1007,26 @@ export default function Dispatch() {
                   style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
                   styles={{ body: { padding: 0 } }}
                 >
+                  <div style={{ padding: '10px 16px 8px', borderBottom: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search LR No, order, client..." allowClear value={transportSearch} onChange={(e) => setTransportSearch(e.target.value)} style={{ width: 250, borderRadius: 8 }} />
+                    <Select allowClear placeholder="Status" value={transportStatusFilter} onChange={setTransportStatusFilter} style={{ width: 160, borderRadius: 8 }}>
+                      <Option value="In Transit">In Transit</Option>
+                      <Option value="Delivered">Delivered</Option>
+                    </Select>
+                  </div>
                   <div className="table-responsive" style={{ padding: '4px' }}>
-                    <Table dataSource={initTransportData} columns={transportColumns} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 1000 }} />
+                    <Table
+                      dataSource={initTransportData.filter((t) => {
+                        const q = transportSearch.toLowerCase();
+                        const matchSearch = !q || (t.lrNumber || '').toLowerCase().includes(q) || (t.orderId || '').toLowerCase().includes(q) || (t.client || '').toLowerCase().includes(q) || (t.transport || '').toLowerCase().includes(q);
+                        const matchStatus = !transportStatusFilter || t.status === transportStatusFilter;
+                        return matchSearch && matchStatus;
+                      })}
+                      columns={transportColumns}
+                      pagination={{ pageSize: 8, size: 'small' }}
+                      size="small"
+                      scroll={{ x: 1000 }}
+                    />
                   </div>
                 </Card>
               </div>

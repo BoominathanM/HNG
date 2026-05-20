@@ -30,6 +30,7 @@ export default function Financial() {
   const purchaseOrders = useSelector((s) => s.purchase.purchaseOrders);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
+  const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
   const [viewRequest, setViewRequest] = useState(null);
   const [viewQuotationFile, setViewQuotationFile] = useState(null);
@@ -181,6 +182,16 @@ export default function Financial() {
     reimbPayForm.resetFields();
   };
 
+  // ── Filter state ──
+  const [purchaseReqSearch, setPurchaseReqSearch] = useState('');
+  const [purchaseReqStatusFilter, setPurchaseReqStatusFilter] = useState(null);
+  const [expSearch, setExpSearch] = useState('');
+  const [expStatusFilter, setExpStatusFilter] = useState(null);
+  const [pickupSearch, setPickupSearch] = useState('');
+  const [pickupPayFilter, setPickupPayFilter] = useState(null);
+  const [localExpSearch, setLocalExpSearch] = useState('');
+  const [localExpPayFilter, setLocalExpPayFilter] = useState(null);
+
   // Parties & Ledgers tab state
   const [partiesSearch, setPartiesSearch] = useState('');
   const [viewPartyLedger, setViewPartyLedger] = useState(null);
@@ -311,9 +322,35 @@ export default function Financial() {
                     <Title level={5} style={{ margin: 0, color: textColor }}>Quotation Requests — Approve / Reject</Title>
                     <Text type="secondary">Review quotation requests raised by the procurement team and approve or reject them</Text>
                   </div>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <Input
+                      prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                      placeholder="Search item, supplier..."
+                      allowClear
+                      value={purchaseReqSearch}
+                      onChange={(e) => setPurchaseReqSearch(e.target.value)}
+                      style={{ width: 220, borderRadius: 8 }}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="Quotation Status"
+                      value={purchaseReqStatusFilter}
+                      onChange={setPurchaseReqStatusFilter}
+                      style={{ width: 170, borderRadius: 8 }}
+                    >
+                      <Option value="Pending">Pending</Option>
+                      <Option value="Approved">Approved</Option>
+                      <Option value="Rejected">Rejected</Option>
+                    </Select>
+                  </div>
                   <Table
                     size="small"
-                    dataSource={raisedRequests}
+                    dataSource={raisedRequests.filter((r) => {
+                      const q = purchaseReqSearch.toLowerCase();
+                      const matchSearch = !q || (r.item || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q);
+                      const matchStatus = !purchaseReqStatusFilter || r.status === purchaseReqStatusFilter;
+                      return matchSearch && matchStatus;
+                    })}
                     pagination={{ pageSize: 8 }}
                     rowKey="key"
                     scroll={{ x: 1400 }}
@@ -506,7 +543,39 @@ export default function Financial() {
               label: <Space><ContainerOutlined /> Expense Payments</Space>,
               children: (
                 <div style={{ marginTop: 12 }}>
-                  <Table size="small" dataSource={expenseRequests} columns={expenseColumns} pagination={{ pageSize: 8 }} scroll={{ x: 700 }} />
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <Input
+                      prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                      placeholder="Search description, bill no, vendor..."
+                      allowClear
+                      value={expSearch}
+                      onChange={(e) => setExpSearch(e.target.value)}
+                      style={{ width: 260, borderRadius: 8 }}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="Payment Status"
+                      value={expStatusFilter}
+                      onChange={setExpStatusFilter}
+                      style={{ width: 160, borderRadius: 8 }}
+                    >
+                      <Option value="Unpaid">Unpaid</Option>
+                      <Option value="Paid">Paid</Option>
+                      <Option value="Partial Paid">Partial Paid</Option>
+                    </Select>
+                  </div>
+                  <Table
+                    size="small"
+                    dataSource={expenseRequests.filter((e) => {
+                      const q = expSearch.toLowerCase();
+                      const matchSearch = !q || (e.desc || '').toLowerCase().includes(q) || (e.bill_no || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q);
+                      const matchStatus = !expStatusFilter || e.status === expStatusFilter;
+                      return matchSearch && matchStatus;
+                    })}
+                    columns={expenseColumns}
+                    pagination={{ pageSize: 8 }}
+                    scroll={{ x: 700 }}
+                  />
                 </div>
               )
             },
@@ -528,6 +597,26 @@ export default function Financial() {
                               <Title level={5} style={{ margin: 0, color: textColor }}>Pickup Expense Reimbursement</Title>
                               <Text type="secondary">Pickup employee expenses from dispatch order taken workflow — review and process payments</Text>
                             </div>
+                            <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                              <Input
+                                prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                                placeholder="Search order, supplier, employee..."
+                                allowClear
+                                value={pickupSearch}
+                                onChange={(e) => setPickupSearch(e.target.value)}
+                                style={{ width: 250, borderRadius: 8 }}
+                              />
+                              <Select
+                                allowClear
+                                placeholder="Payment Status"
+                                value={pickupPayFilter}
+                                onChange={setPickupPayFilter}
+                                style={{ width: 160, borderRadius: 8 }}
+                              >
+                                <Option value="Paid">Paid</Option>
+                                <Option value="Unpaid">Unpaid</Option>
+                              </Select>
+                            </div>
                             {reimbursementExpenses.length === 0 ? (
                               <div style={{ textAlign: 'center', padding: '40px 0' }}>
                                 <WalletOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
@@ -536,7 +625,12 @@ export default function Financial() {
                             ) : (
                               <Table
                                 size="small"
-                                dataSource={reimbursementExpenses}
+                                dataSource={reimbursementExpenses.filter((r) => {
+                                  const q = pickupSearch.toLowerCase();
+                                  const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
+                                  const matchPay = !pickupPayFilter || (r.paymentStatus || 'Unpaid') === pickupPayFilter;
+                                  return matchSearch && matchPay;
+                                })}
                                 rowKey="key"
                                 pagination={{ pageSize: 8 }}
                                 scroll={{ x: 1450 }}
@@ -633,6 +727,26 @@ export default function Financial() {
                               <Title level={5} style={{ margin: 0, color: textColor }}>Local Purchase Payments</Title>
                               <Text type="secondary">Local purchases from vendors — review and process credit payments, upload proof</Text>
                             </div>
+                            <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                              <Input
+                                prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                                placeholder="Search vendor, invoice, item..."
+                                allowClear
+                                value={localExpSearch}
+                                onChange={(e) => setLocalExpSearch(e.target.value)}
+                                style={{ width: 240, borderRadius: 8 }}
+                              />
+                              <Select
+                                allowClear
+                                placeholder="Payment Status"
+                                value={localExpPayFilter}
+                                onChange={setLocalExpPayFilter}
+                                style={{ width: 160, borderRadius: 8 }}
+                              >
+                                <Option value="Paid">Paid</Option>
+                                <Option value="Pending">Pending</Option>
+                              </Select>
+                            </div>
                             {localPurchaseExpenses.length === 0 ? (
                               <div style={{ textAlign: 'center', padding: '40px 0' }}>
                                 <ShoppingOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
@@ -641,7 +755,12 @@ export default function Financial() {
                             ) : (
                               <Table
                                 size="small"
-                                dataSource={localPurchaseExpenses}
+                                dataSource={localPurchaseExpenses.filter((lp) => {
+                                  const q = localExpSearch.toLowerCase();
+                                  const matchSearch = !q || (lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.name || '').toLowerCase().includes(q));
+                                  const matchPay = !localExpPayFilter || lp.paymentStatus === localExpPayFilter;
+                                  return matchSearch && matchPay;
+                                })}
                                 rowKey="key"
                                 pagination={{ pageSize: 8 }}
                                 scroll={{ x: 1200 }}

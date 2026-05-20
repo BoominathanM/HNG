@@ -6,7 +6,7 @@ import {
 import {
   UserOutlined, EyeOutlined, EyeInvisibleOutlined, CopyOutlined,
   EditOutlined, LockOutlined, UnlockOutlined, TeamOutlined, KeyOutlined,
-  CheckCircleOutlined, CloseCircleOutlined, PlusOutlined,
+  CheckCircleOutlined, CloseCircleOutlined, PlusOutlined, SearchOutlined, FilterOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -81,9 +81,23 @@ const initialRoleLogins = [
 // ── Staff List Tab ────────────────────────────────────────────────────────
 function StaffList({ isDark }) {
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
+  const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
   const [staffList, setStaffList] = useState(staff);
   const [addOpen, setAddOpen] = useState(false);
   const [form] = Form.useForm();
+  const [staffSearch, setStaffSearch] = useState('');
+  const [filterDept, setFilterDept] = useState(null);
+  const [filterTeam, setFilterTeam] = useState(null);
+  const [filterStatus, setFilterStatus] = useState(null);
+
+  const filteredStaff = staffList.filter((s) => {
+    const q = staffSearch.toLowerCase();
+    const matchSearch = !q || s.name.toLowerCase().includes(q) || (s.role || '').toLowerCase().includes(q) || (s.phone || '').includes(q);
+    const matchDept = !filterDept || s.dept === filterDept;
+    const matchTeam = !filterTeam || s.team === filterTeam;
+    const matchStatus = !filterStatus || s.status === filterStatus;
+    return matchSearch && matchDept && matchTeam && matchStatus;
+  });
 
   const handleAdd = () => {
     form.validateFields().then((vals) => {
@@ -172,8 +186,29 @@ function StaffList({ isDark }) {
           </Button>
         }
       >
+        {/* ── Search & Filter Bar ── */}
+        <div style={{ padding: '10px 16px 8px', borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <Input
+            prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+            placeholder="Search name, role, phone..."
+            allowClear
+            value={staffSearch}
+            onChange={(e) => setStaffSearch(e.target.value)}
+            style={{ width: 220, borderRadius: 8 }}
+          />
+          <Select allowClear placeholder="Department" value={filterDept} onChange={setFilterDept} style={{ width: 150, borderRadius: 8 }}>
+            {DEPARTMENTS.map((d) => <Option key={d} value={d}>{d}</Option>)}
+          </Select>
+          <Select allowClear placeholder="Team" value={filterTeam} onChange={setFilterTeam} style={{ width: 140, borderRadius: 8 }}>
+            {Object.keys(teamColor).map((t) => <Option key={t} value={t}>{t}</Option>)}
+          </Select>
+          <Select allowClear placeholder="Status" value={filterStatus} onChange={setFilterStatus} style={{ width: 130, borderRadius: 8 }}>
+            <Option value="Present">Present</Option>
+            <Option value="Absent">Absent</Option>
+          </Select>
+        </div>
         <div className="table-responsive" style={{ padding: '4px' }}>
-          <Table dataSource={staffList} columns={columns} pagination={{ pageSize: 10, size: 'small' }} size="small" />
+          <Table dataSource={filteredStaff} columns={columns} pagination={{ pageSize: 10, size: 'small' }} size="small" />
         </div>
       </Card>
 
@@ -398,6 +433,15 @@ function RoleLogins({ isDark }) {
   const [editOpen, setEditOpen] = useState(false);
   const [editRole, setEditRole] = useState(null);
   const [form] = Form.useForm();
+  const [roleSearch, setRoleSearch] = useState('');
+  const [filterActive, setFilterActive] = useState(null);
+
+  const filteredRoles = roleLogins.filter((r) => {
+    const q = roleSearch.toLowerCase();
+    const matchSearch = !q || r.team.toLowerCase().includes(q) || r.username.toLowerCase().includes(q);
+    const matchActive = filterActive === null || r.isActive === filterActive;
+    return matchSearch && matchActive;
+  });
 
   const handleEdit = (role) => {
     setEditRole(role);
@@ -439,8 +483,24 @@ function RoleLogins({ isDark }) {
         </Space>
       </Card>
 
+      {/* ── Search & Filter for Role Logins ── */}
+      <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <Input
+          prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+          placeholder="Search team or username..."
+          allowClear
+          value={roleSearch}
+          onChange={(e) => setRoleSearch(e.target.value)}
+          style={{ width: 240, borderRadius: 8 }}
+        />
+        <Select allowClear placeholder="Status" value={filterActive} onChange={(v) => setFilterActive(v === undefined ? null : v)} style={{ width: 140, borderRadius: 8 }}>
+          <Option value={true}>Active</Option>
+          <Option value={false}>Disabled</Option>
+        </Select>
+      </div>
+
       <Row gutter={[16, 16]}>
-        {roleLogins.map((role) => (
+        {filteredRoles.map((role) => (
           <Col xs={24} md={8} key={role.key}>
             <RoleLoginCard role={role} isDark={isDark} onEdit={handleEdit} onToggle={handleToggle} />
           </Col>
@@ -499,7 +559,11 @@ export default function Staff() {
             label: <Space><UserOutlined />Staff List</Space>,
             children: <StaffList isDark={isDark} />,
           },
-
+          {
+            key: 'role_logins',
+            label: <Space><KeyOutlined />Role Logins</Space>,
+            children: <RoleLogins isDark={isDark} />,
+          },
         ]}
       />
     </div>

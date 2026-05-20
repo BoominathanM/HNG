@@ -151,6 +151,11 @@ export default function Billing() {
   const [payChequeBank, setPayChequeBank] = useState('');
   const [payChequeDate, setPayChequeDate] = useState(null);
   const [quotStatusFilter, setQuotStatusFilter] = useState('all');
+  const [quotSearch, setQuotSearch] = useState('');
+  const [invoiceSearch, setInvoiceSearch] = useState('');
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState(null);
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState(null);
   const [payNote, setPayNote] = useState('');
   const [payNoteVisible, setPayNoteVisible] = useState(false);
   const [payDiscountVisible, setPayDiscountVisible] = useState(false);
@@ -163,7 +168,7 @@ export default function Billing() {
   const [convertQuot, setConvertQuot] = useState(null);
   const [convertAmt, setConvertAmt] = useState(0);
 
-  // Upload proof modal (Paid quotation)
+  // View proof modal (Paid quotation)
   const [proofOpen, setProofOpen] = useState(false);
   const [proofQuot, setProofQuot] = useState(null);
 
@@ -431,7 +436,7 @@ export default function Billing() {
     { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${quotStatusColor[v]}22`, color: quotStatusColor[v], border: `1px solid ${quotStatusColor[v]}44` }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions',
-      width: tabType === 'in-process' ? 400 : 190,
+      width: tabType === 'in-process' ? 320 : 190,
       fixed: 'right',
       render: (_, r) => (
         <Space size={4} wrap>
@@ -439,16 +444,6 @@ export default function Billing() {
           <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Quotation shared on WhatsApp')} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
-          {tabType === 'in-process' && r.status === 'In Process' && (
-            <Button size="small" type="primary" icon={<FileDoneOutlined />} style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontSize: 12 }} onClick={() => openConvertModal(r)}>
-              Convert to Invoice
-            </Button>
-          )}
-          {tabType === 'in-process' && r.balance > 0 && (
-            <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay({ ...r, inv: r.quot })}>
-              Record Manually
-            </Button>
-          )}
           {tabType === 'in-process' && (r.status === 'Paid' || r.status === 'Partially Paid') && (
             <Button size="small" icon={<BellOutlined />} style={{ color: '#fa8c16', borderColor: '#fa8c1644', fontSize: 12 }} onClick={() => { setReminderQuot(r); setReminderDate(null); setReminderTime(null); setReminderMode('WhatsApp'); setReminderOpen(true); }}>
               Set Reminder
@@ -456,7 +451,7 @@ export default function Billing() {
           )}
           {tabType === 'in-process' && r.status === 'Paid' && (
             <>
-              <Button size="small" icon={<UploadOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff44', fontSize: 12 }} onClick={() => { setProofQuot(r); setProofOpen(true); }}>Upload Proof</Button>
+              <Button size="small" icon={<EyeOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff44', fontSize: 12 }} onClick={() => { setProofQuot(r); setProofOpen(true); }}>View Proof</Button>
               <Button size="small" icon={<SafetyCertificateOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', fontSize: 12 }} onClick={() => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); }}>Verify</Button>
             </>
           )}
@@ -508,8 +503,8 @@ export default function Billing() {
             label: 'Order in Process',
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(124,58,237,0.06)' }} styles={{ body: { padding: 0 } }}>
-                <div style={{ padding: '12px 16px 8px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderBottom: `1px solid ${borderColor}` }}>
-                  <Text style={{ fontSize: 13, fontWeight: 600, color: '#555' }}>Filter by Type:</Text>
+                <div style={{ padding: '10px 16px 8px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderBottom: `1px solid ${borderColor}` }}>
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search quotation, client..." allowClear value={quotSearch} onChange={(e) => setQuotSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
                   <Select
                     value={quotStatusFilter}
                     onChange={setQuotStatusFilter}
@@ -517,7 +512,6 @@ export default function Billing() {
                     style={{ width: 180 }}
                   >
                     <Option value="all">All</Option>
-                    <Option value="In Process">In Process</Option>
                     <Option value="Paid">Paid</Option>
                     <Option value="Partially Paid">Partially Paid</Option>
                   </Select>
@@ -525,8 +519,9 @@ export default function Billing() {
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
                     dataSource={quotationList
-                      .filter(q => ['In Process', 'Paid', 'Partially Paid'].includes(q.status))
-                      .filter(q => quotStatusFilter === 'all' || q.status === quotStatusFilter)}
+                      .filter(q => ['Paid', 'Partially Paid'].includes(q.status))
+                      .filter(q => quotStatusFilter === 'all' || q.status === quotStatusFilter)
+                      .filter(q => !quotSearch || (q.quot || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.client || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.order || '').toLowerCase().includes(quotSearch.toLowerCase()))}
                     columns={makeQuotationColumns('in-process')}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
@@ -542,9 +537,23 @@ export default function Billing() {
             label: 'Invoices',
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                <div style={{ padding: '10px 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', borderBottom: `1px solid ${borderColor}` }}>
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client, order..." allowClear value={invoiceSearch} onChange={(e) => setInvoiceSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                  <Select allowClear placeholder="Status" value={invoiceStatusFilter} onChange={setInvoiceStatusFilter} style={{ width: 170, borderRadius: 8 }}>
+                    <Option value="Paid">Paid</Option>
+                    <Option value="Pending">Pending</Option>
+                    <Option value="Partially Paid">Partially Paid</Option>
+                    <Option value="Overdue">Overdue</Option>
+                  </Select>
+                </div>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
-                    dataSource={invoiceList}
+                    dataSource={invoiceList.filter((inv) => {
+                      const q = invoiceSearch.toLowerCase();
+                      const matchSearch = !q || (inv.inv || '').toLowerCase().includes(q) || (inv.client || '').toLowerCase().includes(q) || (inv.order || '').toLowerCase().includes(q);
+                      const matchStatus = !invoiceStatusFilter || inv.status === invoiceStatusFilter;
+                      return matchSearch && matchStatus;
+                    })}
                     columns={columns}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
@@ -1542,12 +1551,12 @@ export default function Billing() {
         )}
       </Modal>
 
-      {/* ───────────── UPLOAD PROOF MODAL (Paid Quotation) ───────────── */}
+      {/* ───────────── VIEW PROOF MODAL (Paid Quotation) ───────────── */}
       <Modal
         title={
           <Space>
-            <UploadOutlined style={{ color: '#1890ff' }} />
-            <span style={{ fontWeight: 700 }}>Upload Payment Proof</span>
+            <EyeOutlined style={{ color: '#1890ff' }} />
+            <span style={{ fontWeight: 700 }}>View Payment Proof</span>
           </Space>
         }
         open={proofOpen}
@@ -1564,30 +1573,15 @@ export default function Billing() {
               <Text type="secondary" style={{ fontSize: 12, marginLeft: 12 }}>Client: </Text>
               <Text strong>{proofQuot.client}</Text>
             </div>
-            <Form layout="vertical">
-              <Form.Item label="Payment Date">
-                <DatePicker style={{ width: '100%' }} defaultValue={dayjs()} />
-              </Form.Item>
-              <Form.Item label="Upload Proof (Screenshot / Receipt / Bank Statement)">
-                <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ borderRadius: 8 }}>
-                  <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#1890ff', fontSize: 24 }} /></p>
-                  <p className="ant-upload-text">Click or drag file to upload</p>
-                  <p className="ant-upload-hint" style={{ fontSize: 11 }}>Supports: JPG, PNG, PDF</p>
-                </Upload.Dragger>
-              </Form.Item>
-              <Form.Item label="Remarks (optional)">
-                <Input.TextArea rows={2} placeholder="Any remarks about this payment..." />
-              </Form.Item>
-            </Form>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <Button style={{ flex: 1 }} onClick={() => setProofOpen(false)}>Cancel</Button>
-              <Button
-                type="primary"
-                style={{ flex: 2, background: 'linear-gradient(135deg,#1890ff,#096dd9)', border: 'none', fontWeight: 700 }}
-                onClick={() => { message.success('Payment proof uploaded successfully'); setProofOpen(false); }}
-              >
-                Upload Proof
-              </Button>
+            <div style={{ textAlign: 'center', padding: '24px 0', background: '#f8f9ff', borderRadius: 10, border: '1px dashed #1890ff44' }}>
+              <EyeOutlined style={{ fontSize: 36, color: '#1890ff', display: 'block', marginBottom: 10 }} />
+              <Text style={{ color: '#555', fontSize: 13 }}>No proof uploaded yet for this quotation.</Text>
+              <div style={{ marginTop: 8 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Proof will appear here once uploaded by the team.</Text>
+              </div>
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <Button block onClick={() => setProofOpen(false)} style={{ height: 40, borderRadius: 8 }}>Close</Button>
             </div>
           </div>
         )}

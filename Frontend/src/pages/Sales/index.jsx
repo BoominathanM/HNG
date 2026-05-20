@@ -860,6 +860,11 @@ export default function Sales() {
   const [activeTab, setActiveTab] = useState('performance');
   const [searchText, setSearchText] = useState('');
   const [dateRange, setDateRange] = useState(null);
+  const [leadStatusFilter, setLeadStatusFilter] = useState(null);
+  const [orderStatusFilter, setOrderStatusFilter] = useState(null);
+  const [quotStatusFilter, setQuotStatusFilter] = useState(null);
+  const [reminderTypeFilter, setReminderTypeFilter] = useState(null);
+  const [complaintStatusFilter, setComplaintStatusFilter] = useState(null);
   const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
 
@@ -4018,8 +4023,21 @@ export default function Sales() {
               label: 'Leads',
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <Select
+                      allowClear
+                      placeholder="Lead Status"
+                      value={leadStatusFilter}
+                      onChange={setLeadStatusFilter}
+                      style={{ width: 190, borderRadius: 8 }}
+                    >
+                      {['New', 'Interested', 'Quotation Sent', 'Converted', 'Cold(First Intro)', 'Warm(In discussion)', 'Hot(Going to close soon)', 'Negotiation', 'Managers Help'].map(s => (
+                        <Option key={s} value={s}>{s}</Option>
+                      ))}
+                    </Select>
+                  </div>
                   <Table
-                    dataSource={filtered(leadsData)}
+                    dataSource={filtered(leadsData).filter(r => !leadStatusFilter || r.status === leadStatusFilter)}
                     columns={leadColumns}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
@@ -4036,8 +4054,34 @@ export default function Sales() {
               label: 'Reminders',
               children: (
                 <div className="table-responsive" style={{ padding: '16px 4px 4px' }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <Input
+                      prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                      placeholder="Search lead, party..."
+                      allowClear
+                      value={searchText}
+                      onChange={(e) => setSearchText(e.target.value)}
+                      style={{ width: 220, borderRadius: 8 }}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="Reminder Type"
+                      value={reminderTypeFilter}
+                      onChange={setReminderTypeFilter}
+                      style={{ width: 200, borderRadius: 8 }}
+                    >
+                      {['Payment Overdue Alert', 'Follow-up Reminder', 'Occupancy Alert', 'Call Reminder'].map(t => (
+                        <Option key={t} value={t}>{t}</Option>
+                      ))}
+                    </Select>
+                  </div>
                   <Table
-                    dataSource={REMINDERS_DATA}
+                    dataSource={REMINDERS_DATA.filter(r => {
+                      const q = searchText.toLowerCase();
+                      const matchSearch = !q || (r.customer || '').toLowerCase().includes(q) || (r.leadId || '').toLowerCase().includes(q);
+                      const matchType = !reminderTypeFilter || r.type === reminderTypeFilter;
+                      return matchSearch && matchType;
+                    })}
                     columns={[
                       { title: 'Lead ID', dataIndex: 'leadId', key: 'leadId', width: 110, render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace' }}>{v || '—'}</Text> },
                       { title: 'Type', dataIndex: 'type', key: 'type', width: 150, render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'}>{t}</Tag> },
@@ -4071,9 +4115,24 @@ export default function Sales() {
               label: 'Quotations & Negotiations',
               children: (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                  <div style={{ padding: '12px 4px 0' }}>
+                    <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                      <Select
+                        allowClear
+                        placeholder="Quotation Status"
+                        value={quotStatusFilter}
+                        onChange={setQuotStatusFilter}
+                        style={{ width: 190, borderRadius: 8 }}
+                      >
+                        {['Draft', 'Sent', 'Approved', 'Rejected', 'Negotiation', 'Quotation (Sent)', 'Quotation (Not Sent)'].map(s => (
+                          <Option key={s} value={s}>{s}</Option>
+                        ))}
+                      </Select>
+                    </div>
+                  </div>
                   <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
                     <SectionDivider title="Current Quotations" />
-                    <Table dataSource={filtered(quotationsData)} columns={quotationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
+                    <Table dataSource={filtered(quotationsData).filter(r => !quotStatusFilter || r.status === quotStatusFilter)} columns={quotationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
                       scroll={{ x: 'max-content' }} onRow={(record) => ({ onClick: () => openQuotationDetail(record) })} style={{ cursor: 'pointer' }} />
                   </div>
                   <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
@@ -4089,8 +4148,21 @@ export default function Sales() {
               label: 'Orders',
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <Select
+                      allowClear
+                      placeholder="Order Status"
+                      value={orderStatusFilter}
+                      onChange={setOrderStatusFilter}
+                      style={{ width: 190, borderRadius: 8 }}
+                    >
+                      {['In Production', 'Dispatch Ready', 'Payment Pending', 'Completed', 'Partially Completed', 'Invoiced'].map(s => (
+                        <Option key={s} value={s}>{s}</Option>
+                      ))}
+                    </Select>
+                  </div>
                   <Table
-                    dataSource={filtered(ordersData)}
+                    dataSource={filtered(ordersData).filter(r => !orderStatusFilter || r.status === orderStatusFilter)}
                     columns={orderColumns}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
@@ -4125,7 +4197,18 @@ export default function Sales() {
               label: 'Complaints',
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Select
+                      allowClear
+                      placeholder="Complaint Status"
+                      value={complaintStatusFilter}
+                      onChange={setComplaintStatusFilter}
+                      style={{ width: 160, borderRadius: 8 }}
+                    >
+                      <Option value="Open">Open</Option>
+                      <Option value="Resolved">Resolved</Option>
+                      <Option value="In Progress">In Progress</Option>
+                    </Select>
                     <Button
                       icon={<WarningOutlined />}
                       style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
@@ -4135,7 +4218,7 @@ export default function Sales() {
                     </Button>
                   </div>
                   <Table
-                    dataSource={filtered(complaintsData)}
+                    dataSource={filtered(complaintsData).filter(r => !complaintStatusFilter || r.status === complaintStatusFilter)}
                     columns={complaintColumns}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"

@@ -20,12 +20,12 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const inventory = [
-  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', seller: 'ChemCo India', purchasedDate: '2024-01-15' },
-  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', seller: 'BioLife Ltd', purchasedDate: '2024-01-10' },
-  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', seller: 'PlastiPack', purchasedDate: '2024-01-05' },
-  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', seller: 'BoxWorld', purchasedDate: '2024-01-12' },
-  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', seller: 'PrintFast', purchasedDate: '2024-01-18' },
-  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', seller: 'ChemCo India', purchasedDate: '2023-12-20' },
+  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', sellers: ['ChemCo India', 'BioLife Ltd'], purchasedDate: '2024-01-15' },
+  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', sellers: ['BioLife Ltd'], purchasedDate: '2024-01-10' },
+  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', sellers: ['PlastiPack'], purchasedDate: '2024-01-05' },
+  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', sellers: ['BoxWorld', 'PlastiPack'], purchasedDate: '2024-01-12' },
+  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', sellers: ['PrintFast'], purchasedDate: '2024-01-18' },
+  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', sellers: ['ChemCo India'], purchasedDate: '2023-12-20' },
 ];
 
 const suppliersList = [
@@ -113,6 +113,7 @@ export default function Purchase() {
   const newProductRequests = useSelector((s) => s.purchase.newProductRequests);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
+  const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
   const [suppliers, setSuppliers] = useState(suppliersList);
   const [vendors, setVendors] = useState(vendorsList);
@@ -251,6 +252,11 @@ export default function Purchase() {
   /* â"€â"€ "Verified by" for received orders â"€â"€ */
   const [verifiedByName, setVerifiedByName] = useState('');
 
+  /* ── Quotation Comparison tab ── */
+  const [quotCompareFiles, setQuotCompareFiles] = useState([]);
+  const [quotCompareLoading, setQuotCompareLoading] = useState(false);
+  const [quotCompareResult, setQuotCompareResult] = useState(null);
+
   /* ── Dispatch Order Tracking tab state ── */
   const [dispatchTrackingOrders, setDispatchTrackingOrders] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hng_dispatch_tracking') || 'null') || initDispatchTrackingOrders; } catch { return initDispatchTrackingOrders; }
@@ -342,6 +348,18 @@ export default function Purchase() {
   const [vendorBillFile, setVendorBillFile] = useState(null);
   const [vendorBillScanLoading, setVendorBillScanLoading] = useState(false);
   const [vendorBillForm] = Form.useForm();
+
+  /* ── Search & Filter state (per-tab) ── */
+  const [stockSearch, setStockSearch] = useState('');
+  const [stockReqStatusFilter, setStockReqStatusFilter] = useState(null);
+  const [dtSearch, setDtSearch] = useState('');
+  const [dtDeliveryFilter, setDtDeliveryFilter] = useState(null);
+  const [dtPayFilter, setDtPayFilter] = useState(null);
+  const [expenseSearch, setExpenseSearch] = useState('');
+  const [expensePaidFilter, setExpensePaidFilter] = useState(null);
+  const [localSearch, setLocalSearch] = useState('');
+  const [localPayFilter, setLocalPayFilter] = useState(null);
+  const [printingSearch, setPrintingSearch] = useState('');
 
   /* ── Local Purchase tab state ── */
   const [localPurchases, setLocalPurchases] = useState(() => {
@@ -556,6 +574,7 @@ export default function Purchase() {
     const suggestQty = product.min > product.current ? (product.min - product.current) * 2 : product.min;
     purchaseForm.setFieldsValue({
       product: product.name,
+      product_code: product.code || '',
       qty: suggestQty,
       unit: product.unit
     });
@@ -689,7 +708,7 @@ export default function Purchase() {
     setRaiseRequestExtraQtys({});
     const suggestQty = product.min > product.current ? (product.min - product.current) * 2 : product.min;
     raiseRequestForm.resetFields();
-    raiseRequestForm.setFieldsValue({ product: product.name, qty: suggestQty, unit: product.unit });
+    raiseRequestForm.setFieldsValue({ product: product.name, product_code: product.code || '', qty: suggestQty, unit: product.unit });
     setShowRaiseRequestModal(true);
   };
 
@@ -1058,7 +1077,7 @@ export default function Purchase() {
                       )}
 
                       {/* â"€â"€ Stock Availability Header with Bulk Purchase button â"€â"€ */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                         <div>
                           <Title level={5} style={{ margin: 0, color: textColor }}>Inventory Stock Availability</Title>
                           <Text type="secondary">Raise purchase requests directly for low stock products</Text>
@@ -1072,9 +1091,23 @@ export default function Purchase() {
                           Bulk Purchase Request
                         </Button>
                       </div>
+                      <div style={{ marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                        <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item, category..." allowClear value={stockSearch} onChange={(e) => setStockSearch(e.target.value)} style={{ width: 230, borderRadius: 8 }} />
+                        <Select allowClear placeholder="Quotation Status" value={stockReqStatusFilter} onChange={setStockReqStatusFilter} style={{ width: 180, borderRadius: 8 }}>
+                          <Option value="Pending">Pending</Option>
+                          <Option value="Approved">Approved</Option>
+                          <Option value="Rejected">Rejected</Option>
+                        </Select>
+                      </div>
                       <Table
                         size="small"
-                        dataSource={INVENTORY_DATA}
+                        dataSource={INVENTORY_DATA.filter((inv) => {
+                          const q = stockSearch.toLowerCase();
+                          const matchSearch = !q || (inv.name || '').toLowerCase().includes(q) || (inv.category || '').toLowerCase().includes(q) || (inv.code || '').toLowerCase().includes(q);
+                          const linkedReq = raisedRequests.find(req => req.item === inv.name);
+                          const matchStatus = !stockReqStatusFilter || (linkedReq?.status || '') === stockReqStatusFilter;
+                          return matchSearch && matchStatus;
+                        })}
                         pagination={{ pageSize: 5 }}
                         rowKey="key"
                         scroll={{ x: 1200 }}
@@ -1514,15 +1547,33 @@ export default function Purchase() {
                   label: <Space><TruckOutlined />Dispatch Order Tracking</Space>,
                   children: (
                     <div style={{ marginTop: 12 }}>
-                      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+                      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
                         <div>
                           <Title level={5} style={{ margin: 0, color: textColor }}>Dispatch Order Tracking</Title>
                           <Text type="secondary">Track dispatch orders — LR details, pickup proof, payment status, and delivery confirmation</Text>
                         </div>
                       </div>
+                      <div style={{ marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                        <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order ID, supplier, item..." allowClear value={dtSearch} onChange={(e) => setDtSearch(e.target.value)} style={{ width: 250, borderRadius: 8 }} />
+                        <Select allowClear placeholder="Delivery Status" value={dtDeliveryFilter} onChange={setDtDeliveryFilter} style={{ width: 170, borderRadius: 8 }}>
+                          <Option value="In Transit">In Transit</Option>
+                          <Option value="Delivered">Delivered</Option>
+                          <Option value="Partial Delivery">Partial Delivery</Option>
+                        </Select>
+                        <Select allowClear placeholder="Payment Status" value={dtPayFilter} onChange={setDtPayFilter} style={{ width: 160, borderRadius: 8 }}>
+                          <Option value="Paid">Paid</Option>
+                          <Option value="Unpaid">Unpaid</Option>
+                        </Select>
+                      </div>
                       <Table
                         size="small"
-                        dataSource={dispatchTrackingOrders}
+                        dataSource={dispatchTrackingOrders.filter((o) => {
+                          const q = dtSearch.toLowerCase();
+                          const matchSearch = !q || (o.orderId || '').toLowerCase().includes(q) || (o.supplier || '').toLowerCase().includes(q) || (o.item || '').toLowerCase().includes(q);
+                          const matchDelivery = !dtDeliveryFilter || o.deliveryStatus === dtDeliveryFilter;
+                          const matchPay = !dtPayFilter || o.paymentStatus === dtPayFilter;
+                          return matchSearch && matchDelivery && matchPay;
+                        })}
                         rowKey="key"
                         pagination={{ pageSize: 8 }}
                         scroll={{ x: 1400 }}
@@ -1882,9 +1933,21 @@ export default function Purchase() {
                               Add Local Purchase
                             </Button>
                           </div>
+                          <div style={{ marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search vendor, invoice..." allowClear value={localSearch} onChange={(e) => setLocalSearch(e.target.value)} style={{ width: 230, borderRadius: 8 }} />
+                            <Select allowClear placeholder="Payment Status" value={localPayFilter} onChange={setLocalPayFilter} style={{ width: 160, borderRadius: 8 }}>
+                              <Option value="Paid">Paid</Option>
+                              <Option value="Pending">Pending</Option>
+                            </Select>
+                          </div>
                           <Table
                             size="small"
-                            dataSource={localPurchases}
+                            dataSource={localPurchases.filter((lp) => {
+                              const q = localSearch.toLowerCase();
+                              const matchSearch = !q || (lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.name || '').toLowerCase().includes(q));
+                              const matchPay = !localPayFilter || lp.paymentStatus === localPayFilter;
+                              return matchSearch && matchPay;
+                            })}
                             rowKey="key"
                             pagination={{ pageSize: 8 }}
                             scroll={{ x: 1200 }}
@@ -2112,9 +2175,35 @@ export default function Purchase() {
                         </div>
                         <Button icon={<DownloadOutlined />}>Export</Button>
                       </div>
+                      <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                        <Input
+                          prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                          placeholder="Search supplier, invoice..."
+                          allowClear
+                          value={expenseSearch}
+                          onChange={(e) => setExpenseSearch(e.target.value)}
+                          style={{ width: 230, borderRadius: 8 }}
+                        />
+                        <Select
+                          allowClear
+                          placeholder="Paid Status"
+                          value={expensePaidFilter}
+                          onChange={setExpensePaidFilter}
+                          style={{ width: 160, borderRadius: 8 }}
+                        >
+                          <Option value="Paid">Paid</Option>
+                          <Option value="Partially Paid">Partially Paid</Option>
+                          <Option value="Unpaid">Unpaid</Option>
+                        </Select>
+                      </div>
                       <Table
                         size="small"
-                        dataSource={purchases}
+                        dataSource={purchases.filter((p) => {
+                          const q = expenseSearch.toLowerCase();
+                          const matchSearch = !q || (p.entity || '').toLowerCase().includes(q) || (p.inv_no || '').toLowerCase().includes(q) || (p.bill_no || '').toLowerCase().includes(q) || (p.items || []).some(i => (i.name || '').toLowerCase().includes(q));
+                          const matchPaid = !expensePaidFilter || (p.paid_status || 'Unpaid') === expensePaidFilter;
+                          return matchSearch && matchPaid;
+                        })}
                         rowKey="key"
                         scroll={{ x: 1400 }}
                         expandable={{
@@ -2235,6 +2324,14 @@ export default function Purchase() {
                           <Text type="secondary" style={{ fontSize: 12 }}>Manage sticker, box and ziplock suppliers</Text>
                         </div>
                         <Space wrap>
+                          <Input
+                            prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                            placeholder="Search supplier..."
+                            allowClear
+                            value={printingSearch}
+                            onChange={(e) => setPrintingSearch(e.target.value)}
+                            style={{ width: 200, borderRadius: 8 }}
+                          />
                           <Select
                             value={printingTypeFilter}
                             onChange={setPrintingTypeFilter}
@@ -2260,7 +2357,12 @@ export default function Purchase() {
                       {/* Suppliers Table */}
                       <Table
                         size="small"
-                        dataSource={printingSuppliers.filter(s => printingTypeFilter === 'all' || s.type === printingTypeFilter)}
+                        dataSource={printingSuppliers.filter(s => {
+                          const q = printingSearch.toLowerCase();
+                          const matchSearch = !q || (s.name || '').toLowerCase().includes(q) || (s.phone || '').toLowerCase().includes(q) || (s.email || '').toLowerCase().includes(q);
+                          const matchType = printingTypeFilter === 'all' || s.type === printingTypeFilter;
+                          return matchSearch && matchType;
+                        })}
                         rowKey="key"
                         scroll={{ x: 900 }}
                         onRow={(record) => ({ onClick: () => setViewPrintingSupplier(record), style: { cursor: 'pointer' } })}
@@ -2288,6 +2390,213 @@ export default function Purchase() {
                           },
                         ]}
                       />
+                    </div>
+                  ),
+                },
+                {
+                  key: 'quotation_comparison',
+                  label: <Space><RobotOutlined />Quotation Comparison</Space>,
+                  children: (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+                        <div>
+                          <Title level={5} style={{ margin: 0, color: isDark ? '#e0e0e0' : '#1a1a2e' }}>AI Quotation Comparison</Title>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Upload multiple supplier quotation files and let AI suggest the best option</Text>
+                        </div>
+                        {quotCompareFiles.length > 0 && (
+                          <Button
+                            danger
+                            size="small"
+                            onClick={() => { setQuotCompareFiles([]); setQuotCompareResult(null); }}
+                          >
+                            Clear All
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Upload Area */}
+                      <Upload.Dragger
+                        multiple
+                        beforeUpload={(file) => {
+                          setQuotCompareFiles(prev => [...prev, file]);
+                          setQuotCompareResult(null);
+                          return false;
+                        }}
+                        onRemove={(file) => {
+                          setQuotCompareFiles(prev => prev.filter(f => f.uid !== file.uid));
+                          setQuotCompareResult(null);
+                        }}
+                        fileList={quotCompareFiles}
+                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls"
+                        style={{ borderRadius: 12, marginBottom: 16, background: isDark ? '#1a1a2a' : '#fafcff', borderColor: '#B11E6A66' }}
+                      >
+                        <div style={{ padding: '24px 16px', textAlign: 'center' }}>
+                          <UploadOutlined style={{ fontSize: 36, color: '#B11E6A', marginBottom: 10, display: 'block' }} />
+                          <Text strong style={{ fontSize: 14, color: isDark ? '#e0e0e0' : '#1a1a2e', display: 'block', marginBottom: 4 }}>
+                            Click or drag quotation files here
+                          </Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            Supports PDF, JPG, PNG, DOC, XLSX — upload 2 or more quotations to compare
+                          </Text>
+                        </div>
+                      </Upload.Dragger>
+
+                      {/* File count indicator */}
+                      {quotCompareFiles.length > 0 && (
+                        <div style={{ marginBottom: 14, padding: '10px 16px', borderRadius: 8, background: isDark ? '#1a1a2a' : '#f0f4ff', border: '1px solid #B11E6A33', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                          <Space>
+                            <FileTextOutlined style={{ color: '#B11E6A' }} />
+                            <Text style={{ fontSize: 13 }}>
+                              <span style={{ fontWeight: 700, color: '#B11E6A' }}>{quotCompareFiles.length}</span> quotation{quotCompareFiles.length > 1 ? 's' : ''} uploaded
+                              {quotCompareFiles.length < 2 && (
+                                <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>(upload at least 2 to compare)</Text>
+                              )}
+                            </Text>
+                          </Space>
+                          <Button
+                            type="primary"
+                            icon={<RobotOutlined />}
+                            disabled={quotCompareFiles.length < 2}
+                            loading={quotCompareLoading}
+                            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
+                            onClick={() => {
+                              setQuotCompareLoading(true);
+                              setQuotCompareResult(null);
+                              setTimeout(() => {
+                                const mockSuppliers = quotCompareFiles.map((f, i) => {
+                                  const prices = [48500, 43200, 51000, 39800, 46700];
+                                  const deliveries = ['7 days', '10 days', '5 days', '14 days', '8 days'];
+                                  const qualities = ['Premium', 'Standard', 'Premium', 'Economy', 'Standard'];
+                                  const terms = ['30% advance, 70% on delivery', '50% advance, 50% on delivery', 'Full payment in advance', '100% credit (30 days)', '40% advance, 60% credit'];
+                                  const scores = [82, 91, 74, 78, 85];
+                                  return {
+                                    name: f.name.replace(/\.[^/.]+$/, ''),
+                                    price: prices[i % prices.length],
+                                    delivery: deliveries[i % deliveries.length],
+                                    quality: qualities[i % qualities.length],
+                                    terms: terms[i % terms.length],
+                                    score: scores[i % scores.length],
+                                  };
+                                });
+                                const best = mockSuppliers.reduce((a, b) => a.score > b.score ? a : b);
+                                setQuotCompareResult({ suppliers: mockSuppliers, best });
+                                setQuotCompareLoading(false);
+                              }, 2200);
+                            }}
+                          >
+                            {quotCompareLoading ? 'Analysing...' : 'Compare with AI'}
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* AI Results */}
+                      {quotCompareResult && (
+                        <div>
+                          {/* Best Recommendation Banner */}
+                          <div style={{ marginBottom: 16, padding: '16px 20px', borderRadius: 12, background: 'linear-gradient(135deg,#B11E6A18,#D85C9E10)', border: '1.5px solid #B11E6A44' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                              <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                <RobotOutlined style={{ color: '#fff', fontSize: 18 }} />
+                              </div>
+                              <div>
+                                <Text strong style={{ fontSize: 14, color: '#B11E6A', display: 'block', marginBottom: 4 }}>
+                                  AI Recommendation
+                                </Text>
+                                <Text style={{ fontSize: 13, color: isDark ? '#e0e0e0' : '#333', lineHeight: 1.6 }}>
+                                  Based on price, delivery time, quality, and payment terms, <Text strong style={{ color: '#B11E6A' }}>{quotCompareResult.best.name}</Text> is the best quotation with an overall score of <Text strong style={{ color: '#B11E6A' }}>{quotCompareResult.best.score}/100</Text>. It offers the optimal balance of cost-efficiency and reliability.
+                                </Text>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Comparison Table */}
+                          <Table
+                            size="small"
+                            rowKey="name"
+                            dataSource={quotCompareResult.suppliers}
+                            scroll={{ x: 700 }}
+                            pagination={false}
+                            rowClassName={(r) => r.name === quotCompareResult.best.name ? 'ant-table-row-selected' : ''}
+                            columns={[
+                              {
+                                title: 'Quotation', dataIndex: 'name', width: 180,
+                                render: (v, r) => (
+                                  <Space>
+                                    <Text strong style={{ color: r.name === quotCompareResult.best.name ? '#B11E6A' : isDark ? '#e0e0e0' : '#1a1a2e', fontSize: 13 }}>{v}</Text>
+                                    {r.name === quotCompareResult.best.name && <Tag color="#B11E6A" style={{ borderRadius: 10, fontSize: 11 }}>Best</Tag>}
+                                  </Space>
+                                ),
+                              },
+                              {
+                                title: 'Price', dataIndex: 'price', width: 110,
+                                render: (v, r) => {
+                                  const min = Math.min(...quotCompareResult.suppliers.map(s => s.price));
+                                  return <Text strong style={{ color: v === min ? '#52c41a' : isDark ? '#e0e0e0' : '#333' }}>₹{v.toLocaleString()}</Text>;
+                                },
+                                sorter: (a, b) => a.price - b.price,
+                              },
+                              {
+                                title: 'Delivery', dataIndex: 'delivery', width: 100,
+                                render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text>,
+                              },
+                              {
+                                title: 'Quality', dataIndex: 'quality', width: 100,
+                                render: (v) => <Tag color={v === 'Premium' ? 'gold' : v === 'Standard' ? 'blue' : 'default'} style={{ borderRadius: 10 }}>{v}</Tag>,
+                              },
+                              {
+                                title: 'Payment Terms', dataIndex: 'terms', width: 220,
+                                render: (v) => <Text style={{ fontSize: 12, color: isDark ? '#bbb' : '#555' }}>{v}</Text>,
+                              },
+                              {
+                                title: 'AI Score', dataIndex: 'score', width: 90,
+                                render: (v, r) => (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <div style={{ flex: 1, height: 6, borderRadius: 3, background: isDark ? '#333' : '#f0f0f0', overflow: 'hidden' }}>
+                                      <div style={{ height: '100%', width: `${v}%`, borderRadius: 3, background: r.name === quotCompareResult.best.name ? 'linear-gradient(90deg,#B11E6A,#D85C9E)' : 'linear-gradient(90deg,#3730a3,#6366f1)' }} />
+                                    </div>
+                                    <Text strong style={{ fontSize: 12, color: r.name === quotCompareResult.best.name ? '#B11E6A' : isDark ? '#e0e0e0' : '#333', minWidth: 28 }}>{v}</Text>
+                                  </div>
+                                ),
+                                sorter: (a, b) => a.score - b.score,
+                                defaultSortOrder: 'descend',
+                              },
+                            ]}
+                          />
+
+                          {/* Actions */}
+                          <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                            <Button
+                              type="primary"
+                              icon={<CheckCircleOutlined />}
+                              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
+                              onClick={() => message.success(`${quotCompareResult.best.name} selected as the preferred quotation`)}
+                            >
+                              Select Best Quotation
+                            </Button>
+                            <Button
+                              icon={<WhatsAppOutlined />}
+                              style={{ color: '#25D366', borderColor: '#25D36644', fontWeight: 600 }}
+                              onClick={() => message.success('Comparison report shared via WhatsApp')}
+                            >
+                              Share Report
+                            </Button>
+                            <Button
+                              icon={<DownloadOutlined />}
+                              onClick={() => message.info('Downloading comparison report...')}
+                            >
+                              Download Report
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Empty state */}
+                      {quotCompareFiles.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '40px 20px', color: isDark ? '#888' : '#aaa' }}>
+                          <RobotOutlined style={{ fontSize: 48, marginBottom: 12, display: 'block', opacity: 0.4 }} />
+                          <Text type="secondary" style={{ fontSize: 14 }}>Upload 2 or more quotation files to start AI comparison</Text>
+                        </div>
+                      )}
                     </div>
                   ),
                 },
@@ -2727,12 +3036,17 @@ export default function Purchase() {
           {/* Product & Supplier */}
           <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
             <Row gutter={12}>
-              <Col span={12}>
-                <Form.Item label="Product" name="product" rules={[{ required: true }]} style={{ marginBottom: 0 }}>
+              <Col span={8}>
+                <Form.Item label="Product Code" name="product_code" style={{ marginBottom: 12 }}>
+                  <Input disabled style={{ borderRadius: 8, background: isDark ? '#1e2235' : '#fff', fontWeight: 700, color: '#B11E6A' }} />
+                </Form.Item>
+              </Col>
+              <Col span={16}>
+                <Form.Item label="Product" name="product" rules={[{ required: true }]} style={{ marginBottom: 12 }}>
                   <Input disabled style={{ borderRadius: 8, background: isDark ? '#1e2235' : '#fff' }} />
                 </Form.Item>
               </Col>
-              <Col span={12}>
+              <Col span={24}>
                 <Form.Item label="Supplier" name="supplier" rules={[{ required: true, message: 'Select a supplier' }]} style={{ marginBottom: 0 }}>
                   <Select
                     placeholder="Select supplier"
@@ -2951,7 +3265,14 @@ export default function Purchase() {
                 <ShoppingOutlined style={{ color: '#fff', fontSize: 16 }} />
               </div>
               <div style={{ flex: 1 }}>
-                <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{raiseRequestProduct.name}</Text>
+                <Space size={8} align="center" style={{ marginBottom: 2 }}>
+                  {raiseRequestProduct.code && (
+                    <Tag style={{ background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20, fontWeight: 700, fontSize: 11, margin: 0 }}>
+                      {raiseRequestProduct.code}
+                    </Tag>
+                  )}
+                  <Text strong style={{ color: textColor, fontSize: 14 }}>{raiseRequestProduct.name}</Text>
+                </Space>
                 <Space size={12} style={{ marginTop: 2 }}>
                   <Text style={{ fontSize: 11, color: raiseRequestProduct.current <= raiseRequestProduct.min ? '#ff4d4f' : '#52c41a' }}>
                     Stock: {raiseRequestProduct.current} {raiseRequestProduct.unit}
@@ -2963,6 +3284,7 @@ export default function Purchase() {
                 </Space>
               </div>
               <Form.Item name="product" hidden><Input /></Form.Item>
+              <Form.Item name="product_code" hidden><Input /></Form.Item>
               <Form.Item name="unit" hidden><Input /></Form.Item>
             </div>
           )}

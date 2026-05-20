@@ -100,6 +100,9 @@ export default function Tasks() {
   const isDark = useSelector((s) => s.theme.isDark);
   const [taskList, setTaskList] = useState(initialTasks);
   const [searchText, setSearchText] = useState('');
+  const [filterType, setFilterType] = useState(null);
+  const [filterPriority, setFilterPriority] = useState(null);
+  const [filterStatus, setFilterStatus] = useState(null);
   const [view, setView] = useState('table');
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
@@ -283,12 +286,14 @@ export default function Tasks() {
   ];
 
   const followupTasks = taskList.filter((t) => t.salesFollowup);
-  const filtered = taskList.filter((t) =>
-    !searchText ||
-    t.id.toLowerCase().includes(searchText.toLowerCase()) ||
-    t.title.toLowerCase().includes(searchText.toLowerCase()) ||
-    (t.client && t.client.toLowerCase().includes(searchText.toLowerCase()))
-  );
+  const filtered = taskList.filter((t) => {
+    const q = (searchText || '').toLowerCase();
+    const matchSearch = !q || t.id.toLowerCase().includes(q) || t.title.toLowerCase().includes(q) || (t.client && t.client.toLowerCase().includes(q)) || (t.assignee && t.assignee.toLowerCase().includes(q));
+    const matchType = !filterType || t.type === filterType;
+    const matchPriority = !filterPriority || t.priority === filterPriority;
+    const matchStatus = !filterStatus || t.status === filterStatus;
+    return matchSearch && matchType && matchPriority && matchStatus;
+  });
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
@@ -343,6 +348,17 @@ export default function Tasks() {
       {/* Table view */}
       {view === 'table' ? (
         <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+          <div style={{ padding: '10px 16px 8px', borderBottom: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <Select allowClear placeholder="Type" value={filterType} onChange={setFilterType} style={{ width: 150, borderRadius: 8 }}>
+              {Object.keys(typeColor).map((t) => <Option key={t} value={t}>{t}</Option>)}
+            </Select>
+            <Select allowClear placeholder="Priority" value={filterPriority} onChange={setFilterPriority} style={{ width: 130, borderRadius: 8 }}>
+              {Object.keys(priorityColor).map((p) => <Option key={p} value={p}>{p}</Option>)}
+            </Select>
+            <Select allowClear placeholder="Status" value={filterStatus} onChange={setFilterStatus} style={{ width: 140, borderRadius: 8 }}>
+              {Object.keys(statusColor).map((s) => <Option key={s} value={s}>{s}</Option>)}
+            </Select>
+          </div>
           <div className="table-responsive" style={{ padding: '4px' }}>
             <Table dataSource={filtered} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 'max-content' }} />
           </div>
