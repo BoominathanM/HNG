@@ -28,6 +28,7 @@ import Expenses from './pages/Expenses';
 import Purchase from './pages/Purchase';
 import Financial from './pages/Financial';
 import PartiesLedger from './pages/PartiesLedger';
+import VendorsSuppliers from './pages/VendorsSuppliers';
 import WhatsAppIntegration from './pages/Integration/WhatsAppIntegration';
 import AIIntegration from './pages/Integration/AIIntegration';
 
@@ -65,6 +66,7 @@ function ThemedApp() {
               <Route path="/purchase" element={<Purchase />} />
               <Route path="/billing" element={<Billing />} />
               <Route path="/parties-ledger" element={<PartiesLedger />} />
+              <Route path="/vendors-suppliers" element={<VendorsSuppliers />} />
               <Route path="/financial" element={<Financial />} />
               <Route path="/expenses" element={<Expenses />} />
               <Route path="/reports" element={<Reports />} />

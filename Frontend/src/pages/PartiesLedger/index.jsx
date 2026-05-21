@@ -658,7 +658,7 @@ export default function PartiesLedger() {
               },
               {
                 key: 'suppliers',
-                label: <Space><ShopOutlined /> Suppliers Ledger</Space>,
+                label: <Space><ShopOutlined /> Vendors Ledger</Space>,
                 children: (
                   <div style={{ marginTop: 12 }}>
                     {renderPartiesTable(supplierList, supplierSearch, setSupplierSearch, 'Supplier')}

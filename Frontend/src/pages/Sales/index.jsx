@@ -499,36 +499,53 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             )}
           </Col>
 
+          {/* Display Unit & Size (kit only) */}
+          {isKit && (
+            <>
+              <Col flex="none" style={{ width: 130 }}>
+                <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>DISPLAY UNIT</Text>
+                <Form.Item {...rest} name={[name, 'unit']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                  <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={isItemDisabled} size="small" />
+                </Form.Item>
+              </Col>
+              <Col flex="none" style={{ width: 140 }}>
+                <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>SIZE</Text>
+                <Form.Item {...rest} name={[name, 'size']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                  <Input placeholder="e.g. 2.5cm x 2.5cm" size="small" disabled={isItemDisabled} />
+                </Form.Item>
+              </Col>
+            </>
+          )}
+
           {/* Qty, Rate, GST & Sticker/Printing */}
           <Col flex="auto">
-            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST / STICKER/PRINTING</Text>
-            <Row gutter={8}>
-              <Col span={5}>
-                <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
-                  <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
-                  <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={isItemDisabled} size="small" />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item {...rest} name={[name, 'gst']} style={{ marginBottom: 0 }}>
-                  <InputNumber placeholder="GST %" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
-                </Form.Item>
-              </Col>
-              <Col span={7}>
-                <Form.Item {...rest} name={[name, 'sticker']} style={{ marginBottom: 0 }}>
-                  <Select size="small" placeholder="Sticker/Printing" disabled={isItemDisabled}>
-                    <Option value="YES">Yes</Option>
-                    <Option value="NO">No</Option>
-                    <Option value="PRINTING">Printing</Option>
-                  </Select>
-                </Form.Item>
-              </Col>
-            </Row>
-          </Col>
+              <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST</Text>
+              <Row gutter={8}>
+                <Col span={5}>
+                  <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
+                    <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
+                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={isItemDisabled} size="small" />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item {...rest} name={[name, 'gst']} style={{ marginBottom: 0 }}>
+                    <InputNumber placeholder="GST %" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
+                  </Form.Item>
+                </Col>
+                <Col span={7}>
+                  <Form.Item {...rest} name={[name, 'sticker']} style={{ marginBottom: 0 }}>
+                    <Select size="small" placeholder="Sticker/Printing" disabled={isItemDisabled}>
+                      <Option value="YES">Yes</Option>
+                      <Option value="NO">No</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Col>
 
           {/* Subtotal Display */}
           <Col flex="none" style={{ textAlign: 'right', minWidth: 100 }}>
@@ -562,89 +579,57 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             {isKit && <Tag color="magenta" style={{ fontSize: 10, borderRadius: 4 }}>KIT MODE</Tag>}
           </div>
 
-          <Row gutter={[16, 16]}>
-            {/* Row 1: Display Unit (kit only), Size (kit only), Logo, Sticker / Printing, Packing Material */}
-            {isKit && (
-              <Col xs={24} sm={6}>
-                <Form.Item {...rest} name={[name, 'unit']} label={<span style={{ fontSize: 11 }}>Display Unit</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                  <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={isItemDisabled} size="small" />
-                </Form.Item>
-              </Col>
-            )}
-            {isKit && (
-              <Col xs={24} sm={6}>
-                <Form.Item {...rest} name={[name, 'size']} label={<span style={{ fontSize: 11 }}>Size</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                  <Input placeholder="e.g. 2.5cm x 2.5cm" size="small" disabled={isItemDisabled} />
-                </Form.Item>
-              </Col>
-            )}
-            <Col xs={24} sm={6}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'nowrap' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={isItemDisabled} size="small" />
               </Form.Item>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'sticker']} label={<span style={{ fontSize: 11 }}>Sticker / Printing</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }, { value: 'PRINTING', label: 'Printing' }]} placeholder="Sticker / Printing?" disabled={isItemDisabled} size="small" />
-              </Form.Item>
-            </Col>
-
-            {/* Row 2: Packing Material, Material Category, Brand, Product */}
-            <Col xs={24} sm={6}>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={isItemDisabled} size="small" />
               </Form.Item>
-            </Col>
-            <Col xs={24} sm={6}>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={isItemDisabled} size="small" />
               </Form.Item>
-            </Col>
-            <Col xs={24} sm={6}>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
                 <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" disabled={isItemDisabled} size="small" />
               </Form.Item>
-            </Col>
-            <Col xs={24} sm={6}>
-              <Form.Item {...rest} name={[name, 'productType']} label={<span style={{ fontSize: 11 }}>Product</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[]} placeholder="Select / Add product" disabled={isItemDisabled} size="small" />
-              </Form.Item>
-            </Col>
-
-            {/* Row 3: Other Specs */}
-            <Col xs={24} sm={6}>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specs</span>} style={{ marginBottom: 0 }}>
                 <Input placeholder="e.g. Special handle" size="small" disabled={isItemDisabled} />
               </Form.Item>
-            </Col>
+            </div>
+          </div>
 
-            {isKit && (
-              <Col xs={24}>
-                <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#f9f9f9', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.03)' }}>
-                  <Text strong style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Kit Contents:</Text>
-                  {kitType === 'DENTAL_KIT' && (
-                    <Row gutter={8}>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'brush']} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'paste']} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
-                      <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
-                    </Row>
-                  )}
-                  {kitType === 'SHAVING_KIT' && (
-                    <Row gutter={8}>
-                      <Col span={12}><Form.Item {...rest} name={[name, 'razor']} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small" disabled={isItemDisabled}>{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r.name} value={r.name}>{r.name}</Option>)}</Select></Form.Item></Col>
-                      <Col span={12}><Form.Item {...rest} name={[name, 'gel']} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small" disabled={isItemDisabled}>{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g.name} value={g.name}>{g.name}</Option>)}</Select></Form.Item></Col>
-                    </Row>
-                  )}
-                  {kitType === 'CARE_KIT' && (
-                    <Form.Item {...rest} name={[name, 'careProducts']} style={{ marginBottom: 0 }}>
-                      <Select mode="multiple" placeholder="Select Products" size="small" disabled={isItemDisabled}>{CARE_KIT_PRODUCTS.products.map(p => <Option key={p} value={p}>{p}</Option>)}</Select>
-                    </Form.Item>
-                  )}
-                </div>
-              </Col>
-            )}
-
-          </Row>
+          {isKit && (
+            <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#f9f9f9', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.03)', marginTop: 8 }}>
+              <Text strong style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Kit Contents:</Text>
+              {kitType === 'DENTAL_KIT' && (
+                <Row gutter={8}>
+                  <Col span={8}><Form.Item {...rest} name={[name, 'brush']} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
+                  <Col span={8}><Form.Item {...rest} name={[name, 'paste']} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
+                  <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
+                </Row>
+              )}
+              {kitType === 'SHAVING_KIT' && (
+                <Row gutter={8}>
+                  <Col span={12}><Form.Item {...rest} name={[name, 'razor']} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small" disabled={isItemDisabled}>{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r.name} value={r.name}>{r.name}</Option>)}</Select></Form.Item></Col>
+                  <Col span={12}><Form.Item {...rest} name={[name, 'gel']} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small" disabled={isItemDisabled}>{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g.name} value={g.name}>{g.name}</Option>)}</Select></Form.Item></Col>
+                </Row>
+              )}
+              {kitType === 'CARE_KIT' && (
+                <Form.Item {...rest} name={[name, 'careProducts']} style={{ marginBottom: 0 }}>
+                  <Select mode="multiple" placeholder="Select Products" size="small" disabled={isItemDisabled}>{CARE_KIT_PRODUCTS.products.map(p => <Option key={p} value={p}>{p}</Option>)}</Select>
+                </Form.Item>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -3135,13 +3120,6 @@ export default function Sales() {
                             : '—'
                         } />
                       </Col>
-                      <Col xs={24} sm={12}>
-                        <InfoRow label="Display Unit" value={
-                          record.displayUnit
-                            ? (DISPLAY_UNIT_OPTIONS.find(o => o.value === record.displayUnit)?.label || record.displayUnit)
-                            : '—'
-                        } />
-                      </Col>
                     </Row>
                   ) : (
                     <Row gutter={16}>
@@ -3154,16 +3132,6 @@ export default function Sales() {
                           />
                         </Form.Item>
                       </Col>
-                      {watchedProductType?.includes('PERSONALIZED_KIT') && (
-                        <Col xs={24} sm={12}>
-                          <Form.Item label="Display Unit" name="displayUnit" rules={[{ required: true, message: 'Select display unit' }]}>
-                            <SelectWithAdd
-                              defaultOptions={DISPLAY_UNIT_OPTIONS}
-                              placeholder="Select display unit"
-                            />
-                          </Form.Item>
-                        </Col>
-                      )}
                     </Row>
                   )}
                 </Card>
@@ -3343,7 +3311,7 @@ export default function Sales() {
                                 <Space>
                                   <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
                                   <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                                  <span>{hasKit && hasSeparate ? 'Personalized Kit Order Details' : 'Order Details — Products'}</span>
+                                  <span>{hasKit ? 'Personalized Kit — Order Details' : 'Order Details — Products'}</span>
                                 </Space>
                               }
                             >
@@ -3374,7 +3342,7 @@ export default function Sales() {
                                 <Space>
                                   <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
                                   <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                                  <span>{hasKit && hasSeparate ? 'Separate Products Order Details' : 'Order Details — Products'}</span>
+                                  <span>{hasSeparate ? 'Separate Product — Order Details' : 'Order Details — Products'}</span>
                                 </Space>
                               }
                             >

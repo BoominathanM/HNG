@@ -7,7 +7,8 @@ import {
   DashboardOutlined, TeamOutlined, ApartmentOutlined, CheckSquareOutlined,
   CarOutlined, UserOutlined, InboxOutlined, DollarOutlined,
   BarChartOutlined, SettingOutlined, BellOutlined, CloseOutlined, RightOutlined, LogoutOutlined,
-  ShoppingOutlined, BankOutlined, ApiOutlined, MessageOutlined, RobotOutlined, BookOutlined
+  ShoppingOutlined, BankOutlined, ApiOutlined, MessageOutlined, RobotOutlined, BookOutlined,
+  ContactsOutlined
 } from '@ant-design/icons';
 import { toggleSidebar } from '../../store/slices/themeSlice';
 import { logout } from '../../store/slices/authSlice';
@@ -24,6 +25,7 @@ const menuItems = [
   { key: '/staff', icon: <UserOutlined />, label: 'Staff Management' },
   { key: '/inventory', icon: <InboxOutlined />, label: 'Inventory' },
   { key: '/purchase', icon: <ShoppingOutlined />, label: 'Purchase' },
+  { key: '/vendors-suppliers', icon: <ContactsOutlined />, label: 'Vendors & Suppliers' },
   { key: '/billing', icon: <DollarOutlined />, label: 'Billing' },
   { key: '/parties-ledger', icon: <BookOutlined />, label: 'Parties & Ledger' },
   { key: '/financial', icon: <BankOutlined />, label: 'Financial' },
