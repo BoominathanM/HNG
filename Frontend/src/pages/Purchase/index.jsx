@@ -42,6 +42,19 @@ const vendorsList = [
   { id: 4, name: 'Hyatt Chennai',     phone: '+91 44 6150 1234', email: 'procurement@hyatt.in',   address: 'Chennai, TN', whatsapp: '914461501234', totalPaid: 42000,  pending: 18000 },
 ];
 
+const exportToCSV = (headers, rows, filename) => {
+  const csv = [headers, ...rows]
+    .map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 const INVENTORY_DATA = [
   { key: 1, code: 'RM-001', name: 'Soap Base (White)', current: 450, min: 100, unit: 'Kg', category: 'Raw Materials' },
   { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', current: 45, min: 100, unit: 'Kg', category: 'Raw Materials' },
@@ -1698,13 +1711,31 @@ export default function Purchase() {
                         if (missingOrders.length === 0) return null;
                         return (
                           <div style={{ marginTop: 28 }}>
-                            <div style={{ marginBottom: 12 }}>
-                              <Space align="center">
-                                <ExclamationCircleOutlined style={{ color: '#fa8c16', fontSize: 16 }} />
-                                <Title level={5} style={{ margin: 0, color: '#fa8c16' }}>Missing / Short-Received Orders</Title>
-                                <Tag color="warning" style={{ borderRadius: 10, fontWeight: 600 }}>{missingOrders.length} order{missingOrders.length > 1 ? 's' : ''}</Tag>
-                              </Space>
-                              <Text type="secondary" style={{ display: 'block', marginTop: 2 }}>Orders with items that were not fully received — partial delivery recorded</Text>
+                            <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <div>
+                                <Space align="center">
+                                  <ExclamationCircleOutlined style={{ color: '#fa8c16', fontSize: 16 }} />
+                                  <Title level={5} style={{ margin: 0, color: '#fa8c16' }}>Missing / Short-Received Orders</Title>
+                                  <Tag color="warning" style={{ borderRadius: 10, fontWeight: 600 }}>{missingOrders.length} order{missingOrders.length > 1 ? 's' : ''}</Tag>
+                                </Space>
+                                <Text type="secondary" style={{ display: 'block', marginTop: 2 }}>Orders with items that were not fully received — partial delivery recorded</Text>
+                              </div>
+                              <Button
+                                icon={<DownloadOutlined />}
+                                size="small"
+                                onClick={() => exportToCSV(
+                                  ['Order ID', 'Date', 'Supplier', 'Item', 'Qty', 'Unit', 'Amount (₹)', 'Missing Items', 'Delivery Status', 'Missed By', 'Action Taken', 'Status'],
+                                  missingOrders.map(o => [
+                                    o.orderId, o.date, o.supplier, o.item, o.qty, o.unit, o.amount,
+                                    `${o.missingItems?.length || 0} item(s)`,
+                                    o.deliveryStatus,
+                                    o.partialMissedBy === 'supplier' ? 'Vendor' : o.partialMissedBy === 'lorry' ? 'Lorry' : '',
+                                    o.actionTakenStatus || '',
+                                    !o.actionTakenStatus ? 'Pending' : o.actionTakenStatus,
+                                  ]),
+                                  'missed_orders.csv'
+                                )}
+                              >Export</Button>
                             </div>
                             <Table
                               size="small"
@@ -2137,6 +2168,14 @@ export default function Purchase() {
                                 <Option value="last_6_months">Last 6 Months</Option>
                                 <Option value="last_year">Last Year</Option>
                               </Select>
+                              <Button
+                                icon={<DownloadOutlined />}
+                                onClick={() => exportToCSV(
+                                  ['Vendor Name', 'Phone', 'Email', 'Address', 'Total Paid (₹)', 'Pending (₹)'],
+                                  filteredVendors.map(v => [v.name, v.phone, v.email, v.address, v.totalPaid, v.pending]),
+                                  'vendors.csv'
+                                )}
+                              >Export</Button>
                               <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddVendorModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Vendor</Button>
                             </Space>
                           </div>
