@@ -167,6 +167,8 @@ export default function Billing() {
   const [convertOpen, setConvertOpen] = useState(false);
   const [convertQuot, setConvertQuot] = useState(null);
   const [convertAmt, setConvertAmt] = useState(0);
+  const [convertPreviousDue, setConvertPreviousDue] = useState(0);
+  const [convertPrevInvoices, setConvertPrevInvoices] = useState([]);
 
   // View proof modal (Paid quotation)
   const [proofOpen, setProofOpen] = useState(false);
@@ -309,8 +311,12 @@ export default function Billing() {
   };
 
   const openConvertModal = (quot) => {
+    const prevInvs = invoiceList.filter(inv => inv.client === quot.client && inv.balance > 0);
+    const prevDue = prevInvs.reduce((sum, inv) => sum + inv.balance, 0);
     setConvertQuot(quot);
     setConvertAmt(quot.total);
+    setConvertPreviousDue(prevDue);
+    setConvertPrevInvoices(prevInvs);
     setConvertOpen(true);
   };
 
@@ -318,6 +324,7 @@ export default function Billing() {
     if (!convertQuot) return;
     const amt = convertAmt || convertQuot.total;
     const proportion = convertQuot.total > 0 ? amt / convertQuot.total : 1;
+    const currentBalance = Math.max(0, amt - Math.round(convertQuot.advance * proportion));
     const newInv = {
       key: Date.now(),
       inv: `INV-${convertQuot.quot.replace('QT-', '')}`,
@@ -328,7 +335,8 @@ export default function Billing() {
       gst: Math.round(convertQuot.gst * proportion),
       total: amt,
       advance: Math.round(convertQuot.advance * proportion),
-      balance: Math.max(0, amt - Math.round(convertQuot.advance * proportion)),
+      balance: currentBalance + convertPreviousDue,
+      previousBalance: convertPreviousDue,
       type: convertQuot.type,
       status: Math.round(convertQuot.advance * proportion) >= amt ? 'Paid' : convertQuot.advance > 0 ? 'Partially Paid' : 'Pending',
     };
@@ -403,7 +411,21 @@ export default function Billing() {
     { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
     { title: 'Total', dataIndex: 'total', width: 115, render: (v) => colMoney(v) },
     { title: 'Advance', dataIndex: 'advance', width: 115, render: (v) => colMoney(v, '#8a1652') },
-    { title: 'Balance', dataIndex: 'balance', width: 115, render: (v) => colMoney(v, v > 0 ? '#B11E6A' : '#52c41a') },
+    {
+      title: 'Balance', dataIndex: 'balance', width: 130,
+      render: (v, r) => (
+        <div>
+          {colMoney(v, v > 0 ? '#B11E6A' : '#52c41a')}
+          {r.previousBalance > 0 && (
+            <Tooltip title={`Includes ₹${r.previousBalance.toLocaleString()} previous outstanding`}>
+              <div style={{ fontSize: 10, color: '#ff4d4f', marginTop: 1, cursor: 'help' }}>
+                Prev: ₹{r.previousBalance.toLocaleString()} ⚠
+              </div>
+            </Tooltip>
+          )}
+        </div>
+      ),
+    },
     { title: 'Status', dataIndex: 'status', width: 125, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions', width: 280, fixed: 'right',
@@ -436,7 +458,7 @@ export default function Billing() {
     { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${quotStatusColor[v]}22`, color: quotStatusColor[v], border: `1px solid ${quotStatusColor[v]}44` }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions',
-      width: tabType === 'in-process' ? 320 : 190,
+      width: tabType === 'in-process' ? 420 : 190,
       fixed: 'right',
       render: (_, r) => (
         <Space size={4} wrap>
@@ -444,6 +466,17 @@ export default function Billing() {
           <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Quotation shared on WhatsApp')} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
+          {tabType === 'in-process' && (
+            <Button
+              size="small"
+              type="primary"
+              icon={<FileDoneOutlined />}
+              style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontSize: 12 }}
+              onClick={() => openConvertModal(r)}
+            >
+              Convert to Invoice
+            </Button>
+          )}
           {tabType === 'in-process' && (r.status === 'Paid' || r.status === 'Partially Paid') && (
             <Button size="small" icon={<BellOutlined />} style={{ color: '#fa8c16', borderColor: '#fa8c1644', fontSize: 12 }} onClick={() => { setReminderQuot(r); setReminderDate(null); setReminderTime(null); setReminderMode('WhatsApp'); setReminderOpen(true); }}>
               Set Reminder
@@ -1485,7 +1518,8 @@ export default function Billing() {
       >
         {convertQuot && (
           <div style={{ marginTop: 8 }}>
-            <div style={{ background: '#7c3aed10', border: '1px solid #7c3aed33', borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
+            {/* Quotation info */}
+            <div style={{ background: '#7c3aed10', border: '1px solid #7c3aed33', borderRadius: 10, padding: '12px 16px', marginBottom: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>Quotation</Text>
                 <Text strong style={{ color: '#7c3aed' }}>{convertQuot.quot}</Text>
@@ -1495,10 +1529,33 @@ export default function Billing() {
                 <Text strong>{convertQuot.client}</Text>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Full Amount</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>Quotation Amount</Text>
                 <Text strong style={{ color: '#B11E6A' }}>₹{convertQuot.total.toLocaleString()}</Text>
               </div>
             </div>
+
+            {/* Previous due section */}
+            {convertPreviousDue > 0 && (
+              <div style={{ background: '#ff4d4f10', border: '1.5px solid #ff4d4f44', borderRadius: 10, padding: '12px 16px', marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff4d4f' }} />
+                  <Text strong style={{ color: '#ff4d4f', fontSize: 13 }}>Previous Outstanding Balance</Text>
+                </div>
+                {convertPrevInvoices.map(inv => (
+                  <div key={inv.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0 4px 14px', borderBottom: '1px solid #ff4d4f20' }}>
+                    <Text style={{ fontSize: 12, color: '#666' }}>
+                      {inv.inv} <Tag style={{ fontSize: 10, background: '#ff4d4f15', color: '#ff4d4f', border: 'none', borderRadius: 20 }}>{inv.status}</Tag>
+                    </Text>
+                    <Text style={{ fontSize: 12, fontWeight: 600, color: '#ff4d4f' }}>₹{inv.balance.toLocaleString()}</Text>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 8, marginTop: 4 }}>
+                  <Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>Total Previous Due</Text>
+                  <Text strong style={{ fontSize: 14, color: '#ff4d4f' }}>₹{convertPreviousDue.toLocaleString()}</Text>
+                </div>
+              </div>
+            )}
+
             <Form layout="vertical">
               <Form.Item
                 label={<Text strong>Amount to Convert to Invoice</Text>}
@@ -1523,7 +1580,29 @@ export default function Billing() {
                 </div>
               )}
             </Form>
-            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+
+            {/* Invoice total summary */}
+            <div style={{ background: isDark ? '#1a0f14' : '#fdf5f9', border: `1px solid #B11E6A33`, borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text style={{ fontSize: 13, color: '#888' }}>Current Invoice Amount</Text>
+                <Text strong>₹{(convertAmt || 0).toLocaleString()}</Text>
+              </div>
+              {convertPreviousDue > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={{ fontSize: 13, color: '#ff4d4f' }}>+ Previous Outstanding</Text>
+                  <Text strong style={{ color: '#ff4d4f' }}>₹{convertPreviousDue.toLocaleString()}</Text>
+                </div>
+              )}
+              <Divider style={{ margin: '6px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Text strong style={{ fontSize: 14 }}>Total Balance on Invoice</Text>
+                <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>
+                  ₹{((convertAmt || 0) + convertPreviousDue).toLocaleString()}
+                </Text>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
               <Button style={{ flex: 1 }} onClick={() => setConvertOpen(false)}>Cancel</Button>
               <Button
                 type="primary"

@@ -2,18 +2,21 @@ import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, Progress, Alert, InputNumber, List, message,
-  Avatar, Divider, Drawer, Tabs, DatePicker, Upload, Switch, Descriptions
+  Avatar, Divider, Drawer, Tabs, DatePicker, Upload, Switch, Descriptions,
+  Badge, Tooltip, notification,
 } from 'antd';
 import {
   PlusOutlined, WarningOutlined, CalculatorOutlined, SearchOutlined, CheckOutlined,
   DownloadOutlined, ShoppingOutlined, LeftOutlined, CloseOutlined,
-  UserOutlined, InfoCircleOutlined, MinusOutlined, FileTextOutlined,
+  UserOutlined, InfoCircleOutlined, MinusOutlined,
   EyeOutlined, UploadOutlined, SafetyCertificateOutlined, HistoryOutlined,
-  ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, SwapOutlined
+  ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, SwapOutlined,
+  ExclamationCircleOutlined, AuditOutlined,
+  BellOutlined, BarChartOutlined, ContainerOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
 
@@ -43,10 +46,18 @@ const suppliersList = [
 ];
 
 const vendorsList = [
-  { id: 1, name: 'Marriott Mumbai', phone: '+91 22 6651 1234', email: 'purchase@marriott.in', address: 'Mumbai, MH', whatsapp: '912266511234' },
-  { id: 2, name: 'Taj Hotels Delhi', phone: '+91 11 6600 7777', email: 'orders@tajhotels.in', address: 'Delhi, DL', whatsapp: '911166007777' },
-  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in', address: 'Kolkata, WB', whatsapp: '913322889999' },
-  { id: 4, name: 'Hyatt Chennai', phone: '+91 44 6150 1234', email: 'procurement@hyatt.in', address: 'Chennai, TN', whatsapp: '914461501234' },
+  { id: 1, name: 'Marriott Mumbai', phone: '+91 22 6651 1234', email: 'purchase@marriott.in', address: 'Mumbai, MH', whatsapp: '912266511234', products: ['Soap Base (White)', 'Dental Kit Boxes'] },
+  { id: 2, name: 'Taj Hotels Delhi', phone: '+91 11 6600 7777', email: 'orders@tajhotels.in', address: 'Delhi, DL', whatsapp: '911166007777', products: ['Shampoo Bottles (Flip 30ml)', 'Custom Stickers (Hotel Brand)'] },
+  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in', address: 'Kolkata, WB', whatsapp: '913322889999', products: ['Soap Base (White)', 'Soap Base (Transparent)'] },
+  { id: 4, name: 'Hyatt Chennai', phone: '+91 44 6150 1234', email: 'procurement@hyatt.in', address: 'Chennai, TN', whatsapp: '914461501234', products: ['Dental Kit Boxes', 'Shampoo Bottles (Flip 30ml)'] },
+];
+
+const initialStockHistory = [
+  { key: 1, date: '2024-01-15', item: 'Soap Base (White)', code: 'RM-001', action: 'Stock Added', qty: 100, unit: 'Kg', source: 'ChemCo India', person: 'Admin', invoiceNo: 'INV-2024-001', notes: 'Opening stock' },
+  { key: 2, date: '2024-01-10', item: 'Soap Base (Transparent)', code: 'RM-002', action: 'Stock Added', qty: 50, unit: 'Kg', source: 'BioLife Ltd', person: 'Priya', invoiceNo: 'INV-2024-002', notes: '' },
+  { key: 3, date: '2024-01-05', item: 'Shampoo Bottles (Flip 30ml)', code: 'PK-001', action: 'Stock Added', qty: 200, unit: 'Pcs', source: 'PlastiPack', person: 'Admin', invoiceNo: 'INV-2024-003', notes: 'Monthly reorder' },
+  { key: 4, date: '2024-01-18', item: 'Custom Stickers (Hotel Brand)', code: 'ST-001', action: 'Stock Added', qty: 3000, unit: 'Pcs', source: 'PrintFast', person: 'Admin', invoiceNo: 'INV-2024-004', notes: '' },
+  { key: 5, date: '2024-05-01', item: 'Soap Base (White)', code: 'RM-001', action: 'Stock Deducted', qty: 50, unit: 'Kg', source: 'Marriott Mumbai', person: 'Priya', invoiceNo: '', notes: 'Sold to client' },
 ];
 
 export default function Inventory() {
@@ -64,15 +75,15 @@ export default function Inventory() {
     { key: 101, date: dayjs().format('YYYY-MM-DD'), type: 'Addition', item: 'Soap Base (White)', qty: 50, unit: 'Kg', entity: 'Manual Adj', person: 'Priya', status: 'Pending', notes: '' }
   ]);
 
-  /* ── Manual adjustment modal (+ / - buttons) ── */
+  /* ── Manual adjustment modal ── */
   const [adjustModal, setAdjustModal] = useState({ open: false, item: null, type: null });
   const [adjustForm] = Form.useForm();
 
-  /* ── Add Item modal (no sub-modals, keep as modal) ── */
+  /* ── Add Item modal ── */
   const [addItemModal, setAddItemModal] = useState(false);
   const [addItemForm] = Form.useForm();
 
-  /* ── Receive Goods (Add Stock) drawer ── */
+  /* ── Add Stock (Receive Goods) drawer ── */
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [receiveForm] = Form.useForm();
   const [activeItem, setActiveItem] = useState(null);
@@ -81,7 +92,7 @@ export default function Inventory() {
   const [showAddSupplier, setShowAddSupplier] = useState(false);
   const [supplierForm] = Form.useForm();
 
-  /* ── Issue Goods (Sell Stock) drawer ── */
+  /* ── Sell Stock (Issue Goods) drawer ── */
   const [issueOpen, setIssueOpen] = useState(false);
   const [issueForm] = Form.useForm();
   const [activeIssueItem, setActiveIssueItem] = useState(null);
@@ -93,17 +104,40 @@ export default function Inventory() {
   const [categories, setCategories] = useState(['Chemicals', 'Ready Stock']);
   const [newCategoryName, setNewCategoryName] = useState('');
 
-  /* ── Search & Filter state ── */
+  /* ── Search & Filter ── */
   const [invSearch, setInvSearch] = useState('');
   const [invCategory, setInvCategory] = useState(null);
   const [invStatus, setInvStatus] = useState(null);
   const [approvalSearch, setApprovalSearch] = useState('');
   const [approvalType, setApprovalType] = useState(null);
   const [approvalStatus, setApprovalStatus] = useState(null);
-  const [docSearch, setDocSearch] = useState('');
-  const [docMovement, setDocMovement] = useState('all');
-  const [docDateRange, setDocDateRange] = useState(null);
+  /* ── Stock History ── */
+  const [stockHistory, setStockHistory] = useState(initialStockHistory);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyActionFilter, setHistoryActionFilter] = useState(null);
+  const [historyDateRange, setHistoryDateRange] = useState(null);
 
+  /* ── Item Detail Drawer (row click) ── */
+  const [detailItem, setDetailItem] = useState(null);
+
+  /* ── Live Staff Checking ── */
+  const [checkSession, setCheckSession] = useState(
+    inventory.map(i => ({
+      key: i.key,
+      code: i.code,
+      name: i.name,
+      unit: i.unit,
+      systemCount: i.current,
+      physicalCount: i.current,
+      missingType: null,
+      missingReason: '',
+    }))
+  );
+  const [checkSubmitOpen, setCheckSubmitOpen] = useState(false);
+  const [checkNotes, setCheckNotes] = useState('');
+  const [checkSubmitted, setCheckSubmitted] = useState(false);
+
+  /* ── Derived ── */
   const filteredInventory = inventoryList.filter((i) => {
     const q = invSearch.toLowerCase();
     const matchSearch = !q || i.name.toLowerCase().includes(q) || (i.code || '').toLowerCase().includes(q) || (i.sellers || []).map(s => (s.name || s)).join(' ').toLowerCase().includes(q);
@@ -120,35 +154,17 @@ export default function Inventory() {
     return matchSearch && matchType && matchStatus;
   });
 
-  const allDocuments = [
-    { key: 1, date: '2024-05-01', invoiceNumber: 'INV-2024-001', type: 'Incoming', item: 'Soap Base (White)', qty: '+100 Kg', entity: 'ChemCo India', person: 'Admin' },
-    { key: 2, date: '2024-05-02', invoiceNumber: 'INV-2024-002', type: 'Outgoing', item: 'Dental Kit Boxes', qty: '-50 Pcs', entity: 'Marriott Mumbai', person: 'Priya' },
-    { key: 3, date: '2024-05-03', invoiceNumber: 'INV-2024-003', type: 'Stock Taken', item: 'Shampoo Bottles', qty: '-2 Pcs', entity: 'Internal Audit', person: 'Admin' },
-    { key: 4, date: '2024-05-04', invoiceNumber: 'INV-2024-004', type: 'Incoming', item: 'Shampoo Concentrate', qty: '+200 Ltr', entity: 'BioLife Ltd', person: 'Admin' },
-  ];
-
-  const filteredDocuments = allDocuments.filter((d) => {
-    const q = docSearch.toLowerCase();
-    const matchSearch = !q || d.item.toLowerCase().includes(q) || d.entity.toLowerCase().includes(q) || (d.invoiceNumber || '').toLowerCase().includes(q);
-    const matchMovement = docMovement === 'all' || (docMovement === 'incoming' && d.type === 'Incoming') || (docMovement === 'outgoing' && d.type === 'Outgoing') || (docMovement === 'adjustment' && d.type === 'Stock Taken');
-    return matchSearch && matchMovement;
+  const filteredHistory = stockHistory.filter(h => {
+    const q = historySearch.toLowerCase();
+    const matchSearch = !q || h.item.toLowerCase().includes(q) || (h.code || '').toLowerCase().includes(q) || (h.source || '').toLowerCase().includes(q) || (h.invoiceNo || '').toLowerCase().includes(q);
+    const matchAction = !historyActionFilter || h.action === historyActionFilter;
+    const matchDate = !historyDateRange || !historyDateRange[0] || !historyDateRange[1] || (
+      h.date >= historyDateRange[0].format('YYYY-MM-DD') && h.date <= historyDateRange[1].format('YYYY-MM-DD')
+    );
+    return matchSearch && matchAction && matchDate;
   });
 
-  const onCategoryChange = (event) => {
-    setNewCategoryName(event.target.value);
-  };
-
-  const addCategory = (e) => {
-    e.preventDefault();
-    if (newCategoryName.trim() && !categories.includes(newCategoryName.trim())) {
-      setCategories([...categories, newCategoryName.trim()]);
-      setNewCategoryName('');
-    }
-  };
-
   const lowStock = inventory.filter((i) => i.status === 'Low' || i.status === 'Out');
-
-  const [supplierFilter, setSupplierFilter] = useState('all');
 
   const filteredSuppliers = suppliersList.filter((s) =>
     s.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
@@ -158,6 +174,16 @@ export default function Inventory() {
     c.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
     c.phone.includes(vendorSearch)
   );
+
+  const onCategoryChange = (event) => setNewCategoryName(event.target.value);
+
+  const addCategory = (e) => {
+    e.preventDefault();
+    if (newCategoryName.trim() && !categories.includes(newCategoryName.trim())) {
+      setCategories([...categories, newCategoryName.trim()]);
+      setNewCategoryName('');
+    }
+  };
 
   const openReceive = (r) => {
     setActiveItem(r);
@@ -181,29 +207,16 @@ export default function Inventory() {
 
   const handleSaveSupplier = () => {
     const vals = supplierForm.getFieldsValue();
-    const newSupplier = {
-      id: Date.now(),
-      name: vals.sup_name || 'New Supplier',
-      phone: vals.sup_phone || '',
-      email: vals.sup_email || '',
-      address: vals.sup_address || '',
-    };
+    const newSupplier = { id: Date.now(), name: vals.sup_name || 'New Supplier', phone: vals.sup_phone || '', email: vals.sup_email || '', address: vals.sup_address || '' };
     setSuppliers([...suppliers, newSupplier]);
     setSelectedSupplier(newSupplier);
     supplierForm.resetFields();
-    setShowAddSupplier(false);
     setShowAddSupplier(false);
   };
 
   const handleSaveVendor = () => {
     const vals = vendorForm.getFieldsValue();
-    const newVendor = {
-      id: Date.now(),
-      name: vals.cust_name || 'New Vendor',
-      phone: vals.cust_phone || '',
-      email: vals.cust_email || '',
-      address: vals.cust_address || '',
-    };
+    const newVendor = { id: Date.now(), name: vals.cust_name || 'New Vendor', phone: vals.cust_phone || '', email: vals.cust_email || '', address: vals.cust_address || '', products: [] };
     setVendors([...vendors, newVendor]);
     setSelectedVendor(newVendor);
     vendorForm.resetFields();
@@ -214,14 +227,14 @@ export default function Inventory() {
     const newAdj = {
       key: Date.now(),
       date: dayjs().format('YYYY-MM-DD'),
-      type: type, // 'Addition' or 'Deduction'
+      type,
       item: item.name,
-      qty: qty,
+      qty,
       unit: item.unit,
-      entity: entity,
+      entity,
       person: 'Staff',
       status: 'Pending',
-      notes: notes,
+      notes,
     };
     setPendingAdjustments([newAdj, ...pendingAdjustments]);
     message.success(`Adjustment request for ${item.name} sent to Operation Head`);
@@ -250,23 +263,77 @@ export default function Inventory() {
             return { ...s, stock: (s.stock || 0) - deduct };
           }).filter(s => s.stock > 0 || currentSellers.length === 1);
         }
-        return {
-          ...item,
-          current: newCurrent,
-          status: newCurrent <= 0 ? 'Out' : newCurrent <= item.min ? 'Low' : 'OK',
-          sellers: newSellers,
-        };
+        return { ...item, current: newCurrent, status: newCurrent <= 0 ? 'Out' : newCurrent <= item.min ? 'Low' : 'OK', sellers: newSellers };
       }
       return item;
     });
     setInventoryList(updatedList);
     setPendingAdjustments(pendingAdjustments.map(a => a.key === adj.key ? { ...a, status: 'Approved' } : a));
+
+    // Log to stock history
+    const matchedItem = updatedList.find(i => i.name === adj.item);
+    setStockHistory(prev => [{
+      key: Date.now(),
+      date: dayjs().format('YYYY-MM-DD'),
+      item: adj.item,
+      code: matchedItem?.code || '',
+      action: adj.type === 'Addition' ? 'Stock Added' : 'Stock Deducted',
+      qty: adj.qty,
+      unit: adj.unit,
+      source: adj.entity,
+      person: adj.person,
+      invoiceNo: '',
+      notes: adj.notes || '',
+    }, ...prev]);
+
     message.success('Stock adjustment approved and applied');
   };
 
   const handleRejectAdjustment = (adj) => {
     setPendingAdjustments(pendingAdjustments.map(a => a.key === adj.key ? { ...a, status: 'Rejected' } : a));
     message.error('Adjustment request rejected');
+  };
+
+  /* ── Submit Live Stock Check ── */
+  const handleSubmitCheck = () => {
+    const discrepancies = checkSession.filter(i => i.physicalCount !== i.systemCount);
+    const unknownItems = checkSession.filter(i => i.physicalCount < i.systemCount && i.missingType === 'unknown');
+
+    // Create adjustment requests for all discrepancies
+    discrepancies.forEach(item => {
+      const diff = item.physicalCount - item.systemCount;
+      const adj = {
+        key: Date.now() + Math.random(),
+        date: dayjs().format('YYYY-MM-DD'),
+        type: diff < 0 ? 'Deduction' : 'Addition',
+        item: item.name,
+        qty: Math.abs(diff),
+        unit: item.unit,
+        entity: 'Stock Check',
+        person: 'Staff',
+        status: 'Pending',
+        notes: diff < 0
+          ? (item.missingType === 'known' ? `Known: ${item.missingReason}` : 'Unknown shortage — reported to management')
+          : 'Extra stock found during check',
+      };
+      setPendingAdjustments(prev => [adj, ...prev]);
+    });
+
+    // Notify for unknown shortages
+    if (unknownItems.length > 0) {
+      unknownItems.forEach(item => {
+        notification.warning({
+          message: 'Unknown Stock Shortage Reported',
+          description: `${Math.abs(item.physicalCount - item.systemCount)} ${item.unit} of "${item.name}" is unaccounted. Super Admin and Manager have been notified.`,
+          icon: <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />,
+          duration: 8,
+        });
+      });
+    }
+
+    setCheckSubmitOpen(false);
+    setCheckSubmitted(true);
+    message.success(`Stock check submitted. ${discrepancies.length} discrepancies sent for approval.`);
   };
 
   /* ── Style helpers ── */
@@ -297,7 +364,7 @@ export default function Inventory() {
     letterSpacing: 0.8,
   });
 
-  /* ── Reusable: inline entity selector (supplier or customer) ── */
+  /* ── Entity selector helper ── */
   const renderEntitySelector = ({
     label, icon, search, setSearch, filtered, selected, setSelected,
     showAdd, setShowAdd, addForm, addFormFields, onSave, gradient,
@@ -308,7 +375,6 @@ export default function Inventory() {
         <Text style={{ fontWeight: 700, color: textColor, fontSize: 14 }}>{label}</Text>
       </div>
       <div style={{ padding: '14px 16px' }}>
-        {/* Selected entity card */}
         {selected ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: `${gradient.split(',')[1]?.trim().slice(0, 7) || '#B11E6A'}15`, border: `1.5px solid ${gradient.split(',')[1]?.trim().slice(0, 7) || '#B11E6A'}44` }}>
             <Avatar style={{ background: gradient, flexShrink: 0 }}>{selected.name[0]}</Avatar>
@@ -316,15 +382,10 @@ export default function Inventory() {
               <Text style={{ fontWeight: 700, color: textColor, display: 'block', fontSize: 14 }}>{selected.name}</Text>
               <Text style={{ fontSize: 12, color: '#aaa' }}>{[selected.phone, selected.address].filter(Boolean).join(' · ')}</Text>
             </div>
-            <Button
-              type="text" size="small" icon={<CloseOutlined />}
-              onClick={() => { setSelected(null); setSearch(''); setShowAdd(false); }}
-              style={{ color: '#aaa' }}
-            />
+            <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => { setSelected(null); setSearch(''); setShowAdd(false); }} style={{ color: '#aaa' }} />
           </div>
         ) : (
           <>
-            {/* Search */}
             <Input
               prefix={<SearchOutlined style={{ color: '#bbb' }} />}
               placeholder={`Search ${label.toLowerCase()} by name or phone...`}
@@ -333,20 +394,16 @@ export default function Inventory() {
               style={{ borderRadius: 24, height: 42, background: isDark ? '#2a2a3a' : '#f5f5f5', border: 'none' }}
               allowClear
             />
-
-            {/* Results list */}
             {!showAdd && (
               <div style={{ marginTop: 8, borderRadius: 10, border: `1px solid ${borderColor}`, background: cardBg, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
-                {filtered.length === 0 && (
-                  <div style={{ padding: '14px', textAlign: 'center', color: '#aaa', fontSize: 13 }}>No results found</div>
-                )}
+                {filtered.length === 0 && <div style={{ padding: '14px', textAlign: 'center', color: '#aaa', fontSize: 13 }}>No results found</div>}
                 {filtered.map((item) => {
                   const isSel = selected?.id === item.id;
                   return (
                     <div
                       key={item.id}
                       onClick={() => { setSelected(item); setSearch(''); }}
-                      style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: `1px solid ${borderColor}`, cursor: 'pointer', gap: 10, transition: 'background 0.1s', background: isSel ? '#B11E6A08' : 'transparent' }}
+                      style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: `1px solid ${borderColor}`, cursor: 'pointer', gap: 10, background: isSel ? '#B11E6A08' : 'transparent' }}
                       onMouseEnter={e => e.currentTarget.style.background = '#B11E6A08'}
                       onMouseLeave={e => e.currentTarget.style.background = isSel ? '#B11E6A08' : 'transparent'}
                     >
@@ -361,27 +418,17 @@ export default function Inventory() {
                 })}
               </div>
             )}
-
-            {/* Add new toggle */}
             {!showAdd && (
-              <Button
-                icon={<PlusOutlined />}
-                onClick={() => { setShowAdd(true); addForm.resetFields(); }}
-                style={{ marginTop: 10, width: '100%', borderColor: '#B11E6A66', color: '#B11E6A', borderRadius: 8, height: 40, fontWeight: 600, borderStyle: 'dashed' }}
-              >
+              <Button icon={<PlusOutlined />} onClick={() => { setShowAdd(true); addForm.resetFields(); }} style={{ marginTop: 10, width: '100%', borderColor: '#B11E6A66', color: '#B11E6A', borderRadius: 8, height: 40, fontWeight: 600, borderStyle: 'dashed' }}>
                 Add New {label}
               </Button>
             )}
           </>
         )}
-
-        {/* Inline add form */}
         <AnimatePresence>
           {showAdd && (
             <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
+              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
               style={{ marginTop: 12, borderRadius: 10, border: `1.5px solid #B11E6A44`, background: isDark ? '#1a0f14' : '#fff8fb', overflow: 'hidden' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#B11E6A12', borderBottom: `1px solid #B11E6A22` }}>
@@ -393,12 +440,7 @@ export default function Inventory() {
               </Form>
               <div style={{ padding: '10px 14px 14px', display: 'flex', gap: 8 }}>
                 <Button onClick={() => setShowAdd(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
-                <Button
-                  type="primary" onClick={onSave}
-                  style={{ flex: 2, height: 40, borderRadius: 8, background: gradient, border: 'none', fontWeight: 700 }}
-                >
-                  Save {label}
-                </Button>
+                <Button type="primary" onClick={onSave} style={{ flex: 2, height: 40, borderRadius: 8, background: gradient, border: 'none', fontWeight: 700 }}>Save {label}</Button>
               </div>
             </motion.div>
           )}
@@ -416,8 +458,7 @@ export default function Inventory() {
       title: 'Stock Level', key: 'level',
       render: (_, r) => (
         <div style={{ minWidth: 120 }}>
-          <Progress percent={Math.min(100, Math.round((r.current / r.max) * 100))} size="small"
-            strokeColor={r.status === 'OK' ? '#B11E6A' : r.status === 'Low' ? '#C94F8A' : '#8a1652'} showInfo={false} />
+          <Progress percent={Math.min(100, Math.round((r.current / r.max) * 100))} size="small" strokeColor={r.status === 'OK' ? '#B11E6A' : r.status === 'Low' ? '#C94F8A' : '#8a1652'} showInfo={false} />
           <Text style={{ fontSize: 11, color: '#999' }}>{(r.current ?? 0).toLocaleString()} / {(r.max ?? 0).toLocaleString()} {r.unit}</Text>
         </div>
       ),
@@ -425,11 +466,9 @@ export default function Inventory() {
     { title: 'Min Req', dataIndex: 'min', responsive: ['lg'], render: (v, r) => `${v} ${r.unit}` },
     {
       title: 'Low Stock Alert', key: 'alert',
-      render: (_, r) => r.current <= r.min ? (
-        <Tag icon={<WarningOutlined />} color="error" style={{ borderRadius: 12 }}>Low Stock</Tag>
-      ) : (
-        <Tag color="success" style={{ borderRadius: 12 }}>Healthy</Tag>
-      )
+      render: (_, r) => r.current <= r.min
+        ? <Tag icon={<WarningOutlined />} color="error" style={{ borderRadius: 12 }}>Low Stock</Tag>
+        : <Tag color="success" style={{ borderRadius: 12 }}>Healthy</Tag>
     },
     { title: 'Price', dataIndex: 'price', responsive: ['md'] },
     {
@@ -445,9 +484,7 @@ export default function Inventory() {
               return (
                 <Tag key={i} style={{ borderRadius: 20, fontSize: 10, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 0, padding: '0 6px 0 8px' }}>
                   <span>{name}</span>
-                  <span style={{ background: '#B11E6A', color: '#fff', borderRadius: 10, padding: '0 6px', fontSize: 9, fontWeight: 700, lineHeight: '16px', marginLeft: 6 }}>
-                    {stock} {r.unit}
-                  </span>
+                  <span style={{ background: '#B11E6A', color: '#fff', borderRadius: 10, padding: '0 6px', fontSize: 9, fontWeight: 700, lineHeight: '16px', marginLeft: 6 }}>{stock} {r.unit}</span>
                 </Tag>
               );
             })}
@@ -459,12 +496,7 @@ export default function Inventory() {
     {
       title: 'Status', dataIndex: 'status',
       render: (v) => (
-        <Tag style={{
-          borderRadius: 20, fontWeight: 500,
-          background: v === 'OK' ? '#B11E6A22' : v === 'Low' ? '#C94F8A22' : '#8a165222',
-          color: v === 'OK' ? '#B11E6A' : v === 'Low' ? '#C94F8A' : '#8a1652',
-          border: `1px solid ${v === 'OK' ? '#B11E6A44' : v === 'Low' ? '#C94F8A44' : '#8a165244'}`,
-        }}>
+        <Tag style={{ borderRadius: 20, fontWeight: 500, background: v === 'OK' ? '#B11E6A22' : v === 'Low' ? '#C94F8A22' : '#8a165222', color: v === 'OK' ? '#B11E6A' : v === 'Low' ? '#C94F8A' : '#8a1652', border: `1px solid ${v === 'OK' ? '#B11E6A44' : v === 'Low' ? '#C94F8A44' : '#8a165244'}` }}>
           {v === 'Out' ? 'Out of Stock' : v}
         </Tag>
       ),
@@ -478,22 +510,8 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
-          <Button
-            size="small" type="primary"
-            icon={<DownloadOutlined />}
-            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }}
-            onClick={() => openReceive(r)}
-          >
-            Add Stock
-          </Button>
-          <Button
-            size="small"
-            icon={<ShoppingOutlined />}
-            style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }}
-            onClick={() => openIssue(r)}
-          >
-            Sell Stock
-          </Button>
+          <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
+          <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
         </Space>
       ),
     },
@@ -542,7 +560,7 @@ export default function Inventory() {
                 <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#333' : '#f0f0f0'} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: isDark ? '#aaa' : '#666' }} />
                 <YAxis tick={{ fontSize: 11, fill: isDark ? '#aaa' : '#666' }} />
-                <Tooltip />
+                <ReTooltip />
                 <Bar dataKey="current" fill="#B11E6A" radius={[4, 4, 0, 0]} name="Current Stock" />
                 <Bar dataKey="min" fill="#D85C9E" radius={[4, 4, 0, 0]} name="Min Required" />
               </BarChart>
@@ -551,9 +569,12 @@ export default function Inventory() {
         </Col>
       </Row>
 
-      {/* Inventory Tabs */}
+      {/* ════════════════════════════════════════
+          INVENTORY TABS
+      ════════════════════════════════════════ */}
       <Tabs defaultActiveKey="stock" style={{ marginBottom: 20 }}
         items={[
+          /* ── Tab 1: Stock Inventory ── */
           {
             key: 'stock',
             label: <Space><ShoppingOutlined />Stock Inventory</Space>,
@@ -569,13 +590,25 @@ export default function Inventory() {
                     <Option value="Low">Low Stock</Option>
                     <Option value="Out">Out of Stock</Option>
                   </Select>
+                  <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>Click any row for details</Text>
                 </div>
                 <div className="table-responsive" style={{ padding: '4px' }}>
-                  <Table dataSource={filteredInventory} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" />
+                  <Table
+                    dataSource={filteredInventory}
+                    columns={columns}
+                    pagination={{ pageSize: 8, size: 'small' }}
+                    size="small"
+                    onRow={(record) => ({
+                      onClick: () => setDetailItem(record),
+                      style: { cursor: 'pointer' },
+                    })}
+                  />
                 </div>
               </Card>
             )
           },
+
+          /* ── Tab 2: Approvals ── */
           {
             key: 'approvals',
             label: <Space><SafetyCertificateOutlined /> Approvals <Tag color="orange" style={{ borderRadius: 10, marginLeft: 4 }}>{pendingAdjustments.filter(a => a.status === 'Pending').length}</Tag></Space>,
@@ -603,24 +636,13 @@ export default function Inventory() {
                   columns={[
                     { title: 'Date', dataIndex: 'date', key: 'date' },
                     { title: 'Item', dataIndex: 'item', key: 'item', render: (v) => <Text strong>{v}</Text> },
-                    {
-                      title: 'Type', dataIndex: 'type', key: 'type',
-                      render: (t) => (
-                        <Tag color={t === 'Addition' ? 'success' : 'error'} icon={t === 'Addition' ? <PlusOutlined /> : <MinusOutlined />} style={{ borderRadius: 12 }}>
-                          {t}
-                        </Tag>
-                      )
-                    },
+                    { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t === 'Addition' ? 'success' : 'error'} icon={t === 'Addition' ? <PlusOutlined /> : <MinusOutlined />} style={{ borderRadius: 12 }}>{t}</Tag> },
                     { title: 'Qty', dataIndex: 'qty', key: 'qty', render: (q, r) => <Text strong>{q} {r.unit}</Text> },
                     { title: 'Notes', dataIndex: 'notes', key: 'notes', render: (v) => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>—</Text> },
                     { title: 'Requested By', dataIndex: 'person', key: 'person' },
                     {
                       title: 'Status', dataIndex: 'status', key: 'status',
-                      render: (s) => (
-                        <Tag color={s === 'Pending' ? 'orange' : s === 'Approved' ? 'success' : 'error'} icon={s === 'Pending' ? <ClockCircleOutlined /> : s === 'Approved' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}>
-                          {s}
-                        </Tag>
-                      )
+                      render: (s) => <Tag color={s === 'Pending' ? 'orange' : s === 'Approved' ? 'success' : 'error'} icon={s === 'Pending' ? <ClockCircleOutlined /> : s === 'Approved' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}>{s}</Tag>
                     },
                     {
                       title: 'Action', key: 'action',
@@ -636,42 +658,447 @@ export default function Inventory() {
               </Card>
             )
           },
+
+          /* ── Tab 3: Stock History ── */
           {
-            key: 'documents',
-            label: <Space><FileTextOutlined />Stock Documents</Space>,
+            key: 'history',
+            label: <Space><HistoryOutlined />Stock History</Space>,
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14, alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                   <Space wrap>
-                    <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item, supplier..." allowClear value={docSearch} onChange={(e) => setDocSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
-                    <Select value={docMovement} onChange={setDocMovement} style={{ width: 180 }}>
-                      <Option value="all">All Movements</Option>
-                      <Option value="incoming">Incoming Stocks</Option>
-                      <Option value="outgoing">Outgoing Stocks</Option>
-                      <Option value="adjustment">Stock Taken (Adj)</Option>
+                    <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item, code, source, invoice..." allowClear value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                    <Select allowClear placeholder="Movement Type" value={historyActionFilter} onChange={setHistoryActionFilter} style={{ width: 170 }}>
+                      <Option value="Stock Added">Incoming (Stock Added)</Option>
+                      <Option value="Stock Deducted">Outgoing (Stock Deducted)</Option>
+                      <Option value="Stock Check">Adjustment (Stock Check)</Option>
                     </Select>
-                    <DatePicker.RangePicker style={{ width: 280 }} onChange={setDocDateRange} />
+                    <DatePicker.RangePicker style={{ width: 280 }} onChange={setHistoryDateRange} />
                   </Space>
-                  <Button icon={<DownloadOutlined />} type="primary" style={{ background: '#B11E6A', border: 'none' }}>Download Report</Button>
+                  <Button icon={<DownloadOutlined />} type="primary" style={{ background: '#B11E6A', border: 'none' }}>Export History</Button>
                 </div>
                 <Table
                   size="small"
-                  dataSource={filteredDocuments}
+                  dataSource={filteredHistory}
                   columns={[
-                    { title: 'Arrival/Departure Date', dataIndex: 'date', key: 'date', render: (v) => <Text strong>{v}</Text> },
-                    { title: 'Invoice Number', dataIndex: 'invoiceNumber', key: 'invoiceNumber', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v || '—'}</Text> },
-                    { title: 'Movement Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t === 'Incoming' ? 'success' : t === 'Outgoing' ? 'processing' : 'warning'} style={{ borderRadius: 12 }}>{t}</Tag> },
-                    { title: 'Stock Item', dataIndex: 'item', key: 'item' },
-                    { title: 'Quantity', dataIndex: 'qty', key: 'qty', render: (q) => <Text strong style={{ color: q.startsWith('+') ? '#52c41a' : '#ff4d4f' }}>{q}</Text> },
-                    { title: 'Supplier / Customer Name', dataIndex: 'entity', key: 'entity', render: (v) => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                    { title: 'Handled By', dataIndex: 'person', key: 'person' },
+                    { title: 'Date', dataIndex: 'date', key: 'date', render: v => <Text strong>{v}</Text> },
+                    { title: 'Code', dataIndex: 'code', key: 'code', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 12 }}>{v}</Text> },
+                    { title: 'Item Name', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
+                    {
+                      title: 'Action', dataIndex: 'action', key: 'action',
+                      render: v => <Tag color={v === 'Stock Added' ? 'success' : v === 'Stock Deducted' ? 'error' : 'warning'} style={{ borderRadius: 12 }}>{v}</Tag>
+                    },
+                    { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.action === 'Stock Added' ? '#52c41a' : '#ff4d4f' }}>{r.action === 'Stock Added' ? '+' : '-'}{r.qty} {r.unit}</Text> },
+                    { title: 'Source / Entity', dataIndex: 'source', key: 'source', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+                    { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', render: v => v ? <Text style={{ color: '#7c3aed' }}>{v}</Text> : <Text type="secondary">—</Text> },
+                    { title: 'Person', dataIndex: 'person', key: 'person' },
+                    { title: 'Notes', dataIndex: 'notes', key: 'notes', render: v => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : '—' },
                   ]}
+                  pagination={{ pageSize: 10, size: 'small' }}
                 />
               </Card>
             )
-          }
+          },
+
+          /* ── Tab 4: Live Staff Checking ── */
+          {
+            key: 'livecheck',
+            label: (
+              <Space>
+                <AuditOutlined />
+                Live Staff Checking
+                {checkSession.some(i => i.physicalCount !== i.systemCount) && (
+                  <Badge count={checkSession.filter(i => i.physicalCount !== i.systemCount).length} size="small" />
+                )}
+              </Space>
+            ),
+            children: (
+              <div>
+                {/* Info alert */}
+                <Alert
+                  type="info"
+                  showIcon
+                  icon={<InfoCircleOutlined />}
+                  message="Live Stock Checking Instructions"
+                  description="Compare physical inventory against system count. Use + / - buttons or enter the actual physical count. For any missing items, select whether the reason is Known or Unknown. Unknown shortages are auto-reported to Super Admin and Manager. Submit when all items are verified."
+                  style={{ marginBottom: 16, borderRadius: 10 }}
+                />
+
+                {checkSubmitted && (
+                  <Alert
+                    type="success"
+                    showIcon
+                    message="Stock Check Submitted Successfully"
+                    description="All discrepancies have been forwarded to the Approvals tab. Super Admin and Manager have been notified of any unknown shortages."
+                    style={{ marginBottom: 16, borderRadius: 10 }}
+                    closable
+                    onClose={() => setCheckSubmitted(false)}
+                  />
+                )}
+
+                <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                  <div style={{ padding: '12px 16px', borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Space>
+                      <Text strong style={{ color: textColor }}>Physical Count Entry</Text>
+                      <Tag color="blue" style={{ borderRadius: 20 }}>Session: {dayjs().format('DD MMM YYYY')}</Tag>
+                    </Space>
+                    <Button
+                      size="small"
+                      onClick={() => setCheckSession(inventory.map(i => ({ key: i.key, code: i.code, name: i.name, unit: i.unit, systemCount: i.current, physicalCount: i.current, missingType: null, missingReason: '' })))}
+                      style={{ borderColor: '#B11E6A44', color: '#B11E6A' }}
+                    >
+                      Reset All
+                    </Button>
+                  </div>
+
+                  <Table
+                    dataSource={checkSession}
+                    size="small"
+                    pagination={false}
+                    scroll={{ x: 900 }}
+                    columns={[
+                      {
+                        title: 'Code', dataIndex: 'code', width: 90,
+                        render: v => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text>
+                      },
+                      {
+                        title: 'Item Name', dataIndex: 'name', width: 200,
+                        render: v => <Text strong style={{ fontSize: 13 }}>{v}</Text>
+                      },
+                      {
+                        title: 'System Count', dataIndex: 'systemCount', width: 120, align: 'center',
+                        render: (v, r) => <Text strong style={{ color: '#B11E6A' }}>{v} {r.unit}</Text>
+                      },
+                      {
+                        title: 'Physical Count', width: 180, align: 'center',
+                        render: (_, r) => (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                            <Button
+                              size="small" type="text"
+                              icon={<MinusOutlined style={{ fontSize: 11, color: '#ff4d4f' }} />}
+                              onClick={() => setCheckSession(prev => prev.map(i => i.key === r.key ? { ...i, physicalCount: Math.max(0, i.physicalCount - 1) } : i))}
+                              style={{ border: '1px solid #ff4d4f33', borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            />
+                            <InputNumber
+                              value={r.physicalCount}
+                              min={0}
+                              onChange={v => setCheckSession(prev => prev.map(i => i.key === r.key ? { ...i, physicalCount: v ?? 0, missingType: (v ?? 0) < i.systemCount ? i.missingType : null, missingReason: (v ?? 0) < i.systemCount ? i.missingReason : '' } : i))}
+                              style={{ width: 72, textAlign: 'center' }}
+                              size="small"
+                              controls={false}
+                            />
+                            <Button
+                              size="small" type="text"
+                              icon={<PlusOutlined style={{ fontSize: 11, color: '#52c41a' }} />}
+                              onClick={() => setCheckSession(prev => prev.map(i => i.key === r.key ? { ...i, physicalCount: i.physicalCount + 1 } : i))}
+                              style={{ border: '1px solid #52c41a33', borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            />
+                          </div>
+                        )
+                      },
+                      {
+                        title: 'Difference', width: 110, align: 'center',
+                        render: (_, r) => {
+                          const diff = r.physicalCount - r.systemCount;
+                          return (
+                            <Text strong style={{ color: diff < 0 ? '#ff4d4f' : diff > 0 ? '#fa8c16' : '#52c41a', fontSize: 13 }}>
+                              {diff > 0 ? '+' : ''}{diff} {r.unit}
+                            </Text>
+                          );
+                        }
+                      },
+                      {
+                        title: 'Status', width: 100, align: 'center',
+                        render: (_, r) => {
+                          const diff = r.physicalCount - r.systemCount;
+                          if (diff === 0) return <Tag color="success" style={{ borderRadius: 12 }}>Match</Tag>;
+                          if (diff < 0) return <Tag color="error" style={{ borderRadius: 12 }}>Missing</Tag>;
+                          return <Tag color="warning" style={{ borderRadius: 12 }}>Extra</Tag>;
+                        }
+                      },
+                      {
+                        title: 'Missing Reason',
+                        render: (_, r) => {
+                          const diff = r.physicalCount - r.systemCount;
+                          if (diff >= 0) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+                          return (
+                            <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                              <Select
+                                placeholder="Select reason type"
+                                value={r.missingType}
+                                onChange={v => setCheckSession(prev => prev.map(i => i.key === r.key ? { ...i, missingType: v, missingReason: '' } : i))}
+                                style={{ width: 180 }}
+                                size="small"
+                              >
+                                <Option value="known">Known Reason</Option>
+                                <Option value="unknown">Unknown</Option>
+                              </Select>
+
+                              {r.missingType === 'known' && (
+                                <Input.TextArea
+                                  placeholder={`Enter reason for ${Math.abs(diff)} ${r.unit} missing...`}
+                                  value={r.missingReason}
+                                  onChange={e => setCheckSession(prev => prev.map(i => i.key === r.key ? { ...i, missingReason: e.target.value } : i))}
+                                  rows={2}
+                                  size="small"
+                                  style={{ width: 240, borderRadius: 6 }}
+                                />
+                              )}
+
+                              {r.missingType === 'unknown' && (
+                                <Alert
+                                  type="warning"
+                                  showIcon
+                                  icon={<ExclamationCircleOutlined />}
+                                  message={<Text strong style={{ fontSize: 12 }}>Unknown Shortage — Will be Reported</Text>}
+                                  description={
+                                    <Text style={{ fontSize: 11 }}>
+                                      {Math.abs(diff)} {r.unit} of <strong>{r.name}</strong> is unaccounted for.
+                                      This will be automatically reported to <strong>Super Admin</strong> and <strong>Manager</strong> upon submission.
+                                    </Text>
+                                  }
+                                  style={{ borderRadius: 6, fontSize: 11 }}
+                                />
+                              )}
+                            </Space>
+                          );
+                        }
+                      },
+                    ]}
+                  />
+
+                  {/* Summary footer */}
+                  <div style={{ padding: '14px 16px', borderTop: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                    <Space wrap>
+                      <Tag color="error" style={{ borderRadius: 20, fontSize: 12 }}>
+                        {checkSession.filter(i => i.physicalCount < i.systemCount).length} Missing
+                      </Tag>
+                      <Tag color="warning" style={{ borderRadius: 20, fontSize: 12 }}>
+                        {checkSession.filter(i => i.physicalCount > i.systemCount).length} Extra
+                      </Tag>
+                      <Tag color="success" style={{ borderRadius: 20, fontSize: 12 }}>
+                        {checkSession.filter(i => i.physicalCount === i.systemCount).length} Matched
+                      </Tag>
+                      {checkSession.some(i => i.physicalCount < i.systemCount && i.missingType === 'unknown') && (
+                        <Tag color="orange" icon={<BellOutlined />} style={{ borderRadius: 20, fontSize: 12 }}>
+                          {checkSession.filter(i => i.physicalCount < i.systemCount && i.missingType === 'unknown').length} Unknown — Will Notify Management
+                        </Tag>
+                      )}
+                    </Space>
+                    <Button
+                      type="primary"
+                      icon={<SafetyCertificateOutlined />}
+                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', height: 40, paddingInline: 24, fontWeight: 700 }}
+                      onClick={() => setCheckSubmitOpen(true)}
+                      disabled={checkSession.every(i => i.physicalCount === i.systemCount)}
+                    >
+                      Submit for Approval
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )
+          },
         ]}
       />
+
+      {/* ═══════════════════════════════════════
+          ITEM DETAIL DRAWER (row click)
+      ═══════════════════════════════════════ */}
+      <Drawer
+        open={!!detailItem}
+        onClose={() => setDetailItem(null)}
+        width={Math.min(480, window.innerWidth)}
+        title={
+          detailItem ? (
+            <Space>
+              <ContainerOutlined style={{ color: '#B11E6A' }} />
+              <span style={{ fontWeight: 700, color: textColor }}>{detailItem.name}</span>
+              <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20, fontWeight: 600 }}>{detailItem.code}</Tag>
+            </Space>
+          ) : null
+        }
+        styles={{ body: { background: isDark ? '#13131f' : '#f4f5f9', padding: 16 } }}
+      >
+        {detailItem && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* Stock progress */}
+            <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
+              <Text style={{ fontSize: 12, color: '#aaa', display: 'block', marginBottom: 6 }}>Stock Level</Text>
+              <Progress
+                percent={Math.min(100, Math.round((detailItem.current / detailItem.max) * 100))}
+                strokeColor={detailItem.status === 'OK' ? '#B11E6A' : detailItem.status === 'Low' ? '#C94F8A' : '#8a1652'}
+                size="default"
+              />
+              <Row gutter={16} style={{ marginTop: 12 }}>
+                <Col span={8} style={{ textAlign: 'center' }}>
+                  <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Current</Text>
+                  <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>{detailItem.current}</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa', display: 'block' }}>{detailItem.unit}</Text>
+                </Col>
+                <Col span={8} style={{ textAlign: 'center' }}>
+                  <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Min Required</Text>
+                  <Text strong style={{ fontSize: 20, color: '#C94F8A' }}>{detailItem.min}</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa', display: 'block' }}>{detailItem.unit}</Text>
+                </Col>
+                <Col span={8} style={{ textAlign: 'center' }}>
+                  <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Max</Text>
+                  <Text strong style={{ fontSize: 20, color: textColor }}>{detailItem.max}</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa', display: 'block' }}>{detailItem.unit}</Text>
+                </Col>
+              </Row>
+            </Card>
+
+            {/* Details */}
+            <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
+              <Text strong style={{ color: textColor, display: 'block', marginBottom: 10 }}>Item Details</Text>
+              <Descriptions column={2} size="small" labelStyle={{ color: '#aaa', fontSize: 12 }} contentStyle={{ fontWeight: 600, fontSize: 13 }}>
+                <Descriptions.Item label="Category">{detailItem.category}</Descriptions.Item>
+                <Descriptions.Item label="Unit">{detailItem.unit}</Descriptions.Item>
+                <Descriptions.Item label="Price">{detailItem.price}</Descriptions.Item>
+                <Descriptions.Item label="Default Size">{detailItem.defaultSize || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Last Purchase">{detailItem.purchasedDate || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Status">
+                  <Tag style={{ borderRadius: 20, fontWeight: 500, background: detailItem.status === 'OK' ? '#B11E6A22' : detailItem.status === 'Low' ? '#C94F8A22' : '#8a165222', color: detailItem.status === 'OK' ? '#B11E6A' : detailItem.status === 'Low' ? '#C94F8A' : '#8a1652', border: 'none' }}>
+                    {detailItem.status === 'Out' ? 'Out of Stock' : detailItem.status}
+                  </Tag>
+                </Descriptions.Item>
+              </Descriptions>
+            </Card>
+
+            {/* Suppliers */}
+            <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
+              <Text strong style={{ color: textColor, display: 'block', marginBottom: 10 }}>Suppliers / Stock Sources</Text>
+              {(detailItem.sellers || []).length === 0 && <Text type="secondary" style={{ fontSize: 13 }}>No suppliers linked</Text>}
+              {(detailItem.sellers || []).map((s, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: isDark ? '#2a2a3e' : '#f8f8fc', borderRadius: 8, marginBottom: 6 }}>
+                  <Text style={{ fontWeight: 600, fontSize: 13, color: textColor }}>{s.name || s}</Text>
+                  <Tag style={{ background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20 }}>{s.stock ?? 0} {detailItem.unit}</Tag>
+                </div>
+              ))}
+            </Card>
+
+            {/* Recent history for this item */}
+            <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
+              <Text strong style={{ color: textColor, display: 'block', marginBottom: 10 }}>Recent Stock History</Text>
+              {stockHistory.filter(h => h.item === detailItem.name).slice(0, 4).length === 0 && (
+                <Text type="secondary" style={{ fontSize: 13 }}>No history yet</Text>
+              )}
+              {stockHistory.filter(h => h.item === detailItem.name).slice(0, 4).map(h => (
+                <div key={h.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${borderColor}` }}>
+                  <Space>
+                    <Tag color={h.action === 'Stock Added' ? 'success' : 'error'} style={{ borderRadius: 12, fontSize: 11 }}>{h.action}</Tag>
+                    <Text style={{ fontSize: 12, color: '#aaa' }}>{h.date}</Text>
+                  </Space>
+                  <Text strong style={{ color: h.action === 'Stock Added' ? '#52c41a' : '#ff4d4f', fontSize: 13 }}>
+                    {h.action === 'Stock Added' ? '+' : '-'}{h.qty} {h.unit}
+                  </Text>
+                </div>
+              ))}
+            </Card>
+
+            {/* Quick actions */}
+            <Row gutter={10}>
+              <Col span={12}>
+                <Button block icon={<DownloadOutlined />} type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', height: 42, borderRadius: 10, fontWeight: 700 }} onClick={() => { setDetailItem(null); openReceive(detailItem); }}>
+                  Add Stock
+                </Button>
+              </Col>
+              <Col span={12}>
+                <Button block icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', height: 42, borderRadius: 10, fontWeight: 700 }} onClick={() => { setDetailItem(null); openIssue(detailItem); }}>
+                  Sell Stock
+                </Button>
+              </Col>
+            </Row>
+          </div>
+        )}
+      </Drawer>
+
+      {/* ═══════════════════════════════════════
+          SUBMIT STOCK CHECK CONFIRMATION MODAL
+      ═══════════════════════════════════════ */}
+      <Modal
+        open={checkSubmitOpen}
+        onCancel={() => setCheckSubmitOpen(false)}
+        title={
+          <Space>
+            <AuditOutlined style={{ color: '#B11E6A' }} />
+            <span style={{ fontWeight: 700 }}>Confirm Stock Check Submission</span>
+          </Space>
+        }
+        footer={
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <Button onClick={() => setCheckSubmitOpen(false)}>Cancel</Button>
+            <Button type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }} onClick={handleSubmitCheck}>
+              Confirm & Submit
+            </Button>
+          </div>
+        }
+        width={500}
+        centered
+      >
+        <div style={{ marginTop: 8 }}>
+          <div style={{ background: '#B11E6A10', border: '1px solid #B11E6A33', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
+            <Row gutter={16}>
+              <Col span={8} style={{ textAlign: 'center' }}>
+                <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Total Items</Text>
+                <Text strong style={{ fontSize: 22, color: textColor }}>{checkSession.length}</Text>
+              </Col>
+              <Col span={8} style={{ textAlign: 'center' }}>
+                <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Discrepancies</Text>
+                <Text strong style={{ fontSize: 22, color: '#ff4d4f' }}>{checkSession.filter(i => i.physicalCount !== i.systemCount).length}</Text>
+              </Col>
+              <Col span={8} style={{ textAlign: 'center' }}>
+                <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Unknown</Text>
+                <Text strong style={{ fontSize: 22, color: '#fa8c16' }}>{checkSession.filter(i => i.physicalCount < i.systemCount && i.missingType === 'unknown').length}</Text>
+              </Col>
+            </Row>
+          </div>
+
+          {checkSession.filter(i => i.physicalCount !== i.systemCount).length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <Text strong style={{ color: textColor, display: 'block', marginBottom: 8 }}>Items with Discrepancies:</Text>
+              {checkSession.filter(i => i.physicalCount !== i.systemCount).map(item => {
+                const diff = item.physicalCount - item.systemCount;
+                return (
+                  <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: isDark ? '#2a2a3e' : '#f8f8fc', borderRadius: 8, marginBottom: 6 }}>
+                    <Space>
+                      <Text strong style={{ fontSize: 13 }}>{item.name}</Text>
+                      {item.missingType === 'unknown' && <Tag color="warning" style={{ borderRadius: 20, fontSize: 11 }}>Unknown</Tag>}
+                      {item.missingType === 'known' && <Tag color="blue" style={{ borderRadius: 20, fontSize: 11 }}>Known</Tag>}
+                    </Space>
+                    <Text strong style={{ color: diff < 0 ? '#ff4d4f' : '#fa8c16', fontSize: 13 }}>
+                      {diff > 0 ? '+' : ''}{diff} {item.unit}
+                    </Text>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {checkSession.some(i => i.physicalCount < i.systemCount && i.missingType === 'unknown') && (
+            <Alert
+              type="warning"
+              showIcon
+              icon={<BellOutlined />}
+              message="Management will be notified"
+              description="Unknown shortages will trigger automatic notifications to Super Admin and Manager."
+              style={{ borderRadius: 8 }}
+            />
+          )}
+
+          <div style={{ marginTop: 14 }}>
+            <Text style={{ fontSize: 13, color: '#aaa', display: 'block', marginBottom: 6 }}>Additional Notes (optional)</Text>
+            <Input.TextArea
+              value={checkNotes}
+              onChange={e => setCheckNotes(e.target.value)}
+              placeholder="Any additional notes about this stock check session..."
+              rows={3}
+              style={{ borderRadius: 8 }}
+            />
+          </div>
+        </div>
+      </Modal>
 
       {/* ═══════════════════════════════════════
           MANUAL ADJUSTMENT MODAL (+ / - buttons)
@@ -692,17 +1119,10 @@ export default function Inventory() {
         onCancel={() => { setAdjustModal({ open: false, item: null, type: null }); adjustForm.resetFields(); }}
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Button onClick={() => { setAdjustModal({ open: false, item: null, type: null }); adjustForm.resetFields(); }}>
-              Cancel
-            </Button>
+            <Button onClick={() => { setAdjustModal({ open: false, item: null, type: null }); adjustForm.resetFields(); }}>Cancel</Button>
             <Button
               type="primary"
-              style={{
-                background: adjustModal.type === 'Addition'
-                  ? 'linear-gradient(135deg,#B11E6A,#D85C9E)'
-                  : 'linear-gradient(135deg,#8a1652,#B11E6A)',
-                border: 'none',
-              }}
+              style={{ background: adjustModal.type === 'Addition' ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : 'linear-gradient(135deg,#8a1652,#B11E6A)', border: 'none' }}
               onClick={() => {
                 adjustForm.validateFields().then((vals) => {
                   requestAdjustment(adjustModal.item, adjustModal.type, vals.count, 'Manual Adj', vals.notes || '');
@@ -715,47 +1135,26 @@ export default function Inventory() {
             </Button>
           </div>
         }
-        width={420}
-        centered
+        width={420} centered
         styles={{ body: { paddingTop: 8 } }}
       >
         <Form form={adjustForm} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item
-            label={
-              <Text style={{ fontWeight: 600 }}>
-                {adjustModal.type === 'Addition' ? 'Add Count' : 'Minus Count'}
-              </Text>
-            }
+            label={<Text style={{ fontWeight: 600 }}>{adjustModal.type === 'Addition' ? 'Add Count' : 'Minus Count'}</Text>}
             name="count"
-            rules={[
-              { required: true, message: 'Enter count' },
-              { type: 'number', min: 1, message: 'Must be at least 1' },
-            ]}
+            rules={[{ required: true, message: 'Enter count' }, { type: 'number', min: 1, message: 'Must be at least 1' }]}
             style={{ marginBottom: 16 }}
           >
-            <InputNumber
-              min={1}
-              style={{ width: '100%', borderRadius: 8 }}
-              placeholder={`Enter quantity to ${adjustModal.type === 'Addition' ? 'add' : 'reduce'}`}
-              addonAfter={adjustModal.item?.unit}
-            />
+            <InputNumber min={1} style={{ width: '100%', borderRadius: 8 }} placeholder={`Enter quantity to ${adjustModal.type === 'Addition' ? 'add' : 'reduce'}`} addonAfter={adjustModal.item?.unit} />
           </Form.Item>
-          <Form.Item
-            label={<Text style={{ fontWeight: 600 }}>Notes / Description</Text>}
-            name="notes"
-            style={{ marginBottom: 0 }}
-          >
-            <Input.TextArea
-              rows={3}
-              placeholder="Reason for this adjustment..."
-              style={{ borderRadius: 8 }}
-            />
+          <Form.Item label={<Text style={{ fontWeight: 600 }}>Notes / Description</Text>} name="notes" style={{ marginBottom: 0 }}>
+            <Input.TextArea rows={3} placeholder="Reason for this adjustment..." style={{ borderRadius: 8 }} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* ═══════════════════════════════════════
-          ADD ITEM MODAL (simple, no sub-modals)
+          ADD ITEM MODAL
       ═══════════════════════════════════════ */}
       <Modal
         title={<span style={{ fontSize: 16, fontWeight: 700 }}>Add Inventory Item</span>}
@@ -775,28 +1174,14 @@ export default function Inventory() {
             <Col xs={24} sm={12}><Form.Item label="Item Name" name="name" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Category" name="category">
-                <Select
-                  placeholder="Select category"
+                <Select placeholder="Select category"
                   dropdownRender={(menu) => (
                     <>
                       {menu}
                       <Divider style={{ margin: '8px 0' }} />
                       <Space style={{ padding: '0 8px 4px' }}>
-                        <Input
-                          placeholder="New category..."
-                          value={newCategoryName}
-                          onChange={onCategoryChange}
-                          onKeyDown={(e) => e.stopPropagation()}
-                          style={{ borderRadius: 6 }}
-                        />
-                        <Button
-                          type="text"
-                          icon={<PlusOutlined />}
-                          onClick={addCategory}
-                          style={{ color: '#B11E6A', fontWeight: 600 }}
-                        >
-                          Add
-                        </Button>
+                        <Input placeholder="New category..." value={newCategoryName} onChange={onCategoryChange} onKeyDown={(e) => e.stopPropagation()} style={{ borderRadius: 6 }} />
+                        <Button type="text" icon={<PlusOutlined />} onClick={addCategory} style={{ color: '#B11E6A', fontWeight: 600 }}>Add</Button>
                       </Space>
                     </>
                   )}
@@ -806,55 +1191,26 @@ export default function Inventory() {
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Value" name="value">
-                <Input
-                  prefix="₹"
-                  addonAfter={
-                    <Form.Item name="unit" noStyle>
-                      <Select style={{ width: 80 }} placeholder="Unit">
-                        <Option value="Kg">Kg</Option>
-                        <Option value="Ltr">Ltr</Option>
-                        <Option value="Pcs">Pcs</Option>
-                        <Option value="ml">ml</Option>
-                        <Option value="gram">gram</Option>
-                      </Select>
-                    </Form.Item>
-                  }
-                />
+                <Input prefix="₹" addonAfter={<Form.Item name="unit" noStyle><Select style={{ width: 80 }} placeholder="Unit"><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option><Option value="ml">ml</Option><Option value="gram">gram</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item label="Default Size" name="default_size" tooltip="e.g. 2.5cm x 2.5cm — used to link this item to Operation product specs">
+              <Form.Item label="Default Size" name="default_size" tooltip="e.g. 2.5cm x 2.5cm">
                 <Input placeholder="e.g. 2.5cm x 2.5cm" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
-
             <Col xs={24} sm={12}>
               <Form.Item label="Purchase Price" name="purchase_price">
-                <Input prefix="₹" addonAfter={
-                  <Form.Item name="purchase_price_tax" noStyle initialValue="without_gst">
-                    <Select style={{ width: 120 }}>
-                      <Option value="with_gst">With GST</Option>
-                      <Option value="without_gst">Without GST</Option>
-                    </Select>
-                  </Form.Item>
-                } />
+                <Input prefix="₹" addonAfter={<Form.Item name="purchase_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Selling Price" name="selling_price">
-                <Input prefix="₹" addonAfter={
-                  <Form.Item name="selling_price_tax" noStyle initialValue="without_gst">
-                    <Select style={{ width: 120 }}>
-                      <Option value="with_gst">With GST</Option>
-                      <Option value="without_gst">Without GST</Option>
-                    </Select>
-                  </Form.Item>
-                } />
+                <Input prefix="₹" addonAfter={<Form.Item name="selling_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>
-
             <Col xs={24} sm={8}><Form.Item label="GST" name="gst"><Select defaultValue="None"><Option value="None">None</Option><Option value="5%">5%</Option><Option value="12%">12%</Option><Option value="18%">18%</Option><Option value="28%">28%</Option></Select></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="HSN" name="hsn"><Input placeholder="Ex: 6704" /></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Discount on Sales Price" name="discount"><Input suffix="%" /></Form.Item></Col>
@@ -864,7 +1220,6 @@ export default function Inventory() {
 
       {/* ═══════════════════════════════════════
           ADD STOCK DRAWER (Receive Goods)
-          — all inline, no sub-modals
       ═══════════════════════════════════════ */}
       <Drawer
         open={receiveOpen}
@@ -873,9 +1228,7 @@ export default function Inventory() {
         closable={false}
         styles={{ body: { padding: 0, background: isDark ? '#13131f' : '#f4f5f9' }, header: { display: 'none' } }}
         footer={
-          <Button
-            type="primary" block
-            style={saveBtn('linear-gradient(135deg,#B11E6A,#D85C9E)')}
+          <Button type="primary" block style={saveBtn('linear-gradient(135deg,#B11E6A,#D85C9E)')}
             onClick={() => {
               const vals = receiveForm.getFieldsValue();
               requestAdjustment(activeItem, 'Addition', vals.qty || 0, selectedSupplier?.name || 'Manual Add');
@@ -890,23 +1243,16 @@ export default function Inventory() {
         }
         footerStyle={{ padding: '12px 16px', background: cardBg, borderTop: `1px solid ${borderColor}` }}
       >
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: cardBg, borderBottom: `1px solid ${borderColor}`, position: 'sticky', top: 0, zIndex: 10 }}>
           <Button type="text" icon={<LeftOutlined />} onClick={() => setReceiveOpen(false)} style={{ color: '#B11E6A', padding: 0, height: 'auto' }} />
           <div style={{ flex: 1 }}>
             <Text style={{ fontSize: 17, fontWeight: 700, color: textColor, display: 'block', lineHeight: 1.2 }}>Add Stock</Text>
             {activeItem && <Text style={{ fontSize: 12, color: '#aaa' }}>Receive Goods</Text>}
           </div>
-          {activeItem && (
-            <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20, fontWeight: 600, fontSize: 11 }}>
-              {activeItem.code}
-            </Tag>
-          )}
+          {activeItem && <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20, fontWeight: 600, fontSize: 11 }}>{activeItem.code}</Tag>}
         </div>
 
         <div style={{ padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-
-          {/* Section 1: Item Summary */}
           {activeItem && (
             <div style={sectionCard}>
               <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -922,14 +1268,8 @@ export default function Inventory() {
                   </Space>
                 </div>
               </div>
-              {/* Stock bar */}
               <div style={{ padding: '0 16px 12px' }}>
-                <Progress
-                  percent={Math.min(100, Math.round((activeItem.current / activeItem.max) * 100))}
-                  size="small"
-                  strokeColor={activeItem.status === 'OK' ? '#B11E6A' : '#C94F8A'}
-                  showInfo={false}
-                />
+                <Progress percent={Math.min(100, Math.round((activeItem.current / activeItem.max) * 100))} size="small" strokeColor={activeItem.status === 'OK' ? '#B11E6A' : '#C94F8A'} showInfo={false} />
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <Text style={{ fontSize: 11, color: '#aaa' }}>0</Text>
                   <Text style={{ fontSize: 11, color: '#aaa' }}>Max: {activeItem.max} {activeItem.unit}</Text>
@@ -938,7 +1278,6 @@ export default function Inventory() {
             </div>
           )}
 
-          {/* Section 2: Transaction Details */}
           <div style={sectionCard}>
             <div style={sectionHeader()}>
               <InfoCircleOutlined style={{ color: '#B11E6A' }} />
@@ -948,22 +1287,8 @@ export default function Inventory() {
               <Form form={receiveForm} layout="vertical">
                 <Row gutter={12}>
                   <Col span={8}>
-                    <Form.Item
-                      label={<Text style={{ fontSize: 13 }}>Quantity <span style={{ color: '#ff4d4f' }}>*</span></Text>}
-                      name="qty"
-                      rules={[{ required: true, message: 'Enter quantity' }]}
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Input
-                        type="number" min={0} placeholder="0"
-                        suffix={
-                          <Space size={4}>
-                            <Text style={{ color: '#aaa', fontSize: 12 }}>{activeItem?.unit}</Text>
-                            <CalculatorOutlined style={{ color: '#B11E6A' }} />
-                          </Space>
-                        }
-                        style={{ borderRadius: 8, height: 42 }}
-                      />
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Quantity <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="qty" rules={[{ required: true, message: 'Enter quantity' }]} style={{ marginBottom: 12 }}>
+                      <Input type="number" min={0} placeholder="0" suffix={<Space size={4}><Text style={{ color: '#aaa', fontSize: 12 }}>{activeItem?.unit}</Text><CalculatorOutlined style={{ color: '#B11E6A' }} /></Space>} style={{ borderRadius: 8, height: 42 }} />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
@@ -972,11 +1297,7 @@ export default function Inventory() {
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item
-                      label={<Text style={{ fontSize: 13 }}>Arrival Date</Text>}
-                      name="date"
-                      style={{ marginBottom: 12 }}
-                    >
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Arrival Date</Text>} name="date" style={{ marginBottom: 12 }}>
                       <DatePicker style={{ width: '100%', borderRadius: 8, height: 42 }} />
                     </Form.Item>
                   </Col>
@@ -1002,7 +1323,6 @@ export default function Inventory() {
             </div>
           </div>
 
-          {/* Section 3: Supplier — fully inline */}
           {renderEntitySelector({
             label: 'Supplier',
             icon: <UserOutlined style={{ color: '#B11E6A' }} />,
@@ -1019,48 +1339,24 @@ export default function Inventory() {
             addFormFields: (
               <>
                 <Row gutter={10}>
-                  <Col span={14}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="sup_name" rules={[{ required: true }]} style={{ marginBottom: 10 }}>
-                      <Input placeholder="Supplier name" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                  <Col span={10}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="sup_phone" style={{ marginBottom: 10 }}>
-                      <Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
+                  <Col span={14}><Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="sup_name" rules={[{ required: true }]} style={{ marginBottom: 10 }}><Input placeholder="Supplier name" style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
+                  <Col span={10}><Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="sup_phone" style={{ marginBottom: 10 }}><Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
                 </Row>
                 <Row gutter={10}>
-                  <Col span={14}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="sup_email" style={{ marginBottom: 10 }}>
-                      <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                  <Col span={10}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="sup_tax" style={{ marginBottom: 10 }}>
-                      <Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
+                  <Col span={14}><Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="sup_email" style={{ marginBottom: 10 }}><Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
+                  <Col span={10}><Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="sup_tax" style={{ marginBottom: 10 }}><Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
                 </Row>
-                <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="sup_address" style={{ marginBottom: 10 }}>
-                  <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
-                </Form.Item>
-                <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="sup_bank" style={{ marginBottom: 10 }}>
-                  <Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} />
-                </Form.Item>
-                <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="sup_notes" style={{ marginBottom: 10 }}>
-                  <Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} />
-                </Form.Item>
+                <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="sup_address" style={{ marginBottom: 10 }}><Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} /></Form.Item>
+                <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="sup_bank" style={{ marginBottom: 10 }}><Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} /></Form.Item>
+                <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="sup_notes" style={{ marginBottom: 10 }}><Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} /></Form.Item>
               </>
             ),
           })}
-
         </div>
       </Drawer>
 
       {/* ═══════════════════════════════════════
           SELL STOCK DRAWER (Issue Goods)
-          — all inline, no sub-modals
       ═══════════════════════════════════════ */}
       <Drawer
         open={issueOpen}
@@ -1069,9 +1365,7 @@ export default function Inventory() {
         closable={false}
         styles={{ body: { padding: 0, background: isDark ? '#13131f' : '#f4f5f9' }, header: { display: 'none' } }}
         footer={
-          <Button
-            type="primary" block
-            style={saveBtn('linear-gradient(135deg,#8a1652,#B11E6A)')}
+          <Button type="primary" block style={saveBtn('linear-gradient(135deg,#8a1652,#B11E6A)')}
             onClick={() => {
               const vals = issueForm.getFieldsValue();
               requestAdjustment(activeIssueItem, 'Deduction', vals.qty || 0, selectedVendor?.name || 'Manual Sell');
@@ -1086,23 +1380,16 @@ export default function Inventory() {
         }
         footerStyle={{ padding: '12px 16px', background: cardBg, borderTop: `1px solid ${borderColor}` }}
       >
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: cardBg, borderBottom: `1px solid ${borderColor}`, position: 'sticky', top: 0, zIndex: 10 }}>
           <Button type="text" icon={<LeftOutlined />} onClick={() => setIssueOpen(false)} style={{ color: '#8a1652', padding: 0, height: 'auto' }} />
           <div style={{ flex: 1 }}>
             <Text style={{ fontSize: 17, fontWeight: 700, color: textColor, display: 'block', lineHeight: 1.2 }}>Sell Stock</Text>
             {activeIssueItem && <Text style={{ fontSize: 12, color: '#aaa' }}>Issue Goods</Text>}
           </div>
-          {activeIssueItem && (
-            <Tag style={{ background: '#8a165215', color: '#8a1652', border: '1px solid #8a165244', borderRadius: 20, fontWeight: 600, fontSize: 11 }}>
-              {activeIssueItem.code}
-            </Tag>
-          )}
+          {activeIssueItem && <Tag style={{ background: '#8a165215', color: '#8a1652', border: '1px solid #8a165244', borderRadius: 20, fontWeight: 600, fontSize: 11 }}>{activeIssueItem.code}</Tag>}
         </div>
 
         <div style={{ padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-
-          {/* Section 1: Item Summary */}
           {activeIssueItem && (
             <div style={sectionCard}>
               <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -1113,20 +1400,13 @@ export default function Inventory() {
                   <Text style={{ fontWeight: 700, color: textColor, display: 'block', fontSize: 14 }}>{activeIssueItem.name}</Text>
                   <Space size={6} style={{ flexWrap: 'wrap' }}>
                     <Tag style={{ borderRadius: 20, fontSize: 11, background: '#8a165222', color: '#8a1652', border: '1px solid #8a165244', margin: 0 }}>{activeIssueItem.category}</Tag>
-                    <Text style={{ fontSize: 12, color: '#aaa' }}>
-                      Available: <strong style={{ color: activeIssueItem.current === 0 ? '#ff4d4f' : '#8a1652' }}>{activeIssueItem.current} {activeIssueItem.unit}</strong>
-                    </Text>
+                    <Text style={{ fontSize: 12, color: '#aaa' }}>Available: <strong style={{ color: activeIssueItem.current === 0 ? '#ff4d4f' : '#8a1652' }}>{activeIssueItem.current} {activeIssueItem.unit}</strong></Text>
                     <Text style={{ fontSize: 12, color: '#aaa' }}>Price: {activeIssueItem.price}</Text>
                   </Space>
                 </div>
               </div>
               <div style={{ padding: '0 16px 12px' }}>
-                <Progress
-                  percent={Math.min(100, Math.round((activeIssueItem.current / activeIssueItem.max) * 100))}
-                  size="small"
-                  strokeColor={activeIssueItem.status === 'OK' ? '#8a1652' : '#C94F8A'}
-                  showInfo={false}
-                />
+                <Progress percent={Math.min(100, Math.round((activeIssueItem.current / activeIssueItem.max) * 100))} size="small" strokeColor={activeIssueItem.status === 'OK' ? '#8a1652' : '#C94F8A'} showInfo={false} />
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <Text style={{ fontSize: 11, color: '#aaa' }}>0</Text>
                   <Text style={{ fontSize: 11, color: '#aaa' }}>Max: {activeIssueItem.max} {activeIssueItem.unit}</Text>
@@ -1135,7 +1415,6 @@ export default function Inventory() {
             </div>
           )}
 
-          {/* Section 2: Transaction Details */}
           <div style={sectionCard}>
             <div style={sectionHeader()}>
               <InfoCircleOutlined style={{ color: '#8a1652' }} />
@@ -1145,22 +1424,8 @@ export default function Inventory() {
               <Form form={issueForm} layout="vertical">
                 <Row gutter={12}>
                   <Col span={8}>
-                    <Form.Item
-                      label={<Text style={{ fontSize: 13 }}>Quantity <span style={{ color: '#ff4d4f' }}>*</span></Text>}
-                      name="qty"
-                      rules={[{ required: true, message: 'Enter quantity' }]}
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Input
-                        type="number" min={0} placeholder="0"
-                        suffix={
-                          <Space size={4}>
-                            <Text style={{ color: '#aaa', fontSize: 12 }}>{activeIssueItem?.unit}</Text>
-                            <CalculatorOutlined style={{ color: '#8a1652' }} />
-                          </Space>
-                        }
-                        style={{ borderRadius: 8, height: 42 }}
-                      />
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Quantity <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="qty" rules={[{ required: true, message: 'Enter quantity' }]} style={{ marginBottom: 12 }}>
+                      <Input type="number" min={0} placeholder="0" suffix={<Space size={4}><Text style={{ color: '#aaa', fontSize: 12 }}>{activeIssueItem?.unit}</Text><CalculatorOutlined style={{ color: '#8a1652' }} /></Space>} style={{ borderRadius: 8, height: 42 }} />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
@@ -1169,11 +1434,7 @@ export default function Inventory() {
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item
-                      label={<Text style={{ fontSize: 13 }}>Departure Date</Text>}
-                      name="date"
-                      style={{ marginBottom: 12 }}
-                    >
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Departure Date</Text>} name="date" style={{ marginBottom: 12 }}>
                       <DatePicker style={{ width: '100%', borderRadius: 8, height: 42 }} />
                     </Form.Item>
                   </Col>
@@ -1185,7 +1446,6 @@ export default function Inventory() {
             </div>
           </div>
 
-          {/* Section 3: Vendor — fully inline */}
           {renderEntitySelector({
             label: 'Vendor',
             icon: <UserOutlined style={{ color: '#8a1652' }} />,
@@ -1202,51 +1462,22 @@ export default function Inventory() {
             addFormFields: (
               <>
                 <Row gutter={10}>
-                  <Col span={14}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="cust_name" rules={[{ required: true }]} style={{ marginBottom: 10 }}>
-                      <Input placeholder="Vendor name" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                  <Col span={10}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="cust_phone" style={{ marginBottom: 10 }}>
-                      <Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
+                  <Col span={14}><Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="cust_name" rules={[{ required: true }]} style={{ marginBottom: 10 }}><Input placeholder="Vendor name" style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
+                  <Col span={10}><Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="cust_phone" style={{ marginBottom: 10 }}><Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
                 </Row>
                 <Row gutter={10}>
-                  <Col span={14}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="cust_email" style={{ marginBottom: 10 }}>
-                      <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
-                  <Col span={10}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="cust_tax" style={{ marginBottom: 10 }}>
-                      <Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
+                  <Col span={14}><Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="cust_email" style={{ marginBottom: 10 }}><Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
+                  <Col span={10}><Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="cust_tax" style={{ marginBottom: 10 }}><Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
                 </Row>
-                <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="cust_address" style={{ marginBottom: 10 }}>
-                  <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
-                </Form.Item>
-                <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="cust_bank" style={{ marginBottom: 10 }}>
-                  <Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} />
-                </Form.Item>
+                <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="cust_address" style={{ marginBottom: 10 }}><Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} /></Form.Item>
+                <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="cust_bank" style={{ marginBottom: 10 }}><Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} /></Form.Item>
                 <Row gutter={10}>
-                  <Col span={14}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="cust_notes" style={{ marginBottom: 10 }}>
-                      <Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} />
-                    </Form.Item>
-                  </Col>
-                  <Col span={10}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Discount (%)</Text>} name="cust_discount" style={{ marginBottom: 10 }}>
-                      <InputNumber min={0} max={100} placeholder="0" style={{ width: '100%', borderRadius: 8, height: 40 }} />
-                    </Form.Item>
-                  </Col>
+                  <Col span={14}><Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="cust_notes" style={{ marginBottom: 10 }}><Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} /></Form.Item></Col>
+                  <Col span={10}><Form.Item label={<Text style={{ fontSize: 13 }}>Discount (%)</Text>} name="cust_discount" style={{ marginBottom: 10 }}><InputNumber min={0} max={100} placeholder="0" style={{ width: '100%', borderRadius: 8, height: 40 }} /></Form.Item></Col>
                 </Row>
               </>
             ),
           })}
-
         </div>
       </Drawer>
 
