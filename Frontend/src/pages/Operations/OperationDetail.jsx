@@ -8,6 +8,7 @@ import {
   Divider,
   Form,
   Input,
+  InputNumber,
   message,
   Modal,
   Progress,
@@ -24,6 +25,7 @@ import {
   AlertFilled,
   ArrowLeftOutlined,
   CreditCardOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EyeOutlined,
   FileImageOutlined,
@@ -90,10 +92,14 @@ export default function OperationDetail() {
   const [assignModalRecord, setAssignModalRecord] = useState(null);
   const [printingModalOpen, setPrintingModalOpen] = useState(false);
   const [printingModalType, setPrintingModalType] = useState(null);
+  const [subTasks, setSubTasks] = useState([]);
+  const [taskRequiredQty, setTaskRequiredQty] = useState(0);
   const inputRef = useRef(null);
 
   const openAssignModal = (record, currentOrder) => {
     setAssignModalRecord(record);
+    setTaskRequiredQty(record.qty || 0);
+    setSubTasks([{ id: Date.now(), description: '', qty: '', assignee: '' }]);
     assignModalForm.setFieldsValue({
       taskName: record.processTask || '',
       taskType: '',
@@ -103,6 +109,18 @@ export default function OperationDetail() {
       assignee: loggedInUser?.name || currentOrder.assignedEmployee,
     });
     setAssignModalOpen(true);
+  };
+
+  const addSubTask = () => {
+    setSubTasks((prev) => [...prev, { id: Date.now(), description: '', qty: '', assignee: '' }]);
+  };
+
+  const removeSubTask = (id) => {
+    setSubTasks((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const updateSubTask = (id, field, value) => {
+    setSubTasks((prev) => prev.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
   };
 
   const addTaskOption = (e) => {
@@ -268,6 +286,9 @@ export default function OperationDetail() {
       },
     }));
   };
+
+  const totalAssignedQty = subTasks.reduce((sum, t) => sum + (Number(t.qty) || 0), 0);
+  const qtyMet = taskRequiredQty > 0 && totalAssignedQty >= taskRequiredQty;
 
   return (
     <div className="page-container fade-in">
@@ -603,10 +624,13 @@ export default function OperationDetail() {
           <Space>
             <TeamOutlined style={{ color: '#B11E6A' }} />
             <span>Assign Task</span>
+            {assignModalRecord && (
+              <Tag color="purple">{assignModalRecord.product}</Tag>
+            )}
           </Space>
         }
         footer={null}
-        width={600}
+        width={680}
         destroyOnClose
       >
         <Form form={assignModalForm} layout="vertical" style={{ marginTop: 16 }}>
@@ -675,7 +699,122 @@ export default function OperationDetail() {
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+
+          {/* Task Breakdown by Quantity */}
+          <Divider orientation="left" style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A30' }}>
+            Task Breakdown by Quantity
+          </Divider>
+
+          {/* Quantity progress overview */}
+          <Row gutter={12} style={{ marginBottom: 12 }}>
+            <Col xs={12}>
+              <div style={{ padding: '8px 12px', borderRadius: 8, background: mutedBg, border: '1px solid #f0f0f0' }}>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Required Quantity</Text>
+                <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>
+                  {taskRequiredQty.toLocaleString()} units
+                </Text>
+              </div>
+            </Col>
+            <Col xs={12}>
+              <div style={{ padding: '8px 12px', borderRadius: 8, background: mutedBg, border: '1px solid #f0f0f0' }}>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Assigned So Far</Text>
+                <Text strong style={{ fontSize: 15, color: qtyMet ? '#52c41a' : '#faad14' }}>
+                  {totalAssignedQty.toLocaleString()} / {taskRequiredQty.toLocaleString()}
+                </Text>
+              </div>
+            </Col>
+          </Row>
+
+          {taskRequiredQty > 0 && (
+            <Progress
+              percent={Math.min(100, Math.round((totalAssignedQty / taskRequiredQty) * 100))}
+              strokeColor={qtyMet ? '#52c41a' : '#B11E6A'}
+              size="small"
+              style={{ marginBottom: 12 }}
+            />
+          )}
+
+          {/* Sub-task rows */}
+          <Space direction="vertical" style={{ width: '100%' }} size={8}>
+            {subTasks.map((task, idx) => (
+              <div
+                key={task.id}
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'flex-end',
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  background: isDark ? '#161622' : '#fafafa',
+                  border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`,
+                }}
+              >
+                <div style={{ flex: 2 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+                    Task {idx + 1} — What to do
+                  </Text>
+                  <Input
+                    placeholder="e.g. Fill bottles, Apply sticker, Pack in box"
+                    value={task.description}
+                    onChange={(e) => updateSubTask(task.id, 'description', e.target.value)}
+                    style={{ borderRadius: 6 }}
+                  />
+                </div>
+                <div style={{ width: 90 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
+                  <InputNumber
+                    min={0}
+                    max={taskRequiredQty || undefined}
+                    placeholder="0"
+                    value={task.qty || undefined}
+                    onChange={(val) => updateSubTask(task.id, 'qty', val || 0)}
+                    style={{ width: '100%', borderRadius: 6 }}
+                  />
+                </div>
+                <div style={{ flex: 1.2 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
+                  <Select
+                    placeholder="Select"
+                    value={task.assignee || undefined}
+                    onChange={(val) => updateSubTask(task.id, 'assignee', val)}
+                    style={{ width: '100%' }}
+                    size="middle"
+                  >
+                    {operationEmployees.map((emp) => (
+                      <Option key={emp.key} value={emp.name}>{emp.name}</Option>
+                    ))}
+                  </Select>
+                </div>
+                {subTasks.length > 1 && (
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => removeSubTask(task.id)}
+                    style={{ marginBottom: 0, flexShrink: 0 }}
+                  />
+                )}
+              </div>
+            ))}
+          </Space>
+
+          {/* Add Task / completion status */}
+          {!qtyMet ? (
+            <Button
+              type="dashed"
+              icon={<PlusOutlined />}
+              onClick={addSubTask}
+              style={{ width: '100%', marginTop: 10, borderColor: '#B11E6A', color: '#B11E6A' }}
+            >
+              Add Task{taskRequiredQty > 0 ? ` — ${(taskRequiredQty - totalAssignedQty).toLocaleString()} units remaining` : ''}
+            </Button>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '8px', color: '#52c41a', fontSize: 12, marginTop: 10 }}>
+              ✓ Full quantity assigned across all sub-tasks
+            </div>
+          )}
+
+          <Form.Item style={{ marginBottom: 0, marginTop: 16 }}>
             <Button
               type="primary"
               block

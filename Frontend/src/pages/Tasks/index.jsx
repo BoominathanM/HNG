@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import {
-  Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input,
+  Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs,
   Typography, Space, Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, DatePicker,
 } from 'antd';
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
-  FileImageOutlined, CheckCircleOutlined,
+  FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -69,6 +69,7 @@ const initialTasks = [
     status: 'In Progress', startTime: '2024-01-20T10:30:00Z', due: '2024-01-21',
     paymentStatus: null, salesFollowup: false, dispatchStatus: null,
     product: 'Soap Base', qty: 500,
+    isEmergency: true,
     phases: { completed: 0, total: 1 },
     phasesList: [],
   },
@@ -79,6 +80,36 @@ const initialTasks = [
     status: 'Pending', due: '2024-01-24',
     paymentStatus: null, salesFollowup: false, dispatchStatus: null,
     product: 'Batch B-22', qty: 0,
+    phases: { completed: 0, total: 1 },
+    phasesList: [],
+  },
+  {
+    key: 6, id: 'TSK-106', type: 'Sticker Work', title: 'Label stickers - ORD-2401',
+    orderId: 'ORD-2401', client: 'Hotel Blue Star', salesPerson: 'Priya',
+    createdAt: '2024-01-24T10:00:00Z', assignee: null, priority: 'High',
+    status: 'Pending', due: '2024-01-26',
+    paymentStatus: 'Paid', salesFollowup: false, dispatchStatus: null,
+    product: 'Soap Round 50g', qty: 1500,
+    phases: { completed: 0, total: 3 },
+    phasesList: [],
+  },
+  {
+    key: 7, id: 'TSK-107', type: 'Production', title: 'Fill bottles - ORD-2402',
+    orderId: 'ORD-2402', client: 'Marriott Mumbai', salesPerson: 'Arun',
+    createdAt: '2024-01-24T11:00:00Z', assignee: null, priority: 'Medium',
+    status: 'Pending', due: '2024-01-27',
+    paymentStatus: 'Pending', salesFollowup: false, dispatchStatus: null,
+    product: 'Shampoo 30ml Flip', qty: 2000,
+    phases: { completed: 0, total: 4 },
+    phasesList: [],
+  },
+  {
+    key: 8, id: 'TSK-108', type: 'Packing', title: 'Box packaging - ORD-2403',
+    orderId: 'ORD-2403', client: 'Taj Hotels Delhi', salesPerson: 'Priya',
+    createdAt: '2024-01-24T14:00:00Z', assignee: null, priority: 'High',
+    status: 'Pending', due: '2024-01-28',
+    paymentStatus: 'Partial', salesFollowup: false, dispatchStatus: null,
+    product: 'Dental Kit', qty: 500,
     phases: { completed: 0, total: 1 },
     phasesList: [],
   },
@@ -103,6 +134,7 @@ export default function Tasks() {
   const [filterType, setFilterType] = useState(null);
   const [filterPriority, setFilterPriority] = useState(null);
   const [filterStatus, setFilterStatus] = useState(null);
+  const [mainTab, setMainTab] = useState('current');
   const [view, setView] = useState('table');
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
@@ -160,16 +192,51 @@ export default function Tasks() {
     });
   };
 
+  const getSmartSuggestion = (task) => {
+    if (!task.orderId) return { text: 'Internal task — check with supervisor for instructions', alertType: 'info', canStart: true };
+    const order = operationOrders.find((o) => o.id === task.orderId);
+    if (!order) return { text: 'Order data not found — verify order ID', alertType: 'warning', canStart: false };
+    const item = order.items.find((i) => i.product === task.product) || order.items[0];
+    if (!item) return { text: 'Product data unavailable', alertType: 'warning', canStart: false };
+    const stockOk = (item.inventoryStock ?? 0) >= item.qty;
+    const isSticker = item.logoType === 'Sticker';
+    const isBox = item.logoType === 'Box';
+    if (isSticker) {
+      if (stockOk) return { text: 'Sticker stock arrived — start labeling bottles immediately', alertType: 'success', canStart: true };
+      return { text: 'Sticker pending arrival — start bottle filling now, apply stickers once they arrive', alertType: 'info', canStart: true };
+    }
+    if (isBox) {
+      if (stockOk) return { text: 'Box stock available — start packing products immediately', alertType: 'success', canStart: true };
+      return { text: 'Box stock short — prepare products now, wait for box delivery before packing', alertType: 'warning', canStart: false };
+    }
+    if (stockOk) return { text: 'All stock available — task can begin immediately', alertType: 'success', canStart: true };
+    const short = item.qty - (item.inventoryStock ?? 0);
+    return { text: `Stock short by ${short.toLocaleString()} units — partial work possible while awaiting restocking`, alertType: 'warning', canStart: true };
+  };
+
   // ── Columns ───────────────────────────────────────────────────────────
   const columns = [
     {
       title: 'Task ID', dataIndex: 'id',
-      render: (v, r) => (
-        <Button type="link" style={{ color: '#B11E6A', padding: 0, fontWeight: 700 }}
-          onClick={() => { setSelectedTask(r); setTaskDetailOpen(true); }}>
-          {v}
-        </Button>
-      ),
+      render: (v, r) => {
+        const isUrgent = r.isEmergency || r.priority === 'Urgent';
+        return (
+          <Space size={4} align="center">
+            {isUrgent && (
+              <Tooltip title="Emergency / Urgent Task">
+                <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />
+              </Tooltip>
+            )}
+            <Button
+              type="link"
+              style={{ color: isUrgent ? '#ff4d4f' : '#B11E6A', padding: 0, fontWeight: 700 }}
+              onClick={() => { setSelectedTask(r); setTaskDetailOpen(true); }}
+            >
+              {v}
+            </Button>
+          </Space>
+        );
+      },
     },
     {
       title: 'Logo',
@@ -190,25 +257,22 @@ export default function Tasks() {
       ),
     },
     {
-      title: 'Suggested Task',
+      title: 'Current Task',
       key: 'suggestedTask',
       render: (_, r) => {
         const suggestions = getSuggestedTasks(r);
         if (!suggestions.length) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        const s = suggestions[0];
         return (
-          <Space direction="vertical" size={3}>
-            {suggestions.map((s, i) => (
-              <Tooltip key={i} title={s.isLow ? `${s.product} — short by ${s.short.toLocaleString()} units` : s.product}>
-                <Tag
-                  color={s.isLow ? 'error' : 'processing'}
-                  icon={s.isLow ? <ExclamationCircleOutlined /> : undefined}
-                  style={{ fontSize: 11, margin: 0 }}
-                >
-                  {s.label}{s.isLow ? ` (−${s.short.toLocaleString()})` : ''}
-                </Tag>
-              </Tooltip>
-            ))}
-          </Space>
+          <Tooltip title={s.isLow ? `${s.product} — short by ${s.short.toLocaleString()} units` : s.product}>
+            <Tag
+              color={s.isLow ? 'error' : 'processing'}
+              icon={s.isLow ? <ExclamationCircleOutlined /> : undefined}
+              style={{ fontSize: 11, margin: 0 }}
+            >
+              {s.label}{s.isLow ? ` (−${s.short.toLocaleString()})` : ''}
+            </Tag>
+          </Tooltip>
         );
       },
     },
@@ -218,7 +282,9 @@ export default function Tasks() {
     },
     {
       title: 'Assignee', dataIndex: 'assignee', responsive: ['md'], width: 170,
-      render: (v) => <Space><Avatar size={24} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>,
+      render: (v) => v
+        ? <Space><Avatar size={24} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>
+        : <Tag color="default" style={{ color: '#999', fontSize: 11 }}>Unassigned</Tag>,
     },
     { title: 'Priority', dataIndex: 'priority', responsive: ['sm'], render: (v) => <Tag color={priorityColor[v]}>{v}</Tag> },
     {
@@ -287,6 +353,7 @@ export default function Tasks() {
 
   const followupTasks = taskList.filter((t) => t.salesFollowup);
   const filtered = taskList.filter((t) => {
+    if (!t.assignee) return false; // exclude unassigned from Current Task tab
     const q = (searchText || '').toLowerCase();
     const matchSearch = !q || t.id.toLowerCase().includes(q) || t.title.toLowerCase().includes(q) || (t.client && t.client.toLowerCase().includes(q)) || (t.assignee && t.assignee.toLowerCase().includes(q));
     const matchType = !filterType || t.type === filterType;
@@ -304,10 +371,6 @@ export default function Tasks() {
         <Space wrap>
           <Input prefix={<SearchOutlined />} placeholder="Search tasks..." value={searchText}
             onChange={(e) => setSearchText(e.target.value)} allowClear style={{ width: 200, borderRadius: 8 }} />
-          <Button.Group>
-            <Button type={view === 'table' ? 'primary' : 'default'} onClick={() => setView('table')} style={view === 'table' ? { background: '#B11E6A', border: 'none' } : {}}>Table</Button>
-            <Button type={view === 'kanban' ? 'primary' : 'default'} onClick={() => setView('kanban')} style={view === 'kanban' ? { background: '#B11E6A', border: 'none' } : {}}>Kanban</Button>
-          </Button.Group>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>New Task</Button>
         </Space>
       </div>
@@ -345,91 +408,220 @@ export default function Tasks() {
         })}
       </Row>
 
-      {/* Table view */}
-      {view === 'table' ? (
-        <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
-          <div style={{ padding: '10px 16px 8px', borderBottom: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-            <Select allowClear placeholder="Type" value={filterType} onChange={setFilterType} style={{ width: 150, borderRadius: 8 }}>
-              {Object.keys(typeColor).map((t) => <Option key={t} value={t}>{t}</Option>)}
-            </Select>
-            <Select allowClear placeholder="Priority" value={filterPriority} onChange={setFilterPriority} style={{ width: 130, borderRadius: 8 }}>
-              {Object.keys(priorityColor).map((p) => <Option key={p} value={p}>{p}</Option>)}
-            </Select>
-            <Select allowClear placeholder="Status" value={filterStatus} onChange={setFilterStatus} style={{ width: 140, borderRadius: 8 }}>
-              {Object.keys(statusColor).map((s) => <Option key={s} value={s}>{s}</Option>)}
-            </Select>
-          </div>
-          <div className="table-responsive" style={{ padding: '4px' }}>
-            <Table dataSource={filtered} columns={columns} pagination={{ pageSize: 8, size: 'small' }} size="small" scroll={{ x: 'max-content' }} />
-          </div>
-        </Card>
-      ) : (
-        /* Kanban view */
-        <Row gutter={[16, 16]}>
-          {kanbanCols.map((col) => (
-            <Col xs={24} md={8} key={col.key}>
-              <Card
-                title={
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: col.color }} />
-                    <Text strong>{col.label}</Text>
-                    <Badge count={taskList.filter((t) => t.status === col.key).length} style={{ background: col.color }} />
-                  </div>
-                }
-                style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', minHeight: 400 }}
-                styles={{ body: { padding: '8px' } }}
-              >
-                {filtered.filter((t) => t.status === col.key).map((task) => (
-                  <motion.div key={task.id} whileHover={{ y: -2 }}>
-                    <Card size="small" style={{ marginBottom: 10, borderRadius: 10, border: `1px solid ${col.color}20` }} styles={{ body: { padding: '10px 12px' } }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <Button type="link" style={{ padding: 0, color: '#B11E6A', fontWeight: 700, height: 'auto' }}
-                          onClick={() => { setSelectedTask(task); setTaskDetailOpen(true); }}>
-                          {task.id}
-                        </Button>
-                        {task.salesFollowup && (
-                          <Tooltip title={`${task.salesPerson} → follow up on ${task.client}`}>
-                            <BellOutlined style={{ color: '#fa8c16' }} />
-                          </Tooltip>
-                        )}
+      {/* ── Main Tabs: Current Task | Suggested Task ─────────────────────────── */}
+      <Tabs
+        activeKey={mainTab}
+        onChange={setMainTab}
+        type="card"
+        style={{ marginBottom: 0 }}
+        items={[
+          {
+            key: 'current',
+            label: 'Current Task',
+            children: (
+              <div>
+                {/* Sub-view toggle + filters row */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+                  <Button.Group>
+                    <Button type={view === 'table' ? 'primary' : 'default'} onClick={() => setView('table')} style={view === 'table' ? { background: '#B11E6A', border: 'none' } : {}}>Table</Button>
+                    <Button type={view === 'kanban' ? 'primary' : 'default'} onClick={() => setView('kanban')} style={view === 'kanban' ? { background: '#B11E6A', border: 'none' } : {}}>Kanban</Button>
+                  </Button.Group>
+                  {view === 'table' && (
+                    <>
+                      <Select allowClear placeholder="Type" value={filterType} onChange={setFilterType} style={{ width: 150, borderRadius: 8 }}>
+                        {Object.keys(typeColor).map((t) => <Option key={t} value={t}>{t}</Option>)}
+                      </Select>
+                      <Select allowClear placeholder="Priority" value={filterPriority} onChange={setFilterPriority} style={{ width: 130, borderRadius: 8 }}>
+                        {Object.keys(priorityColor).map((p) => <Option key={p} value={p}>{p}</Option>)}
+                      </Select>
+                      <Select allowClear placeholder="Status" value={filterStatus} onChange={setFilterStatus} style={{ width: 140, borderRadius: 8 }}>
+                        {Object.keys(statusColor).map((s) => <Option key={s} value={s}>{s}</Option>)}
+                      </Select>
+                    </>
+                  )}
+                </div>
+
+                {/* Table sub-view */}
+                {view === 'table' && (
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                    <div className="table-responsive" style={{ padding: '4px' }}>
+                      <Table
+                        dataSource={filtered}
+                        columns={columns}
+                        pagination={{ pageSize: 8, size: 'small' }}
+                        size="small"
+                        scroll={{ x: 'max-content' }}
+                        onRow={(record) => ({
+                          style: {
+                            background: (record.isEmergency || record.priority === 'Urgent')
+                              ? (isDark ? '#2d1516' : '#fff2f0')
+                              : '',
+                            borderLeft: (record.isEmergency || record.priority === 'Urgent')
+                              ? '3px solid #ff4d4f'
+                              : '',
+                          },
+                        })}
+                      />
+                    </div>
+                  </Card>
+                )}
+
+                {/* Kanban sub-view */}
+                {view === 'kanban' && (
+                  <Row gutter={[16, 16]}>
+                    {kanbanCols.map((col) => (
+                      <Col xs={24} md={8} key={col.key}>
+                        <Card
+                          title={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{ width: 10, height: 10, borderRadius: '50%', background: col.color }} />
+                              <Text strong>{col.label}</Text>
+                              <Badge count={taskList.filter((t) => t.status === col.key).length} style={{ background: col.color }} />
+                            </div>
+                          }
+                          style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', minHeight: 400 }}
+                          styles={{ body: { padding: '8px' } }}
+                        >
+                          {filtered.filter((t) => t.status === col.key).map((task) => (
+                            <motion.div key={task.id} whileHover={{ y: -2 }}>
+                              <Card size="small" style={{ marginBottom: 10, borderRadius: 10, border: `1px solid ${col.color}20` }} styles={{ body: { padding: '10px 12px' } }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                  <Button type="link" style={{ padding: 0, color: '#B11E6A', fontWeight: 700, height: 'auto' }}
+                                    onClick={() => { setSelectedTask(task); setTaskDetailOpen(true); }}>
+                                    {task.id}
+                                  </Button>
+                                  {task.salesFollowup && (
+                                    <Tooltip title={`${task.salesPerson} → follow up on ${task.client}`}>
+                                      <BellOutlined style={{ color: '#fa8c16' }} />
+                                    </Tooltip>
+                                  )}
+                                </div>
+                                <Tag color={typeColor[task.type]} style={{ marginBottom: 6, borderRadius: 20, fontSize: 11 }}>{task.type}</Tag>
+                                <Text strong style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>{task.title}</Text>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                  <Space size={4}><Avatar size={20} icon={<UserOutlined />} style={{ background: '#B11E6A' }} /><Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>{task.assignee}</Text></Space>
+                                  <Tag color={priorityColor[task.priority]} style={{ margin: 0, fontSize: 11 }}>{task.priority}</Tag>
+                                </div>
+                                {task.paymentStatus && <Tag color={paymentColor[task.paymentStatus] || 'default'} style={{ fontSize: 10, marginBottom: 6 }}>{task.paymentStatus}</Tag>}
+                                <Space direction="vertical" size={2} style={{ width: '100%', marginTop: 8 }}>
+                                  {task.status === 'Pending' && (
+                                    <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => handleStartTask(task.id)} style={{ background: '#1890ff', border: 'none', width: '100%' }}>Start</Button>
+                                  )}
+                                  {task.status === 'In Progress' && (
+                                    <>
+                                      <Tag color="processing" icon={<ClockCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>In Process</Tag>
+                                      <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => handleCompleteTask(task.id)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', width: '100%' }}>Done</Button>
+                                    </>
+                                  )}
+                                  {task.status === 'Completed' && (
+                                    <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Completed</Tag>
+                                  )}
+                                  {task.status === 'Completed' && task.paymentStatus === 'Paid' && !task.dispatchStatus && (
+                                    <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}>Dispatch</Button>
+                                  )}
+                                  {task.status === 'Completed' && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
+                                    <Button size="small" danger icon={<ExclamationCircleOutlined />} onClick={() => openEmergency(task)} style={{ width: '100%' }}>Emergency Dispatch</Button>
+                                  )}
+                                  {task.startTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Started: {new Date(task.startTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
+                                  {task.endTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Ended: {new Date(task.endTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
+                                </Space>
+                              </Card>
+                            </motion.div>
+                          ))}
+                        </Card>
+                      </Col>
+                    ))}
+                  </Row>
+                )}
+              </div>
+            ),
+          },
+          {
+            key: 'suggested',
+            label: (
+              <Space size={6}>
+                <BulbOutlined />
+                Suggested Task
+                {taskList.filter((t) => !t.assignee).length > 0 && (
+                  <Badge count={taskList.filter((t) => !t.assignee).length} style={{ background: '#B11E6A' }} />
+                )}
+              </Space>
+            ),
+            children: (
+              <div>
+                <Alert
+                  type="info"
+                  showIcon
+                  icon={<BulbOutlined />}
+                  message="Suggested Tasks — Unassigned"
+                  description="Tasks waiting to be assigned. Smart suggestions are based on current inventory stock and order status."
+                  style={{ marginBottom: 16, borderRadius: 8 }}
+                />
+                <Row gutter={[16, 16]}>
+                  {taskList.filter((t) => !t.assignee).length === 0 ? (
+                    <Col xs={24}>
+                      <div style={{ textAlign: 'center', padding: '48px 0' }}>
+                        <BulbOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
+                        <Text type="secondary">No unassigned tasks at the moment</Text>
                       </div>
-                      <Tag color={typeColor[task.type]} style={{ marginBottom: 6, borderRadius: 20, fontSize: 11 }}>{task.type}</Tag>
-                      <Text strong style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>{task.title}</Text>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                        <Space size={4}><Avatar size={20} icon={<UserOutlined />} style={{ background: '#B11E6A' }} /><Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>{task.assignee}</Text></Space>
-                        <Tag color={priorityColor[task.priority]} style={{ margin: 0, fontSize: 11 }}>{task.priority}</Tag>
-                      </div>
-                      {task.paymentStatus && <Tag color={paymentColor[task.paymentStatus] || 'default'} style={{ fontSize: 10, marginBottom: 6 }}>{task.paymentStatus}</Tag>}
-                      <Space direction="vertical" size={2} style={{ width: '100%', marginTop: 8 }}>
-                        {task.status === 'Pending' && (
-                          <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => handleStartTask(task.id)} style={{ background: '#1890ff', border: 'none', width: '100%' }}>Start</Button>
-                        )}
-                        {task.status === 'In Progress' && (
-                          <>
-                            <Tag color="processing" icon={<ClockCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>In Process</Tag>
-                            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => handleCompleteTask(task.id)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', width: '100%' }}>Done</Button>
-                          </>
-                        )}
-                        {task.status === 'Completed' && (
-                          <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Completed</Tag>
-                        )}
-                        {task.status === 'Completed' && task.paymentStatus === 'Paid' && !task.dispatchStatus && (
-                          <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}>Dispatch</Button>
-                        )}
-                        {task.status === 'Completed' && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
-                          <Button size="small" danger icon={<ExclamationCircleOutlined />} onClick={() => openEmergency(task)} style={{ width: '100%' }}>Emergency Dispatch</Button>
-                        )}
-                        {task.startTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Started: {new Date(task.startTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
-                        {task.endTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Ended: {new Date(task.endTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
-                      </Space>
-                    </Card>
-                  </motion.div>
-                ))}
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      )}
+                    </Col>
+                  ) : (
+                    taskList.filter((t) => !t.assignee).map((task) => {
+                      const suggestion = getSmartSuggestion(task);
+                      return (
+                        <Col xs={24} md={12} lg={8} key={task.key}>
+                          <motion.div whileHover={{ y: -2 }}>
+                            <Card
+                              style={{ borderRadius: 12, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                              styles={{ body: { padding: 16 } }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                                <Space size={4} wrap>
+                                  <Tag color={typeColor[task.type]} style={{ borderRadius: 20, fontSize: 11 }}>{task.type}</Tag>
+                                  <Tag color={priorityColor[task.priority]} style={{ fontSize: 11 }}>{task.priority}</Tag>
+                                </Space>
+                                <Text style={{ fontSize: 11, color: '#999' }}>{task.id}</Text>
+                              </div>
+                              <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{task.title}</Text>
+                              {task.client && (
+                                <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666', display: 'block', marginBottom: 8 }}>
+                                  {task.client}{task.product ? ` • ${task.product}` : ''}
+                                </Text>
+                              )}
+                              {task.qty > 0 && (
+                                <Tag color="blue" style={{ marginBottom: 10 }}>{task.qty.toLocaleString()} units</Tag>
+                              )}
+                              <Alert
+                                type={suggestion.alertType}
+                                showIcon
+                                message={suggestion.text}
+                                style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
+                              />
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Text style={{ fontSize: 11, color: '#999' }}>Due: {task.due || '—'}</Text>
+                                <Space>
+                                  <Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedTask(task); setTaskDetailOpen(true); }}>View</Button>
+                                  <Button
+                                    size="small" type="primary" icon={<UserOutlined />}
+                                    disabled={!suggestion.canStart}
+                                    style={suggestion.canStart ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' } : {}}
+                                  >
+                                    Assign
+                                  </Button>
+                                </Space>
+                              </div>
+                            </Card>
+                          </motion.div>
+                        </Col>
+                      );
+                    })
+                  )}
+                </Row>
+              </div>
+            ),
+          },
+        ]}
+      />
 
       {/* ── New Task Modal (existing, unchanged) ─────────────────────────────── */}
       <Modal title="Create New Task" open={modalOpen} onCancel={() => setModalOpen(false)}
