@@ -2587,9 +2587,11 @@ export default function Purchase() {
                 />
               )}
 
-              <Form.Item label="GPay / UPI Number" name="gPayNumber" rules={[{ required: true, message: 'Enter GPay number for instant payment' }]} style={{ marginBottom: 12 }}>
-                <Input placeholder="GPay / UPI Number" prefix={<PhoneOutlined style={{ color: '#52c41a' }} />} />
-              </Form.Item>
+              {localPurchasePaidBy !== 'finance_team' && (
+                <Form.Item label="GPay / UPI Number" name="gPayNumber" rules={[{ required: localPurchasePaidBy !== 'finance_team', message: 'Enter GPay number for instant payment' }]} style={{ marginBottom: 12 }}>
+                  <Input placeholder="GPay / UPI Number" prefix={<PhoneOutlined style={{ color: '#52c41a' }} />} />
+                </Form.Item>
+              )}
 
               {/* Upload Payment Proof — shown for both paid-by options */}
               {(localPurchasePaidBy === 'purchase_person' || localPurchasePaidBy === 'finance_team') && (
