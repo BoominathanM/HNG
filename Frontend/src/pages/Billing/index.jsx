@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
-  Typography, Space, Divider, Avatar, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, message,
+  Typography, Space, Divider, Avatar, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, message, Switch,
 } from 'antd';
 import {
   PlusOutlined, PrinterOutlined, DownloadOutlined, EyeOutlined,
@@ -9,6 +9,7 @@ import {
   SearchOutlined, DeleteOutlined, CalendarOutlined, MinusOutlined,
   ShopOutlined, EnvironmentOutlined, BankOutlined, WhatsAppOutlined,
   FileDoneOutlined, EditOutlined, UploadOutlined, BellOutlined, SafetyCertificateOutlined,
+  GiftOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -137,6 +138,10 @@ export default function Billing() {
   const [noteText, setNoteText] = useState('');
   const [advanceAmt, setAdvanceAmt] = useState(0);
 
+  // Complementary order
+  const [isComplementary, setIsComplementary] = useState(false);
+  const [complementaryNote, setComplementaryNote] = useState('');
+
   // Record Payment In
   const [recordPayOpen, setRecordPayOpen] = useState(false);
   const [recordPayInv, setRecordPayInv] = useState(null);
@@ -185,6 +190,11 @@ export default function Billing() {
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [verifyQuot, setVerifyQuot] = useState(null);
   const [verifierName, setVerifierName] = useState('');
+
+  // Edit GST modal (Invoices tab)
+  const [gstEditOpen, setGstEditOpen] = useState(false);
+  const [gstEditInv, setGstEditInv] = useState(null);
+  const [gstEditValue, setGstEditValue] = useState(0);
 
   const filteredParties = partiesList.filter(p =>
     p.name.toLowerCase().includes(partySearch.toLowerCase()) ||
@@ -266,6 +276,8 @@ export default function Billing() {
     setShowPartySearch(false);
     setShowCreateParty(false);
     setShowItemSearch(false);
+    setIsComplementary(false);
+    setComplementaryNote('');
   };
 
   const bankAccounts = ['HDFC Bank - ****1234', 'SBI Bank - ****5678', 'Axis Bank - ****9012'];
@@ -353,6 +365,24 @@ export default function Billing() {
     message.success(`${convertQuot.quot} converted to ${newInv.inv} and moved to Invoices`);
   };
 
+  const openGstEdit = (inv) => {
+    setGstEditInv(inv);
+    setGstEditValue(inv.gst);
+    setGstEditOpen(true);
+  };
+
+  const handleSaveGst = () => {
+    const newGst = gstEditValue || 0;
+    setInvoiceList(prev => prev.map(inv => {
+      if (inv.key !== gstEditInv.key) return inv;
+      const newTotal = inv.amount + newGst;
+      const newBalance = Math.max(0, newTotal - inv.advance);
+      return { ...inv, gst: newGst, total: newTotal, balance: newBalance };
+    }));
+    message.success('GST updated successfully');
+    setGstEditOpen(false);
+  };
+
   const handlePrintDocument = (docType, data) => {
     const html = generatePrintHTML(docType, data);
     const win = window.open('', '_blank', 'width=900,height=700');
@@ -428,10 +458,11 @@ export default function Billing() {
     },
     { title: 'Status', dataIndex: 'status', width: 125, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag> },
     {
-      title: 'Actions', key: 'actions', width: 280, fixed: 'right',
+      title: 'Actions', key: 'actions', width: 320, fixed: 'right',
       render: (_, r) => (
         <Space size={4} wrap>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); }} /></Tooltip>
+          <Tooltip title="Edit GST"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openGstEdit(r)} /></Tooltip>
           <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Invoice shared on WhatsApp')} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
@@ -1144,6 +1175,65 @@ export default function Billing() {
                   style={{ borderRadius: 8 }}
                 />
               </div>
+
+              {/* ── Complementary Order toggle ── */}
+              <div style={{
+                borderRadius: 10,
+                border: `1.5px solid ${isComplementary ? '#52c41a55' : borderColor}`,
+                background: isComplementary ? (isDark ? '#0a200a' : '#f6ffed') : (isDark ? '#1a1a2a' : '#fafafa'),
+                padding: '12px 14px',
+                transition: 'all 0.2s',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Space size={8}>
+                    <GiftOutlined style={{ color: isComplementary ? '#52c41a' : '#aaa', fontSize: 15 }} />
+                    <div>
+                      <Text style={{ fontWeight: 700, color: isComplementary ? '#52c41a' : textColor, fontSize: 13, display: 'block' }}>
+                        Complementary Order
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#aaa' }}>
+                        Mark as free — for complaint resolution or goodwill
+                      </Text>
+                    </div>
+                  </Space>
+                  <Switch
+                    checked={isComplementary}
+                    onChange={setIsComplementary}
+                    style={{ background: isComplementary ? '#52c41a' : undefined }}
+                  />
+                </div>
+                <AnimatePresence>
+                  {isComplementary && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      style={{ overflow: 'hidden' }}
+                    >
+                      <div style={{ marginTop: 12 }}>
+                        <Text style={{ fontSize: 12, color: '#52c41a', display: 'block', marginBottom: 5, fontWeight: 600 }}>
+                          Complaint Reference / Reason
+                        </Text>
+                        <Input.TextArea
+                          placeholder="e.g. Replacing damaged goods from order ORD-2401, complaint ref #C-102..."
+                          value={complementaryNote}
+                          onChange={(e) => setComplementaryNote(e.target.value)}
+                          rows={2}
+                          style={{ borderRadius: 8, borderColor: '#52c41a55' }}
+                        />
+                        <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: '#52c41a10', border: '1px solid #52c41a33' }}>
+                          <Space size={6}>
+                            <GiftOutlined style={{ color: '#52c41a', fontSize: 12 }} />
+                            <Text style={{ fontSize: 11, color: '#52c41a', fontWeight: 600 }}>
+                              This order will be recorded as ₹0 — no charge to client
+                            </Text>
+                          </Space>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
           </div>
 
@@ -1165,26 +1255,41 @@ export default function Billing() {
                   </div>
                 )}
                 <Divider style={{ margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Text style={{ fontWeight: 700, fontSize: 15, color: textColor }}>Total</Text>
-                  <Text style={{ fontWeight: 800, fontSize: 16, color: '#B11E6A' }}>₹{total.toFixed(2)}</Text>
+                  {isComplementary ? (
+                    <Space size={6}>
+                      <Tag style={{ background: '#52c41a15', color: '#52c41a', border: '1px solid #52c41a33', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
+                        <GiftOutlined /> Complementary
+                      </Tag>
+                      <Text style={{ fontWeight: 800, fontSize: 16, color: '#52c41a' }}>₹0.00</Text>
+                    </Space>
+                  ) : (
+                    <Text style={{ fontWeight: 800, fontSize: 16, color: '#B11E6A' }}>₹{total.toFixed(2)}</Text>
+                  )}
                 </div>
                 <Divider style={{ margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: isDark ? '#aaa' : '#666' }}>Advance Payment</Text>
-                  <InputNumber
-                    prefix="₹"
-                    placeholder="0.00"
-                    value={advanceAmt || undefined}
-                    onChange={(val) => setAdvanceAmt(val || 0)}
-                    min={0}
-                    max={total}
-                    style={{ width: 130, borderRadius: 8 }}
-                  />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: balanceDue > 0 ? '#B11E6A10' : '#52c41a10', border: `1.5px solid ${balanceDue > 0 ? '#B11E6A44' : '#52c41a44'}`, marginTop: 4 }}>
-                  <Text style={{ fontWeight: 700, color: balanceDue > 0 ? '#B11E6A' : '#52c41a', fontSize: 14 }}>Current Bill Balance</Text>
-                  <Text style={{ fontWeight: 800, color: balanceDue > 0 ? '#B11E6A' : '#52c41a', fontSize: 16 }}>₹{balanceDue.toFixed(2)}</Text>
+                {!isComplementary && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ color: isDark ? '#aaa' : '#666' }}>Advance Payment</Text>
+                    <InputNumber
+                      prefix="₹"
+                      placeholder="0.00"
+                      value={advanceAmt || undefined}
+                      onChange={(val) => setAdvanceAmt(val || 0)}
+                      min={0}
+                      max={total}
+                      style={{ width: 130, borderRadius: 8 }}
+                    />
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: isComplementary ? '#52c41a10' : balanceDue > 0 ? '#B11E6A10' : '#52c41a10', border: `1.5px solid ${isComplementary ? '#52c41a44' : balanceDue > 0 ? '#B11E6A44' : '#52c41a44'}`, marginTop: 4 }}>
+                  <Text style={{ fontWeight: 700, color: isComplementary ? '#52c41a' : balanceDue > 0 ? '#B11E6A' : '#52c41a', fontSize: 14 }}>
+                    {isComplementary ? 'Complementary — No Charge' : 'Current Bill Balance'}
+                  </Text>
+                  <Text style={{ fontWeight: 800, color: isComplementary ? '#52c41a' : balanceDue > 0 ? '#B11E6A' : '#52c41a', fontSize: 16 }}>
+                    {isComplementary ? '₹0.00' : `₹${balanceDue.toFixed(2)}`}
+                  </Text>
                 </div>
                 {selectedParty && selectedParty.balance > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 14px', borderRadius: 10, background: '#ff4d4f10', border: `1.5px solid #ff4d4f44`, marginTop: 8 }}>
@@ -1727,6 +1832,80 @@ export default function Billing() {
                 }}
               >
                 Schedule Reminder
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ───────────── EDIT GST MODAL (Invoices tab) ───────────── */}
+      <Modal
+        title={
+          <Space>
+            <EditOutlined style={{ color: '#B11E6A' }} />
+            <span style={{ fontWeight: 700 }}>Edit GST — {gstEditInv?.inv}</span>
+          </Space>
+        }
+        open={gstEditOpen}
+        onCancel={() => setGstEditOpen(false)}
+        footer={null}
+        width={420}
+        centered
+      >
+        {gstEditInv && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ background: '#B11E6A10', border: '1px solid #B11E6A33', borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Invoice</Text>
+                <Text strong style={{ color: '#B11E6A' }}>{gstEditInv.inv}</Text>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Client</Text>
+                <Text strong>{gstEditInv.client}</Text>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Base Amount</Text>
+                <Text strong>₹{gstEditInv.amount.toLocaleString()}</Text>
+              </div>
+            </div>
+            <Form layout="vertical">
+              <Form.Item label={<Text strong>GST Amount <span style={{ color: '#ff4d4f' }}>*</span></Text>}>
+                <InputNumber
+                  prefix="₹"
+                  value={gstEditValue}
+                  onChange={(v) => setGstEditValue(v || 0)}
+                  min={0}
+                  style={{ width: '100%', height: 44 }}
+                  controls={false}
+                  autoFocus
+                />
+              </Form.Item>
+            </Form>
+            <div style={{ background: isDark ? '#1a0f14' : '#fdf5f9', border: '1px solid #B11E6A33', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text style={{ fontSize: 13, color: '#888' }}>Base Amount</Text>
+                <Text strong>₹{gstEditInv.amount.toLocaleString()}</Text>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text style={{ fontSize: 13, color: '#888' }}>GST</Text>
+                <Text strong style={{ color: '#B11E6A' }}>₹{(gstEditValue || 0).toLocaleString()}</Text>
+              </div>
+              <Divider style={{ margin: '6px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Text strong style={{ fontSize: 14 }}>New Total</Text>
+                <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>
+                  ₹{(gstEditInv.amount + (gstEditValue || 0)).toLocaleString()}
+                </Text>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button style={{ flex: 1 }} onClick={() => setGstEditOpen(false)}>Cancel</Button>
+              <Button
+                type="primary"
+                style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
+                onClick={handleSaveGst}
+              >
+                Save GST
               </Button>
             </div>
           </div>

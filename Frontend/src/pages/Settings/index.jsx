@@ -6,7 +6,7 @@ import {
 import {
   SaveOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   UserOutlined, UploadOutlined, CheckOutlined, CloseOutlined,
-  HistoryOutlined,
+  HistoryOutlined, FileTextOutlined, BgColorsOutlined, FontColorsOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -42,6 +42,35 @@ const MODULE_PERM_TYPES = {
 
 const ALL_PERMS = { read: true, add: true, edit: true, delete: true };
 const NO_PERMS  = { read: false, add: false, edit: false, delete: false };
+
+const INVOICE_THEMES = [
+  { key: 'classic',      name: 'Classic',      desc: 'Clean & minimal',       headerBg: '#ffffff', headerText: '#1a1a2e', accent: '#1a1a2e',  border: '#e0e0e0' },
+  { key: 'brand',        name: 'Brand Pink',   desc: 'Company brand color',   headerBg: '#B11E6A', headerText: '#ffffff', accent: '#B11E6A',  border: '#B11E6A33' },
+  { key: 'professional', name: 'Professional', desc: 'Dark executive style',  headerBg: '#1a1a2e', headerText: '#ffffff', accent: '#1a1a2e',  border: '#1a1a2e33' },
+  { key: 'ocean',        name: 'Ocean Blue',   desc: 'Corporate blue look',   headerBg: '#1e3a5f', headerText: '#ffffff', accent: '#1e3a5f',  border: '#1e3a5f33' },
+  { key: 'forest',       name: 'Forest',       desc: 'Trustworthy green',     headerBg: '#1a4731', headerText: '#ffffff', accent: '#1a4731',  border: '#1a473133' },
+  { key: 'minimal',      name: 'Minimal',      desc: 'Light & airy layout',   headerBg: '#f5f5f5', headerText: '#555555', accent: '#888888',  border: '#eeeeee' },
+];
+
+const INVOICE_FONTS = [
+  { key: 'Inter',              name: 'Inter',           sample: 'Aa' },
+  { key: 'Roboto',             name: 'Roboto',          sample: 'Aa' },
+  { key: 'Poppins',            name: 'Poppins',         sample: 'Aa' },
+  { key: "'Open Sans'",        name: 'Open Sans',       sample: 'Aa' },
+  { key: 'Montserrat',         name: 'Montserrat',      sample: 'Aa' },
+  { key: "'Playfair Display'", name: 'Playfair',        sample: 'Aa' },
+  { key: "'Times New Roman'",  name: 'Times New Roman', sample: 'Aa' },
+  { key: 'Arial',              name: 'Arial',           sample: 'Aa' },
+];
+
+const GST_OPTIONS = [
+  { value: 'none',      label: 'None',           desc: 'Do not show any tax on invoice' },
+  { value: 'cgst',      label: 'CGST Only',      desc: 'Central GST — intra-state (half rate)' },
+  { value: 'sgst',      label: 'SGST Only',      desc: 'State GST — intra-state (half rate)' },
+  { value: 'cgst_sgst', label: 'CGST + SGST',    desc: 'Both components for intra-state' },
+  { value: 'igst',      label: 'IGST Only',      desc: 'Integrated GST for inter-state' },
+  { value: 'all',       label: 'All Components', desc: 'CGST + SGST + IGST (show all)' },
+];
 
 const buildPerms = (mods, overrides = {}) =>
   Object.fromEntries(MODULES.map(m => [m, mods.includes(m) ? { ...ALL_PERMS, ...overrides[m] } : { ...NO_PERMS, ...overrides[m] }]));
@@ -102,6 +131,22 @@ export default function Settings() {
 
   // Logo
   const [logoUrl, setLogoUrl] = useState('/hng logo new.png');
+
+  // Invoice Settings
+  const [invoiceTheme, setInvoiceTheme]             = useState('classic');
+  const [invoiceFont, setInvoiceFont]               = useState('Inter');
+  const [invoiceGstConfig, setInvoiceGstConfig]     = useState('cgst_sgst');
+  const [invoiceShowGstin, setInvoiceShowGstin]     = useState(true);
+  const [invoiceShowHsn, setInvoiceShowHsn]         = useState(true);
+  const [invoiceShowTaxRate, setInvoiceShowTaxRate] = useState(true);
+  const [invoiceShowLogo, setInvoiceShowLogo]       = useState(true);
+  const [invoiceShowBank, setInvoiceShowBank]       = useState(true);
+  const [invoiceShowTerms, setInvoiceShowTerms]     = useState(true);
+  const [invoiceShowSign, setInvoiceShowSign]       = useState(false);
+  const [invoiceFooter, setInvoiceFooter]           = useState('Thank you for your business!');
+  const [invoiceTerms, setInvoiceTerms]             = useState(
+    '1. Goods once sold will not be taken back or exchanged.\n2. All disputes are subject to local jurisdiction only.\n3. Payment should be made within the due date mentioned on the invoice.\n4. Interest @ 18% p.a. will be charged on overdue payments.\n5. E. & O.E.'
+  );
 
   // Deleted Records
   const [deletedRecords, setDeletedRecords] = useState([
@@ -596,6 +641,329 @@ export default function Settings() {
                   </div>
                 </Form>
               </Card>
+            ),
+          },
+          {
+            key: 'invoice_settings',
+            label: <Space><FileTextOutlined />Invoice Settings</Space>,
+            children: (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+                {/* ── Theme ── */}
+                <Card
+                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  title={
+                    <Space>
+                      <BgColorsOutlined style={{ color: '#B11E6A' }} />
+                      <Text strong style={{ color: textColor }}>Invoice Theme</Text>
+                    </Space>
+                  }
+                >
+                  <Text style={{ fontSize: 13, color: '#aaa', display: 'block', marginBottom: 16 }}>
+                    Select the visual style for your generated invoices
+                  </Text>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+                    {INVOICE_THEMES.map(theme => {
+                      const selected = invoiceTheme === theme.key;
+                      return (
+                        <div
+                          key={theme.key}
+                          onClick={() => setInvoiceTheme(theme.key)}
+                          style={{
+                            cursor: 'pointer',
+                            borderRadius: 12,
+                            border: selected ? '2px solid #B11E6A' : `2px solid ${borderColor}`,
+                            overflow: 'hidden',
+                            width: 148,
+                            flexShrink: 0,
+                            transition: 'all 0.2s',
+                            boxShadow: selected ? '0 4px 16px rgba(177,30,106,0.22)' : '0 2px 8px rgba(0,0,0,0.06)',
+                            background: '#fff',
+                          }}
+                        >
+                          {/* Mini invoice header */}
+                          <div style={{ background: theme.headerBg, padding: '8px 10px', borderBottom: `1px solid ${theme.border}` }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div>
+                                <div style={{ width: 32, height: 5, background: theme.headerText, borderRadius: 3, opacity: 0.85, marginBottom: 3 }} />
+                                <div style={{ width: 22, height: 3, background: theme.headerText, borderRadius: 2, opacity: 0.45 }} />
+                              </div>
+                              <div style={{ width: 22, height: 22, borderRadius: 4, background: `${theme.headerText}22` }} />
+                            </div>
+                          </div>
+                          {/* Mini invoice body */}
+                          <div style={{ padding: '8px 10px', background: '#fff' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                              <div style={{ width: 38, height: 3, background: '#e8e8e8', borderRadius: 2 }} />
+                              <div style={{ width: 22, height: 3, background: theme.accent, borderRadius: 2, opacity: 0.65 }} />
+                            </div>
+                            {[36, 48, 28].map((w, i) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                                <div style={{ width: w, height: 2.5, background: '#f0f0f0', borderRadius: 2 }} />
+                                <div style={{ width: 18, height: 2.5, background: '#f0f0f0', borderRadius: 2 }} />
+                              </div>
+                            ))}
+                            <div style={{ borderTop: `1px solid ${theme.accent}33`, marginTop: 6, paddingTop: 5, display: 'flex', justifyContent: 'flex-end' }}>
+                              <div style={{ width: 38, height: 5, background: theme.accent, borderRadius: 3, opacity: 0.75 }} />
+                            </div>
+                          </div>
+                          {/* Label */}
+                          <div style={{ padding: '6px 10px', background: isDark ? '#1a1a2e' : '#fafafa', borderTop: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                              <Text style={{ fontSize: 12, fontWeight: 600, color: selected ? '#B11E6A' : textColor, display: 'block', lineHeight: 1.3 }}>{theme.name}</Text>
+                              <Text style={{ fontSize: 10, color: '#aaa' }}>{theme.desc}</Text>
+                            </div>
+                            {selected && <CheckOutlined style={{ fontSize: 11, color: '#B11E6A' }} />}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Card>
+
+                {/* ── Font ── */}
+                <Card
+                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  title={
+                    <Space>
+                      <FontColorsOutlined style={{ color: '#B11E6A' }} />
+                      <Text strong style={{ color: textColor }}>Invoice Font</Text>
+                    </Space>
+                  }
+                >
+                  <Text style={{ fontSize: 13, color: '#aaa', display: 'block', marginBottom: 16 }}>
+                    Choose the typeface used across your invoice
+                  </Text>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                    {INVOICE_FONTS.map(font => {
+                      const selected = invoiceFont === font.key;
+                      return (
+                        <div
+                          key={font.key}
+                          onClick={() => setInvoiceFont(font.key)}
+                          style={{
+                            cursor: 'pointer',
+                            borderRadius: 10,
+                            border: selected ? '2px solid #B11E6A' : `2px solid ${borderColor}`,
+                            padding: '10px 16px',
+                            minWidth: 100,
+                            textAlign: 'center',
+                            background: selected ? '#B11E6A08' : cardBg,
+                            transition: 'all 0.2s',
+                            boxShadow: selected ? '0 2px 10px rgba(177,30,106,0.18)' : 'none',
+                          }}
+                        >
+                          <div style={{ fontFamily: font.key, fontSize: 24, fontWeight: 500, color: selected ? '#B11E6A' : textColor, lineHeight: 1 }}>{font.sample}</div>
+                          <Text style={{ fontSize: 11, color: selected ? '#B11E6A' : '#aaa', display: 'block', marginTop: 4, fontWeight: selected ? 600 : 400 }}>{font.name}</Text>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* Live preview */}
+                  <div style={{ marginTop: 18, background: subBg, borderRadius: 10, padding: '14px 18px', border: `1px solid ${borderColor}` }}>
+                    <Text style={{ fontSize: 11, color: '#aaa', display: 'block', marginBottom: 8 }}>Preview</Text>
+                    <div style={{ fontFamily: invoiceFont, color: textColor }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>Tax Invoice #INV-0042</div>
+                      <div style={{ fontSize: 13, color: '#888' }}>Heal N Glow &nbsp;·&nbsp; 29ABCDE1234F1Z5 &nbsp;·&nbsp; 26 May 2026</div>
+                      <div style={{ fontSize: 12, marginTop: 8, color: '#aaa' }}>Product description — Qty × Rate = Amount</div>
+                    </div>
+                  </div>
+                </Card>
+
+                {/* ── GST ── */}
+                <Card
+                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  title={
+                    <Space>
+                      <span style={{ fontSize: 16 }}>%</span>
+                      <Text strong style={{ color: textColor }}>GST & Tax Display</Text>
+                    </Space>
+                  }
+                >
+                  <Text style={{ fontSize: 13, color: '#aaa', display: 'block', marginBottom: 20 }}>
+                    Configure which tax components appear on the printed invoice
+                  </Text>
+
+                  {/* Tax component selection */}
+                  <div style={{ marginBottom: 24 }}>
+                    <Text strong style={{ color: textColor, display: 'block', marginBottom: 12, fontSize: 13 }}>Tax Components on Invoice</Text>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {GST_OPTIONS.map(opt => {
+                        const selected = invoiceGstConfig === opt.value;
+                        return (
+                          <div
+                            key={opt.value}
+                            onClick={() => setInvoiceGstConfig(opt.value)}
+                            style={{
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 14,
+                              padding: '12px 16px',
+                              borderRadius: 10,
+                              border: selected ? '1.5px solid #B11E6A' : `1.5px solid ${borderColor}`,
+                              background: selected ? '#B11E6A08' : subBg,
+                              transition: 'all 0.18s',
+                            }}
+                          >
+                            <div style={{
+                              width: 18,
+                              height: 18,
+                              borderRadius: '50%',
+                              border: `2px solid ${selected ? '#B11E6A' : '#bbb'}`,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0,
+                              transition: 'all 0.18s',
+                            }}>
+                              {selected && <div style={{ width: 9, height: 9, borderRadius: '50%', background: '#B11E6A' }} />}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <Text strong style={{ fontSize: 13, color: selected ? '#B11E6A' : textColor }}>{opt.label}</Text>
+                              <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>{opt.desc}</Text>
+                            </div>
+                            {opt.value !== 'none' && (
+                              <div style={{ display: 'flex', gap: 5 }}>
+                                {opt.value === 'cgst_sgst' && <>
+                                  <Tag style={{ borderRadius: 8, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, margin: 0 }}>CGST</Tag>
+                                  <Tag style={{ borderRadius: 8, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, margin: 0 }}>SGST</Tag>
+                                </>}
+                                {opt.value === 'cgst' && <Tag style={{ borderRadius: 8, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, margin: 0 }}>CGST</Tag>}
+                                {opt.value === 'sgst' && <Tag style={{ borderRadius: 8, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, margin: 0 }}>SGST</Tag>}
+                                {opt.value === 'igst' && <Tag style={{ borderRadius: 8, background: '#1e3a5f18', color: '#1e3a5f', border: '1px solid #1e3a5f33', fontSize: 11, margin: 0 }}>IGST</Tag>}
+                                {opt.value === 'all' && <>
+                                  <Tag style={{ borderRadius: 8, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, margin: 0 }}>CGST</Tag>
+                                  <Tag style={{ borderRadius: 8, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, margin: 0 }}>SGST</Tag>
+                                  <Tag style={{ borderRadius: 8, background: '#1e3a5f18', color: '#1e3a5f', border: '1px solid #1e3a5f33', fontSize: 11, margin: 0 }}>IGST</Tag>
+                                </>}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <Divider style={{ margin: '0 0 20px' }} />
+
+                  {/* Tax detail toggles */}
+                  <Text strong style={{ color: textColor, display: 'block', marginBottom: 14, fontSize: 13 }}>Tax Detail Options</Text>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {[
+                      { label: 'Show GSTIN on Invoice',        desc: 'Print your GST registration number',        val: invoiceShowGstin,  set: setInvoiceShowGstin },
+                      { label: 'Show HSN / SAC Code per Item', desc: 'Display HSN/SAC code alongside each product', val: invoiceShowHsn,    set: setInvoiceShowHsn },
+                      { label: 'Show Tax Rate per Line Item',  desc: 'Print applicable GST % next to each row',    val: invoiceShowTaxRate,set: setInvoiceShowTaxRate },
+                    ].map((item, i, arr) => (
+                      <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: i < arr.length - 1 ? `1px solid ${borderColor}` : 'none' }}>
+                        <div>
+                          <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>{item.label}</Text>
+                          <Text style={{ fontSize: 12, color: '#aaa' }}>{item.desc}</Text>
+                        </div>
+                        <Switch checked={item.val} onChange={item.set} style={{ background: item.val ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                {/* ── Invoice Display Options ── */}
+                <Card
+                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  title={<Text strong style={{ color: textColor }}>Invoice Display Options</Text>}
+                >
+                  {/* Show Company Logo */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: `1px solid ${borderColor}` }}>
+                    <div>
+                      <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Company Logo</Text>
+                      <Text style={{ fontSize: 12, color: '#aaa' }}>Print the logo at the top of every invoice</Text>
+                    </div>
+                    <Switch checked={invoiceShowLogo} onChange={setInvoiceShowLogo} style={{ background: invoiceShowLogo ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                  </div>
+
+                  {/* Show Bank Details */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: `1px solid ${borderColor}` }}>
+                    <div>
+                      <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Bank Details</Text>
+                      <Text style={{ fontSize: 12, color: '#aaa' }}>Include bank account info for payment</Text>
+                    </div>
+                    <Switch checked={invoiceShowBank} onChange={setInvoiceShowBank} style={{ background: invoiceShowBank ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                  </div>
+
+                  {/* Terms & Conditions — toggle + editable textarea */}
+                  <div style={{ borderBottom: `1px solid ${borderColor}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
+                      <div>
+                        <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Terms & Conditions</Text>
+                        <Text style={{ fontSize: 12, color: '#aaa' }}>Print T&C text at the bottom of the invoice</Text>
+                      </div>
+                      <Switch checked={invoiceShowTerms} onChange={setInvoiceShowTerms} style={{ background: invoiceShowTerms ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                    </div>
+                    {invoiceShowTerms && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        style={{ overflow: 'hidden', paddingBottom: 16 }}
+                      >
+                        <div style={{ background: subBg, borderRadius: 10, padding: 14, border: `1px solid ${borderColor}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <Text strong style={{ fontSize: 12, color: '#B11E6A' }}>Terms & Conditions Text</Text>
+                            <Text style={{ fontSize: 11, color: '#aaa' }}>Displayed on every invoice footer</Text>
+                          </div>
+                          <Input.TextArea
+                            value={invoiceTerms}
+                            onChange={e => setInvoiceTerms(e.target.value)}
+                            rows={6}
+                            placeholder={`1. Goods once sold will not be taken back or exchanged.\n2. All disputes are subject to local jurisdiction only.\n3. Payment should be made within the due date.`}
+                            showCount
+                            maxLength={1000}
+                            style={{
+                              borderRadius: 8,
+                              fontSize: 13,
+                              lineHeight: 1.7,
+                              resize: 'vertical',
+                            }}
+                          />
+                          <Text style={{ fontSize: 11, color: '#aaa', display: 'block', marginTop: 8 }}>
+                            Tip: Start each clause on a new line (e.g. 1. First clause, 2. Second clause…)
+                          </Text>
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+
+                  {/* Show Signature Field */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
+                    <div>
+                      <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Signature Field</Text>
+                      <Text style={{ fontSize: 12, color: '#aaa' }}>Add authorised signatory line at footer</Text>
+                    </div>
+                    <Switch checked={invoiceShowSign} onChange={setInvoiceShowSign} style={{ background: invoiceShowSign ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                  </div>
+
+                  <Divider style={{ margin: '4px 0 16px' }} />
+                  <Form layout="vertical">
+                    <Form.Item label={<Text strong style={{ color: textColor }}>Invoice Footer Note</Text>} style={{ marginBottom: 0 }}>
+                      <Input
+                        value={invoiceFooter}
+                        onChange={e => setInvoiceFooter(e.target.value)}
+                        placeholder="e.g. Thank you for your business!"
+                        maxLength={120}
+                        showCount
+                        style={{ borderRadius: 8 }}
+                      />
+                    </Form.Item>
+                  </Form>
+                </Card>
+
+                {/* Save */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <Button>Cancel</Button>
+                  <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+                    Save Invoice Settings
+                  </Button>
+                </div>
+              </div>
             ),
           },
           {

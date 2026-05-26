@@ -71,20 +71,20 @@ const salesRawData = [
 ];
 
 const purchaseRawData = [
-  { key: 1, vendor_gst: '27AABCG1234F1Z5', supplier: 'ChemCo India', product: 'Soap Base (White)', state_code: '27', state_name: 'Maharashtra', inv_no: 'PUR-8821', orig_inv_no: 'INV-CHEM-101', inv_date: '2024-05-01', inv_value: 10030, total_tax: 1530, taxable: 8500, cgst: 765, sgst: 765, igst: 0 },
-  { key: 2, vendor_gst: '33AABHB5678K1Z2', supplier: 'BioLife Ltd', product: 'Shampoo Concentrate', state_code: '33', state_name: 'Tamil Nadu', inv_no: 'PUR-8825', orig_inv_no: 'INV-BIO-452', inv_date: '2024-05-04', inv_value: 51920, total_tax: 7920, taxable: 44000, cgst: 3960, sgst: 3960, igst: 0 },
-  { key: 3, vendor_gst: '07AABCP9012E1Z8', supplier: 'PlastiPack', product: 'Soap Base (Transparent)', state_code: '07', state_name: 'Delhi', inv_no: 'PUR-8831', orig_inv_no: 'INV-PP-203', inv_date: '2024-05-06', inv_value: 2655, total_tax: 405, taxable: 2250, cgst: 202.5, sgst: 0, igst: 202.5 },
-  { key: 4, vendor_gst: '29AABCB1122A1Z3', supplier: 'BoxWorld', product: 'Soap Base (White)', state_code: '29', state_name: 'Karnataka', inv_no: 'PUR-8839', orig_inv_no: 'INV-BW-77', inv_date: '2024-05-10', inv_value: 14400, total_tax: 2400, taxable: 12000, cgst: 1200, sgst: 1200, igst: 0 },
+  { key: 1, vendor_gst: '27AABCG1234F1Z5', supplier: 'ChemCo India', product: 'Soap Base (White)', hsn: '34011190', gst_rate: 18, qty: 100, unit_price: 85, state_code: '27', state_name: 'Maharashtra', inv_no: 'PUR-8821', orig_inv_no: 'INV-CHEM-101', inv_date: '2024-05-01', inv_value: 10030, total_tax: 1530, taxable: 8500, cgst: 765, sgst: 765, igst: 0 },
+  { key: 2, vendor_gst: '33AABHB5678K1Z2', supplier: 'BioLife Ltd', product: 'Shampoo Concentrate', hsn: '33051010', gst_rate: 18, qty: 200, unit_price: 220, state_code: '33', state_name: 'Tamil Nadu', inv_no: 'PUR-8825', orig_inv_no: 'INV-BIO-452', inv_date: '2024-05-04', inv_value: 51920, total_tax: 7920, taxable: 44000, cgst: 3960, sgst: 3960, igst: 0 },
+  { key: 3, vendor_gst: '07AABCP9012E1Z8', supplier: 'PlastiPack', product: 'Soap Base (Transparent)', hsn: '34011920', gst_rate: 18, qty: 150, unit_price: 15, state_code: '07', state_name: 'Delhi', inv_no: 'PUR-8831', orig_inv_no: 'INV-PP-203', inv_date: '2024-05-06', inv_value: 2655, total_tax: 405, taxable: 2250, cgst: 202.5, sgst: 0, igst: 202.5 },
+  { key: 4, vendor_gst: '29AABCB1122A1Z3', supplier: 'BoxWorld', product: 'Soap Base (White)', hsn: '34011190', gst_rate: 18, qty: 120, unit_price: 100, state_code: '29', state_name: 'Karnataka', inv_no: 'PUR-8839', orig_inv_no: 'INV-BW-77', inv_date: '2024-05-10', inv_value: 14400, total_tax: 2400, taxable: 12000, cgst: 1200, sgst: 1200, igst: 0 },
 ];
 
-// P&L monthly data — sales from products, cogs = purchase cost
+// P&L monthly data — sales from products, cogs = purchase cost; salesGst/cogsGst for with-GST mode
 const plMonthlyData = [
-  { month: 'Sep', sales: 62000, cogs: 38000, grossProfit: 24000, expenses: { rent: 3000, salary: 2500, utilities: 800, transport: 700, marketing: 500, other: 0 } },
-  { month: 'Oct', sales: 78000, cogs: 47000, grossProfit: 31000, expenses: { rent: 3000, salary: 3000, utilities: 900, transport: 600, marketing: 500, other: 500 } },
-  { month: 'Nov', sales: 71000, cogs: 42000, grossProfit: 29000, expenses: { rent: 3000, salary: 2800, utilities: 750, transport: 650, marketing: 500, other: 500 } },
-  { month: 'Dec', sales: 95000, cogs: 58000, grossProfit: 37000, expenses: { rent: 3000, salary: 3200, utilities: 1000, transport: 800, marketing: 500, other: 500 } },
-  { month: 'Jan', sales: 89000, cogs: 53000, grossProfit: 36000, expenses: { rent: 3000, salary: 3000, utilities: 950, transport: 550, marketing: 500, other: 500 } },
-  { month: 'Feb', sales: 112000, cogs: 68000, grossProfit: 44000, expenses: { rent: 3000, salary: 3500, utilities: 1100, transport: 900, marketing: 500, other: 1000 } },
+  { month: 'Sep', sales: 62000, salesGst: 11160, cogs: 38000, cogsGst: 6840, grossProfit: 24000, expenses: { rent: 3000, salary: 2500, utilities: 800, transport: 700, marketing: 500, other: 0 } },
+  { month: 'Oct', sales: 78000, salesGst: 14040, cogs: 47000, cogsGst: 8460, grossProfit: 31000, expenses: { rent: 3000, salary: 3000, utilities: 900, transport: 600, marketing: 500, other: 500 } },
+  { month: 'Nov', sales: 71000, salesGst: 12780, cogs: 42000, cogsGst: 7560, grossProfit: 29000, expenses: { rent: 3000, salary: 2800, utilities: 750, transport: 650, marketing: 500, other: 500 } },
+  { month: 'Dec', sales: 95000, salesGst: 17100, cogs: 58000, cogsGst: 10440, grossProfit: 37000, expenses: { rent: 3000, salary: 3200, utilities: 1000, transport: 800, marketing: 500, other: 500 } },
+  { month: 'Jan', sales: 89000, salesGst: 16020, cogs: 53000, cogsGst: 9540, grossProfit: 36000, expenses: { rent: 3000, salary: 3000, utilities: 950, transport: 550, marketing: 500, other: 500 } },
+  { month: 'Feb', sales: 112000, salesGst: 20160, cogs: 68000, cogsGst: 12240, grossProfit: 44000, expenses: { rent: 3000, salary: 3500, utilities: 1100, transport: 900, marketing: 500, other: 1000 } },
 ];
 
 const expenseCategoryConfig = [
@@ -97,10 +97,10 @@ const expenseCategoryConfig = [
 ];
 
 const productPLData = [
-  { key: 1, product: 'Soap 50g', sales: 144500, cogs: 89000, grossProfit: 55500 },
-  { key: 2, product: 'Shampoo 30ml', sales: 107500, cogs: 68000, grossProfit: 39500 },
-  { key: 3, product: 'Dental Kit', sales: 161000, cogs: 95000, grossProfit: 66000 },
-  { key: 4, product: 'Conditioner', sales: 94000, cogs: 56000, grossProfit: 38000 },
+  { key: 1, product: 'Soap 50g',    sales: 144500, cogs: 89000, grossProfit: 55500, soldQty: 2890, stockQty: 450 },
+  { key: 2, product: 'Shampoo 30ml', sales: 107500, cogs: 68000, grossProfit: 39500, soldQty: 3583, stockQty: 280 },
+  { key: 3, product: 'Dental Kit',  sales: 161000, cogs: 95000, grossProfit: 66000, soldQty: 2300, stockQty: 120 },
+  { key: 4, product: 'Conditioner', sales: 94000,  cogs: 56000, grossProfit: 38000, soldQty: 1880, stockQty: 340 },
 ];
 
 // Per-product monthly P&L — expenses are proportional to product share of total sales
@@ -140,6 +140,36 @@ const plProductMonthlyData = {
 };
 
 const CHART_COLORS = ['#B11E6A', '#D85C9E', '#8a1652', '#C94F8A', '#e91e8c', '#f06292'];
+const statusColor = { Paid: '#52c41a', Pending: '#fa8c16', 'Partially Paid': '#B11E6A', Overdue: '#ff4d4f' };
+
+// Bill-wise P&L — per invoice gross profit calculation
+const billPLData = [
+  { key: 1, inv_no: 'INV-2401', date: '2024-01-18', client: 'Marriott Mumbai',   product: 'Soap 50g',    sell_taxable: 38500,  gst_collected: 6930,  sell_total: 45430,  cogs: 23700,  input_gst: 4266,  gross_profit: 14800, status: 'Partially Paid' },
+  { key: 2, inv_no: 'INV-2402', date: '2024-01-17', client: 'Taj Hotels Delhi',  product: 'Dental Kit',  sell_taxable: 120000, gst_collected: 21600, sell_total: 141600, cogs: 74000,  input_gst: 13320, gross_profit: 46000, status: 'Pending' },
+  { key: 3, inv_no: 'INV-2403', date: '2024-01-16', client: 'ITC Grand Kolkata', product: 'Shampoo 30ml', sell_taxable: 250000, gst_collected: 0,     sell_total: 250000, cogs: 155000, input_gst: 0,     gross_profit: 95000, status: 'Paid' },
+  { key: 4, inv_no: 'INV-2404', date: '2024-02-01', client: 'Hyatt Chennai',     product: 'Conditioner', sell_taxable: 50000,  gst_collected: 8000,  sell_total: 58000,  cogs: 30900,  input_gst: 5562,  gross_profit: 19100, status: 'Partially Paid' },
+  { key: 5, inv_no: 'INV-2405', date: '2024-01-15', client: 'Client Demo',       product: 'Soap 50g',    sell_taxable: 25000,  gst_collected: 4500,  sell_total: 29500,  cogs: 15400,  input_gst: 2772,  gross_profit: 9600,  status: 'Pending' },
+];
+
+// Performance data
+// Sales Person performance data
+const salesPersonData = [
+  { key: 1, name: 'Rajan Kumar',   role: 'Senior Sales', orders: 15, revenue: 250000, target: 200000, conversion: 78, complaints: 1, avgDeal: 16667, color: '#B11E6A' },
+  { key: 2, name: 'Priya Nair',    role: 'Senior Sales', orders: 12, revenue: 180000, target: 200000, conversion: 72, complaints: 2, avgDeal: 15000, color: '#C94F8A' },
+  { key: 3, name: 'Vikram Singh',  role: 'Field Sales',  orders: 11, revenue: 143000, target: 150000, conversion: 70, complaints: 3, avgDeal: 13000, color: '#8a1652' },
+  { key: 4, name: 'Arjun Sharma',  role: 'Junior Sales', orders: 9,  revenue: 95000,  target: 120000, conversion: 65, complaints: 0, avgDeal: 10556, color: '#D85C9E' },
+  { key: 5, name: 'Sunita Patel',  role: 'Junior Sales', orders: 8,  revenue: 89500,  target: 100000, conversion: 60, complaints: 1, avgDeal: 11188, color: '#e8739e' },
+];
+
+// Month-wise revenue per salesperson
+const salesPersonMonthlyData = [
+  { month: 'Sep', 'Rajan Kumar': 32000, 'Priya Nair': 28000, 'Vikram Singh': 18000, 'Arjun Sharma': 10000, 'Sunita Patel': 9500 },
+  { month: 'Oct', 'Rajan Kumar': 41000, 'Priya Nair': 31000, 'Vikram Singh': 22000, 'Arjun Sharma': 13000, 'Sunita Patel': 12000 },
+  { month: 'Nov', 'Rajan Kumar': 37000, 'Priya Nair': 27000, 'Vikram Singh': 20000, 'Arjun Sharma': 11500, 'Sunita Patel': 10500 },
+  { month: 'Dec', 'Rajan Kumar': 52000, 'Priya Nair': 38000, 'Vikram Singh': 29000, 'Arjun Sharma': 17000, 'Sunita Patel': 15000 },
+  { month: 'Jan', 'Rajan Kumar': 46000, 'Priya Nair': 33000, 'Vikram Singh': 26000, 'Arjun Sharma': 15000, 'Sunita Patel': 14000 },
+  { month: 'Feb', 'Rajan Kumar': 58000, 'Priya Nair': 42000, 'Vikram Singh': 35000, 'Arjun Sharma': 19500, 'Sunita Patel': 18000 },
+];
 
 export default function Reports() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -161,6 +191,14 @@ export default function Reports() {
   const [plDateRange, setPlDateRange] = useState(null);
   const [plSelectedExpenses, setPlSelectedExpenses] = useState(['rent', 'salary', 'utilities', 'transport', 'marketing', 'other']);
   const [plProductFilter, setPlProductFilter] = useState(null);
+  const [plGstMode, setPlGstMode] = useState('excl');
+
+  // Bill-wise P&L state
+  const [billPlSearch, setBillPlSearch] = useState('');
+  const [billPlProductFilter, setBillPlProductFilter] = useState(null);
+
+  // Performance state
+  const [perfTab, setPerfTab] = useState('leaderboard');
 
   const salesChartData = salesProductFilter ? (salesMonthData[salesProductFilter] || salesMonthData.all) : salesMonthData.all;
   const purchaseChartData = purchaseProductFilter ? (purchaseMonthData[purchaseProductFilter] || purchaseMonthData.all) : purchaseMonthData.all;
@@ -201,13 +239,20 @@ export default function Reports() {
 
   const plFilteredData = plSelectedMonth === 'all' ? plBaseData : plBaseData.filter(d => d.month === plSelectedMonth);
 
-  const totalSales = plFilteredData.reduce((s, d) => s + d.sales, 0);
-  const totalCogs = plFilteredData.reduce((s, d) => s + d.cogs, 0);
-  const totalGrossProfit = plFilteredData.reduce((s, d) => s + d.grossProfit, 0);
+  const totalSalesExcl = plFilteredData.reduce((s, d) => s + d.sales, 0);
+  const totalSalesGst  = plFilteredData.reduce((s, d) => s + (d.salesGst || 0), 0);
+  const totalCogsExcl  = plFilteredData.reduce((s, d) => s + d.cogs, 0);
+  const totalCogsGst   = plFilteredData.reduce((s, d) => s + (d.cogsGst || 0), 0);
+  const totalGrossProfitExcl = plFilteredData.reduce((s, d) => s + d.grossProfit, 0);
+
+  const totalSales      = plGstMode === 'incl' ? totalSalesExcl + totalSalesGst : totalSalesExcl;
+  const totalCogs       = plGstMode === 'incl' ? totalCogsExcl + totalCogsGst   : totalCogsExcl;
+  const totalGrossProfit = plGstMode === 'incl' ? totalSales - totalCogs         : totalGrossProfitExcl;
   const totalExpenses = plFilteredData.reduce((s, d) =>
     s + plSelectedExpenses.reduce((sum, cat) => sum + (d.expenses[cat] || 0), 0), 0
   );
   const totalNetProfit = totalGrossProfit - totalExpenses;
+  const netGstPayable  = totalSalesGst - totalCogsGst;
 
   const plChartData = plFilteredData.map(d => ({
     month: d.month,
@@ -454,23 +499,27 @@ export default function Reports() {
                   </div>
                   <Table
                     size="small"
-                    scroll={{ x: 1400 }}
+                    scroll={{ x: 1800 }}
                     dataSource={filteredPurchaseData}
                     columns={[
-                      { title: 'Vendor GST No', dataIndex: 'vendor_gst', key: 'vendor_gst', width: 160, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Vendor GST No', dataIndex: 'vendor_gst', key: 'vendor_gst', width: 160, fixed: 'left', render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
                       { title: 'Supplier Name', dataIndex: 'supplier', key: 'supplier', width: 140, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
                       { title: 'Product', dataIndex: 'product', key: 'product', width: 160, render: v => <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20 }}>{v}</Tag> },
+                      { title: 'HSN Code', dataIndex: 'hsn', key: 'hsn', width: 100, align: 'center', render: v => <Text style={{ fontSize: 12, fontFamily: 'monospace', color: '#7c3aed' }}>{v}</Text> },
+                      { title: 'GST Rate', dataIndex: 'gst_rate', key: 'gst_rate', width: 90, align: 'center', render: v => <Tag style={{ background: '#fa8c1615', color: '#fa8c16', border: '1px solid #fa8c1633', borderRadius: 20, fontSize: 11 }}>{v}%</Tag> },
+                      { title: 'Qty', dataIndex: 'qty', key: 'qty', width: 70, align: 'center', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Unit Price', dataIndex: 'unit_price', key: 'unit_price', width: 100, render: v => <Text style={{ fontSize: 12 }}>₹{v?.toLocaleString()}</Text> },
                       { title: 'State Code', dataIndex: 'state_code', key: 'state_code', width: 90, align: 'center' },
                       { title: 'State Name', dataIndex: 'state_name', key: 'state_name', width: 120 },
                       { title: 'Invoice No', dataIndex: 'inv_no', key: 'inv_no', width: 110, render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
                       { title: 'Original Inv No', dataIndex: 'orig_inv_no', key: 'orig_inv_no', width: 130, render: v => <Text style={{ color: '#B11E6A' }}>{v}</Text> },
                       { title: 'Invoice Date', dataIndex: 'inv_date', key: 'inv_date', width: 110 },
-                      { title: 'Invoice Value', dataIndex: 'inv_value', key: 'inv_value', width: 120, render: v => <Text strong>₹{v.toLocaleString()}</Text> },
-                      { title: 'Total Tax', dataIndex: 'total_tax', key: 'total_tax', width: 100, render: v => <Text style={{ color: '#fa8c16' }}>₹{v.toLocaleString()}</Text> },
                       { title: 'Taxable Value', dataIndex: 'taxable', key: 'taxable', width: 120, render: v => <Text>₹{v.toLocaleString()}</Text> },
-                      { title: 'CGST', dataIndex: 'cgst', key: 'cgst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
-                      { title: 'SGST', dataIndex: 'sgst', key: 'sgst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
-                      { title: 'IGST', dataIndex: 'igst', key: 'igst', width: 90, render: v => <Text>₹{v.toLocaleString()}</Text> },
+                      { title: 'CGST', dataIndex: 'cgst', key: 'cgst', width: 90, render: v => <Text style={{ color: '#fa8c16' }}>₹{v.toLocaleString()}</Text> },
+                      { title: 'SGST', dataIndex: 'sgst', key: 'sgst', width: 90, render: v => <Text style={{ color: '#fa8c16' }}>₹{v.toLocaleString()}</Text> },
+                      { title: 'IGST', dataIndex: 'igst', key: 'igst', width: 90, render: v => <Text style={{ color: '#fa8c16' }}>₹{v.toLocaleString()}</Text> },
+                      { title: 'Total Tax', dataIndex: 'total_tax', key: 'total_tax', width: 100, render: v => <Text style={{ color: '#ff4d4f', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
+                      { title: 'Invoice Value', dataIndex: 'inv_value', key: 'inv_value', width: 120, fixed: 'right', render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v.toLocaleString()}</Text> },
                     ]}
                     pagination={{ pageSize: 10 }}
                   />
@@ -529,6 +578,26 @@ export default function Reports() {
                       {plSelectedMonth !== 'all' && <Tag style={{ background: '#8a165215', color: '#8a1652', border: '1px solid #8a165233', borderRadius: 20 }}>{plSelectedMonth}</Tag>}
                     </div>
                   )}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                    <Text style={{ fontSize: 12, color: '#888' }}>GST Mode:</Text>
+                    {[{ key: 'excl', label: 'Excl. GST' }, { key: 'incl', label: 'Incl. GST' }].map(m => (
+                      <div
+                        key={m.key}
+                        onClick={() => setPlGstMode(m.key)}
+                        style={{
+                          padding: '4px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: 600, transition: 'all 0.15s',
+                          border: `1.5px solid ${plGstMode === m.key ? '#B11E6A' : borderColor}`,
+                          background: plGstMode === m.key ? '#B11E6A18' : 'transparent',
+                          color: plGstMode === m.key ? '#B11E6A' : isDark ? '#aaa' : '#666',
+                        }}
+                      >{m.label}</div>
+                    ))}
+                    {plGstMode === 'incl' && (
+                      <Tag style={{ background: '#fa8c1615', color: '#fa8c16', border: '1px solid #fa8c1633', borderRadius: 20, fontSize: 11 }}>
+                        Shows gross amounts incl. GST
+                      </Tag>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                     <Text style={{ fontSize: 12, color: '#888' }}>Deduct Expenses:</Text>
                     {expenseCategoryConfig.map(cat => {
@@ -661,14 +730,45 @@ export default function Reports() {
                       styles={{ body: { padding: '16px' } }}
                     >
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
-                          <Text>Total Sales Revenue</Text>
-                          <Text strong style={{ color: '#B11E6A' }}>₹{totalSales.toLocaleString()}</Text>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
-                          <Text>Cost of Goods Sold (COGS)</Text>
-                          <Text strong style={{ color: '#8a1652' }}>- ₹{totalCogs.toLocaleString()}</Text>
-                        </div>
+                        {plGstMode === 'incl' ? (
+                          <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
+                              <Text>Gross Revenue (Incl. GST)</Text>
+                              <Text strong style={{ color: '#B11E6A' }}>₹{totalSales.toLocaleString()}</Text>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 14 }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>  Taxable Sales</Text>
+                              <Text style={{ fontSize: 12 }}>₹{totalSalesExcl.toLocaleString()}</Text>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 14 }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>  GST Collected</Text>
+                              <Text style={{ fontSize: 12, color: '#fa8c16' }}>₹{totalSalesGst.toLocaleString()}</Text>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
+                              <Text>Gross Purchase Cost (Incl. GST)</Text>
+                              <Text strong style={{ color: '#8a1652' }}>- ₹{totalCogs.toLocaleString()}</Text>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 14 }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>  Taxable COGS</Text>
+                              <Text style={{ fontSize: 12 }}>₹{totalCogsExcl.toLocaleString()}</Text>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 14 }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>  Input Tax Credit</Text>
+                              <Text style={{ fontSize: 12, color: '#52c41a' }}>- ₹{totalCogsGst.toLocaleString()}</Text>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
+                              <Text>Total Sales Revenue</Text>
+                              <Text strong style={{ color: '#B11E6A' }}>₹{totalSales.toLocaleString()}</Text>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
+                              <Text>Cost of Goods Sold (COGS)</Text>
+                              <Text strong style={{ color: '#8a1652' }}>- ₹{totalCogs.toLocaleString()}</Text>
+                            </div>
+                          </>
+                        )}
                         <Divider style={{ margin: '2px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: '#B11E6A10', borderRadius: 8, border: '1px solid #B11E6A33' }}>
                           <Text strong style={{ fontSize: 14 }}>Gross Profit</Text>
@@ -696,8 +796,14 @@ export default function Reports() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 2px' }}>
                             <Text type="secondary" style={{ fontSize: 12 }}>Net Profit Margin</Text>
                             <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontWeight: 700 }}>
-                              {((totalNetProfit / totalSales) * 100).toFixed(1)}%
+                              {((totalNetProfit / (plGstMode === 'incl' ? totalSalesExcl : totalSales)) * 100).toFixed(1)}%
                             </Tag>
+                          </div>
+                        )}
+                        {plGstMode === 'incl' && netGstPayable > 0 && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 8, background: '#fa8c1610', border: '1px solid #fa8c1633', marginTop: 4 }}>
+                            <Text style={{ fontSize: 12, color: '#fa8c16', fontWeight: 600 }}>Net GST Payable (to Govt.)</Text>
+                            <Text style={{ fontSize: 12, color: '#fa8c16', fontWeight: 700 }}>₹{netGstPayable.toLocaleString()}</Text>
                           </div>
                         )}
                       </div>
@@ -826,6 +932,8 @@ export default function Reports() {
                           })}
                           columns={[
                             { title: 'Product', dataIndex: 'product', key: 'product', render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: r.product === plProductFilter ? '#B11E6A' : textColor }}>{v}</Text> },
+                            { title: 'Sold Qty', dataIndex: 'soldQty', key: 'soldQty', align: 'center', render: v => <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{v?.toLocaleString()}</Tag> },
+                            { title: 'Stock Qty', dataIndex: 'stockQty', key: 'stockQty', align: 'center', render: v => <Tag style={{ background: v < 200 ? '#ff4d4f15' : '#52c41a15', color: v < 200 ? '#ff4d4f' : '#52c41a', border: `1px solid ${v < 200 ? '#ff4d4f33' : '#52c41a33'}`, borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{v?.toLocaleString()}</Tag> },
                             { title: 'Sales',    dataIndex: 'sales',       key: 'sales',       render: v => <Text style={{ fontSize: 12, color: '#D85C9E', fontWeight: 600 }}>₹{(v / 1000).toFixed(0)}K</Text> },
                             { title: 'Gross P.', dataIndex: 'grossProfit', key: 'grossProfit', render: v => <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 700 }}>₹{(v / 1000).toFixed(0)}K</Text> },
                             {
@@ -837,14 +945,17 @@ export default function Reports() {
                             },
                           ]}
                           summary={(data) => {
-                            const tS = data.reduce((s, r) => s + r.sales, 0);
-                            const tG = data.reduce((s, r) => s + r.grossProfit, 0);
+                            const tS  = data.reduce((s, r) => s + r.sales, 0);
+                            const tG  = data.reduce((s, r) => s + r.grossProfit, 0);
+                            const tSq = data.reduce((s, r) => s + (r.soldQty || 0), 0);
                             return (
                               <Table.Summary.Row>
                                 <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell><Text strong style={{ color: '#D85C9E', fontSize: 12 }}>₹{(tS / 1000).toFixed(0)}K</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>₹{(tG / 1000).toFixed(0)}K</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell>
+                                <Table.Summary.Cell index={1}><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{tSq.toLocaleString()}</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={2}><Text style={{ fontSize: 11, color: '#aaa' }}>—</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={3}><Text strong style={{ color: '#D85C9E', fontSize: 12 }}>₹{(tS / 1000).toFixed(0)}K</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={4}><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>₹{(tG / 1000).toFixed(0)}K</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={5}>
                                   <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontWeight: 700, fontSize: 11 }}>
                                     {((tG / tS) * 100).toFixed(1)}%
                                   </Tag>
@@ -862,6 +973,348 @@ export default function Reports() {
                 </Card>
               </div>
             ),
+          },
+
+          /* ─────────── BILL-WISE P&L ─────────── */
+          {
+            key: 'bill_pl',
+            label: 'Bill-wise P&L',
+            children: (() => {
+              const filtered = billPLData.filter(r => {
+                const q = billPlSearch.toLowerCase();
+                const matchSearch = !q || r.inv_no.toLowerCase().includes(q) || r.client.toLowerCase().includes(q) || r.product.toLowerCase().includes(q);
+                const matchProd = !billPlProductFilter || r.product === billPlProductFilter;
+                return matchSearch && matchProd;
+              });
+              const totSell = filtered.reduce((s, r) => s + r.sell_taxable, 0);
+              const totGst  = filtered.reduce((s, r) => s + r.gst_collected, 0);
+              const totCogs = filtered.reduce((s, r) => s + r.cogs, 0);
+              const totGP   = filtered.reduce((s, r) => s + r.gross_profit, 0);
+              const avgMargin = totSell > 0 ? ((totGP / totSell) * 100).toFixed(1) : 0;
+              return (
+                <div>
+                  {/* Summary cards */}
+                  <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                    {[
+                      { label: 'Total Taxable Sales', value: totSell,   color: '#B11E6A', sub: `${filtered.length} bills` },
+                      { label: 'GST Collected',        value: totGst,    color: '#fa8c16', sub: 'Output tax' },
+                      { label: 'Total COGS',           value: totCogs,   color: '#8a1652', sub: 'Purchase cost' },
+                      { label: 'Gross Profit',         value: totGP,     color: '#52c41a', sub: `Avg margin: ${avgMargin}%` },
+                    ].map((s, i) => (
+                      <Col xs={12} sm={6} key={s.label}>
+                        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}>
+                          <Card style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: `linear-gradient(135deg,${s.color}22,${s.color}08)` }} styles={{ body: { padding: '14px 16px' } }}>
+                            <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 4 }}>{s.label}</Text>
+                            <div style={{ fontSize: 19, fontWeight: 800, color: s.color }}>₹{s.value.toLocaleString()}</div>
+                            <Text style={{ fontSize: 11, color: '#aaa' }}>{s.sub}</Text>
+                          </Card>
+                        </motion.div>
+                      </Col>
+                    ))}
+                  </Row>
+
+                  {/* Filter bar */}
+                  <Card style={{ borderRadius: 12, border: 'none', background: cardBg, marginBottom: 14, boxShadow: '0 2px 12px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px' } }}>
+                    <Space wrap>
+                      <FilterOutlined style={{ color: '#B11E6A' }} />
+                      <Select allowClear placeholder="All Products" value={billPlProductFilter} onChange={setBillPlProductFilter} style={{ width: 180 }}>
+                        {['Soap 50g', 'Shampoo 30ml', 'Dental Kit', 'Conditioner'].map(p => <Option key={p} value={p}>{p}</Option>)}
+                      </Select>
+                      <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client..." allowClear value={billPlSearch} onChange={e => setBillPlSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
+                      <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }}>Excel</Button>
+                      <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>PDF</Button>
+                    </Space>
+                  </Card>
+
+                  {/* Bill-wise P&L chart */}
+                  <Row gutter={[14, 14]} style={{ marginBottom: 14 }}>
+                    <Col xs={24} lg={16}>
+                      <Card title={<Text strong style={{ color: textColor }}>Bill-wise Gross Profit</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
+                        <ResponsiveContainer width="100%" height={240}>
+                          <BarChart data={filtered} barGap={4}>
+                            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                            <XAxis dataKey="inv_no" tick={{ fill: tickColor, fontSize: 11 }} />
+                            <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                            <Tooltip formatter={(v, n) => [`₹${v.toLocaleString()}`, n]} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
+                            <Legend />
+                            <Bar dataKey="sell_taxable" name="Taxable Sales" fill="#D85C9E" radius={[4,4,0,0]} />
+                            <Bar dataKey="cogs"         name="COGS"          fill="#8a1652" radius={[4,4,0,0]} />
+                            <Bar dataKey="gross_profit" name="Gross Profit"  fill="#B11E6A" radius={[4,4,0,0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </Card>
+                    </Col>
+                    <Col xs={24} lg={8}>
+                      <Card title={<Text strong style={{ color: textColor }}>Profit by Client</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }} styles={{ body: { padding: '16px' } }}>
+                        <ResponsiveContainer width="100%" height={180}>
+                          <PieChart>
+                            <Pie data={filtered.map((r, i) => ({ name: r.client, value: r.gross_profit, color: CHART_COLORS[i % CHART_COLORS.length] }))} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={false}>
+                              {filtered.map((_, idx) => <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />)}
+                            </Pie>
+                            <Tooltip formatter={v => `₹${v.toLocaleString()}`} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 4 }}>
+                          {filtered.map((r, i) => (
+                            <div key={r.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Space size={6}>
+                                <div style={{ width: 8, height: 8, borderRadius: '50%', background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                                <Text style={{ fontSize: 11, color: textColor }} ellipsis>{r.client}</Text>
+                              </Space>
+                              <Text style={{ fontSize: 11, fontWeight: 700, color: '#B11E6A' }}>₹{(r.gross_profit/1000).toFixed(1)}K</Text>
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+                    </Col>
+                  </Row>
+
+                  {/* Bill-wise P&L table */}
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                      <Title level={5} style={{ color: textColor, margin: 0 }}>Bill-wise Profit & Loss Statement</Title>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{filtered.length} bills • Avg Margin: <Text strong style={{ color: '#B11E6A' }}>{avgMargin}%</Text></Text>
+                    </div>
+                    <Table
+                      size="small"
+                      scroll={{ x: 1200 }}
+                      dataSource={filtered}
+                      columns={[
+                        { title: 'Invoice #', dataIndex: 'inv_no', key: 'inv_no', width: 110, fixed: 'left', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text> },
+                        { title: 'Date', dataIndex: 'date', key: 'date', width: 110, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                        { title: 'Client', dataIndex: 'client', key: 'client', width: 160, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>{v}</Text> },
+                        { title: 'Product', dataIndex: 'product', key: 'product', width: 130, render: v => <Tag style={{ background: '#8a165215', color: '#8a1652', border: '1px solid #8a165233', borderRadius: 20 }}>{v}</Tag> },
+                        { title: 'Taxable Sales', dataIndex: 'sell_taxable', key: 'sell_taxable', width: 120, render: v => <Text style={{ fontSize: 12 }}>₹{v.toLocaleString()}</Text> },
+                        { title: 'GST Collected', dataIndex: 'gst_collected', key: 'gst_collected', width: 120, render: v => <Text style={{ fontSize: 12, color: '#fa8c16' }}>₹{v.toLocaleString()}</Text> },
+                        { title: 'Total Bill', dataIndex: 'sell_total', key: 'sell_total', width: 110, render: v => <Text strong style={{ fontSize: 12 }}>₹{v.toLocaleString()}</Text> },
+                        { title: 'COGS', dataIndex: 'cogs', key: 'cogs', width: 110, render: v => <Text style={{ fontSize: 12, color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
+                        { title: 'Input GST', dataIndex: 'input_gst', key: 'input_gst', width: 100, render: v => <Text style={{ fontSize: 12, color: '#52c41a' }}>₹{v.toLocaleString()}</Text> },
+                        {
+                          title: 'Gross Profit', dataIndex: 'gross_profit', key: 'gross_profit', width: 120, fixed: 'right',
+                          render: v => <Text strong style={{ fontSize: 12, color: v >= 0 ? '#52c41a' : '#ff4d4f' }}>₹{v.toLocaleString()}</Text>,
+                        },
+                        {
+                          title: 'Margin %', key: 'margin', width: 90, fixed: 'right',
+                          render: (_, r) => {
+                            const m = r.sell_taxable > 0 ? ((r.gross_profit / r.sell_taxable) * 100).toFixed(1) : 0;
+                            return <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontWeight: 700, fontSize: 11 }}>{m}%</Tag>;
+                          },
+                        },
+                        { title: 'Status', dataIndex: 'status', key: 'status', width: 120, render: v => <Tag style={{ borderRadius: 20, fontSize: 11, fontWeight: 600, background: `${statusColor[v] || '#888'}22`, color: statusColor[v] || '#888', border: `1px solid ${statusColor[v] || '#888'}44` }}>{v}</Tag> },
+                      ]}
+                      summary={(data) => {
+                        const tS = data.reduce((s, r) => s + r.sell_taxable, 0);
+                        const tG = data.reduce((s, r) => s + r.gst_collected, 0);
+                        const tC = data.reduce((s, r) => s + r.cogs, 0);
+                        const tP = data.reduce((s, r) => s + r.gross_profit, 0);
+                        return (
+                          <Table.Summary.Row style={{ fontWeight: 700 }}>
+                            <Table.Summary.Cell colSpan={4}><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>₹{tS.toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{tG.toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>₹{(tS + tG).toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#8a1652', fontSize: 12 }}>₹{tC.toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell />
+                            <Table.Summary.Cell><Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{tP.toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell>
+                              <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontWeight: 700, fontSize: 11 }}>
+                                {tS > 0 ? ((tP / tS) * 100).toFixed(1) : 0}%
+                              </Tag>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell />
+                          </Table.Summary.Row>
+                        );
+                      }}
+                      pagination={{ pageSize: 10 }}
+                    />
+                  </Card>
+                </div>
+              );
+            })(),
+          },
+
+          /* ─────────── SALESPERSON PERFORMANCE REPORT ─────────── */
+          {
+            key: 'performance',
+            label: 'Performance',
+            children: (() => {
+              const topPerformer = [...salesPersonData].sort((a, b) => b.revenue - a.revenue)[0];
+              const teamRevenue  = salesPersonData.reduce((s, p) => s + p.revenue, 0);
+              const teamOrders   = salesPersonData.reduce((s, p) => s + p.orders, 0);
+              const avgTarget    = salesPersonData.reduce((s, p) => s + Math.round((p.revenue / p.target) * 100), 0) / salesPersonData.length;
+              const totalComplaints = salesPersonData.reduce((s, p) => s + p.complaints, 0);
+              return (
+                <div>
+                  {/* KPI summary row */}
+                  <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                    {[
+                      { label: 'Top Performer',      value: topPerformer.name.split(' ')[0], color: '#B11E6A', sub: `₹${(topPerformer.revenue/1000).toFixed(0)}K revenue` },
+                      { label: 'Team Revenue',        value: `₹${(teamRevenue/100000).toFixed(2)}L`, color: '#C94F8A', sub: `${teamOrders} total orders` },
+                      { label: 'Avg Target Achieved', value: `${avgTarget.toFixed(0)}%`,      color: avgTarget >= 100 ? '#52c41a' : '#fa8c16', sub: 'Across all sales persons' },
+                      { label: 'Total Complaints',    value: totalComplaints,                  color: totalComplaints > 5 ? '#ff4d4f' : '#52c41a', sub: 'Assigned to team' },
+                    ].map((s, i) => (
+                      <Col xs={12} sm={6} key={s.label}>
+                        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}>
+                          <Card style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: `linear-gradient(135deg,${s.color}22,${s.color}08)` }} styles={{ body: { padding: '14px 16px' } }}>
+                            <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 4 }}>{s.label}</Text>
+                            <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+                            <Text style={{ fontSize: 11, color: '#aaa' }}>{s.sub}</Text>
+                          </Card>
+                        </motion.div>
+                      </Col>
+                    ))}
+                  </Row>
+
+                  {/* Sub-tab selector */}
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                    {[['leaderboard', 'Leaderboard'], ['target', 'Target vs Achievement'], ['monthly', 'Monthly Trend']].map(([k, lbl]) => (
+                      <button key={k} type="button" onClick={() => setPerfTab(k)} style={{
+                        padding: '6px 18px', borderRadius: 20, cursor: 'pointer', fontWeight: 600, fontSize: 13, transition: 'all 0.15s',
+                        border: `1.5px solid ${perfTab === k ? '#B11E6A' : borderColor}`,
+                        background: perfTab === k ? '#B11E6A18' : 'transparent',
+                        color: perfTab === k ? '#B11E6A' : isDark ? '#aaa' : '#666',
+                      }}>{lbl}</button>
+                    ))}
+                  </div>
+
+                  {/* ── Leaderboard ── */}
+                  {perfTab === 'leaderboard' && (
+                    <Row gutter={[14, 14]}>
+                      <Col xs={24} lg={14}>
+                        <Card title={<Text strong style={{ color: textColor }}>Revenue Leaderboard</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
+                          <ResponsiveContainer width="100%" height={270}>
+                            <BarChart data={[...salesPersonData].sort((a, b) => b.revenue - a.revenue)} layout="vertical" barGap={4}>
+                              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} horizontal={false} />
+                              <XAxis type="number" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                              <YAxis type="category" dataKey="name" tick={{ fill: tickColor, fontSize: 11 }} width={100} />
+                              <Tooltip formatter={v => `₹${v.toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
+                              <Bar dataKey="revenue" name="Revenue" radius={[0,4,4,0]}>
+                                {[...salesPersonData].sort((a, b) => b.revenue - a.revenue).map((p, idx) => (
+                                  <Cell key={idx} fill={p.color} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </Card>
+                      </Col>
+                      <Col xs={24} lg={10}>
+                        <Card title={<Text strong style={{ color: textColor }}>Sales Person Details</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                          <Table
+                            size="small"
+                            dataSource={[...salesPersonData].sort((a, b) => b.revenue - a.revenue)}
+                            pagination={false}
+                            rowKey="key"
+                            columns={[
+                              {
+                                title: '#', key: 'rank', width: 32, align: 'center',
+                                render: (_, __, idx) => (
+                                  <div style={{ width: 20, height: 20, borderRadius: '50%', background: idx === 0 ? '#faad14' : idx === 1 ? '#aaa' : idx === 2 ? '#cd7f32' : '#f0f0f0', color: idx < 3 ? '#fff' : '#666', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700 }}>{idx + 1}</div>
+                                ),
+                              },
+                              { title: 'Name', dataIndex: 'name', key: 'name', render: (v, r) => <div><Text style={{ fontSize: 12, fontWeight: 700 }}>{v}</Text><br /><Text style={{ fontSize: 10, color: '#aaa' }}>{r.role}</Text></div> },
+                              { title: 'Orders', dataIndex: 'orders', key: 'orders', align: 'center', width: 55, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>{v}</Text> },
+                              { title: 'Revenue', dataIndex: 'revenue', key: 'revenue', width: 85, render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: r.color }}>₹{(v/1000).toFixed(0)}K</Text> },
+                              { title: 'Conv.', dataIndex: 'conversion', key: 'conversion', align: 'center', width: 55, render: v => <Tag style={{ background: v >= 70 ? '#52c41a15' : '#fa8c1615', color: v >= 70 ? '#52c41a' : '#fa8c16', border: `1px solid ${v >= 70 ? '#52c41a33' : '#fa8c1633'}`, borderRadius: 20, fontSize: 10, fontWeight: 700 }}>{v}%</Tag> },
+                            ]}
+                          />
+                        </Card>
+                      </Col>
+                    </Row>
+                  )}
+
+                  {/* ── Target vs Achievement ── */}
+                  {perfTab === 'target' && (
+                    <Row gutter={[14, 14]}>
+                      <Col xs={24} lg={15}>
+                        <Card title={<Text strong style={{ color: textColor }}>Target vs Revenue Achieved</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
+                          <ResponsiveContainer width="100%" height={280}>
+                            <BarChart data={salesPersonData} barGap={6}>
+                              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                              <XAxis dataKey="name" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => v.split(' ')[0]} />
+                              <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                              <Tooltip formatter={v => `₹${v.toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
+                              <Legend />
+                              <Bar dataKey="target"  name="Target"   fill={isDark ? '#444' : '#e0e0e0'} radius={[4,4,0,0]} />
+                              <Bar dataKey="revenue" name="Achieved" radius={[4,4,0,0]}>
+                                {salesPersonData.map((p, idx) => <Cell key={idx} fill={p.revenue >= p.target ? '#52c41a' : '#B11E6A'} />)}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </Card>
+                      </Col>
+                      <Col xs={24} lg={9}>
+                        <Card title={<Text strong style={{ color: textColor }}>Achievement Summary</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                          <Table
+                            size="small"
+                            dataSource={salesPersonData}
+                            pagination={false}
+                            rowKey="key"
+                            columns={[
+                              { title: 'Sales Person', dataIndex: 'name', key: 'name', render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>{v.split(' ')[0]}</Text> },
+                              { title: 'Target', dataIndex: 'target', key: 'target', width: 80, render: v => <Text style={{ fontSize: 12, color: '#888' }}>₹{(v/1000).toFixed(0)}K</Text> },
+                              { title: 'Achieved', dataIndex: 'revenue', key: 'revenue', width: 85, render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: v >= r.target ? '#52c41a' : '#B11E6A' }}>₹{(v/1000).toFixed(0)}K</Text> },
+                              {
+                                title: '% Hit', key: 'hit', width: 65, align: 'center',
+                                render: (_, r) => {
+                                  const pct = Math.round((r.revenue / r.target) * 100);
+                                  return <Tag style={{ background: pct >= 100 ? '#52c41a15' : pct >= 80 ? '#fa8c1615' : '#ff4d4f15', color: pct >= 100 ? '#52c41a' : pct >= 80 ? '#fa8c16' : '#ff4d4f', border: `1px solid ${pct >= 100 ? '#52c41a33' : pct >= 80 ? '#fa8c1633' : '#ff4d4f33'}`, borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{pct}%</Tag>;
+                                },
+                              },
+                              { title: 'Compl.', dataIndex: 'complaints', key: 'complaints', align: 'center', width: 60, render: v => <Tag style={{ background: v === 0 ? '#52c41a15' : v > 2 ? '#ff4d4f15' : '#fa8c1615', color: v === 0 ? '#52c41a' : v > 2 ? '#ff4d4f' : '#fa8c16', border: `1px solid ${v === 0 ? '#52c41a33' : v > 2 ? '#ff4d4f33' : '#fa8c1633'}`, borderRadius: 20, fontSize: 11 }}>{v}</Tag> },
+                            ]}
+                          />
+                        </Card>
+                      </Col>
+                    </Row>
+                  )}
+
+                  {/* ── Monthly Trend ── */}
+                  {perfTab === 'monthly' && (
+                    <Row gutter={[14, 14]}>
+                      <Col xs={24} lg={16}>
+                        <Card title={<Text strong style={{ color: textColor }}>Month-wise Revenue per Sales Person</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
+                          <ResponsiveContainer width="100%" height={280}>
+                            <LineChart data={salesPersonMonthlyData}>
+                              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                              <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
+                              <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                              <Tooltip formatter={v => `₹${v.toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
+                              <Legend />
+                              {salesPersonData.map(p => (
+                                <Line key={p.name} type="monotone" dataKey={p.name} stroke={p.color} strokeWidth={2} dot={{ fill: p.color, r: 3 }} name={p.name.split(' ')[0]} />
+                              ))}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </Card>
+                      </Col>
+                      <Col xs={24} lg={8}>
+                        <Card title={<Text strong style={{ color: textColor }}>Latest Month (Feb)</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }} styles={{ body: { padding: 0 } }}>
+                          <Table
+                            size="small"
+                            dataSource={salesPersonData.map(p => ({ ...p, febRevenue: salesPersonMonthlyData[salesPersonMonthlyData.length - 1][p.name] || 0 }))}
+                            pagination={false}
+                            rowKey="key"
+                            columns={[
+                              { title: 'Name', dataIndex: 'name', key: 'name', render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: r.color }}>{v.split(' ')[0]}</Text> },
+                              { title: 'Feb Rev.', dataIndex: 'febRevenue', key: 'febRevenue', width: 85, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>₹{(v/1000).toFixed(0)}K</Text> },
+                              {
+                                title: 'vs Jan', key: 'mom', width: 70, align: 'center',
+                                render: (_, r) => {
+                                  const jan = salesPersonMonthlyData[salesPersonMonthlyData.length - 2][r.name] || 0;
+                                  const feb = salesPersonMonthlyData[salesPersonMonthlyData.length - 1][r.name] || 0;
+                                  const diff = jan > 0 ? (((feb - jan) / jan) * 100).toFixed(0) : 0;
+                                  return <Tag style={{ background: diff >= 0 ? '#52c41a15' : '#ff4d4f15', color: diff >= 0 ? '#52c41a' : '#ff4d4f', border: `1px solid ${diff >= 0 ? '#52c41a33' : '#ff4d4f33'}`, borderRadius: 20, fontSize: 10, fontWeight: 700 }}>{diff >= 0 ? '+' : ''}{diff}%</Tag>;
+                                },
+                              },
+                            ]}
+                          />
+                        </Card>
+                      </Col>
+                    </Row>
+                  )}
+                </div>
+              );
+            })(),
           },
         ]}
       />

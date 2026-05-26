@@ -87,6 +87,28 @@ const initLocalPurchases = [
   { key: 'LP-003', date: '2024-05-15', invoiceNo: 'INV-LOCAL-003', invoiceFile: null, vendorName: 'ITC Grand Kolkata', vendorPhone: '+91 33 2288 9999', items: [{ name: 'Housekeeping Kit', qty: 100, unit: 'Kits', amount: 15000 }], totalAmount: 15000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null, gPayProof: null },
 ];
 
+// ── Vendor / Supplier complaint history mock data ────────────────────────────
+const vendorComplaintsData = {
+  'ChemCo India': [
+    { id: 1, date: '2024-04-10', issue: 'Late delivery — 5 days delay on Soap Base order', severity: 'high', status: 'Open' },
+    { id: 2, date: '2024-03-22', issue: 'Wrong quantity supplied — 450 Kg received instead of 500 Kg', severity: 'medium', status: 'Resolved' },
+  ],
+  'BioLife Ltd': [
+    { id: 1, date: '2024-03-15', issue: 'Product quality mismatch — Shampoo Concentrate below spec', severity: 'high', status: 'Open' },
+  ],
+  'PlastiPack': [
+    { id: 1, date: '2024-04-05', issue: 'Packaging damaged on arrival — 200 Pcs unusable', severity: 'medium', status: 'Resolved' },
+    { id: 2, date: '2024-05-01', issue: 'Delivery delayed by 3 days without prior notice', severity: 'low', status: 'Open' },
+  ],
+  'Marriott Mumbai': [
+    { id: 1, date: '2024-04-20', issue: 'Invoice amount mismatch — ₹500 overcharged on last order', severity: 'medium', status: 'Open' },
+  ],
+  'Taj Hotels Delhi': [
+    { id: 1, date: '2024-03-10', issue: 'Items not delivered as per purchase order — Paper Towels missing', severity: 'high', status: 'Open' },
+    { id: 2, date: '2024-02-28', issue: 'Payment receipt not provided after payment', severity: 'low', status: 'Resolved' },
+  ],
+};
+
 // ── Printing Suppliers mock data ─────────────────────────────────────────────
 const initPrintingSuppliers = [
   {
@@ -279,6 +301,43 @@ export default function Purchase() {
   const [prevOrdersDelivered, setPrevOrdersDelivered] = useState(null);
   const [viewLRCopyModal, setViewLRCopyModal] = useState(null);
 
+  /* ── Place Order — LR copy reminder after send ── */
+  const [showPlaceOrderSuccess, setShowPlaceOrderSuccess] = useState(false);
+  const [lrCopyReminderChecked, setLrCopyReminderChecked] = useState(false);
+  const [lrCopyReminderCount, setLrCopyReminderCount] = useState(0);
+  const lrCopyReminderRef = useRef(null);
+
+  const closePlaceOrderModal = () => {
+    if (lrCopyReminderRef.current) { clearInterval(lrCopyReminderRef.current); lrCopyReminderRef.current = null; }
+    setShowPlaceOrderModal(false);
+    setSelectedPlaceOrderItem(null);
+    setSelectedPlaceOrderReq(null);
+    setPlaceOrderFiftyDate(null);
+    setShowPlaceOrderSuccess(false);
+    setLrCopyReminderChecked(false);
+    setLrCopyReminderCount(0);
+  };
+
+  const toggleLrCopyReminder = (checked) => {
+    setLrCopyReminderChecked(checked);
+    if (checked) {
+      setLrCopyReminderCount(0);
+      lrCopyReminderRef.current = setInterval(() => {
+        setLrCopyReminderCount(c => c + 1);
+        notification.warning({
+          message: 'LR Copy Pending',
+          description: `Please collect the LR copy from the purchase team for the order placed with ${selectedPlaceOrderReq?.supplier || 'supplier'}.`,
+          placement: 'topRight',
+          duration: 10,
+          key: 'lr-copy-reminder',
+        });
+      }, 30 * 60 * 1000);
+      message.info('30-minute LR copy reminder is now active.', 4);
+    } else {
+      if (lrCopyReminderRef.current) { clearInterval(lrCopyReminderRef.current); lrCopyReminderRef.current = null; }
+    }
+  };
+
   const openReceivedModal = (record) => {
     setReceivedTarget(record);
     setInvoiceScanned(false);
@@ -358,6 +417,7 @@ export default function Purchase() {
   const [showAddLocalPurchaseModal, setShowAddLocalPurchaseModal] = useState(false);
   const [localPurchaseForm] = Form.useForm();
   const [localPurchasePaymentType, setLocalPurchasePaymentType] = useState('credit');
+  const [localPurchasePaidBy, setLocalPurchasePaidBy] = useState('');
   const [localPurchaseScanLoading, setLocalPurchaseScanLoading] = useState(false);
   const [localPurchaseInvoiceFile, setLocalPurchaseInvoiceFile] = useState(null);
   const [localPurchaseScannedDetails, setLocalPurchaseScannedDetails] = useState(null);
@@ -743,6 +803,8 @@ export default function Purchase() {
       paymentStatus: values.paymentType === 'instant' ? 'Paid' : 'Pending',
       paymentProof: values.paymentType === 'instant' ? (values.proof?.fileList?.[0]?.name || null) : null,
       gPayNumber: values.paymentType === 'instant' ? (values.gPayNumber || null) : null,
+      paidBy: values.paymentType === 'instant' ? (values.paidBy || '') : null,
+      paymentProofFile: values.paymentType === 'instant' ? (values.paymentProofFile?.fileList?.[0]?.name || null) : null,
     };
 
     if (localPurchaseNewVendorDetected && values.addToVendors) {
@@ -785,6 +847,7 @@ export default function Purchase() {
     setLocalPurchaseScannedDetails(null);
     setLocalPurchaseNewVendorDetected(false);
     setLocalPurchasePaymentType('credit');
+    setLocalPurchasePaidBy('');
     message.success('Local purchase recorded successfully!');
   };
 
@@ -2331,7 +2394,7 @@ export default function Purchase() {
           </div>
         }
         open={showAddLocalPurchaseModal}
-        onCancel={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); }}
+        onCancel={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); }}
         footer={null}
         width={580}
         centered
@@ -2490,24 +2553,72 @@ export default function Purchase() {
 
           {localPurchasePaymentType === 'instant' && (
             <div style={{ padding: '14px 16px', borderRadius: 10, background: isDark ? '#0a1a10' : '#f6fff8', border: '1px solid #52c41a33', marginBottom: 16 }}>
-              <Text style={{ fontWeight: 700, color: '#52c41a', display: 'block', marginBottom: 12, fontSize: 13 }}>
+              <Text style={{ fontWeight: 700, color: '#52c41a', display: 'block', marginBottom: 14, fontSize: 13 }}>
                 <ThunderboltOutlined style={{ marginRight: 6 }} />Instant Payment Details
               </Text>
-              <Form.Item label="GPay Number" name="gPayNumber" rules={[{ required: true, message: 'Enter GPay number for instant payment' }]}>
+              {/* Paid By selection */}
+              <Form.Item label={<Text strong style={{ fontSize: 12 }}>Paid By</Text>} name="paidBy" rules={[{ required: true, message: 'Select who made the payment' }]} style={{ marginBottom: 12 }}>
+                <Select
+                  placeholder="Select who paid..."
+                  style={{ borderRadius: 8 }}
+                  onChange={val => setLocalPurchasePaidBy(val)}
+                >
+                  <Option value="purchase_person">Purchase Person</Option>
+                  <Option value="finance_team">Finance Team</Option>
+                </Select>
+              </Form.Item>
+
+              {localPurchasePaidBy === 'purchase_person' && (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 12, borderRadius: 8 }}
+                  message={<Text strong style={{ fontSize: 12 }}>Goes to Reimbursement Expense</Text>}
+                  description={<Text style={{ fontSize: 11 }}>This payment will be recorded as a Purchase Person expense and sent to the Reimbursement Expense section for approval and settlement.</Text>}
+                />
+              )}
+              {localPurchasePaidBy === 'finance_team' && (
+                <Alert
+                  type="success"
+                  showIcon
+                  style={{ marginBottom: 12, borderRadius: 8 }}
+                  message={<Text strong style={{ fontSize: 12 }}>Goes to Finance Team</Text>}
+                  description={<Text style={{ fontSize: 11 }}>This payment will be recorded as a Finance Team expense and logged in the Finance section for tracking.</Text>}
+                />
+              )}
+
+              <Form.Item label="GPay / UPI Number" name="gPayNumber" rules={[{ required: true, message: 'Enter GPay number for instant payment' }]} style={{ marginBottom: 12 }}>
                 <Input placeholder="GPay / UPI Number" prefix={<PhoneOutlined style={{ color: '#52c41a' }} />} />
               </Form.Item>
-              <Form.Item label="Upload Payment Proof" name="proof">
-                <Upload.Dragger maxCount={1} beforeUpload={() => false} accept=".jpg,.jpeg,.png,.pdf" style={{ borderRadius: 8 }}>
-                  <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#52c41a', fontSize: 20 }} /></p>
-                  <p className="ant-upload-text" style={{ fontSize: 12 }}>Upload GPay/UPI Screenshot</p>
-                  <p className="ant-upload-hint" style={{ fontSize: 10 }}>JPG, PNG, or PDF</p>
-                </Upload.Dragger>
-              </Form.Item>
+
+              {/* Upload Payment Proof — shown for both paid-by options */}
+              {(localPurchasePaidBy === 'purchase_person' || localPurchasePaidBy === 'finance_team') && (
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <UploadOutlined style={{ color: '#52c41a' }} />
+                      <Text strong style={{ fontSize: 12 }}>
+                        Upload Payment Proof {localPurchasePaidBy === 'purchase_person' ? '(Reimbursement)' : '(Finance Team)'}
+                      </Text>
+                    </Space>
+                  }
+                  name="paymentProofFile"
+                  style={{ marginBottom: 0 }}
+                >
+                  <Upload.Dragger maxCount={1} beforeUpload={() => false} accept=".jpg,.jpeg,.png,.pdf" style={{ borderRadius: 8 }}>
+                    <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#52c41a', fontSize: 20 }} /></p>
+                    <p className="ant-upload-text" style={{ fontSize: 12 }}>
+                      {localPurchasePaidBy === 'purchase_person' ? 'Upload receipt / bill for reimbursement claim' : 'Upload GPay / UPI / bank payment screenshot'}
+                    </p>
+                    <p className="ant-upload-hint" style={{ fontSize: 10 }}>JPG, PNG, or PDF accepted</p>
+                  </Upload.Dragger>
+                </Form.Item>
+              )}
             </div>
           )}
 
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-            <Button style={{ flex: 1 }} onClick={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); }}>
               Cancel
             </Button>
             <Button
@@ -3018,6 +3129,48 @@ export default function Purchase() {
                 <DatePicker style={{ width: '100%', borderRadius: 8 }} placeholder="Pick reminder date for 2nd payment" disabledDate={(d) => d && d.isBefore(dayjs(), 'day')} />
               </Form.Item>
             )}
+          </div>
+
+          {/* Previous complaints banner for selected supplier */}
+          {raiseRequestSupplier && (() => {
+            const complaints = vendorComplaintsData[raiseRequestSupplier.name] || [];
+            const open = complaints.filter(c => c.status === 'Open');
+            if (!open.length) return null;
+            return (
+              <Alert
+                style={{ marginBottom: 14, borderRadius: 10 }}
+                type="warning"
+                showIcon
+                icon={<ExclamationCircleOutlined />}
+                message={<Text strong style={{ fontSize: 12 }}>Pending Complaints — {raiseRequestSupplier.name}</Text>}
+                description={
+                  <div style={{ marginTop: 4 }}>
+                    {open.map(c => (
+                      <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 3 }}>
+                        <Tag color={c.severity === 'high' ? 'error' : c.severity === 'medium' ? 'warning' : 'default'} style={{ fontSize: 10, margin: 0, flexShrink: 0 }}>{c.severity.toUpperCase()}</Tag>
+                        <Text style={{ fontSize: 11 }}>{c.issue} <Text type="secondary" style={{ fontSize: 10 }}>({c.date})</Text></Text>
+                      </div>
+                    ))}
+                  </div>
+                }
+              />
+            );
+          })()}
+
+          {/* Complaint / Issue Notes */}
+          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <ExclamationCircleOutlined style={{ color: '#fa8c16', fontSize: 13 }} />
+              <Text style={{ fontSize: 12, fontWeight: 600, color: textColor }}>Complaint / Issue Notes</Text>
+              <Tag color="default" style={{ fontSize: 10, marginLeft: 'auto' }}>Optional</Tag>
+            </div>
+            <Form.Item name="complaint_notes" style={{ marginBottom: 0 }}>
+              <Input.TextArea
+                rows={2}
+                placeholder="Log any complaints or issues from previous orders with this supplier (e.g. late delivery, quality issues, wrong quantity)..."
+                style={{ borderRadius: 8, fontSize: 12 }}
+              />
+            </Form.Item>
           </div>
 
           {/* Multi-select additional products */}
@@ -3541,15 +3694,93 @@ export default function Purchase() {
           </div>
         }
         open={showPlaceOrderModal}
-        onCancel={() => { setShowPlaceOrderModal(false); setSelectedPlaceOrderItem(null); setSelectedPlaceOrderReq(null); setPlaceOrderFiftyDate(null); }}
+        onCancel={closePlaceOrderModal}
         footer={null}
         width={540}
         centered
       >
         {selectedPlaceOrderReq && (() => {
           const sup = suppliersList.find(s => s.name === selectedPlaceOrderReq.supplier);
+          const complaints = vendorComplaintsData[selectedPlaceOrderReq.supplier] || [];
+          const openComplaints = complaints.filter(c => c.status === 'Open');
+
+          if (showPlaceOrderSuccess) {
+            return (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ textAlign: 'center', padding: '16px 0 8px' }}>
+                  <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'linear-gradient(135deg,#25D366,#128C7E)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+                    <CheckCircleOutlined style={{ color: '#fff', fontSize: 28 }} />
+                  </div>
+                  <Text strong style={{ fontSize: 16, display: 'block', marginBottom: 4 }}>Order Sent Successfully!</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Order placed with <Text strong style={{ color: '#B11E6A' }}>{selectedPlaceOrderReq.supplier}</Text> via WhatsApp.</Text>
+                </div>
+                <Divider style={{ margin: '16px 0' }} />
+                {/* LR Copy Reminder */}
+                <div style={{ padding: '14px 16px', borderRadius: 10, background: isDark ? '#1a1408' : '#fffbe6', border: `1px solid ${lrCopyReminderChecked ? '#faad14' : '#ffe58f'}`, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <BellOutlined style={{ color: '#fa8c16', fontSize: 18, marginTop: 2, flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <Text strong style={{ display: 'block', color: '#ad6800', marginBottom: 4, fontSize: 13 }}>LR Copy Reminder</Text>
+                      <Text style={{ fontSize: 12, color: '#614700', display: 'block', marginBottom: 10 }}>
+                        Enable 30-minute reminders to follow up and collect the LR (Lorry Receipt) copy from the purchase team.
+                      </Text>
+                      <Checkbox
+                        checked={lrCopyReminderChecked}
+                        onChange={e => toggleLrCopyReminder(e.target.checked)}
+                        style={{ fontWeight: 600, color: '#ad6800' }}
+                      >
+                        Remind me every 30 min to get LR copy
+                      </Checkbox>
+                      {lrCopyReminderChecked && (
+                        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, background: '#fa8c1620' }}>
+                          <ClockCircleOutlined style={{ color: '#fa8c16', fontSize: 12 }} />
+                          <Text style={{ fontSize: 11, color: '#ad6800' }}>
+                            Reminder is active{lrCopyReminderCount > 0 ? ` — fired ${lrCopyReminderCount} time${lrCopyReminderCount > 1 ? 's' : ''}` : ' — first alert in 30 min'}
+                          </Text>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  block
+                  type="primary"
+                  style={{ height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
+                  onClick={closePlaceOrderModal}
+                >
+                  Done
+                </Button>
+              </div>
+            );
+          }
+
           return (
             <div style={{ marginTop: 8 }}>
+              {/* Previous complaints banner */}
+              {openComplaints.length > 0 && (
+                <Alert
+                  style={{ marginBottom: 14, borderRadius: 10 }}
+                  type="warning"
+                  showIcon
+                  icon={<ExclamationCircleOutlined />}
+                  message={<Text strong style={{ fontSize: 13 }}>Pending Complaints for {selectedPlaceOrderReq.supplier}</Text>}
+                  description={
+                    <div style={{ marginTop: 4 }}>
+                      <Text style={{ fontSize: 12, color: '#614700', display: 'block', marginBottom: 6 }}>
+                        There are <Text strong>{openComplaints.length}</Text> unresolved issue(s) from previous orders. Review before placing a new order:
+                      </Text>
+                      {openComplaints.map(c => (
+                        <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
+                          <Tag color={c.severity === 'high' ? 'error' : c.severity === 'medium' ? 'warning' : 'default'} style={{ fontSize: 10, margin: 0, flexShrink: 0 }}>
+                            {c.severity.toUpperCase()}
+                          </Tag>
+                          <Text style={{ fontSize: 11 }}>{c.issue} <Text type="secondary" style={{ fontSize: 10 }}>({c.date})</Text></Text>
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
+              )}
               {/* Order Details */}
               <div style={{ padding: '12px 16px', background: isDark ? '#0d2010' : '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 10, marginBottom: 16 }}>
                 <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>ORDER DETAILS</Text>
@@ -3627,10 +3858,7 @@ export default function Purchase() {
 
               {/* Send via WhatsApp */}
               <div style={{ display: 'flex', gap: 8 }}>
-                <Button
-                  onClick={() => { setShowPlaceOrderModal(false); setSelectedPlaceOrderItem(null); setSelectedPlaceOrderReq(null); setPlaceOrderFiftyDate(null); }}
-                  style={{ flex: 1, height: 44, borderRadius: 10 }}
-                >
+                <Button onClick={closePlaceOrderModal} style={{ flex: 1, height: 44, borderRadius: 10 }}>
                   Cancel
                 </Button>
                 <Button
@@ -3641,11 +3869,7 @@ export default function Purchase() {
                     const msg = `*Purchase Order*\n\n*Item:* ${selectedPlaceOrderReq.item}\n*Quantity:* ${selectedPlaceOrderReq.qty} ${selectedPlaceOrderReq.unit}\n*Payment Terms:* ${selectedPlaceOrderReq.payment_terms}${reminderLine}\n*Date:* ${selectedPlaceOrderReq.date}\n\nKindly confirm the order and advise on delivery timeline.`;
                     const phone = sup ? sup.phone.replace(/\D/g, '') : '';
                     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-                    message.success('Order sent via WhatsApp');
-                    setShowPlaceOrderModal(false);
-                    setSelectedPlaceOrderItem(null);
-                    setSelectedPlaceOrderReq(null);
-                    setPlaceOrderFiftyDate(null);
+                    setShowPlaceOrderSuccess(true);
                   }}
                 >
                   Send Order via WhatsApp
