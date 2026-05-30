@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// Resolve API base URL:
+// - Explicit VITE_API_URL wins (set per-environment at build time)
+// - On localhost dev → backend on port 7007
+// - On the production domain → same origin (e.g. https://hngcrm.askeva.io/api)
+const isLocalhost =
+  typeof window !== 'undefined' &&
+  /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+
+const BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (isLocalhost ? 'http://localhost:7007/api' : `${window.location.origin}/api`);
 
 const api = axios.create({
   baseURL: BASE_URL,

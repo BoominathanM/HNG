@@ -2,7 +2,7 @@ require('dotenv').config();
 const app = require('./app');
 const connectDB = require('./config/db');
 
-const PORT = parseInt(process.env.PORT || '5000', 10);
+const PORT = parseInt(process.env.PORT || '7007', 10);
 
 // Gracefully handle uncaught exceptions — but NOT EADDRINUSE (handled below)
 process.on('uncaughtException', (err) => {

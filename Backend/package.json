@@ -5,9 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "predev": "node -e \"require('kill-port')(5000).catch(()=>{})\"",
+    "predev": "node -e \"require('kill-port')(7007).catch(()=>{})\"",
     "dev": "nodemon src/server.js",
-    "kill-port": "node -e \"require('kill-port')(5000).then(()=>console.log('Port 5000 freed')).catch(()=>console.log('Nothing on port 5000'))\"",
+    "kill-port": "node -e \"require('kill-port')(7007).then(()=>console.log('Port 7007 freed')).catch(()=>console.log('Nothing on port 7007'))\"",
     "seed": "node src/utils/seeder.js"
   },
   "dependencies": {
