@@ -10,6 +10,13 @@ router.post('/', ctrl.createItem);
 router.get('/history', ctrl.getStockHistory);
 router.get('/approvals', ctrl.getApprovals);
 router.post('/stock-check', ctrl.submitStockCheck);
+
+// Kits
+router.get('/kits', ctrl.getKits);
+router.post('/kits', ctrl.createKit);
+router.put('/kits/:id', ctrl.updateKit);
+router.delete('/kits/:id', ctrl.deleteKit);
+
 router.get('/:id', ctrl.getItem);
 router.put('/:id', ctrl.updateItem);
 router.delete('/:id', ctrl.deleteItem);

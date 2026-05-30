@@ -19,4 +19,8 @@ router.put('/users/:id/permissions', ctrl.updatePermissions);
 router.get('/deleted-records', ctrl.getDeletedRecords);
 router.post('/deleted-records/:type/:id/restore', ctrl.restoreRecord);
 
+// Dropdown options (user-added select values)
+router.get('/options', ctrl.getOptions);
+router.post('/options', ctrl.createOption);
+
 module.exports = router;

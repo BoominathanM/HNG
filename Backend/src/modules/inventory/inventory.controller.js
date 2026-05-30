@@ -1,5 +1,6 @@
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
+const Kit = require('../../models/Kit');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -151,6 +152,38 @@ exports.getStockHistory = asyncHandler(async (req, res) => {
     .sort('-createdAt')
     .limit(100);
   res.status(200).json({ success: true, data: movements });
+});
+
+// ─── KITS ──────────────────────────────────────────────────────────────────
+exports.getKits = asyncHandler(async (req, res) => {
+  const filter = { deletedAt: null };
+  if (req.query.search) filter.kitName = new RegExp(req.query.search, 'i');
+  const kits = await Kit.find(filter).sort('kitName');
+  res.status(200).json({ success: true, total: kits.length, data: kits });
+});
+
+exports.createKit = asyncHandler(async (req, res) => {
+  const kitCode = await generateCode('KIT');
+  const kit = await Kit.create({ ...req.body, kitCode, createdBy: req.user._id });
+  res.status(201).json({ success: true, data: kit });
+});
+
+exports.updateKit = asyncHandler(async (req, res, next) => {
+  const kit = await Kit.findOneAndUpdate(
+    { _id: req.params.id, deletedAt: null },
+    req.body,
+    { new: true, runValidators: true }
+  );
+  if (!kit) return next(new AppError('Kit not found', 404));
+  res.status(200).json({ success: true, data: kit });
+});
+
+exports.deleteKit = asyncHandler(async (req, res, next) => {
+  const kit = await Kit.findOne({ _id: req.params.id, deletedAt: null });
+  if (!kit) return next(new AppError('Kit not found', 404));
+  kit.deletedAt = Date.now();
+  await kit.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, message: 'Kit deleted' });
 });
 
 // Live Staff Stock Check

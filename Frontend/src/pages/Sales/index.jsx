@@ -40,8 +40,10 @@ import {
   useUpdateComplaintStatusMutation,
   useGetMyPerformanceQuery,
   useGetStaffQuery,
+  useGetKitsQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import SelectWithAdd from '../../components/common/SelectWithAdd';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -206,7 +208,7 @@ function prepareFormValues(data) {
   const dateFields = [
     'followUpDate', 'orderDeliveryDate', 'quotationDate',
     'paymentReminderDate', 'date', 'expectedDelivery',
-    'raisedDate', 'quotationDate'
+    'raisedDate', 'quotationDate', 'softwareExpiryDate',
   ];
 
   dateFields.forEach(field => {
@@ -279,47 +281,6 @@ Miss. Priya will Contact you
 +91 63741 15883`;
 }
 
-// ─── SelectWithAdd — dropdown with inline add ──────────────────────────
-const SelectWithAdd = ({ defaultOptions = [], placeholder, ...props }) => {
-  const [items, setItems] = React.useState(defaultOptions);
-  const [name, setName] = React.useState('');
-  const inputRef = React.useRef(null);
-
-  const addItem = (e) => {
-    e.preventDefault();
-    if (!name || items.some(i => i.value === name)) return;
-    setItems([...items, { value: name, label: name }]);
-    setName('');
-    setTimeout(() => inputRef.current?.focus(), 0);
-  };
-
-  return (
-    <Select
-      {...props}
-      placeholder={placeholder}
-      dropdownRender={(menu) => (
-        <>
-          {menu}
-          <Divider style={{ margin: '8px 0' }} />
-          <Space style={{ padding: '0 8px 4px' }}>
-            <Input
-              placeholder="Add item"
-              ref={inputRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.stopPropagation()}
-            />
-            <Button type="text" icon={<PlusOutlined />} onClick={addItem}>
-              Add
-            </Button>
-          </Space>
-        </>
-      )}
-      options={items}
-    />
-  );
-};
-
 // ─── Sub-components ───────────────────────────────────────────────────
 function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark }) {
   const { name, key, ...rest } = field;
@@ -365,32 +326,16 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
             {!isKit ? (
               <Form.Item {...rest} name={[name, 'name']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={PRODUCT_TYPE_OPTIONS} placeholder="Select Product" disabled={isItemDisabled} size="small" />
+                <SelectWithAdd field="productType" defaultOptions={PRODUCT_TYPE_OPTIONS} placeholder="Select Product" disabled={isItemDisabled} size="small" />
               </Form.Item>
             ) : (
               <Form.Item {...rest} name={[name, 'kitType']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={KIT_CATEGORIES} placeholder="Select Kit Type" disabled={isItemDisabled} size="small" />
+                <SelectWithAdd field="kitType" defaultOptions={KIT_CATEGORIES} placeholder="Select Kit Type" disabled={isItemDisabled} size="small" />
               </Form.Item>
             )}
           </Col>
 
-          {/* Display Unit & Size (kit only) */}
-          {isKit && (
-            <>
-              <Col flex="none" style={{ width: 130 }}>
-                <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>DISPLAY UNIT</Text>
-                <Form.Item {...rest} name={[name, 'unit']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                  <SelectWithAdd defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Unit" disabled={isItemDisabled} size="small" />
-                </Form.Item>
-              </Col>
-              <Col flex="none" style={{ width: 140 }}>
-                <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>SIZE</Text>
-                <Form.Item {...rest} name={[name, 'size']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                  <Input placeholder="e.g. 2.5cm x 2.5cm" size="small" disabled={isItemDisabled} />
-                </Form.Item>
-              </Col>
-            </>
-          )}
+          {/* Display Unit & Size now live once at the kit-card header (see kit card) */}
 
           {/* Qty, Rate, GST & Sticker/Printing */}
           <Col flex="auto">
@@ -457,22 +402,22 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           <div style={{ display: 'flex', gap: 10, flexWrap: 'nowrap' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={isItemDisabled} size="small" />
+                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={isItemDisabled} size="small" /> {/* binary — not persisted */}
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={isItemDisabled} size="small" />
+                <SelectWithAdd field="packingMaterial" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={isItemDisabled} size="small" />
+                <SelectWithAdd field="materialCategory" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[]} placeholder="Select / Add brand" disabled={isItemDisabled} size="small" />
+                <SelectWithAdd field="brand" defaultOptions={[]} placeholder="Select / Add brand" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -594,12 +539,12 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
     <Row gutter={12}>
       <Col xs={24} sm={12}>
         <Form.Item label="Delivery By" name="deliveryBy" initialValue="HNG">
-          <SelectWithAdd defaultOptions={[{ value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" disabled={disabled} />
+          <SelectWithAdd field="deliveryBy" defaultOptions={[{ value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" disabled={disabled} />
         </Form.Item>
       </Col>
       <Col xs={24} sm={12}>
         <Form.Item label="Transport Cost Scope" name="transportationBy">
-          <SelectWithAdd defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'TTDC', label: 'TTDC' }]} placeholder="Select or Add" disabled={disabled} />
+          <SelectWithAdd field="transportationBy" defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'TTDC', label: 'TTDC' }]} placeholder="Select or Add" disabled={disabled} />
         </Form.Item>
       </Col>
       <Col xs={24} sm={12}>
@@ -721,6 +666,39 @@ const exportRowsToCSV = (rows, filename) => {
   return true;
 };
 
+// Minimal CSV parser → array of objects keyed by the header row. Handles
+// quoted fields, escaped quotes ("") and commas/newlines inside quotes.
+const parseCSV = (text) => {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  const pushField = () => { row.push(field); field = ''; };
+  const pushRow = () => { pushField(); rows.push(row); row = []; };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') pushField();
+    else if (c === '\n') pushRow();
+    else if (c === '\r') { /* ignore */ }
+    else field += c;
+  }
+  if (field.length > 0 || row.length > 0) pushRow();
+  const nonEmpty = rows.filter((r) => r.some((v) => v.trim() !== ''));
+  if (nonEmpty.length < 2) return [];
+  const headers = nonEmpty[0].map((h) => h.trim());
+  return nonEmpty.slice(1).map((r) =>
+    headers.reduce((obj, h, idx) => { obj[h] = (r[idx] ?? '').trim(); return obj; }, {}),
+  );
+};
+
+const LEAD_CSV_FIELDS = ['hotelName', 'phone', 'billingName', 'contactPerson', 'pocDesignation', 'email', 'location', 'source', 'status', 'gstNumber', 'city', 'state', 'pincode', 'notes'];
+
 const KNOWN_PRODUCT_NAMES = new Set([
   'Soap', 'Paste', 'Brush', 'Raizer', 'Gel', 'Face Kit Combo', 'Body Kit Combo',
   'Soap 15grm', 'Single Brush', 'Shampoo 15ml',
@@ -729,6 +707,7 @@ const KNOWN_PRODUCT_NAMES = new Set([
 
 export default function Sales() {
   const isDark = useSelector((s) => s.theme.isDark);
+  const currentUser = useSelector((s) => s.auth?.user);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
@@ -759,6 +738,7 @@ export default function Sales() {
   const [editingLead, setEditingLead] = useState(null);
   const [leadForm] = Form.useForm();
   const [editingSection, setEditingSection] = useState(null);
+  const [followupNote, setFollowupNote] = useState('');
 
   // Quotation state
   const [quotationFromLead, setQuotationFromLead] = useState(null);
@@ -848,10 +828,43 @@ export default function Sales() {
   const { data: complaintsRaw } = useGetComplaintsQuery();
   const { data: perfRaw, isLoading: perfLoading } = useGetMyPerformanceQuery();
   const { data: staffRaw } = useGetStaffQuery();
+  const { data: kitsRaw } = useGetKitsQuery();
 
   const performanceTargets = perfRaw?.data?.targets || [];
   const performanceRewards = perfRaw?.data?.rewards || {};
   const salesPersonOptions = (staffRaw?.data || []).map((s) => ({ value: s._id, label: s.fullName }));
+  const kits = kitsRaw?.data || [];
+  const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
+
+  // When a kit is picked in the "Products adding" card, auto-fill its products
+  // into the kit product list and set the kit-level display unit & size.
+  const applyKitToForm = (kitId) => {
+    const kit = kits.find((k) => k._id === kitId);
+    if (!kit) return;
+    const existing = leadForm.getFieldValue('products') || [];
+    const nonKit = existing.filter((p) => p && !(p.isKit || p.kitType));
+    // One row per kit product. Marked isKit so they render in the kit card
+    // (which carries the shared Display Unit & Size header). The product field
+    // shown in the kit card is `kitType`, so we put the product name there.
+    const kitRows = (kit.products || []).map((p) => ({
+      isKit: true,
+      kitType: p.productName,
+      name: p.productName,
+      qty: p.qty,
+      rate: p.rate,
+      unit: p.unit,
+      kitName: kit.kitName,
+    }));
+    const pt = leadForm.getFieldValue('productType') || [];
+    const nextPt = Array.isArray(pt) ? Array.from(new Set([...pt, 'PERSONALIZED_KIT'])) : ['PERSONALIZED_KIT'];
+    leadForm.setFieldsValue({
+      productType: nextPt,
+      selectedKit: kitId,
+      kitDisplayUnit: kit.displayUnit,
+      kitSize: kit.size,
+      products: [...kitRows, ...nonKit],
+    });
+  };
 
   const [createLeadMutation] = useCreateLeadMutation();
   const [updateLeadMutation] = useUpdateLeadMutation();
@@ -911,6 +924,117 @@ export default function Sales() {
     setViewMode('detail');
   };
 
+  // Build the payload sent to the API. The Lead schema is permissive, so we
+  // persist every raw form field (products, productType, kit info, follow-ups,
+  // delivery, etc.) AND a few canonical mappings used by listings/search and
+  // other modules. This is what makes "fetch all details on edit" work.
+  const buildLeadPayload = (values) => {
+    const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
+    return {
+      ...values,
+      locationCity: values.location,
+      numRooms: Number(values.rowsInHotel) || undefined,
+      generalOccupancy: Number(values.generalOccupancy) || undefined,
+      altRole: values.alternativeRole,
+      altName: values.alternativeName,
+      altNumber: values.alternativePhone,
+      address: values.detailedAddress,
+      interestedSoftware: values.interestedInSoftware === 'YES' || values.interestedInSoftware === true,
+      prevSoftwarePrice: Number(values.previousSoftwarePrice) || undefined,
+      followupDate: toStr(values.followUpDate),
+      followupTime: values.followUpTime,
+      displayUnit: values.kitDisplayUnit || values.displayUnit,
+    };
+  };
+
+  // Append a follow-up note to the selected lead and persist it.
+  const postFollowupNote = async () => {
+    const text = (followupNote || '').trim();
+    if (!text || !selectedRecord) return;
+    const now = dayjs();
+    const note = {
+      date: now.format('YYYY-MM-DD'),
+      time: now.format('hh:mm A'),
+      person: currentUser?.fullName || 'Me',
+      text,
+    };
+    const nextHistory = [...(selectedRecord.notesHistory || []), note];
+    const updated = { ...selectedRecord, notesHistory: nextHistory };
+    try {
+      await updateLeadMutation({ id: selectedRecord._id || selectedRecord.key, notesHistory: nextHistory }).unwrap();
+      setSelectedRecord(updated);
+      setLeadsData(prev => prev.map(l => l.key === updated.key ? updated : l));
+      setCustomersData(prev => prev.map(c => c.key === updated.key ? updated : c));
+      setFollowupNote('');
+      enqueueSnackbar('Follow-up note added', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add note', { variant: 'error' });
+    }
+  };
+
+  // ─── Import / Export / Sample CSV ─────────────────────────────────
+  const importInputRef = React.useRef(null);
+
+  const handleExport = () => {
+    const byTab = {
+      leads: leadsData, customers: customersData, quotations: quotationsData,
+      negotiations: negotiationsData, orders: ordersData, complaints: complaintsData,
+    };
+    const rows = byTab[activeTab] || leadsData;
+    if (exportRowsToCSV(rows, `${activeTab}-${dayjs().format('YYYY-MM-DD')}.csv`)) {
+      enqueueSnackbar(`Exported ${rows.length} record(s) to CSV`, { variant: 'success' });
+    } else {
+      enqueueSnackbar('Nothing to export in this tab', { variant: 'warning' });
+    }
+  };
+
+  const downloadSampleCSV = () => {
+    const sampleRow = ['Grand Palace Hotel', '9876543210', 'Grand Palace', 'Rajesh Kumar', 'Manager', 'rajesh@example.com', 'Chennai', 'Direct', 'Warm', '33ABCDE1234F1Z5', 'Chennai', 'Tamil Nadu', '600001', 'Sample imported lead'];
+    const csv = [
+      LEAD_CSV_FIELDS.join(','),
+      sampleRow.map((v) => `"${v}"`).join(','),
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'sample-leads.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+    enqueueSnackbar('Sample CSV downloaded', { variant: 'info' });
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const rows = parseCSV(text);
+      if (!rows.length) {
+        enqueueSnackbar('CSV is empty or has no data rows', { variant: 'warning' });
+        e.target.value = '';
+        return;
+      }
+      let ok = 0, skipped = 0;
+      for (const r of rows) {
+        if (!r.hotelName || !r.phone) { skipped++; continue; }
+        try {
+          await createLeadMutation({
+            ...r,
+            locationCity: r.location,
+            status: r.status || 'Warm',
+          }).unwrap();
+          ok++;
+        } catch { skipped++; }
+      }
+      enqueueSnackbar(`Imported ${ok} lead(s)${skipped ? `, ${skipped} skipped` : ''}`, { variant: ok ? 'success' : 'warning' });
+    } catch (err) {
+      enqueueSnackbar('Failed to read CSV file', { variant: 'error' });
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   // ─── Lead handlers ────────────────────────────────────────────────
   const openAddLead = (lead = null) => {
     setEditingLead(lead);
@@ -936,7 +1060,7 @@ export default function Sales() {
             : (editingLead.statusHistory || []),
         };
         try {
-          await updateLeadMutation({ id: editingLead._id || editingLead.key, ...values }).unwrap();
+          await updateLeadMutation({ id: editingLead._id || editingLead.key, ...buildLeadPayload(values) }).unwrap();
           if (statusChanged) {
             await updateLeadStatusMutation({ id: editingLead._id || editingLead.key, status: values.status }).unwrap();
           }
@@ -954,34 +1078,7 @@ export default function Sales() {
           enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update lead', { variant: 'error' });
         }
       } else {
-        const SOURCES = ['Direct', 'Reference', 'Online', 'Exhibition', 'Cold Call', 'Other'];
-        const payload = {
-          hotelName: values.hotelName,
-          phone: values.phone,
-          branch: values.branch,
-          billingName: values.billingName,
-          contactPerson: values.contactPerson,
-          pocDesignation: values.pocDesignation,
-          email: values.email,
-          locationCity: values.location,
-          destination: values.destination,
-          numRooms: Number(values.rowsInHotel) || undefined,
-          generalOccupancy: Number(values.generalOccupancy) || undefined,
-          altRole: values.alternativeRole,
-          altName: values.alternativeName,
-          altNumber: values.alternativePhone,
-          address: values.detailedAddress,
-          city: values.city,
-          state: values.state,
-          pincode: values.pincode,
-          gstNumber: values.gstNumber,
-          status: values.status || 'Warm',
-          notes: values.notes,
-          interestedSoftware: values.interestedInSoftware === 'YES',
-          previousSoftware: values.previousSoftware,
-          prevSoftwarePrice: Number(values.previousSoftwarePrice) || undefined,
-        };
-        if (SOURCES.includes(values.source)) payload.source = values.source;
+        const payload = { ...buildLeadPayload(values), status: values.status || 'Warm' };
         try {
           await createLeadMutation(payload).unwrap();
           enqueueSnackbar('Lead added', { variant: 'success' });
@@ -2804,7 +2901,7 @@ export default function Sales() {
 
                     <Col xs={24} sm={8}>
                       <Form.Item label="Alternative Role" name="alternativeRole" rules={[{ required: true, message: 'Alternative contact role is required' }]}>
-                        <SelectWithAdd defaultOptions={ALTERNATIVE_PERSON_OPTIONS} placeholder="Select / Add Role" />
+                        <SelectWithAdd field="alternativeRole" defaultOptions={ALTERNATIVE_PERSON_OPTIONS} placeholder="Select / Add Role" />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -2835,13 +2932,13 @@ export default function Sales() {
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="Assign Lead To" name="salesPerson" rules={[{ required: true, message: 'Please assign this lead' }]}>
-                        <SelectWithAdd defaultOptions={salesPersonOptions} placeholder="Select / Add Sales Person" />
+                        <SelectWithAdd field="salesPerson" defaultOptions={salesPersonOptions} placeholder="Select / Add Sales Person" />
                       </Form.Item>
                     </Col>
 
                     <Col xs={24} sm={8}>
                       <Form.Item label="Source" name="source">
-                        <SelectWithAdd defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }]} placeholder="Select source" />
+                        <SelectWithAdd field="source" defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }]} placeholder="Select source" />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -2958,6 +3055,7 @@ export default function Sales() {
                       <>
                         <Form.Item name="status" label="Status">
                           <SelectWithAdd
+                            field="status"
                             defaultOptions={[
                               { value: 'Cold', label: '🔵 Cold' },
                               { value: 'Warm', label: '🟡 Warm' },
@@ -3061,7 +3159,7 @@ export default function Sales() {
                     <Space>
                       <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
                       <GiftOutlined style={{ color: '#722ed1' }} />
-                      <span>Personalization</span>
+                      <span>Products adding</span>
                     </Space>
                   }
                   extra={usePerCardEdit && (
@@ -3095,6 +3193,18 @@ export default function Sales() {
                             mode="multiple"
                             defaultOptions={PERSONALIZATION_OPTIONS}
                             placeholder="Select product types"
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <Form.Item label="Select Kit" name="selectedKit" tooltip="Pick a kit defined in Inventory → Kit. Its products auto-fill below.">
+                          <Select
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            placeholder={kitOptions.length ? 'Select a kit to load its products' : 'No kits yet — add in Inventory → Kit'}
+                            options={kitOptions}
+                            onChange={(val) => { if (val) applyKitToForm(val); }}
                           />
                         </Form.Item>
                       </Col>
@@ -3281,6 +3391,19 @@ export default function Sales() {
                                 </Space>
                               }
                             >
+                              {/* Kit-level Display Unit & Size — one header row for the whole kit */}
+                              <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
+                                <Col xs={12} sm={8}>
+                                  <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
+                                    <SelectWithAdd field="displayUnit" defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Select / Add unit" />
+                                  </Form.Item>
+                                </Col>
+                                <Col xs={12} sm={8}>
+                                  <Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}>
+                                    <Input placeholder="e.g. 2.5cm x 2.5cm" />
+                                  </Form.Item>
+                                </Col>
+                              </Row>
                               <ProductHeaders />
                               {kitFields.map((field, index) => (
                                 <ProductItem
@@ -3683,10 +3806,12 @@ export default function Sales() {
                   extra={<Button type="link" size="small" icon={<PlusOutlined />} style={{ color: '#B11E6A' }}>Add Note</Button>}
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {(record.notes_history || [
-                      { date: '2024-05-01', time: '10:30 AM', person: 'Priya', text: 'Initial call done. Interested in Soap 15grm.' },
-                      { date: '2024-05-01', time: '02:15 PM', person: 'Priya', text: 'Sent sample photos via WhatsApp.' }
-                    ]).map((note, idx) => (
+                    {(record.notesHistory || []).length === 0 && (
+                      <Text type="secondary" style={{ fontSize: 12, textAlign: 'center', padding: '8px 0' }}>
+                        No follow-up notes yet. Add the first one below.
+                      </Text>
+                    )}
+                    {(record.notesHistory || []).map((note, idx) => (
                       <div key={idx} style={{
                         padding: '12px 14px', background: isDark ? 'rgba(255,255,255,0.04)' : '#f8f9fc',
                         borderRadius: 10, borderLeft: '3px solid #B11E6A',
@@ -3694,7 +3819,7 @@ export default function Sales() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                              <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{note.person[0]}</span>
+                              <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{(note.person || '?')[0]}</span>
                             </div>
                             <Text strong style={{ fontSize: 13 }}>{note.person}</Text>
                           </div>
@@ -3704,8 +3829,10 @@ export default function Sales() {
                       </div>
                     ))}
                     <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-                      <Input.TextArea placeholder="Write a note..." rows={2} style={{ flex: 1, borderRadius: 8 }} />
-                      <Button type="primary" style={{ background: '#B11E6A', border: 'none', borderRadius: 8, alignSelf: 'flex-end', height: 36 }}>Post</Button>
+                      <Input.TextArea placeholder="Write a note..." rows={2} style={{ flex: 1, borderRadius: 8 }}
+                        value={followupNote} onChange={(e) => setFollowupNote(e.target.value)} />
+                      <Button type="primary" onClick={postFollowupNote} disabled={!followupNote.trim()}
+                        style={{ background: '#B11E6A', border: 'none', borderRadius: 8, alignSelf: 'flex-end', height: 36 }}>Post</Button>
                     </div>
                   </div>
                 </Card>
@@ -3797,11 +3924,12 @@ export default function Sales() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Sales Team" items={[{ label: 'Sales Team' }]} style={{ marginBottom: 0 }} />
         <Space size={8}>
-          <Button icon={<DownloadOutlined />}>Export</Button>
-          <Tooltip title="Ensure CSV follows sample format">
-            <Button icon={<UploadOutlined />}>Import</Button>
+          <input ref={importInputRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={handleImportFile} />
+          <Button icon={<DownloadOutlined />} onClick={handleExport}>Export</Button>
+          <Tooltip title="Import leads from a CSV that follows the sample format">
+            <Button icon={<UploadOutlined />} onClick={() => importInputRef.current?.click()}>Import</Button>
           </Tooltip>
-          <Button icon={<DownloadOutlined />} onClick={() => enqueueSnackbar('Sample CSV download started...', { variant: 'info' })}>Sample CSV</Button>
+          <Button icon={<DownloadOutlined />} onClick={downloadSampleCSV}>Sample CSV</Button>
           {(activeTab === 'leads' || activeTab === 'customers') && (
             <Button type="primary" icon={<PlusOutlined />}
               style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}

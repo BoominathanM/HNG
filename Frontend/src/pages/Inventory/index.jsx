@@ -34,7 +34,12 @@ import {
   useSubmitStockCheckMutation,
   useGetVendorsQuery,
   useCreateVendorMutation,
+  useGetKitsQuery,
+  useCreateKitMutation,
+  useUpdateKitMutation,
+  useDeleteKitMutation,
 } from '../../store/api/apiSlice';
+import SelectWithAdd from '../../components/common/SelectWithAdd';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -126,6 +131,79 @@ export default function Inventory() {
   /* ── Add Item modal ── */
   const [addItemModal, setAddItemModal] = useState(false);
   const [addItemForm] = Form.useForm();
+
+  /* ── Kits ── */
+  const { data: kitsData } = useGetKitsQuery();
+  const [createKitMutation] = useCreateKitMutation();
+  const [updateKitMutation] = useUpdateKitMutation();
+  const [deleteKitMutation] = useDeleteKitMutation();
+  const kitsList = useMemo(() => (kitsData?.data || []).map((k) => ({
+    key: k._id,
+    _id: k._id,
+    kitCode: k.kitCode,
+    kitName: k.kitName,
+    displayUnit: k.displayUnit,
+    size: k.size,
+    products: k.products || [],
+  })), [kitsData]);
+  const [kitModal, setKitModal] = useState(false);
+  const [editingKit, setEditingKit] = useState(null);
+  const [kitForm] = Form.useForm();
+
+  const openAddKit = (kit = null) => {
+    setEditingKit(kit);
+    kitForm.resetFields();
+    if (kit) {
+      kitForm.setFieldsValue({
+        kitName: kit.kitName,
+        displayUnit: kit.displayUnit,
+        size: kit.size,
+        products: kit.products?.length ? kit.products : [{ productName: '', qty: 1, rate: 0 }],
+      });
+    } else {
+      kitForm.setFieldsValue({ products: [{ productName: '', qty: 1, rate: 0 }] });
+    }
+    setKitModal(true);
+  };
+
+  const handleSaveKit = async () => {
+    try {
+      const vals = await kitForm.validateFields();
+      const payload = {
+        kitName: vals.kitName,
+        displayUnit: vals.displayUnit || '',
+        size: vals.size || '',
+        products: (vals.products || []).filter((p) => p && p.productName).map((p) => ({
+          productName: p.productName,
+          qty: Number(p.qty) || 1,
+          rate: Number(p.rate) || 0,
+          unit: p.unit || '',
+        })),
+      };
+      if (editingKit) {
+        await updateKitMutation({ id: editingKit._id, ...payload }).unwrap();
+        enqueueSnackbar('Kit updated', { variant: 'success' });
+      } else {
+        await createKitMutation(payload).unwrap();
+        enqueueSnackbar('Kit added', { variant: 'success' });
+      }
+      kitForm.resetFields();
+      setKitModal(false);
+      setEditingKit(null);
+    } catch (err) {
+      if (err?.errorFields) return;
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to save kit', { variant: 'error' });
+    }
+  };
+
+  const handleDeleteKit = async (kit) => {
+    try {
+      await deleteKitMutation(kit._id).unwrap();
+      enqueueSnackbar('Kit deleted', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to delete kit', { variant: 'error' });
+    }
+  };
 
   /* ── Add Stock (Receive Goods) drawer ── */
   const [receiveOpen, setReceiveOpen] = useState(false);
@@ -946,8 +1024,150 @@ export default function Inventory() {
               </div>
             )
           },
+          /* ── Tab: Kit ── */
+          {
+            key: 'kit',
+            label: <Space><ContainerOutlined />Kit</Space>,
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
+                <div style={{ padding: '12px 16px', borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                  <Space>
+                    <Text strong style={{ color: textColor }}>Kits</Text>
+                    <Tag color="magenta" style={{ borderRadius: 20 }}>{kitsList.length}</Tag>
+                  </Space>
+                  <Button type="primary" icon={<PlusOutlined />}
+                    style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                    onClick={() => openAddKit(null)}>
+                    Add Kit
+                  </Button>
+                </div>
+                <Table
+                  dataSource={kitsList}
+                  size="small"
+                  pagination={{ pageSize: 8, size: 'small' }}
+                  columns={[
+                    { title: 'Code', dataIndex: 'kitCode', width: 110, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v || '—'}</Text> },
+                    { title: 'Kit Name', dataIndex: 'kitName', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
+                    { title: 'Display Unit', dataIndex: 'displayUnit', render: v => v ? v.replace(/_/g, ' ') : '—' },
+                    { title: 'Size', dataIndex: 'size', render: v => v || '—' },
+                    {
+                      title: 'Products', dataIndex: 'products',
+                      render: (products) => (
+                        <Space wrap size={4}>
+                          {(products || []).length === 0 ? <Text type="secondary">—</Text> :
+                            (products || []).map((p, i) => (
+                              <Tag key={i} style={{ borderRadius: 12, fontSize: 11 }}>{p.productName} ×{p.qty}</Tag>
+                            ))}
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: 'Actions', width: 110,
+                      render: (_, kit) => (
+                        <Space>
+                          <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => openAddKit(kit)} />
+                          <Button type="text" size="small" danger icon={<CloseOutlined />} onClick={() => handleDeleteKit(kit)} />
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+              </Card>
+            )
+          },
         ]}
       />
+
+      {/* ═══════════════════════════════════════
+          KIT ADD / EDIT MODAL
+      ═══════════════════════════════════════ */}
+      <Modal
+        open={kitModal}
+        title={editingKit ? 'Edit Kit' : 'Add Kit'}
+        onCancel={() => { setKitModal(false); setEditingKit(null); }}
+        onOk={handleSaveKit}
+        okText={editingKit ? 'Update Kit' : 'Add Kit'}
+        width={680}
+        okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
+      >
+        <Form form={kitForm} layout="vertical">
+          <Row gutter={12}>
+            <Col xs={24} sm={8}>
+              <Form.Item label="Kit Name" name="kitName" rules={[{ required: true, message: 'Kit name required' }]}>
+                <Input placeholder="e.g. Dental Kit A" />
+              </Form.Item>
+            </Col>
+            <Col xs={12} sm={8}>
+              <Form.Item label="Display Unit" name="displayUnit">
+                <SelectWithAdd field="displayUnit" defaultOptions={[
+                  { value: 'ZIPLOCK_POUCH', label: 'Ziplock Pouch' },
+                  { value: 'STICKY_POUCH', label: 'Sticky Pouch' },
+                  { value: 'TDDC_SLICE_BOX', label: 'TDDC Size Box' },
+                  { value: 'PVK_SIZE_BOX', label: 'PVK Size Box' },
+                ]} placeholder="Select / Add unit" />
+              </Form.Item>
+            </Col>
+            <Col xs={12} sm={8}>
+              <Form.Item label="Size" name="size">
+                <Input placeholder="e.g. 2.5cm x 2.5cm" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Divider style={{ margin: '4px 0 12px' }}>Products in this Kit</Divider>
+          <Form.List name="products">
+            {(fields, { add, remove }) => (
+              <>
+                <Row gutter={8} style={{ marginBottom: 4 }}>
+                  <Col flex="auto"><Text type="secondary" style={{ fontSize: 12 }}>Product Name</Text></Col>
+                  <Col style={{ width: 80 }}><Text type="secondary" style={{ fontSize: 12 }}>Qty</Text></Col>
+                  <Col style={{ width: 100 }}><Text type="secondary" style={{ fontSize: 12 }}>Rate (₹)</Text></Col>
+                  <Col style={{ width: 90 }}><Text type="secondary" style={{ fontSize: 12 }}>Unit</Text></Col>
+                  <Col style={{ width: 32 }} />
+                </Row>
+                {fields.map((field) => (
+                  <Row gutter={8} key={field.key} style={{ marginBottom: 8 }} align="middle">
+                    <Col flex="auto">
+                      <Form.Item {...field} name={[field.name, 'productName']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+                        <SelectWithAdd field="productType" defaultOptions={[
+                          { value: 'Soap', label: 'Soap' },
+                          { value: 'Paste', label: 'Paste' },
+                          { value: 'Brush', label: 'Brush' },
+                          { value: 'Razor', label: 'Razor' },
+                          { value: 'Gel', label: 'Gel' },
+                          { value: 'Box', label: 'Box' },
+                          { value: 'Cover', label: 'Cover' },
+                        ]} placeholder="Select / Add product" />
+                      </Form.Item>
+                    </Col>
+                    <Col style={{ width: 80 }}>
+                      <Form.Item {...field} name={[field.name, 'qty']} style={{ marginBottom: 0 }}>
+                        <InputNumber min={1} style={{ width: '100%' }} placeholder="Qty" />
+                      </Form.Item>
+                    </Col>
+                    <Col style={{ width: 100 }}>
+                      <Form.Item {...field} name={[field.name, 'rate']} style={{ marginBottom: 0 }}>
+                        <InputNumber min={0} step={0.01} style={{ width: '100%' }} placeholder="Rate" />
+                      </Form.Item>
+                    </Col>
+                    <Col style={{ width: 90 }}>
+                      <Form.Item {...field} name={[field.name, 'unit']} style={{ marginBottom: 0 }}>
+                        <Input placeholder="pcs" />
+                      </Form.Item>
+                    </Col>
+                    <Col style={{ width: 32 }}>
+                      <Button type="text" danger icon={<MinusOutlined />} onClick={() => remove(field.name)} />
+                    </Col>
+                  </Row>
+                ))}
+                <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ productName: '', qty: 1, rate: 0 })} style={{ borderRadius: 8, marginTop: 4 }}>
+                  Add Product to Kit
+                </Button>
+              </>
+            )}
+          </Form.List>
+        </Form>
+      </Modal>
 
       {/* ═══════════════════════════════════════
           ITEM DETAIL DRAWER (row click)
@@ -1229,18 +1449,10 @@ export default function Inventory() {
             <Col xs={24} sm={12}><Form.Item label="Item Name" name="name" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Category" name="category">
-                <Select placeholder="Select category"
-                  dropdownRender={(menu) => (
-                    <>
-                      {menu}
-                      <Divider style={{ margin: '8px 0' }} />
-                      <Space style={{ padding: '0 8px 4px' }}>
-                        <Input placeholder="New category..." value={newCategoryName} onChange={onCategoryChange} onKeyDown={(e) => e.stopPropagation()} style={{ borderRadius: 6 }} />
-                        <Button type="text" icon={<PlusOutlined />} onClick={addCategory} style={{ color: '#B11E6A', fontWeight: 600 }}>Add</Button>
-                      </Space>
-                    </>
-                  )}
-                  options={categories.map((item) => ({ label: item, value: item }))}
+                <SelectWithAdd
+                  field="inventoryCategory"
+                  defaultOptions={categories.map((item) => ({ label: item, value: item }))}
+                  placeholder="Select / Add category"
                 />
               </Form.Item>
             </Col>

@@ -1,9 +1,30 @@
 const User = require('../../models/User');
 const CompanySettings = require('../../models/CompanySettings');
 const Party = require('../../models/Party');
+const DropdownOption = require('../../models/DropdownOption');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const bcrypt = require('bcryptjs');
+
+// ─── Dropdown Options (user-added select values) ─────────────────────────────
+exports.getOptions = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (req.query.field) filter.field = req.query.field;
+  const options = await DropdownOption.find(filter).sort('value');
+  res.status(200).json({ success: true, data: options });
+});
+
+exports.createOption = asyncHandler(async (req, res, next) => {
+  const { field, value, label } = req.body;
+  if (!field || !value) return next(new AppError('field and value are required', 400));
+  // Upsert so duplicates are silently ignored instead of erroring.
+  const option = await DropdownOption.findOneAndUpdate(
+    { field, value },
+    { field, value, label: label || value, createdBy: req.user._id },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+  res.status(201).json({ success: true, data: option });
+});
 
 // ─── Company Settings ───────────────────────────────────────────────────────
 exports.getCompanySettings = asyncHandler(async (req, res) => {

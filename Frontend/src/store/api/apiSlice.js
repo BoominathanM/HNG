@@ -28,7 +28,7 @@ export const apiSlice = createApi({
     'Billing', 'BillingParties', 'Invoices',
     'Reports', 'Notifications', 'Settings', 'Users', 'DeletedRecords',
     'Parties', 'PartyLedger', 'Expenses', 'Tasks', 'Operations', 'Stickers',
-    'Dashboard',
+    'Dashboard', 'Kits', 'Options',
   ],
   endpoints: (builder) => ({
 
@@ -295,6 +295,23 @@ export const apiSlice = createApi({
     submitStockCheck: builder.mutation({
       query: (items) => ({ url: '/inventory/stock-check', method: 'post', data: { items } }),
       invalidatesTags: ['Inventory'],
+    }),
+    // Kits
+    getKits: builder.query({
+      query: (params) => ({ url: '/inventory/kits', params }),
+      providesTags: ['Kits'],
+    }),
+    createKit: builder.mutation({
+      query: (data) => ({ url: '/inventory/kits', method: 'post', data }),
+      invalidatesTags: ['Kits'],
+    }),
+    updateKit: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/inventory/kits/${id}`, method: 'put', data }),
+      invalidatesTags: ['Kits'],
+    }),
+    deleteKit: builder.mutation({
+      query: (id) => ({ url: `/inventory/kits/${id}`, method: 'delete' }),
+      invalidatesTags: ['Kits'],
     }),
 
     // ── Financial ────────────────────────────────────────────────────────────
@@ -632,6 +649,15 @@ export const apiSlice = createApi({
       query: ({ type, id }) => ({ url: `/settings/deleted-records/${type}/${id}/restore`, method: 'post' }),
       invalidatesTags: ['DeletedRecords'],
     }),
+    // Dropdown options (user-added select values)
+    getOptions: builder.query({
+      query: (params) => ({ url: '/settings/options', params }),
+      providesTags: ['Options'],
+    }),
+    createOption: builder.mutation({
+      query: (data) => ({ url: '/settings/options', method: 'post', data }),
+      invalidatesTags: ['Options'],
+    }),
 
     // ── Parties & Ledger ─────────────────────────────────────────────────────
     getParties: builder.query({
@@ -759,6 +785,10 @@ export const {
   useRejectMovementMutation,
   useGetStockHistoryQuery,
   useSubmitStockCheckMutation,
+  useGetKitsQuery,
+  useCreateKitMutation,
+  useUpdateKitMutation,
+  useDeleteKitMutation,
   // Financial
   useGetPendingRequestsQuery,
   useApproveFinancialRequestMutation,
@@ -847,6 +877,8 @@ export const {
   useUpdatePermissionsMutation,
   useGetDeletedRecordsQuery,
   useRestoreRecordMutation,
+  useGetOptionsQuery,
+  useCreateOptionMutation,
   // Parties
   useGetPartiesQuery,
   useGetPartyLedgerQuery,
