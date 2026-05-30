@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect } from 'react';
+﻿import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, Tooltip, Badge, notification, Popover, Dropdown, Checkbox, Alert
@@ -11,7 +11,21 @@ import {
   MoreOutlined, MinusOutlined, QrcodeOutlined, ExclamationCircleOutlined, PhoneOutlined, CarOutlined, SyncOutlined, SendOutlined
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
-import { addRaisedRequest, raiseOrder, addBulkRequests, dismissNewProductRequest, updateFinanceStatus, updateRequestQty, addRequestNote, updateQuotationDetails } from '../../store/slices/purchaseSlice';
+import { addRaisedRequest, raiseOrder, addBulkRequests, dismissNewProductRequest, updateFinanceStatus, updateRequestQty, addRequestNote, updateQuotationDetails, setRaisedRequests, setPurchaseOrders } from '../../store/slices/purchaseSlice';
+import {
+  useGetVendorsQuery,
+  useCreateVendorMutation,
+  useGetItemsQuery,
+  useGetRequestsQuery,
+  useGetPurchaseOrdersQuery,
+  useGetLocalPurchasesQuery,
+  useRaiseRequestMutation,
+  useCreateBulkRequestMutation,
+  useUploadQuotationFileMutation,
+  useReceiveOrderMutation,
+  useUploadPurchaseLRMutation,
+  useCreateLocalPurchaseMutation,
+} from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
@@ -19,28 +33,7 @@ import dayjs from 'dayjs';
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const inventory = [
-  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', sellers: ['ChemCo India', 'BioLife Ltd'], purchasedDate: '2024-01-15' },
-  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', sellers: ['BioLife Ltd'], purchasedDate: '2024-01-10' },
-  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', sellers: ['PlastiPack'], purchasedDate: '2024-01-05' },
-  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', sellers: ['BoxWorld', 'PlastiPack'], purchasedDate: '2024-01-12' },
-  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', sellers: ['PrintFast'], purchasedDate: '2024-01-18' },
-  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', sellers: ['ChemCo India'], purchasedDate: '2023-12-20' },
-];
-
-const suppliersList = [
-  { id: 1, name: 'ChemCo India', phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH', bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234' },
-  { id: 2, name: 'BioLife Ltd', phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN', bank: 'SBI — A/C 30112345678 | IFSC SBIN0001234' },
-  { id: 3, name: 'PlastiPack', phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL', bank: 'ICICI — A/C 007601234567 | IFSC ICIC0000076' },
-  { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA', bank: 'Axis Bank — A/C 912010012345678 | IFSC UTIB0000001' },
-];
-
-const vendorsList = [
-  { id: 1, name: 'Marriott Mumbai',   phone: '+91 22 6651 1234', email: 'purchase@marriott.in',    address: 'Mumbai, MH',  whatsapp: '912266511234', totalPaid: 95000,  pending: 25000 },
-  { id: 2, name: 'Taj Hotels Delhi',  phone: '+91 11 6600 7777', email: 'orders@tajhotels.in',     address: 'Delhi, DL',   whatsapp: '911166007777', totalPaid: 60000,  pending: 81600 },
-  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in',     address: 'Kolkata, WB', whatsapp: '913322889999', totalPaid: 250000, pending: 0     },
-  { id: 4, name: 'Hyatt Chennai',     phone: '+91 44 6150 1234', email: 'procurement@hyatt.in',   address: 'Chennai, TN', whatsapp: '914461501234', totalPaid: 42000,  pending: 18000 },
-];
+// All data loaded from backend API via useEffect
 
 const exportToCSV = (headers, rows, filename) => {
   const csv = [headers, ...rows]
@@ -55,90 +48,7 @@ const exportToCSV = (headers, rows, filename) => {
   URL.revokeObjectURL(url);
 };
 
-const INVENTORY_DATA = [
-  { key: 1, code: 'RM-001', name: 'Soap Base (White)', current: 450, min: 100, unit: 'Kg', category: 'Raw Materials' },
-  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', current: 45, min: 100, unit: 'Kg', category: 'Raw Materials' },
-  { key: 3, code: 'PK-010', name: 'Amber Bottles 100ml', current: 120, min: 500, unit: 'Pcs', category: 'Packaging' },
-  { key: 4, code: 'PK-012', name: 'Flip Top Caps', current: 800, min: 1000, unit: 'Pcs', category: 'Packaging' },
-];
-
-// ── Dispatch Order Tracking mock data ────────────────────────────────────────
-const initDispatchTrackingOrders = [
-  { key: 'DT-001', orderId: 'PO-2501', date: '2024-05-20', supplier: 'ChemCo India', item: 'Soap Base (White)', qty: 500, unit: 'Kg', amount: 42500, lrNumber: 'LR-78921', lorryNo: 'TN-09-AB-1234', transportCompany: 'Fast Cargo Pvt Ltd', lrCopyFile: 'LR_78921_ChemCo.pdf', expectedDelivery: '2024-05-28', pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', paymentStatus: 'Unpaid', takenStatus: null, takenProof: null, gPayNumber: null, receivedStatus: null, paymentProof: null, deliveryStatus: 'In Transit' },
-  { key: 'DT-002', orderId: 'PO-2502', date: '2024-05-18', supplier: 'BioLife Ltd', item: 'Shampoo Concentrate', qty: 200, unit: 'Ltr', amount: 44000, lrNumber: 'LR-78915', lorryNo: 'KA-05-CD-5678', transportCompany: 'Blue Dart Logistics', lrCopyFile: 'LR_78915_BioLife.pdf', expectedDelivery: '2024-05-23', pickupEmpId: 'EMP-102', pickupEmpName: 'Suresh Babu', paymentStatus: 'Paid', takenStatus: 'taken', takenProof: 'proof_biolife.jpg', gPayNumber: '9876543210', receivedStatus: 'received', paymentProof: 'payment_biolife.pdf', deliveryStatus: 'Delivered' },
-  { key: 'DT-003', orderId: 'PO-2503', date: '2024-05-22', supplier: 'PlastiPack', item: 'Shampoo Bottles (Flip 30ml)', qty: 5000, unit: 'Pcs', amount: 22500, lrNumber: 'LR-78930', lorryNo: 'DL-01-EF-9012', transportCompany: 'VRL Logistics', lrCopyFile: null, expectedDelivery: '2024-05-30', pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', paymentStatus: 'Unpaid', takenStatus: null, takenProof: null, gPayNumber: null, receivedStatus: null, paymentProof: null, deliveryStatus: 'In Transit' },
-  { key: 'DT-004', orderId: 'PO-2504', date: '2024-05-15', supplier: 'BoxWorld', item: 'Dental Kit Boxes', qty: 1000, unit: 'Pcs', amount: 12000, lrNumber: 'LR-78900', lorryNo: 'KA-09-GH-3456', transportCompany: 'DTDC Express', lrCopyFile: 'LR_78900_BoxWorld.pdf', expectedDelivery: '2024-05-20', pickupEmpId: 'EMP-103', pickupEmpName: 'Vijay Anand', paymentStatus: 'Unpaid', takenStatus: 'taken', takenProof: 'proof_boxworld.jpg', gPayNumber: '8765432109', receivedStatus: 'partial', paymentProof: null, deliveryStatus: 'Partial Delivery', missingItems: [{ key: 1, name: 'Dental Kit Boxes', ordered: 1000, received: 780, missing: 220 }], partialMissedBy: 'supplier', partialVendorAction: 'new_order', actionTakenStatus: null },
-];
-
-const MOCK_INVOICE_PRODUCTS = {
-  'ChemCo India': [{ key: 1, name: 'Soap Base (White)', hsn: '3401', gst: '18%', originalQty: 500, unit: 'Kg', rate: 85, amount: 42500 }],
-  'BioLife Ltd': [{ key: 1, name: 'Shampoo Concentrate', hsn: '3305', gst: '12%', originalQty: 200, unit: 'Ltr', rate: 220, amount: 44000 }],
-  'PlastiPack': [
-    { key: 1, name: 'Shampoo Bottles (Flip 30ml)', hsn: '3923', gst: '12%', originalQty: 3000, unit: 'Pcs', rate: 4.5, amount: 13500 },
-    { key: 2, name: 'Flip Top Caps', hsn: '3923', gst: '12%', originalQty: 2000, unit: 'Pcs', rate: 4.5, amount: 9000 },
-  ],
-  'BoxWorld': [{ key: 1, name: 'Dental Kit Boxes', hsn: '4819', gst: '18%', originalQty: 1000, unit: 'Pcs', rate: 12, amount: 12000 }],
-};
-
-// ── Local Purchase mock data ─────────────────────────────────────────────────
-const initLocalPurchases = [
-  { key: 'LP-001', date: '2024-05-10', invoiceNo: 'INV-LOCAL-001', invoiceFile: 'invoice_local_001.pdf', vendorName: 'Marriott Mumbai', vendorPhone: '+91 22 6651 1234', items: [{ name: 'Cleaning Supplies', qty: 50, unit: 'Pcs', amount: 5000 }], totalAmount: 5000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null, gPayProof: null },
-  { key: 'LP-002', date: '2024-05-12', invoiceNo: 'INV-LOCAL-002', invoiceFile: 'invoice_local_002.jpg', vendorName: 'Taj Hotels Delhi', vendorPhone: '+91 11 6600 7777', items: [{ name: 'Paper Towels', qty: 200, unit: 'Rolls', amount: 8000 }, { name: 'Liquid Soap', qty: 50, unit: 'Ltr', amount: 6000 }], totalAmount: 14000, paymentType: 'instant', paymentStatus: 'Paid', paymentProof: 'gpay_proof_LP002.jpg', gPayNumber: '9876543210', gPayProof: 'gpay_proof_LP002.jpg' },
-  { key: 'LP-003', date: '2024-05-15', invoiceNo: 'INV-LOCAL-003', invoiceFile: null, vendorName: 'ITC Grand Kolkata', vendorPhone: '+91 33 2288 9999', items: [{ name: 'Housekeeping Kit', qty: 100, unit: 'Kits', amount: 15000 }], totalAmount: 15000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null, gPayProof: null },
-];
-
-// ── Vendor / Supplier complaint history mock data ────────────────────────────
-const vendorComplaintsData = {
-  'ChemCo India': [
-    { id: 1, date: '2024-04-10', issue: 'Late delivery — 5 days delay on Soap Base order', severity: 'high', status: 'Open' },
-    { id: 2, date: '2024-03-22', issue: 'Wrong quantity supplied — 450 Kg received instead of 500 Kg', severity: 'medium', status: 'Resolved' },
-  ],
-  'BioLife Ltd': [
-    { id: 1, date: '2024-03-15', issue: 'Product quality mismatch — Shampoo Concentrate below spec', severity: 'high', status: 'Open' },
-  ],
-  'PlastiPack': [
-    { id: 1, date: '2024-04-05', issue: 'Packaging damaged on arrival — 200 Pcs unusable', severity: 'medium', status: 'Resolved' },
-    { id: 2, date: '2024-05-01', issue: 'Delivery delayed by 3 days without prior notice', severity: 'low', status: 'Open' },
-  ],
-  'Marriott Mumbai': [
-    { id: 1, date: '2024-04-20', issue: 'Invoice amount mismatch — ₹500 overcharged on last order', severity: 'medium', status: 'Open' },
-  ],
-  'Taj Hotels Delhi': [
-    { id: 1, date: '2024-03-10', issue: 'Items not delivered as per purchase order — Paper Towels missing', severity: 'high', status: 'Open' },
-    { id: 2, date: '2024-02-28', issue: 'Payment receipt not provided after payment', severity: 'low', status: 'Resolved' },
-  ],
-};
-
-// ── Printing Suppliers mock data ─────────────────────────────────────────────
-const initPrintingSuppliers = [
-  {
-    key: 'PRN-001', type: 'Sticker', name: 'PrintFast Solutions', phone: '+91 98765 11111',
-    email: 'info@printfast.in', taxId: 'GST29ABC123D1Z5', address: 'Mumbai, MH',
-    bank: 'HDFC Bank — A/C 50100111111 | IFSC HDFC0001234', notes: 'Reliable sticker supplier',
-    orders: [
-      { key: 'PO-S001', date: '2024-05-01', item: 'Custom Stickers (Hotel Brand)', qty: 5000, unit: 'Pcs', amount: 6000, status: 'Delivered' },
-      { key: 'PO-S002', date: '2024-05-12', item: 'Logo Stickers (Mini)', qty: 2000, unit: 'Pcs', amount: 2400, status: 'In Transit' },
-    ],
-  },
-  {
-    key: 'PRN-002', type: 'Box', name: 'BoxWorld Printers', phone: '+91 87654 22222',
-    email: 'orders@boxworld.in', taxId: 'GST27XYZ456E2Z8', address: 'Bengaluru, KA',
-    bank: 'Axis Bank — A/C 912010099999 | IFSC UTIB0000002', notes: 'Bulk box supplier',
-    orders: [
-      { key: 'PO-B001', date: '2024-04-20', item: 'Dental Kit Boxes', qty: 1000, unit: 'Pcs', amount: 12000, status: 'Delivered' },
-      { key: 'PO-B002', date: '2024-05-08', item: 'Soap Gift Boxes', qty: 500, unit: 'Pcs', amount: 7500, status: 'Pending' },
-    ],
-  },
-  {
-    key: 'PRN-003', type: 'Ziplock', name: 'ZipSeal Industries', phone: '+91 76543 33333',
-    email: 'sales@zipseal.in', taxId: 'GST24MNO789F3Z1', address: 'Delhi, DL',
-    bank: 'SBI — A/C 30199887766 | IFSC SBIN0002345', notes: 'Ziplock bag manufacturer',
-    orders: [
-      { key: 'PO-Z001', date: '2024-05-05', item: 'Ziplock Bags (Small)', qty: 10000, unit: 'Pcs', amount: 5000, status: 'Delivered' },
-      { key: 'PO-Z002', date: '2024-05-15', item: 'Ziplock Bags (Large)', qty: 5000, unit: 'Pcs', amount: 4000, status: 'In Transit' },
-    ],
-  },
-];
+// All data loaded from backend API via useEffect below
 
 export default function Purchase() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -150,8 +60,78 @@ export default function Purchase() {
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
-  const [suppliers, setSuppliers] = useState(suppliersList);
-  const [vendors, setVendors] = useState(vendorsList);
+  // ── Data from RTK Query ─────────────────────────────────────────────────
+  const { data: vendorData } = useGetVendorsQuery({ type: 'raw_material' });
+  const { data: itemsData } = useGetItemsQuery();
+  const { data: requestsData } = useGetRequestsQuery();
+  const { data: purchaseOrdersData } = useGetPurchaseOrdersQuery();
+  const { data: localPurchasesData } = useGetLocalPurchasesQuery();
+
+  const [raiseRequestMutation] = useRaiseRequestMutation();
+  const [createBulkRequestMutation] = useCreateBulkRequestMutation();
+  const [uploadQuotationFile] = useUploadQuotationFileMutation();
+  const [receiveOrderMutation] = useReceiveOrderMutation();
+  const [uploadPurchaseLR] = useUploadPurchaseLRMutation();
+  const [createLocalPurchaseMutation] = useCreateLocalPurchaseMutation();
+  const [createVendorMutation] = useCreateVendorMutation();
+  const { data: allVendorData } = useGetVendorsQuery();
+
+  const suppliers = useMemo(() => (vendorData?.data || []).map((v) => ({
+    id: v._id, key: v._id, name: v.name, phone: v.phone,
+    email: v.email, address: v.address, bank: v.bankDetails,
+    taxId: v.taxId, status: v.status,
+  })), [vendorData]);
+
+  const vendors = useMemo(() => (allVendorData?.data || []).map((v) => ({
+    id: v._id, key: v._id, name: v.name, phone: v.phone,
+    email: v.email, address: v.address, bank: v.bankDetails,
+    totalPaid: 0, pending: 0, status: v.status,
+  })), [allVendorData]);
+
+  const inventoryItems = useMemo(() => (itemsData?.data || []).map((i) => ({
+    key: i._id, code: i.itemCode, name: i.itemName,
+    category: i.category, unit: i.unit, current: i.currentStock,
+    min: i.minStock, max: i.minStock * 10,
+    price: `₹${i.purchasePrice}/${i.unit}`,
+    status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
+  })), [itemsData]);
+
+  // Sync RTK Query data into Redux slices
+  useEffect(() => {
+    const mapped = (requestsData?.data || []).map((r) => ({
+      key: r._id, item: r.itemId?.itemName || r.itemName,
+      supplier: r.vendorId?.name || '—', qty: r.qty, unit: r.unit,
+      payment_terms: r.paymentTerms, date: r.createdAt?.slice(0, 10),
+      status: r.status, notes: r.notes || [],
+    }));
+    if (mapped.length > 0) dispatch(setRaisedRequests(mapped));
+  }, [requestsData]);
+
+  useEffect(() => {
+    const mapped = (purchaseOrdersData?.data || []).map((o) => ({
+      key: o._id, requestKey: o.requestId,
+      item: o.itemId?.itemName || o.itemName,
+      supplier: o.vendorId?.name || '—',
+      qty: o.qty, unit: o.unit, amount: o.amount,
+      payment_terms: o.paymentTerms, date: o.createdAt?.slice(0, 10),
+      bill_no: o.billNo || '', inv_no: o.invNo || '',
+      status: o.paymentStatus, paid_amount: o.paidAmount || 0,
+    }));
+    if (mapped.length > 0) dispatch(setPurchaseOrders(mapped));
+  }, [purchaseOrdersData]);
+
+  useEffect(() => {
+    const mapped = (localPurchasesData?.data || []).map((lp) => ({
+      key: lp._id, date: lp.createdAt?.slice(0, 10),
+      invoiceNo: lp.invoiceNo, invoiceFile: lp.invoiceFileUrl,
+      vendorName: lp.vendorName, vendorPhone: lp.vendorPhone,
+      items: lp.items || [], totalAmount: lp.totalAmount,
+      paymentType: lp.paymentType, paymentStatus: lp.paymentStatus,
+      paymentProof: lp.paymentProofUrl, gPayNumber: lp.gPayNumber,
+    }));
+    if (mapped.length > 0) setLocalPurchases(mapped);
+  }, [localPurchasesData]);
+
   const [viewSupplier, setViewSupplier] = useState(null);
   const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
 
@@ -191,8 +171,8 @@ export default function Purchase() {
   const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
   const [raiseRequestForm] = Form.useForm();
 
-  /* â"€â"€ WhatsApp sent tracking for stock status flow (key 1 pre-seeded for demo) â"€â"€ */
-  const [whatsappSentItems, setWhatsappSentItems] = useState(new Set([1]));
+  /* ── WhatsApp sent tracking for stock status flow ── */
+  const [whatsappSentItems, setWhatsappSentItems] = useState(new Set());
 
   /* â"€â"€ Place Order modal â"€â"€ */
   const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
@@ -276,11 +256,17 @@ export default function Purchase() {
   const [quotCompareLoading, setQuotCompareLoading] = useState(false);
   const [quotCompareResult, setQuotCompareResult] = useState(null);
 
-  /* ── Dispatch Order Tracking tab state ── */
-  const [dispatchTrackingOrders, setDispatchTrackingOrders] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hng_dispatch_tracking') || 'null') || initDispatchTrackingOrders; } catch { return initDispatchTrackingOrders; }
-  });
-  useEffect(() => { localStorage.setItem('hng_dispatch_tracking', JSON.stringify(dispatchTrackingOrders)); }, [dispatchTrackingOrders]);
+  /* ── Dispatch Order Tracking tab state — from RTK Query ── */
+  const { data: dispatchTrackingData } = useGetPurchaseOrdersQuery({ dispatchStatus: 'In Transit' });
+  const dispatchTrackingOrders = useMemo(() => (dispatchTrackingData?.data || []).map((o) => ({
+    key: o._id, orderId: o.poCode, date: o.createdAt?.slice(0, 10),
+    supplier: o.vendorId?.name || '—', item: o.itemId?.itemName || o.itemName,
+    qty: o.qty, unit: o.unit, amount: o.amount,
+    lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
+    lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
+    deliveryStatus: o.dispatchStatus === 'Received' ? 'Delivered' : 'In Transit',
+    receivedStatus: o.dispatchStatus === 'Received' ? 'received' : null,
+  })), [dispatchTrackingData]);
 
   const [showTakenModal, setShowTakenModal] = useState(false);
   const [takenTarget, setTakenTarget] = useState(null);
@@ -355,7 +341,7 @@ export default function Purchase() {
     if (!receivedTarget) return;
     setInvoiceScanLoading(true);
     setTimeout(() => {
-      const products = MOCK_INVOICE_PRODUCTS[receivedTarget.supplier] || [{ key: 1, name: receivedTarget.item, hsn: '3401', gst: '18%', originalQty: receivedTarget.qty, unit: receivedTarget.unit, rate: Math.round(receivedTarget.amount / receivedTarget.qty), amount: receivedTarget.amount }];
+      const products = [{ key: 1, name: receivedTarget.item, hsn: '3401', gst: '18%', originalQty: receivedTarget.qty, unit: receivedTarget.unit, rate: receivedTarget.qty ? Math.round(receivedTarget.amount / receivedTarget.qty) : 0, amount: receivedTarget.amount }];
       setInvoiceProducts(products);
       const qtys = {};
       products.forEach(p => { qtys[p.key] = p.originalQty; });
@@ -388,17 +374,6 @@ export default function Purchase() {
     setReceivedTarget(null);
   };
 
-  /* ── Purchase Expense tab state ── */
-  const [purchaseExpenses, setPurchaseExpenses] = useState([
-    { key: 1, date: '2024-05-01', invoice_no: 'INV-CHEM-101', supplier: 'ChemCo India', qty: '100 Kg', paid_status: 'Paid', paid_amount: 8500, total_amount: 8500, remaining: 0 },
-    { key: 2, date: '2024-05-04', invoice_no: 'INV-BIO-452', supplier: 'BioLife Ltd', qty: '200 Ltr', paid_status: 'Partially Paid', paid_amount: 22000, total_amount: 44000, remaining: 22000 },
-    { key: 3, date: '2024-05-06', invoice_no: 'INV-PP-203', supplier: 'PlastiPack', qty: '500 Pcs', paid_status: 'Unpaid', paid_amount: 0, total_amount: 2250, remaining: 2250 },
-  ]);
-  const [showAddExpenseModal, setShowAddExpenseModal] = useState(false);
-  const [expenseScanFile, setExpenseScanFile] = useState(null);
-  const [expenseScanLoading, setExpenseScanLoading] = useState(false);
-  const [expenseForm] = Form.useForm();
-
   /* ── Search & Filter state (per-tab) ── */
   const [stockSearch, setStockSearch] = useState('');
   const [stockReqStatusFilter, setStockReqStatusFilter] = useState(null);
@@ -411,9 +386,7 @@ export default function Purchase() {
   const [localPayFilter, setLocalPayFilter] = useState(null);
 
   /* ── Local Purchase tab state ── */
-  const [localPurchases, setLocalPurchases] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hng_local_purchases') || 'null') || initLocalPurchases; } catch { return initLocalPurchases; }
-  });
+  const [localPurchases, setLocalPurchases] = useState([]);
   const [showAddLocalPurchaseModal, setShowAddLocalPurchaseModal] = useState(false);
   const [localPurchaseForm] = Form.useForm();
   const [localPurchasePaymentType, setLocalPurchasePaymentType] = useState('credit');
@@ -483,92 +456,39 @@ export default function Purchase() {
     s.phone.includes(supplierSearch)
   );
 
-  const handleSaveSupplier = () => {
+  const handleSaveSupplier = async () => {
     const vals = supplierForm.getFieldsValue();
-    const newSupplier = {
-      id: Date.now(),
-      name: vals.sup_name || 'New Supplier',
-      phone: vals.sup_phone || '',
-      email: vals.sup_email || '',
-      address: vals.sup_address || '',
-    };
-    setSuppliers([...suppliers, newSupplier]);
-    supplierForm.resetFields();
-    setShowAddSupplierModal(false);
-    message.success('Supplier added successfully');
+    try {
+      await createVendorMutation({
+        name: vals.sup_name || 'New Supplier',
+        phone: vals.sup_phone || '',
+        email: vals.sup_email || '',
+        address: vals.sup_address || '',
+        type: 'raw_material',
+      }).unwrap();
+      supplierForm.resetFields();
+      setShowAddSupplierModal(false);
+      message.success('Supplier added successfully');
+    } catch (e) {
+      message.error(e?.data || 'Failed to add supplier');
+    }
   };
 
-  const purchases = [
-    {
-      key: 1,
-      date: '2024-05-01',
-      bill_no: 'PUR-8821',
-      inv_no: 'INV-CHEM-101',
-      invoice_file: 'INV-CHEM-101.pdf',
-      items: [
-        { name: 'Soap Base (White)', qty: '100 Kg', price: '₹85/Kg', total: '₹8,500' },
-      ],
-      entity: 'ChemCo India',
-      amount: '₹8,500',
-      paid_status: 'Paid',
-      paid_amount: 8500,
-      remaining: 0,
-      status: 'Paid',
-      req_status: 'Confirmed'
-    },
-    {
-      key: 2,
-      date: '2024-05-04',
-      bill_no: 'PUR-8825',
-      inv_no: 'INV-BIO-452',
-      invoice_file: 'INV-BIO-452.pdf',
-      items: [
-        { name: 'Shampoo Concentrate', qty: '200 Ltr', price: '₹220/Ltr', total: '₹44,000' }
-      ],
-      entity: 'BioLife Ltd',
-      amount: '₹44,000',
-      paid_status: 'Partially Paid',
-      paid_amount: 22000,
-      remaining: 22000,
-      status: 'Unpaid',
-      req_status: 'Pending'
-    },
-    {
-      key: 3,
-      date: '2024-05-06',
-      bill_no: 'PUR-8830',
-      inv_no: 'INV-PP-203',
-      invoice_file: null,
-      items: [
-        { name: 'Shampoo Bottles (Flip 30ml)', qty: '500 Pcs', price: '₹4.5/Pc', total: '₹2,250' },
-        { name: 'Flip Top Caps', qty: '500 Pcs', price: '₹2/Pc', total: '₹1,000' },
-      ],
-      entity: 'PlastiPack',
-      amount: '₹3,250',
-      paid_status: 'Unpaid',
-      paid_amount: 0,
-      remaining: 3250,
-      status: 'Unpaid',
-      req_status: 'Confirmed'
-    },
-    {
-      key: 4,
-      date: '2024-05-08',
-      bill_no: 'PUR-8835',
-      inv_no: 'INV-BW-101',
-      invoice_file: 'INV-BW-101.jpg',
-      items: [
-        { name: 'Dental Kit Boxes', qty: '1000 Pcs', price: '₹12/Pc', total: '₹12,000' },
-      ],
-      entity: 'BoxWorld',
-      amount: '₹12,000',
-      paid_status: 'Paid',
-      paid_amount: 12000,
-      remaining: 0,
-      status: 'Paid',
-      req_status: 'Confirmed'
-    },
-  ];
+  const purchases = purchaseOrders.map((o) => ({
+    key: o.key,
+    date: o.date,
+    bill_no: o.bill_no,
+    inv_no: o.inv_no,
+    invoice_file: null,
+    items: o.item ? [{ name: o.item, qty: `${o.qty} ${o.unit}`, price: '', total: `₹${(o.amount || 0).toLocaleString()}` }] : [],
+    entity: o.supplier,
+    amount: `₹${(o.amount || 0).toLocaleString()}`,
+    paid_status: o.status,
+    paid_amount: o.paid_amount || 0,
+    remaining: Math.max(0, (o.amount || 0) - (o.paid_amount || 0)),
+    status: o.status,
+    req_status: 'Confirmed',
+  }));
 
   const handleOpenRequest = (product) => {
     setSelectedProduct(product);
@@ -727,7 +647,7 @@ export default function Purchase() {
       }));
       // Additional selected products
       raiseRequestExtraProducts.forEach(productName => {
-        const invItem = inventory.find(i => i.name === productName);
+        const invItem = inventoryItems.find(i => i.name === productName);
         dispatch(addRaisedRequest({
           key: Date.now() + Math.random(),
           item: productName,
@@ -757,9 +677,9 @@ export default function Purchase() {
     if (!localPurchaseInvoiceFile) { message.warning('Please upload an invoice first'); return; }
     setLocalPurchaseScanLoading(true);
     setTimeout(() => {
-      const mockVendorNames = ['Marriott Mumbai', 'Taj Hotels Delhi', 'ITC Grand Kolkata', 'Hyatt Chennai'];
-      const isKnownVendor = Math.random() > 0.3;
-      const vendorName = isKnownVendor ? mockVendorNames[Math.floor(Math.random() * mockVendorNames.length)] : 'New Vendor Pvt. Ltd.';
+      const vendorNames = vendors.map(v => v.name).filter(Boolean);
+      const isKnownVendor = vendorNames.length > 0 && Math.random() > 0.3;
+      const vendorName = isKnownVendor ? vendorNames[Math.floor(Math.random() * vendorNames.length)] : 'New Vendor Pvt. Ltd.';
       const knownVendor = vendors.find(v => v.name === vendorName);
       const scanned = {
         invoiceNo: 'INV-' + Math.floor(Math.random() * 90000 + 10000),
@@ -817,7 +737,12 @@ export default function Purchase() {
         totalPaid: 0,
         pending: newLP.paymentStatus === 'Pending' ? newLP.totalAmount : 0,
       };
-      setVendors(prev => [...prev, newVendor]);
+      createVendorMutation({
+        name: newVendor.name,
+        phone: newVendor.phone,
+        email: newVendor.email,
+        address: newVendor.address,
+      });
       message.success('New vendor added to vendors list!');
     }
 
@@ -852,22 +777,28 @@ export default function Purchase() {
   };
 
   const handleAddSupplierInline = () => {
-    addSupplierInlineForm.validateFields().then(vals => {
-      const newSup = { id: Date.now(), name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', bank: vals.bank || '' };
-      setSuppliers(prev => [...prev, newSup]);
-      setShowAddSupplierInlineModal(false);
-      addSupplierInlineForm.resetFields();
-      message.success(`Supplier "${vals.name}" added!`);
+    addSupplierInlineForm.validateFields().then(async vals => {
+      try {
+        await createVendorMutation({ name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', bankDetails: vals.bank || '', type: 'raw_material' }).unwrap();
+        setShowAddSupplierInlineModal(false);
+        addSupplierInlineForm.resetFields();
+        message.success(`Supplier "${vals.name}" added!`);
+      } catch (e) {
+        message.error(e?.data || 'Failed to add supplier');
+      }
     });
   };
 
   const handleAddVendorInline = () => {
-    addVendorInlineForm.validateFields().then(vals => {
-      const newVend = { id: Date.now(), name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', totalPaid: 0, pending: 0 };
-      setVendors(prev => [...prev, newVend]);
-      setShowAddVendorInlineModal(false);
-      addVendorInlineForm.resetFields();
-      message.success(`Vendor "${vals.name}" added!`);
+    addVendorInlineForm.validateFields().then(async vals => {
+      try {
+        await createVendorMutation({ name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '' }).unwrap();
+        setShowAddVendorInlineModal(false);
+        addVendorInlineForm.resetFields();
+        message.success(`Vendor "${vals.name}" added!`);
+      } catch (e) {
+        message.error(e?.data || 'Failed to add vendor');
+      }
     });
   };
 
@@ -875,8 +806,8 @@ export default function Purchase() {
     setBulkSupplierName(supplierName);
     setBulkQuotationAsked(false);
     setBulkRaiseFile(null);
-    const supplierItems = inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller === supplierName);
-    const otherLowStock = inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller !== supplierName);
+    const supplierItems = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller === supplierName);
+    const otherLowStock = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller !== supplierName);
     const allItems = [...supplierItems, ...otherLowStock];
     setBulkItems(allItems.map(i => ({
       invKey: i.key,
@@ -1089,7 +1020,7 @@ export default function Purchase() {
                       </div>
                       <Table
                         size="small"
-                        dataSource={INVENTORY_DATA.filter((inv) => {
+                        dataSource={inventoryItems.filter((inv) => {
                           const q = stockSearch.toLowerCase();
                           const matchSearch = !q || (inv.name || '').toLowerCase().includes(q) || (inv.category || '').toLowerCase().includes(q) || (inv.code || '').toLowerCase().includes(q);
                           const linkedReq = raisedRequests.find(req => req.item === inv.name);
@@ -1286,7 +1217,7 @@ export default function Purchase() {
                               // Direct WA Ask Quotation button (uses raised request supplier details)
                               const buildReqWABtn = (label = 'Ask Quotation') => {
                                 if (!req) return null;
-                                const sup = suppliersList.find(s => s.name === req.supplier);
+                                const sup = suppliers.find(s => s.name === req.supplier);
                                 const phone = sup ? sup.phone.replace(/\D/g, '') : '';
                                 const latestNote = (req.notes || []).at(-1);
                                 const msg = `*Quotation Follow-up*\n\n*Item:* ${req.item}\n*Quantity:* ${req.qty} ${req.unit}\n*Payment Terms:* ${req.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nPlease provide a quotation at the earliest.`;
@@ -1460,7 +1391,7 @@ export default function Purchase() {
                               );
 
                               if (r.status === 'Pending') {
-                                const sup = suppliersList.find(s => s.name === r.supplier);
+                                const sup = suppliers.find(s => s.name === r.supplier);
                                 const phone = sup ? sup.phone.replace(/\D/g, '') : '';
                                 const latestNote = (r.notes || []).at(-1);
                                 const msg = `*Bulk Order Follow-up*\n\n*Item:* ${r.item}\n*Quantity:* ${r.qty} ${r.unit}\n*Payment Terms:* ${r.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly share the quotation at the earliest.`;
@@ -2234,28 +2165,7 @@ export default function Purchase() {
                             loading={quotCompareLoading}
                             style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
                             onClick={() => {
-                              setQuotCompareLoading(true);
-                              setQuotCompareResult(null);
-                              setTimeout(() => {
-                                const mockSuppliers = quotCompareFiles.map((f, i) => {
-                                  const prices = [48500, 43200, 51000, 39800, 46700];
-                                  const deliveries = ['7 days', '10 days', '5 days', '14 days', '8 days'];
-                                  const qualities = ['Premium', 'Standard', 'Premium', 'Economy', 'Standard'];
-                                  const terms = ['30% advance, 70% on delivery', '50% advance, 50% on delivery', 'Full payment in advance', '100% credit (30 days)', '40% advance, 60% credit'];
-                                  const scores = [82, 91, 74, 78, 85];
-                                  return {
-                                    name: f.name.replace(/\.[^/.]+$/, ''),
-                                    price: prices[i % prices.length],
-                                    delivery: deliveries[i % deliveries.length],
-                                    quality: qualities[i % qualities.length],
-                                    terms: terms[i % terms.length],
-                                    score: scores[i % scores.length],
-                                  };
-                                });
-                                const best = mockSuppliers.reduce((a, b) => a.score > b.score ? a : b);
-                                setQuotCompareResult({ suppliers: mockSuppliers, best });
-                                setQuotCompareLoading(false);
-                              }, 2200);
+                              message.info('AI quotation comparison will be available once the backend endpoint is ready');
                             }}
                           >
                             {quotCompareLoading ? 'Analysing...' : 'Compare with AI'}
@@ -2876,12 +2786,12 @@ export default function Purchase() {
               onChange={(vals) => {
                 setQuotationExtraProducts(vals);
                 const newQtys = { ...quotationExtraQtys };
-                vals.forEach(v => { if (!newQtys[v]) { const inv = inventory.find(i => i.name === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
+                vals.forEach(v => { if (!newQtys[v]) { const inv = inventoryItems.find(i => i.name === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
                 setQuotationExtraQtys(newQtys);
               }}
               optionLabelProp="label"
             >
-              {inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== selectedProduct?.name).map(i => (
+              {inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== selectedProduct?.name).map(i => (
                 <Option key={i.key} value={i.name} label={i.name}>
                   <Space>
                     <Tag color={i.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0 }}>{i.status}</Tag>
@@ -2894,7 +2804,7 @@ export default function Purchase() {
             {quotationExtraProducts.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 {quotationExtraProducts.map(productName => {
-                  const inv = inventory.find(i => i.name === productName);
+                  const inv = inventoryItems.find(i => i.name === productName);
                   return (
                     <Row key={productName} gutter={8} align="middle" style={{ marginBottom: 6 }}>
                       <Col flex="auto"><Text style={{ fontSize: 12 }}>{productName}</Text></Col>
@@ -2926,7 +2836,7 @@ export default function Purchase() {
                 if (!values.supplier) { message.warning('Please select a supplier first'); return; }
                 const mainLine = `â€¢ *${values.product}* — Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
                 const extraLines = quotationExtraProducts.map(p => {
-                  const inv = inventory.find(i => i.name === p);
+                  const inv = inventoryItems.find(i => i.name === p);
                   return `â€¢ *${p}* — Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
                 });
                 const allLines = [mainLine, ...extraLines].join('\n');
@@ -3135,7 +3045,7 @@ export default function Purchase() {
 
           {/* Previous complaints banner for selected supplier */}
           {raiseRequestSupplier && (() => {
-            const complaints = vendorComplaintsData[raiseRequestSupplier.name] || [];
+            const complaints = [];
             const open = complaints.filter(c => c.status === 'Open');
             if (!open.length) return null;
             return (
@@ -3188,12 +3098,12 @@ export default function Purchase() {
               onChange={(vals) => {
                 setRaiseRequestExtraProducts(vals);
                 const newQtys = { ...raiseRequestExtraQtys };
-                vals.forEach(v => { if (!newQtys[v]) { const inv = inventory.find(i => i.name === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
+                vals.forEach(v => { if (!newQtys[v]) { const inv = inventoryItems.find(i => i.name === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
                 setRaiseRequestExtraQtys(newQtys);
               }}
               optionLabelProp="label"
             >
-              {inventory.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== raiseRequestProduct?.name).map(i => (
+              {inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== raiseRequestProduct?.name).map(i => (
                 <Option key={i.key} value={i.name} label={i.name}>
                   <Space>
                     <Tag color={i.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0 }}>{i.status}</Tag>
@@ -3206,7 +3116,7 @@ export default function Purchase() {
             {raiseRequestExtraProducts.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 {raiseRequestExtraProducts.map(productName => {
-                  const inv = inventory.find(i => i.name === productName);
+                  const inv = inventoryItems.find(i => i.name === productName);
                   return (
                     <Row key={productName} gutter={8} align="middle" style={{ marginBottom: 6 }}>
                       <Col flex="auto"><Text style={{ fontSize: 12 }}>{productName}</Text></Col>
@@ -3564,72 +3474,6 @@ export default function Purchase() {
         </Form>
       </Modal>
 
-      {/* Add Purchase Expense Modal */}
-      <Modal
-        title={<Text strong style={{ fontSize: 16 }}>Add Purchase Expense</Text>}
-        open={showAddExpenseModal}
-        onCancel={() => { setShowAddExpenseModal(false); expenseForm.resetFields(); setExpenseScanFile(null); }}
-        footer={null}
-        width={480}
-        centered
-      >
-        <div style={{ marginTop: 12 }}>
-          <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Upload maxCount={1} beforeUpload={(f) => { setExpenseScanFile(f); return false; }} onRemove={() => setExpenseScanFile(null)} accept=".pdf,.jpg,.png" style={{ flex: 1 }}>
-                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Invoice / PDF</Button>
-              </Upload>
-              <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setExpenseScanFile)} style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>Capture</Button>
-              <Button
-                icon={<ThunderboltOutlined />}
-                loading={expenseScanLoading}
-                style={{ background: expenseScanFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: expenseScanFile ? '#fff' : '#bbb', fontWeight: 700 }}
-                onClick={() => {
-                  if (!expenseScanFile) { message.warning('Upload file first'); return; }
-                  setExpenseScanLoading(true);
-                  setTimeout(() => {
-                    expenseForm.setFieldsValue({ date: dayjs(), invoice_no: 'INV-' + Math.floor(Math.random() * 9000 + 1000), supplier: 'ChemCo India', qty: '50 Kg', total_amount: 4250, paid_status: 'Unpaid' });
-                    setExpenseScanLoading(false);
-                    message.success('AI extracted expense details!');
-                  }, 2000);
-                }}
-              >
-                {expenseScanLoading ? 'Scanning...' : 'Scan'}
-              </Button>
-            </div>
-          </div>
-          <Form form={expenseForm} layout="vertical">
-            <Row gutter={12}>
-              <Col span={12}><Form.Item label="Purchase Date" name="date" rules={[{ required: true }]}><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
-              <Col span={12}><Form.Item label="Invoice No" name="invoice_no" rules={[{ required: true }]}><Input placeholder="INV-XXXX" /></Form.Item></Col>
-            </Row>
-            <Row gutter={12}>
-              <Col span={14}><Form.Item label="Supplier" name="supplier" rules={[{ required: true }]}><Select placeholder="Select supplier">{suppliersList.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}</Select></Form.Item></Col>
-              <Col span={10}><Form.Item label="Quantity" name="qty"><Input placeholder="e.g. 100 Kg" /></Form.Item></Col>
-            </Row>
-            <Row gutter={12}>
-              <Col span={12}><Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true }]}><InputNumber prefix="₹" style={{ width: '100%' }} min={0} /></Form.Item></Col>
-              <Col span={12}><Form.Item label="Paid Status" name="paid_status" rules={[{ required: true }]}><Select><Option value="Paid">Paid</Option><Option value="Partially Paid">Partially Paid</Option><Option value="Unpaid">Unpaid</Option></Select></Form.Item></Col>
-            </Row>
-          </Form>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button style={{ flex: 1 }} onClick={() => { setShowAddExpenseModal(false); expenseForm.resetFields(); setExpenseScanFile(null); }}>Cancel</Button>
-            <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
-              onClick={() => {
-                expenseForm.validateFields().then(values => {
-                  const newExp = { key: Date.now(), date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'), invoice_no: values.invoice_no, supplier: values.supplier, qty: values.qty || '—', paid_status: values.paid_status, paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0, total_amount: values.total_amount, remaining: values.paid_status === 'Paid' ? 0 : values.total_amount };
-                  setPurchaseExpenses(prev => [newExp, ...prev]);
-                  message.success('Purchase expense added');
-                  setShowAddExpenseModal(false);
-                  expenseForm.resetFields();
-                  setExpenseScanFile(null);
-                });
-              }}
-            >Save Expense</Button>
-          </div>
-        </div>
-      </Modal>
-
       {/* Shared Camera Capture Modal */}
       <Modal
         title={
@@ -3702,8 +3546,8 @@ export default function Purchase() {
         centered
       >
         {selectedPlaceOrderReq && (() => {
-          const sup = suppliersList.find(s => s.name === selectedPlaceOrderReq.supplier);
-          const complaints = vendorComplaintsData[selectedPlaceOrderReq.supplier] || [];
+          const sup = suppliers.find(s => s.name === selectedPlaceOrderReq.supplier);
+          const complaints = [];
           const openComplaints = complaints.filter(c => c.status === 'Open');
 
           if (showPlaceOrderSuccess) {
@@ -4276,7 +4120,7 @@ export default function Purchase() {
                 onClick={() => {
                   editReqForm.validateFields().then(vals => {
                     dispatch(updateQuotationDetails({ key: editQuotationTarget.key, qty: vals.qty, payment_terms: vals.payment_terms }));
-                    const sup = suppliersList.find(s => s.name === editQuotationTarget.supplier);
+                    const sup = suppliers.find(s => s.name === editQuotationTarget.supplier);
                     const phone = sup ? sup.phone.replace(/\D/g, '') : '';
                     const latestNote = (editQuotationTarget.notes || []).at(-1);
                     const msg = `*Updated Quotation Request*\n\n*Item:* ${editQuotationTarget.item}\n*Quantity:* ${vals.qty} ${editQuotationTarget.unit}\n*Payment Terms:* ${vals.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly provide an updated quotation at the earliest.`;

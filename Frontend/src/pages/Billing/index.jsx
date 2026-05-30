@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
   Typography, Space, Divider, Avatar, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, message, Switch,
@@ -16,47 +16,24 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
 import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
+import {
+  useGetInvoicesQuery,
+  useGetQuotationsInProcessQuery,
+  useGetBillingPartiesQuery,
+  useGetItemsQuery,
+  useCreateInvoiceMutation,
+  useRecordPaymentMutation,
+  useConvertQuotationToInvoiceMutation,
+  useCreateBillingPartyMutation,
+  useGetBillingPartyLedgerQuery,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const initialInvoices = [
-  { key: 1, inv: 'INV-2401', client: 'Marriott Mumbai', order: 'ORD-2402', date: '2024-01-18 10:30 AM', amount: 38500, gst: 6930, total: 45430, advance: 19250, balance: 26180, type: 'GST', status: 'Partially Paid' },
-  { key: 2, inv: 'INV-2402', client: 'Taj Hotels Delhi', order: 'ORD-2403', date: '2024-01-17 02:45 PM', amount: 120000, gst: 21600, total: 141600, advance: 60000, balance: 81600, type: 'GST', status: 'Pending' },
-  { key: 3, inv: 'INV-2403', client: 'ITC Grand Kolkata', order: 'ORD-2404', date: '2024-01-16 11:15 AM', amount: 250000, gst: 0, total: 250000, advance: 250000, balance: 0, type: 'Non-GST', status: 'Paid' },
-  { key: 4, inv: 'INV-2404', client: 'The Grand Hotel', order: 'ORD-2401', date: '2024-01-10 09:20 AM', amount: 42000, gst: 7560, total: 49560, advance: 21000, balance: 28560, type: 'GST', status: 'Partially Paid' },
-  { key: 5, inv: 'INV-2389', client: 'Client Demo', order: 'ORD-2389', date: '2023-11-20 04:30 PM', amount: 25000, gst: 4500, total: 29500, advance: 17000, balance: 12500, previousBalance: 0, type: 'GST', status: 'Overdue' },
-  { key: 6, inv: 'INV-2405', client: 'Client Demo', order: 'ORD-2405', date: '2024-01-15 12:00 PM', amount: 50000, gst: 9000, total: 59000, advance: 10000, balance: 49000, previousBalance: 12500, type: 'GST', status: 'Pending' },
-];
-
+// All billing data loaded from API
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
-
-const initialQuotations = [
-  { key: 1, quot: 'QT-2401', client: 'Marriott Mumbai', order: 'ORD-2402', date: '2024-01-18 10:30 AM', amount: 38500, gst: 6930, total: 45430, advance: 19250, balance: 26180, type: 'GST', status: 'In Process' },
-  { key: 2, quot: 'QT-2402', client: 'Taj Hotels Delhi', order: 'ORD-2403', date: '2024-01-17 02:45 PM', amount: 120000, gst: 21600, total: 141600, advance: 0, balance: 141600, type: 'GST', status: 'Unpaid' },
-  { key: 3, quot: 'QT-2403', client: 'ITC Grand Kolkata', order: 'ORD-2404', date: '2024-01-16 11:15 AM', amount: 250000, gst: 0, total: 250000, advance: 250000, balance: 0, type: 'Non-GST', status: 'Paid' },
-  { key: 4, quot: 'QT-2404', client: 'The Grand Hotel', order: 'ORD-2401', date: '2024-01-10 09:20 AM', amount: 42000, gst: 7560, total: 49560, advance: 21000, balance: 28560, type: 'GST', status: 'Partially Paid' },
-  { key: 5, quot: 'QT-2405', client: 'Client Demo', order: 'ORD-2389', date: '2023-11-20 04:30 PM', amount: 25000, gst: 4500, total: 29500, advance: 0, balance: 29500, type: 'GST', status: 'Unpaid' },
-  { key: 6, quot: 'QT-2406', client: 'Hotel Blue Star', order: 'ORD-2406', date: '2024-01-15 12:00 PM', amount: 50000, gst: 9000, total: 59000, advance: 10000, balance: 49000, type: 'GST', status: 'In Process' },
-];
-
 const quotStatusColor = { 'In Process': '#7c3aed', Paid: '#6b1240', 'Partially Paid': '#B11E6A', Unpaid: '#C94F8A' };
-
-const partiesList = [
-  { key: 1, name: '3R GREEN CORPORATION', phone: '7417157859', type: 'Supplier', balance: 0 },
-  { key: 2, name: 'A1 TRAVELS AND SPEED PARCEL SERVICE', phone: '9443021991', type: 'Customer', balance: 0 },
-  { key: 3, name: 'ABC COMPUTERS', phone: '9842117951', type: 'Supplier', balance: 76 },
-  { key: 4, name: 'Abirami Royal', type: 'Customer', balance: 0 },
-  { key: 5, name: 'ABM Home Stay', type: 'Customer', balance: 0 },
-  { key: 6, name: 'ADITYA HERITAGE HOMES', type: 'Customer', balance: 0 },
-  { key: 7, name: 'Client Demo', type: 'Customer', balance: 12500, phone: '9876543210' },
-];
-
-const itemsList = [
-  { key: 1, name: 'KUTRALAM (2 SOAP 15G, 2 BRUSH, 1 PASTE, 1 COMB, 2 SHAMPOO, 1 OIL)', price: 30, unit: 'PCS', stock: -1.0, initials: 'K', color: '#B11E6A' },
-  { key: 2, name: 'Morning Kit TTDC', price: 20, unit: 'PCS', stock: -2.0, initials: 'M', color: '#8a1652' },
-  { key: 3, name: 'Soap (L) 15 gram', price: 3.65, unit: 'PCS', stock: 5.0, initials: 'S', color: '#C94F8A' },
-];
 
 const indianStates = [
   'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa',
@@ -75,32 +52,74 @@ export default function Billing() {
   const sectionBg = isDark ? '#16161e' : '#fafafa';
   const inputBg = isDark ? '#1a1a2a' : '#fff';
 
-  // Data state (mutable)
-  const [invoiceList, setInvoiceList] = useState(initialInvoices);
-  const [quotationList, setQuotationList] = useState(initialQuotations);
+  // Data — RTK Query
+  const { data: invoicesData } = useGetInvoicesQuery();
+  const { data: quotationsData } = useGetQuotationsInProcessQuery();
+  const { data: partiesData } = useGetBillingPartiesQuery();
+  const { data: invItemsData } = useGetItemsQuery();
+  const [createInvoiceMutation] = useCreateInvoiceMutation();
+  const [recordPaymentMutation] = useRecordPaymentMutation();
+  const [convertQuotationMutation] = useConvertQuotationToInvoiceMutation();
+  const [createBillingPartyMutation] = useCreateBillingPartyMutation();
+
+  const invoiceList = useMemo(() => (invoicesData?.data || []).map((inv) => ({
+    key: inv._id,
+    inv: inv.invoiceNumber,
+    client: inv.partyId?.name || '—',
+    order: inv.orderId?.orderCode || '—',
+    date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
+    amount: inv.subtotal,
+    gst: inv.gstAmount,
+    total: inv.total,
+    advance: inv.advanceAmount,
+    balance: inv.balanceDue,
+    previousBalance: inv.previousBalance || 0,
+    type: inv.invoiceType,
+    status: inv.status,
+  })), [invoicesData]);
+
+  const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => ({
+    key: q._id,
+    quot: q.quotCode,
+    client: q.clientName || '—',
+    order: q.orderId?.orderCode || '—',
+    date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
+    amount: q.amount,
+    gst: q.gstAmount,
+    total: q.total,
+    advance: q.advancePaid,
+    balance: q.balance,
+    type: q.type,
+    status: q.status,
+  })), [quotationsData]);
+
+  const partiesList = useMemo(() => (partiesData?.data || []).map((p) => ({
+    key: p._id,
+    name: p.name,
+    phone: p.phone || '',
+    type: p.type,
+    balance: p.runningBalance || 0,
+    gstNumber: p.gstNumber,
+    creditPeriod: p.creditPeriod,
+    creditLimit: p.creditLimit,
+  })), [partiesData]);
+
+  const itemsList = useMemo(() => (invItemsData?.data || []).map((i) => ({
+    key: i._id,
+    name: i.itemName,
+    price: i.sellingPrice || i.purchasePrice,
+    unit: i.unit,
+    stock: i.currentStock,
+    initials: i.itemName?.[0]?.toUpperCase() || 'I',
+    color: '#B11E6A',
+  })), [invItemsData]);
   const [activeTab, setActiveTab] = useState('order-in-process');
 
   // View invoice / quotation
   const [viewModal, setViewModal] = useState(false);
   const [selectedInv, setSelectedInv] = useState(null);
   const [viewDocType, setViewDocType] = useState('invoice');
-  const [ledgerEntries, setLedgerEntries] = useState([
-    { key: 1,  date: '2024-01-18', client: 'Marriott Mumbai',    type: 'Invoice',     doc: 'INV-2401', debit: 45430,  credit: 0,     balance: 45430  },
-    { key: 2,  date: '2024-01-20', client: 'Marriott Mumbai',    type: 'Payment',     doc: 'REC-3001', debit: 0,      credit: 19250, balance: 26180  },
-    { key: 3,  date: '2024-01-17', client: 'Taj Hotels Delhi',   type: 'Invoice',     doc: 'INV-2402', debit: 141600, credit: 0,     balance: 141600 },
-    { key: 4,  date: '2024-01-19', client: 'Taj Hotels Delhi',   type: 'Payment',     doc: 'REC-3002', debit: 0,      credit: 60000, balance: 81600  },
-    { key: 5,  date: '2024-01-16', client: 'ITC Grand Kolkata',  type: 'Invoice',     doc: 'INV-2403', debit: 250000, credit: 0,     balance: 250000 },
-    { key: 6,  date: '2024-01-18', client: 'ITC Grand Kolkata',  type: 'Payment',     doc: 'REC-3003', debit: 0,      credit: 250000,balance: 0      },
-    { key: 7,  date: '2024-01-10', client: 'The Grand Hotel',    type: 'Invoice',     doc: 'INV-2404', debit: 49560,  credit: 0,     balance: 49560  },
-    { key: 8,  date: '2024-01-12', client: 'The Grand Hotel',    type: 'Payment',     doc: 'REC-3004', debit: 0,      credit: 21000, balance: 28560  },
-    { key: 9,  date: '2023-11-20', client: 'Client Demo',        type: 'Invoice',     doc: 'INV-2389', debit: 29500,  credit: 0,     balance: 29500  },
-    { key: 10, date: '2023-11-25', client: 'Client Demo',        type: 'Payment',     doc: 'REC-3005', debit: 0,      credit: 17000, balance: 12500  },
-    { key: 11, date: '2024-01-15', client: 'Client Demo',        type: 'Invoice',     doc: 'INV-2405', debit: 59000,  credit: 0,     balance: 61500  },
-    { key: 12, date: '2024-01-16', client: 'Client Demo',        type: 'Payment',     doc: 'REC-3006', debit: 0,      credit: 10000, balance: 61500  },
-    { key: 13, date: '2024-05-01', client: 'Hotel Blue Star',    type: 'Invoice',     doc: 'INV-1001', debit: 25000,  credit: 0,     balance: 25000  },
-    { key: 14, date: '2024-05-02', client: 'Hotel Blue Star',    type: 'Payment',     doc: 'REC-2041', debit: 0,      credit: 15000, balance: 10000  },
-    { key: 15, date: '2024-05-03', client: 'Hotel Blue Star',    type: 'Credit Note', doc: 'CN-501',   debit: 0,      credit: 2000,  balance: 8000   },
-  ]);
+  const [ledgerEntries, setLedgerEntries] = useState([]);
 
   // Parties & Ledgers tab state
   const [viewBillingPartyLedger, setViewBillingPartyLedger] = useState(null);
@@ -527,6 +546,7 @@ export default function Billing() {
   const totalRevenue = invoiceList.reduce((s, i) => s + i.total, 0);
   const totalPaid = invoiceList.filter((i) => i.status === 'Paid').reduce((s, i) => s + i.total, 0);
   const totalPending = invoiceList.reduce((s, i) => s + i.balance, 0);
+  const totalQuotation = quotationList.reduce((s, q) => s + (q.total || 0), 0);
 
   return (
     <div className="page-container fade-in">
@@ -543,7 +563,7 @@ export default function Billing() {
           { label: 'Total Invoiced', val: `₹${(totalRevenue / 100000).toFixed(2)}L`, color: '#B11E6A' },
           { label: 'Paid', val: `₹${(totalPaid / 1000).toFixed(0)}K`, color: '#8a1652' },
           { label: 'TO COLLECT', val: `₹${(totalPending / 1000).toFixed(0)}K`, color: '#C94F8A' },
-          { label: 'Total Quotation', val: '₹4.2L', color: '#D85C9E', sub: 'Non-converted' },
+          { label: 'Total Quotation', val: totalQuotation >= 100000 ? `₹${(totalQuotation / 100000).toFixed(2)}L` : `₹${(totalQuotation / 1000).toFixed(0)}K`, color: '#D85C9E', sub: 'Non-converted' },
         ].map((s, i) => (
           <Col xs={12} sm={6} key={s.label}>
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}>

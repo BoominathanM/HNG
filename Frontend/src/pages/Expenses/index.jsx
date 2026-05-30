@@ -1,11 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import dayjs from 'dayjs';
-import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs } from 'antd';
+import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs, message } from 'antd';
 import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined, SearchOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import {
+  useGetExpensesQuery,
+  useCreateExpenseMutation,
+  useUpdateExpenseMutation,
+  useDeleteExpenseMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -17,28 +23,34 @@ const EXPENSE_CATEGORIES = [
   { value: 'OTHER', label: 'Other Expenses', color: '#722ed1', icon: <PlusOutlined /> },
 ];
 
-const INITIAL_EXPENSES = [
-  { key: 1, date: '2024-05-01', category: 'RAW_MATERIAL', desc: 'Soap Base (White) 500kg', amount: 42500, status: 'Paid', vendor: 'ChemCo India' },
-  { key: 2, date: '2024-05-02', category: 'SHIPPING', desc: 'Dispatch to Marriott Mumbai', amount: 3500, status: 'Paid', vendor: 'SafeExpress' },
-  { key: 3, date: '2024-05-03', category: 'UTILITY', desc: 'Monthly Office Rent', amount: 25000, status: 'Paid', vendor: 'RealEstates Inc' },
-  { key: 4, date: '2024-05-04', category: 'OTHER', desc: 'Office Stationery', amount: 1200, status: 'Paid', vendor: 'Local Mart' },
-];
 
 export default function Expenses() {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
-  const [expenses, setExpenses] = useState(INITIAL_EXPENSES);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
 
-  // Purchase expenses (imported from Purchase module - shown in combined view)
-  const [purchaseExpenses] = useState([
-    { key: 'pe1', date: '2024-05-01', category: 'PURCHASE', desc: 'Soap Base (White) 100Kg', amount: 8500, status: 'Paid', vendor: 'ChemCo India', invoice_no: 'INV-CHEM-101' },
-    { key: 'pe2', date: '2024-05-04', category: 'PURCHASE', desc: 'Shampoo Concentrate 200Ltr', amount: 44000, status: 'Partially Paid', vendor: 'BioLife Ltd', invoice_no: 'INV-BIO-452' },
-    { key: 'pe3', date: '2024-05-06', category: 'PURCHASE', desc: 'Shampoo Bottles 500Pcs', amount: 2250, status: 'Unpaid', vendor: 'PlastiPack', invoice_no: 'INV-PP-203' },
-  ]);
+  const { data: expData, isLoading: expLoading } = useGetExpensesQuery();
+  const [createExpense] = useCreateExpenseMutation();
+  const [updateExpense] = useUpdateExpenseMutation();
+  const [deleteExpense] = useDeleteExpenseMutation();
+
+  const expenses = useMemo(() => (expData?.data || []).map((e) => ({
+    key: e._id,
+    date: e.expenseDate?.slice(0, 10),
+    category: e.category?.toUpperCase().replace(/ /g, '_').replace(/\//g, '_') || 'OTHER',
+    desc: e.description,
+    amount: e.amount,
+    status: e.paymentStatus,
+    vendor: e.vendorPayee,
+    expenseCode: e.expenseCode,
+    source: e.expenseSource || 'manual',
+  })), [expData]);
+
+  // Purchase expenses filtered from all expenses
+  const [purchaseExpenses] = useState([]);
 
   // Expense history drill-down
   const [historyModal, setHistoryModal] = useState(false);
@@ -64,16 +76,25 @@ export default function Expenses() {
     return matchSearch && matchCategory && matchStatus;
   });
 
-  const handleAddExpense = (values) => {
-    const newExpense = {
-      key: Date.now(),
-      ...values,
-      categoryLabel: values.category === 'OTHER' ? values.customCategory : EXPENSE_CATEGORIES.find(c => c.value === values.category)?.label,
-      status: 'Paid',
-    };
-    setExpenses([newExpense, ...expenses]);
-    setIsModalOpen(false);
-    form.resetFields();
+  const handleAddExpense = async (values) => {
+    try {
+      const formData = new FormData();
+      formData.append('expenseDate', values.date ? dayjs(values.date).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'));
+      formData.append('category', values.category === 'OTHER' ? (values.customCategory || 'Other') : (EXPENSE_CATEGORIES.find(c => c.value === values.category)?.label || values.category));
+      formData.append('description', values.desc);
+      formData.append('amount', values.amount);
+      if (values.vendor) formData.append('vendorPayee', values.vendor);
+      if (values.proof?.fileList?.[0]?.originFileObj) {
+        formData.append('proof', values.proof.fileList[0].originFileObj);
+      }
+      await expApi.createExpense(formData);
+      message.success('Expense added successfully');
+      loadExpenses();
+      setIsModalOpen(false);
+      form.resetFields();
+    } catch {
+      message.error('Failed to add expense');
+    }
   };
 
   const chartData = EXPENSE_CATEGORIES.map(cat => ({

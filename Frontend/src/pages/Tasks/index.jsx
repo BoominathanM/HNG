@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs,
   Typography, Space, Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, DatePicker,
@@ -11,109 +11,17 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
-import { operationOrders } from '../Operations/data';
+import {
+  useGetTasksQuery,
+  useCreateTaskMutation,
+  useUpdateTaskStatusMutation,
+  useApproveEmergencyMutation,
+  useDeleteTaskMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-// ── Data ─────────────────────────────────────────────────────────────────
-const initialTasks = [
-  {
-    key: 1, id: 'TSK-101', type: 'Production', title: 'Produce Soap Batch - ORD-2401',
-    orderId: 'ORD-2401', client: 'Hotel Blue Star', salesPerson: 'Priya',
-    createdAt: '2024-01-20T10:00:00Z', assignee: 'Ramesh K', priority: 'High',
-    status: 'In Progress', startTime: '2024-01-21T09:00:00Z', due: '2024-01-22',
-    paymentStatus: 'Paid', salesFollowup: false, dispatchStatus: 'Dispatched',
-    product: 'Soap Round 50g', qty: 2000,
-    phases: { completed: 4, total: 4 },
-    phasesList: [
-      { phase: 1, qty: 500, status: 'Delivered', date: '2024-01-22' },
-      { phase: 2, qty: 500, status: 'Delivered', date: '2024-01-24' },
-      { phase: 3, qty: 500, status: 'Delivered', date: '2024-01-26' },
-      { phase: 4, qty: 500, status: 'Delivered', date: '2024-01-28' },
-    ],
-  },
-  {
-    key: 2, id: 'TSK-102', type: 'Sticker Work', title: 'Apply stickers - ORD-2402',
-    orderId: 'ORD-2402', client: 'Marriott Mumbai', salesPerson: 'Arun',
-    createdAt: '2024-01-21T11:30:00Z', assignee: 'Kavitha S', priority: 'Medium',
-    status: 'Pending', due: '2024-01-23',
-    paymentStatus: 'Pending', salesFollowup: true, dispatchStatus: null,
-    product: 'Shampoo 30ml Flip', qty: 3000,
-    phases: { completed: 1, total: 4 },
-    phasesList: [
-      { phase: 1, qty: 750, status: 'Delivered', date: '2024-01-25' },
-      { phase: 2, qty: 750, status: 'Pending', date: '' },
-      { phase: 3, qty: 750, status: 'Pending', date: '' },
-      { phase: 4, qty: 750, status: 'Pending', date: '' },
-    ],
-  },
-  {
-    key: 3, id: 'TSK-103', type: 'Packing', title: 'Pack dental kits - ORD-2403',
-    orderId: 'ORD-2403', client: 'Taj Hotels Delhi', salesPerson: 'Priya',
-    createdAt: '2024-01-22T14:15:00Z', assignee: 'Meena D', priority: 'High',
-    status: 'Completed', startTime: '2024-01-23T10:00:00Z', endTime: '2024-01-23T15:30:00Z', due: '2024-01-20',
-    paymentStatus: 'Partial', salesFollowup: true, dispatchStatus: null,
-    product: 'Dental Kit', qty: 3000,
-    phases: { completed: 2, total: 3 },
-    phasesList: [
-      { phase: 1, qty: 1000, status: 'Delivered', date: '2024-01-23' },
-      { phase: 2, qty: 1000, status: 'Delivered', date: '2024-01-24' },
-      { phase: 3, qty: 1000, status: 'Pending', date: '' },
-    ],
-  },
-  {
-    key: 4, id: 'TSK-104', type: 'Procurement', title: 'Buy Soap Base 500kg',
-    orderId: '', client: '', salesPerson: 'N/A',
-    createdAt: '2024-01-20T09:00:00Z', assignee: 'Suresh T', priority: 'Urgent',
-    status: 'In Progress', startTime: '2024-01-20T10:30:00Z', due: '2024-01-21',
-    paymentStatus: null, salesFollowup: false, dispatchStatus: null,
-    product: 'Soap Base', qty: 500,
-    isEmergency: true,
-    phases: { completed: 0, total: 1 },
-    phasesList: [],
-  },
-  {
-    key: 5, id: 'TSK-105', type: 'Internal', title: 'Quality Check - Batch B-22',
-    orderId: '', client: '', salesPerson: 'N/A',
-    createdAt: '2024-01-22T10:00:00Z', assignee: 'Ramesh K', priority: 'Low',
-    status: 'Pending', due: '2024-01-24',
-    paymentStatus: null, salesFollowup: false, dispatchStatus: null,
-    product: 'Batch B-22', qty: 0,
-    phases: { completed: 0, total: 1 },
-    phasesList: [],
-  },
-  {
-    key: 6, id: 'TSK-106', type: 'Sticker Work', title: 'Label stickers - ORD-2401',
-    orderId: 'ORD-2401', client: 'Hotel Blue Star', salesPerson: 'Priya',
-    createdAt: '2024-01-24T10:00:00Z', assignee: null, priority: 'High',
-    status: 'Pending', due: '2024-01-26',
-    paymentStatus: 'Paid', salesFollowup: false, dispatchStatus: null,
-    product: 'Soap Round 50g', qty: 1500,
-    phases: { completed: 0, total: 3 },
-    phasesList: [],
-  },
-  {
-    key: 7, id: 'TSK-107', type: 'Production', title: 'Fill bottles - ORD-2402',
-    orderId: 'ORD-2402', client: 'Marriott Mumbai', salesPerson: 'Arun',
-    createdAt: '2024-01-24T11:00:00Z', assignee: null, priority: 'Medium',
-    status: 'Pending', due: '2024-01-27',
-    paymentStatus: 'Pending', salesFollowup: false, dispatchStatus: null,
-    product: 'Shampoo 30ml Flip', qty: 2000,
-    phases: { completed: 0, total: 4 },
-    phasesList: [],
-  },
-  {
-    key: 8, id: 'TSK-108', type: 'Packing', title: 'Box packaging - ORD-2403',
-    orderId: 'ORD-2403', client: 'Taj Hotels Delhi', salesPerson: 'Priya',
-    createdAt: '2024-01-24T14:00:00Z', assignee: null, priority: 'High',
-    status: 'Pending', due: '2024-01-28',
-    paymentStatus: 'Partial', salesFollowup: false, dispatchStatus: null,
-    product: 'Dental Kit', qty: 500,
-    phases: { completed: 0, total: 1 },
-    phasesList: [],
-  },
-];
 
 const typeColor = { Production: '#B11E6A', 'Sticker Work': '#8a1652', Packing: '#C94F8A', Procurement: '#D85C9E', Internal: '#6b1240' };
 const priorityColor = { Urgent: '#6b1240', High: '#B11E6A', Medium: '#C94F8A', Low: '#D85C9E' };
@@ -129,7 +37,26 @@ const kanbanCols = [
 // ─────────────────────────────────────────────────────────────────────────
 export default function Tasks() {
   const isDark = useSelector((s) => s.theme.isDark);
-  const [taskList, setTaskList] = useState(initialTasks);
+  const { data: tasksData, isLoading: tasksLoading } = useGetTasksQuery();
+  const [createTask] = useCreateTaskMutation();
+  const [updateTaskStatus] = useUpdateTaskStatusMutation();
+  const [approveEmergency] = useApproveEmergencyMutation();
+  const [deleteTask] = useDeleteTaskMutation();
+
+  const taskList = useMemo(() => (tasksData?.data || []).map((t) => ({
+    key: t._id,
+    id: t.taskCode,
+    type: t.taskType || 'Packing',
+    name: t.taskName || t.taskCode,
+    order: t.orderId?.orderCode || '—',
+    client: t.orderId?.clientName || '—',
+    product: t.product || '—',
+    assignedTo: t.assignedTo?.fullName || '—',
+    status: t.status,
+    priority: t.isEmergency ? 'High' : 'Normal',
+    payment: 'Pending',
+    createdAt: t.createdAt,
+  })), [tasksData]);
   const [searchText, setSearchText] = useState('');
   const [filterType, setFilterType] = useState(null);
   const [filterPriority, setFilterPriority] = useState(null);
@@ -176,42 +103,11 @@ export default function Tasks() {
   };
 
   // ── Inventory-based task suggestions ─────────────────────────────────
-  const getSuggestedTasks = (task) => {
-    if (!task.orderId) return [];
-    const order = operationOrders.find((o) => o.id === task.orderId);
-    if (!order) return [];
-    return order.items.map((item) => {
-      const short = item.qty - (item.inventoryStock ?? 0);
-      const isLow = short > 0;
-      const label =
-        item.logoType === 'Sticker' ? 'Sticker Placing' :
-        item.logoType === 'Box' ? 'Box Filling' :
-        item.logoType === 'Frosted Ziplock' ? 'Ziplock Sealing' :
-        item.processTask || 'Process';
-      return { label, product: item.product, isLow, short };
-    });
-  };
+  const getSuggestedTasks = () => [];
 
   const getSmartSuggestion = (task) => {
     if (!task.orderId) return { text: 'Internal task — check with supervisor for instructions', alertType: 'info', canStart: true };
-    const order = operationOrders.find((o) => o.id === task.orderId);
-    if (!order) return { text: 'Order data not found — verify order ID', alertType: 'warning', canStart: false };
-    const item = order.items.find((i) => i.product === task.product) || order.items[0];
-    if (!item) return { text: 'Product data unavailable', alertType: 'warning', canStart: false };
-    const stockOk = (item.inventoryStock ?? 0) >= item.qty;
-    const isSticker = item.logoType === 'Sticker';
-    const isBox = item.logoType === 'Box';
-    if (isSticker) {
-      if (stockOk) return { text: 'Sticker stock arrived — start labeling bottles immediately', alertType: 'success', canStart: true };
-      return { text: 'Sticker pending arrival — start bottle filling now, apply stickers once they arrive', alertType: 'info', canStart: true };
-    }
-    if (isBox) {
-      if (stockOk) return { text: 'Box stock available — start packing products immediately', alertType: 'success', canStart: true };
-      return { text: 'Box stock short — prepare products now, wait for box delivery before packing', alertType: 'warning', canStart: false };
-    }
-    if (stockOk) return { text: 'All stock available — task can begin immediately', alertType: 'success', canStart: true };
-    const short = item.qty - (item.inventoryStock ?? 0);
-    return { text: `Stock short by ${short.toLocaleString()} units — partial work possible while awaiting restocking`, alertType: 'warning', canStart: true };
+    return { text: 'Task is linked to an order — verify inventory and proceed as per production plan.', alertType: 'info', canStart: true };
   };
 
   // ── Columns ───────────────────────────────────────────────────────────

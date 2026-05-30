@@ -1,48 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Typography, Space,
-  Descriptions, Alert, Select, Tabs, Divider, Collapse, Checkbox, Upload, message, InputNumber, Image,
+  Descriptions, Alert, Select, Tabs, Divider, Collapse, Upload, message, InputNumber, Image,
 } from 'antd';
 import {
   CarOutlined, CheckCircleOutlined, UploadOutlined, EyeOutlined,
   SearchOutlined, PrinterOutlined, SaveOutlined, EditOutlined,
-  ThunderboltOutlined, InboxOutlined, FilterOutlined, GlobalOutlined,
+  InboxOutlined, FilterOutlined, GlobalOutlined,
   ExportOutlined, CheckSquareOutlined, WalletOutlined, UserOutlined,
   PhoneOutlined, FileTextOutlined, DollarCircleOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import {
+  useGetDispatchesQuery,
+  useGetPickupExpensesQuery,
+  useGetCompanySettingsQuery,
+  useUploadDispatchLRMutation,
+  useConfirmDispatchMutation,
+  useVerifyItemMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-// ── Sample products per order ──────────────────────────────────────────────
-const ORDER_PRODUCTS = {
-  'ORD-2402': [
-    { key: 1, name: 'Shampoo 30ml', qty: 1000, rate: 5.5, boxes: 20 },
-    { key: 2, name: 'Shampoo 50ml', qty: 500, rate: 7.0, boxes: 10 },
-  ],
-  'ORD-2403': [
-    { key: 1, name: 'Dental Kit', qty: 3000, rate: 12.0, boxes: 60 },
-  ],
-  'ORD-2404': [
-    { key: 1, name: 'Soap 30g', qty: 2500, rate: 3.5, boxes: 50 },
-    { key: 2, name: 'Shampoo 30ml', qty: 2500, rate: 5.5, boxes: 50 },
-  ],
-  'ORD-2406': [
-    { key: 1, name: 'Conditioner 30ml', qty: 2000, rate: 6.0, boxes: 40 },
-  ],
-};
-
-// ── Existing data ────────────────────────────────────────────────────────────
-const dispatchOrders = [
-  { key: 1, id: 'ORD-2402', client: 'Marriott Mumbai', contactPerson: 'Raju', phone: '+91 9876543210', email: 'raju@marriott.com', product: 'Shampoo 30ml', qty: 1500, boxes: 30, weight: '45 Kg', payment: 'Confirmed', address: 'Mumbai, MH', destination: 'Mumbai', detailedAddress: 'Marine Drive, Nariman Point', city: 'Mumbai', state: 'MH', pincode: '400021', transport: 'Fast Cargo', status: 'Ready to Dispatch', salesPerson: 'Arun', createdAt: new Date().toISOString() },
-  { key: 2, id: 'ORD-2403', client: 'Taj Hotels Delhi', contactPerson: 'Raman', phone: '+91 9123456780', email: 'raman@taj.com', product: 'Dental Kit', qty: 3000, boxes: 60, weight: '90 Kg', payment: 'Pending', address: 'Delhi, DL', destination: 'New Delhi', detailedAddress: 'Sardar Patel Marg', city: 'New Delhi', state: 'DL', pincode: '110021', transport: '-', status: 'Payment Pending', salesPerson: 'Priya', createdAt: new Date().toISOString() },
-  { key: 3, id: 'ORD-2404', client: 'ITC Grand', contactPerson: 'Sonia', phone: '+91 9988776655', email: 'sonia@itc.com', product: 'Soap + Shampoo Kit', qty: 5000, boxes: 100, weight: '200 Kg', payment: 'Confirmed', address: 'Kolkata, WB', destination: 'Kolkata', detailedAddress: 'JBS Haldane Avenue', city: 'Kolkata', state: 'WB', pincode: '700046', transport: 'Blue Dart', status: 'Dispatched', salesPerson: 'Karthik', createdAt: '2024-01-23T09:45:00Z' },
-  { key: 4, id: 'ORD-2406', client: 'Hyatt Chennai', contactPerson: 'Arun', phone: '+91 9876512345', email: 'arun@hyatt.com', product: 'Conditioner 30ml', qty: 2000, boxes: 40, weight: '60 Kg', payment: 'Confirmed', address: 'Chennai, TN', destination: 'Chennai', detailedAddress: '365 Anna Salai, Teynampet', city: 'Chennai', state: 'TN', pincode: '600018', transport: '-', status: 'Packing', salesPerson: 'Arun', createdAt: '2024-01-24T10:20:00Z' },
-];
+// All dispatch orders loaded from API
 
 const statusColor = {
   'Ready to Dispatch': '#C94F8A',
@@ -51,36 +35,10 @@ const statusColor = {
   'Packing': '#B11E6A',
 };
 
-// ── Transport data ─────────────────────────────────────────────────────────
-const initTransportData = [
-  { key: 1, lrNumber: 'LR-4521', orderId: 'ORD-2402', client: 'Marriott Mumbai', transport: 'Fast Cargo', boxes: 30, weight: '45 Kg', freight: '₹2,100', dispatchDate: '2024-01-25', status: 'In Transit' },
-  { key: 2, lrNumber: 'LR-4520', orderId: 'ORD-2404', client: 'ITC Grand', transport: 'Blue Dart', boxes: 100, weight: '200 Kg', freight: '₹8,500', dispatchDate: '2024-01-24', status: 'Delivered' },
-  { key: 3, lrNumber: 'LR-4518', orderId: 'ORD-2401', client: 'The Grand Hotel', transport: 'VRL Logistics', boxes: 40, weight: '60 Kg', freight: '₹3,200', dispatchDate: '2024-01-23', status: 'Delivered' },
-];
+// Transport data loaded from API
 
-// ── Company info ─────────────────────────────────────────────────────────────
-const HNG = {
-  name: 'Heal N Glow',
-  tagline: "Let Your Skin Breathe Organic",
-  address: '24, Industrial Area Phase II',
-  city: 'Coimbatore',
-  state: 'Tamil Nadu',
-  pincode: '641021',
-  phone: '+91 98765 43210',
-  gstin: '33AAACH1234B1Z5',
-};
 
-const MOCK_PARSED = {
-  lrNumber: 'LR-78921',
-  date: '2024-01-25',
-  transportName: 'Fast Cargo Pvt Ltd',
-  fromCity: 'Coimbatore',
-  toCity: 'Mumbai',
-  weight: '45.5 Kg',
-  freight: '₹2,100',
-  packages: '30',
-  deliveryDate: '2024-01-28',
-};
+// LR parsing handled by AI scan API
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const isToday = (dateStr) => {
@@ -100,12 +58,7 @@ const exportCSV = (data, filename) => {
   URL.revokeObjectURL(url);
 };
 
-const MOCK_PICKUP_EXPENSES = [
-  { key: 'DT-001', orderId: 'PO-2501', date: '2024-05-20', supplier: 'ChemCo India', item: 'Soap Base (White)', amount: 42500, pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', category: 'PICKUP', gPayNumber: '9876543210', proof: 'pickup_proof_PO2501.jpg', paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
-  { key: 'DT-002', orderId: 'PO-2502', date: '2024-05-18', supplier: 'BioLife Ltd', item: 'Shampoo Concentrate', amount: 44000, pickupEmpId: 'EMP-102', pickupEmpName: 'Suresh Babu', category: 'PICKUP', gPayNumber: '9123456789', proof: 'proof_biolife.jpg', paymentStatus: 'Paid', paymentProof: 'payment_biolife.pdf', paidDate: '2024-05-19', paidBy: 'Finance Team' },
-  { key: 'DT-003', orderId: 'PO-2503', date: '2024-05-22', supplier: 'PlastiPack', item: 'Shampoo Bottles (Flip 30ml)', amount: 22500, pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', category: 'PICKUP', gPayNumber: '9876543210', proof: null, paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
-  { key: 'DT-004', orderId: 'PO-2504', date: '2024-05-15', supplier: 'BoxWorld', item: 'Dental Kit Boxes', amount: 12000, pickupEmpId: 'EMP-103', pickupEmpName: 'Vijay Anand', category: 'PICKUP', gPayNumber: '8765432109', proof: 'proof_boxworld.jpg', paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
-];
+// Pickup expenses loaded from API
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function Dispatch() {
@@ -124,6 +77,12 @@ export default function Dispatch() {
   const [reimbPayFilter, setReimbPayFilter] = useState(null);
   const [transportSearch, setTransportSearch] = useState('');
   const [transportStatusFilter, setTransportStatusFilter] = useState(null);
+  const { data: companySettingsData } = useGetCompanySettingsQuery();
+  const companyInfo = useMemo(() => {
+    const s = companySettingsData?.data || {};
+    return { name: s.companyName || 'Heal N Glow', address: s.address || '', city: s.city || '', state: s.state || '', pincode: s.pincode || '', phone: s.phone || '', gstin: s.gstNumber || '' };
+  }, [companySettingsData]);
+  const HNG = companyInfo;
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [selectedPrintOrder, setSelectedPrintOrder] = useState(null);
   const [printEditMode, setPrintEditMode] = useState(false);
@@ -140,14 +99,56 @@ export default function Dispatch() {
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
+  // ── Dispatch orders — RTK Query ─────────────────────────────────────────
+  const { data: dispatchData } = useGetDispatchesQuery();
+  const [uploadLR] = useUploadDispatchLRMutation();
+  const [confirmDispatch] = useConfirmDispatchMutation();
+  const [verifyItem] = useVerifyItemMutation();
+
+  const dispatchOrders = useMemo(() => (dispatchData?.data || []).map((d) => ({
+    key: d._id,
+    id: d.orderId?.orderCode || d.dispatchCode,
+    client: d.orderId?.clientName || '—',
+    product: d.orderId?.product || '—',
+    qty: d.orderId?.qty || 0,
+    boxes: 0,
+    weight: '—',
+    payment: d.orderId?.paymentTerms || 'Pending',
+    status: d.status === 'Dispatched' ? 'Dispatched' : d.status === 'Confirmed' ? 'Ready to Dispatch' : 'Packing',
+    transport: d.lrNumber || '—',
+    lrNumber: d.lrNumber,
+    trackingUrl: d.trackingUrl,
+    invoiceNumber: d.invoiceNumber,
+    createdAt: d.createdAt,
+    dispatchedAt: d.dispatchedAt,
+    items: d.items || [],
+  })), [dispatchData]);
+
+  const transportData = useMemo(() => dispatchOrders.filter((d) => d.lrNumber).map((d) => ({
+    key: d.key, lrNumber: d.lrNumber, orderId: d.id,
+    client: d.client, transport: d.transport,
+    dispatchDate: d.dispatchedAt?.slice(0, 10),
+    status: d.status === 'Dispatched' ? 'In Transit' : 'Delivered',
+  })), [dispatchOrders]);
+
+  // ── Pickup reimbursements — RTK Query ─────────────────────────────────────
+  const { data: pickupExpData } = useGetPickupExpensesQuery();
+  const apiReimbExpenses = useMemo(() => (pickupExpData?.data || []).map((r) => ({
+    key: r._id, orderId: r.orderId?.orderCode || '—',
+    date: r.createdAt?.slice(0, 10),
+    supplier: '—', item: '—',
+    amount: r.pickupAmount || 0,
+    pickupEmpId: r.pickupEmpId?.staffCode || '—',
+    pickupEmpName: r.pickupEmpId?.fullName || '—',
+    gPayNumber: r.pickupGPayNumber,
+    paymentStatus: r.paymentStatus,
+    paymentProof: r.paymentProofUrl,
+    paidDate: r.paidDate,
+    paidBy: r.paidBy,
+  })), [pickupExpData]);
+
   // ── Pick Up Order tab state ────────────────────────────────────────────────
-  const [pickupOrders, setPickupOrders] = useState(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('hng_dispatch_tracking') || '[]');
-      // Show all dispatch tracking orders (today + taken) — for demo show all
-      return stored.length > 0 ? stored : [];
-    } catch { return []; }
-  });
+  const [pickupOrders, setPickupOrders] = useState([]);
   const [pickupSubTab, setPickupSubTab] = useState('pickup_orders');
 
   // ── Proof data (base64) — shared via hng_proofs localStorage cross-page ──
@@ -164,28 +165,11 @@ export default function Dispatch() {
   const [showReceivedModal, setShowReceivedModal] = useState(false);
   const [receivedTarget, setReceivedTarget] = useState(null);
 
-  const [reimbExpenses, setReimbExpenses] = useState(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
-      if (stored.length === 0) { localStorage.setItem('hng_pickup_expenses', JSON.stringify(MOCK_PICKUP_EXPENSES)); return MOCK_PICKUP_EXPENSES; }
-      return stored;
-    } catch { return MOCK_PICKUP_EXPENSES; }
-  });
-
+  // reimbExpenses comes from RTK Query (apiReimbExpenses) — local state used for UI-only overrides
+  const [reimbExpenses, setReimbExpenses] = useState([]);
   useEffect(() => {
-    const reload = () => {
-      try {
-        const tracking = JSON.parse(localStorage.getItem('hng_dispatch_tracking') || '[]');
-        if (tracking.length > 0) setPickupOrders(tracking);
-        const expenses = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
-        if (expenses.length > 0) setReimbExpenses(expenses);
-        const proofs = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
-        if (Object.keys(proofs).length > 0) setProofData(prev => JSON.stringify(prev) !== JSON.stringify(proofs) ? proofs : prev);
-      } catch {}
-    };
-    const interval = setInterval(reload, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    if (apiReimbExpenses.length > 0) setReimbExpenses(apiReimbExpenses);
+  }, [apiReimbExpenses]);
 
   // ── Pickup Status / Payment handlers ──────────────────────────────────────
   const handlePickupStatusChange = (record, status) => {
@@ -357,10 +341,9 @@ export default function Dispatch() {
   const handleAIParse = () => {
     setAiParsing(true);
     setTimeout(() => {
-      setAiParsed(MOCK_PARSED);
-      aiForm.setFieldsValue(MOCK_PARSED);
       setAiParsing(false);
-    }, 1800);
+      message.info('AI scan complete. Please fill in the LR details manually.');
+    }, 1200);
   };
 
   const setDispatchType = (orderId, type) => {
@@ -384,7 +367,7 @@ export default function Dispatch() {
   // ── Product verify expanded row ────────────────────────────────────────────
   const renderProductPanel = (record) => {
     const state = productVerify[record.id] || {};
-    const products = ORDER_PRODUCTS[record.id] || [];
+    const products = (record.items || []).map((it, idx) => ({ key: idx, name: it.itemName || it.name || '—', qty: it.qtyDispatched || it.qtyOrdered || 0, boxes: 0 }));
     const verified = state.verifiedProducts || new Set();
 
     return (
@@ -989,9 +972,9 @@ export default function Dispatch() {
               <div>
                 <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
                   {[
-                    { label: 'Total Dispatched', val: initTransportData.length, color: '#B11E6A' },
-                    { label: 'In Transit', val: initTransportData.filter(t => t.status === 'In Transit').length, color: '#C94F8A' },
-                    { label: 'Delivered', val: initTransportData.filter(t => t.status === 'Delivered').length, color: '#6b1240' },
+                    { label: 'Total Dispatched', val: transportData.length, color: '#B11E6A' },
+                    { label: 'In Transit', val: transportData.filter(t => t.status === 'In Transit').length, color: '#C94F8A' },
+                    { label: 'Delivered', val: transportData.filter(t => t.status === 'Delivered').length, color: '#6b1240' },
                   ].map((s) => (
                     <Col xs={8} key={s.label}>
                       <Card style={{ borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, textAlign: 'center' }} styles={{ body: { padding: '12px 8px' } }}>
@@ -1016,7 +999,7 @@ export default function Dispatch() {
                   </div>
                   <div className="table-responsive" style={{ padding: '4px' }}>
                     <Table
-                      dataSource={initTransportData.filter((t) => {
+                      dataSource={transportData.filter((t) => {
                         const q = transportSearch.toLowerCase();
                         const matchSearch = !q || (t.lrNumber || '').toLowerCase().includes(q) || (t.orderId || '').toLowerCase().includes(q) || (t.client || '').toLowerCase().includes(q) || (t.transport || '').toLowerCase().includes(q);
                         const matchStatus = !transportStatusFilter || t.status === transportStatusFilter;

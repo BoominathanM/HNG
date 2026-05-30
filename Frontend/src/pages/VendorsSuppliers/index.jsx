@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Tabs, Descriptions
@@ -14,46 +14,20 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
+import {
+  useGetVendorsQuery,
+  useCreateVendorMutation,
+  useUpdateVendorMutation,
+  useDeleteVendorMutation,
+  useGetVendorHistoryQuery,
+  useUpdateVendorStatusMutation,
+  useGenerateAiSummaryMutation,
+  useCreateExpenseMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const vendorsList = [
-  { id: 1, name: 'Marriott Mumbai',   phone: '+91 22 6651 1234', email: 'purchase@marriott.in',    address: 'Mumbai, MH',  whatsapp: '912266511234', totalPaid: 95000,  pending: 25000 },
-  { id: 2, name: 'Taj Hotels Delhi',  phone: '+91 11 6600 7777', email: 'orders@tajhotels.in',     address: 'Delhi, DL',   whatsapp: '911166007777', totalPaid: 60000,  pending: 81600 },
-  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in',     address: 'Kolkata, WB', whatsapp: '913322889999', totalPaid: 250000, pending: 0     },
-  { id: 4, name: 'Hyatt Chennai',     phone: '+91 44 6150 1234', email: 'procurement@hyatt.in',   address: 'Chennai, TN', whatsapp: '914461501234', totalPaid: 42000,  pending: 18000 },
-];
-
-const initPrintingSuppliers = [
-  {
-    key: 'PRN-001', type: 'Sticker', name: 'PrintFast Solutions', phone: '+91 98765 11111',
-    email: 'info@printfast.in', taxId: 'GST29ABC123D1Z5', address: 'Mumbai, MH',
-    bank: 'HDFC Bank — A/C 50100111111 | IFSC HDFC0001234', notes: 'Reliable sticker supplier',
-    orders: [
-      { key: 'PO-S001', date: '2024-05-01', item: 'Custom Stickers (Hotel Brand)', qty: 5000, unit: 'Pcs', amount: 6000, status: 'Delivered' },
-      { key: 'PO-S002', date: '2024-05-12', item: 'Logo Stickers (Mini)', qty: 2000, unit: 'Pcs', amount: 2400, status: 'In Transit' },
-    ],
-  },
-  {
-    key: 'PRN-002', type: 'Box', name: 'BoxWorld Printers', phone: '+91 87654 22222',
-    email: 'orders@boxworld.in', taxId: 'GST27XYZ456E2Z8', address: 'Bengaluru, KA',
-    bank: 'Axis Bank — A/C 912010099999 | IFSC UTIB0000002', notes: 'Bulk box supplier',
-    orders: [
-      { key: 'PO-B001', date: '2024-04-20', item: 'Dental Kit Boxes', qty: 1000, unit: 'Pcs', amount: 12000, status: 'Delivered' },
-      { key: 'PO-B002', date: '2024-05-08', item: 'Soap Gift Boxes', qty: 500, unit: 'Pcs', amount: 7500, status: 'Pending' },
-    ],
-  },
-  {
-    key: 'PRN-003', type: 'Ziplock', name: 'ZipSeal Industries', phone: '+91 76543 33333',
-    email: 'sales@zipseal.in', taxId: 'GST24MNO789F3Z1', address: 'Delhi, DL',
-    bank: 'SBI — A/C 30199887766 | IFSC SBIN0002345', notes: 'Ziplock bag manufacturer',
-    orders: [
-      { key: 'PO-Z001', date: '2024-05-05', item: 'Ziplock Bags (Small)', qty: 10000, unit: 'Pcs', amount: 5000, status: 'Delivered' },
-      { key: 'PO-Z002', date: '2024-05-15', item: 'Ziplock Bags (Large)', qty: 5000, unit: 'Pcs', amount: 4000, status: 'In Transit' },
-    ],
-  },
-];
 
 const exportToCSV = (headers, rows, filename) => {
   const csv = [headers, ...rows]
@@ -74,9 +48,53 @@ export default function VendorsSuppliers() {
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
-  /* ── Vendors state ── */
-  const [vendors, setVendors] = useState(vendorsList);
+  /* ── Vendors state — RTK Query ── */
+  const { data: vendorData, isLoading: vendorsLoading } = useGetVendorsQuery({ type: 'raw_material' });
+  const { data: printingData } = useGetVendorsQuery({ type: 'printing' });
+  const [createVendor] = useCreateVendorMutation();
+  const [updateVendor] = useUpdateVendorMutation();
+  const [deleteVendorMutation] = useDeleteVendorMutation();
+  const [updateVendorStatus] = useUpdateVendorStatusMutation();
+  const [generateAiSummary] = useGenerateAiSummaryMutation();
+  const [createExpense] = useCreateExpenseMutation();
+
   const [viewVendor, setViewVendor] = useState(null);
+  const { data: vendorHistoryData } = useGetVendorHistoryQuery(viewVendor?.id, { skip: !viewVendor?.id });
+  const vendorHistoryRaw = useMemo(() => (vendorHistoryData?.data || []).map((h) => ({
+    key: h._id,
+    date: h.date?.slice(0, 10) || h.createdAt?.slice(0, 10),
+    bill_no: h.billNo || '—',
+    inv_no: h.invNo || '—',
+    items: (h.items || []).map((i) => ({ name: i.name, qty: `${i.qty} ${i.unit || ''}`, price: i.price ? `₹${i.price}` : '—', total: i.total ? `₹${i.total}` : '—' })),
+    status: h.status || '—',
+  })), [vendorHistoryData]);
+
+  const vendors = useMemo(() => (vendorData?.data || []).map((v) => ({
+    id: v._id,
+    key: v._id,
+    name: v.name,
+    phone: v.phone,
+    email: v.email,
+    address: v.address,
+    taxId: v.taxId,
+    bankDetails: v.bankDetails,
+    discountPercent: v.discountPercent,
+    status: v.status,
+    aiSummary: v.aiSummary,
+    totalPaid: 0,
+    pending: 0,
+  })), [vendorData]);
+
+  const printingSuppliers = useMemo(() => (printingData?.data || []).map((v) => ({
+    key: v._id,
+    type: v.supplierType || 'Box',
+    name: v.name,
+    phone: v.phone,
+    email: v.email,
+    taxId: v.taxId,
+    address: v.address,
+    bank: v.bankDetails,
+  })), [printingData]);
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
   const [vendorSearch, setVendorSearch] = useState('');
   const [vendorFilter, setVendorFilter] = useState('all');
@@ -103,8 +121,7 @@ export default function VendorsSuppliers() {
   const [vendorBillForm] = Form.useForm();
   const [purchaseExpenses, setPurchaseExpenses] = useState([]);
 
-  /* ── Printing Suppliers state ── */
-  const [printingSuppliers, setPrintingSuppliers] = useState(initPrintingSuppliers);
+  /* ── Printing Suppliers state (loaded from API above) ── */
   const [printingSearch, setPrintingSearch] = useState('');
   const [printingTypeFilter, setPrintingTypeFilter] = useState('all');
   const [viewPrintingSupplier, setViewPrintingSupplier] = useState(null);
@@ -219,11 +236,6 @@ export default function VendorsSuppliers() {
     message.success('Printing supplier added successfully');
   };
 
-  /* ── Vendor history mock data ── */
-  const vendorHistoryRaw = [
-    { key: 1, date: '2024-05-02', bill_no: 'SAL-2001', inv_no: 'INV-X99', items: [{ name: 'Dental Kit Boxes', qty: '50 Pcs', price: '₹15/Pc', total: '₹750' }, { name: 'Soap Bars', qty: '20 Pcs', price: '₹10/Pc', total: '₹200' }], status: 'Dispatched' },
-    { key: 2, date: '2024-04-20', bill_no: 'SAL-1980', inv_no: 'INV-X85', items: [{ name: 'Custom Stickers', qty: '1000 Pcs', price: '₹2/Pc', total: '₹2,000' }], status: 'Delivered' },
-  ];
 
   const totalPaid = vendors.reduce((s, v) => s + (v.totalPaid || 0), 0);
   const totalPending = vendors.reduce((s, v) => s + (v.pending || 0), 0);
@@ -744,26 +756,13 @@ export default function VendorsSuppliers() {
               <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setVendorBillFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A' }}>Capture</Button>
               <Button
                 icon={<ThunderboltOutlined />}
-                loading={vendorBillScanLoading}
                 style={{ borderRadius: 8, background: vendorBillFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: vendorBillFile ? '#fff' : '#bbb', fontWeight: 700 }}
                 onClick={() => {
                   if (!vendorBillFile) { message.warning('Please upload or capture a bill first'); return; }
-                  setVendorBillScanLoading(true);
-                  setTimeout(() => {
-                    vendorBillForm.setFieldsValue({
-                      date: dayjs(),
-                      invoice_no: 'INV-' + Math.floor(Math.random() * 9000 + 1000),
-                      supplier: 'ChemCo India',
-                      qty: '100 Kg',
-                      total_amount: 8500,
-                      paid_status: 'Unpaid',
-                    });
-                    setVendorBillScanLoading(false);
-                    message.success('AI extracted bill details successfully!');
-                  }, 2000);
+                  message.info('AI bill scanning will be available once the backend endpoint is ready');
                 }}
               >
-                {vendorBillScanLoading ? 'Scanning...' : 'Scan with AI'}
+                Scan with AI
               </Button>
             </div>
             {vendorBillFile && (
@@ -821,25 +820,25 @@ export default function VendorsSuppliers() {
             <Button
               type="primary"
               style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
-              onClick={() => {
-                vendorBillForm.validateFields().then(values => {
-                  const newExp = {
-                    key: Date.now(),
+              onClick={async () => {
+                try {
+                  const values = await vendorBillForm.validateFields();
+                  await createExpense({
                     date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
-                    invoice_no: values.invoice_no,
-                    supplier: values.supplier,
-                    qty: values.qty || '—',
-                    paid_status: values.paid_status,
-                    paid_amount: values.paid_status === 'Paid' ? values.total_amount : 0,
-                    total_amount: values.total_amount,
-                    remaining: values.paid_status === 'Paid' ? 0 : values.total_amount,
-                  };
-                  setPurchaseExpenses(prev => [newExp, ...prev]);
+                    invoiceNo: values.invoice_no,
+                    vendorName: values.supplier,
+                    qty: values.qty || '',
+                    paidStatus: values.paid_status,
+                    totalAmount: values.total_amount,
+                    category: 'Purchase',
+                  }).unwrap();
                   message.success('Bill recorded as Purchase Expense');
                   setShowVendorBillScanModal(false);
                   vendorBillForm.resetFields();
                   setVendorBillFile(null);
-                });
+                } catch {
+                  message.error('Failed to record expense');
+                }
               }}
             >
               Create Purchase Expense

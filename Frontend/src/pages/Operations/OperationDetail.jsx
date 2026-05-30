@@ -39,6 +39,12 @@ import {
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import {
+  useGetOperationOrdersQuery,
+  useUpdateOperationOrderStatusMutation,
+  useAssignTaskMutation,
+} from '../../store/api/apiSlice';
+import {
+  buildProductionQueues,
   canAssignTaskFromChecks,
   DESIGN_FLOW,
   designColor,
@@ -46,10 +52,7 @@ import {
   getCheckStateMap,
   getFlowStep,
   getProgressFromChecks,
-  operationEmployees,
-  operationOrders,
   PAYMENT_LABELS,
-  productionQueues,
   statusPill,
 } from './data';
 
@@ -83,7 +86,31 @@ export default function OperationDetail() {
   const loggedInUser = useSelector((state) => state.auth.user);
   const [taskForm] = Form.useForm();
   const [assignModalForm] = Form.useForm();
-  const [checkStates, setCheckStates] = useState(getCheckStateMap());
+  const { data: ordersData } = useGetOperationOrdersQuery();
+  const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
+  const [assignTask] = useAssignTaskMutation();
+
+  const allOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
+    key: o._id, id: o.orderCode || o._id,
+    hotelLogo: o.clientName || '—', salesPerson: o.assignedTo?.fullName || '—',
+    createdAt: o.createdAt, orderType: o.orderType || 'Sticker',
+    clientApproval: o.clientApproval || 'Waiting',
+    designStatus: o.designStatus || 'Not Started',
+    printingStatus: o.printingStatus || 'Not Started',
+    stockStatus: o.stockStatus || 'Not Received',
+    operationStage: o.operationStage || '', taskStatus: o.taskStatus || 'Pending',
+    assignedEmployee: o.assignedTo?.fullName || '', printerSentTotal: o.printerSentTotal || 0,
+    printerVerified: o.printerVerified || false, inventoryStock: o.inventoryStock || 0,
+    orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
+    specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || '',
+    totalAmount: o.total || 0, advance: o.advancePaid || 0,
+    expectedDelivery: o.expectedDelivery, isUrgent: o.isUrgent || false,
+    items: o.items || [], readiness: o.readiness || {},
+    location: o.location || '', phone: o.clientPhone || '',
+    paymentProofs: o.paymentProofs || [],
+  })), [ordersData]);
+  const checkStates = useMemo(() => getCheckStateMap(allOrders), [allOrders]);
+  const productionQueues = useMemo(() => buildProductionQueues(allOrders), [allOrders]);
   const [taskOptions, setTaskOptions] = useState(['Packing', 'Labeling', 'Filling']);
   const [newTaskValue, setNewTaskValue] = useState('');
   const [printingValues, setPrintingValues] = useState({});
@@ -145,13 +172,13 @@ export default function OperationDetail() {
     };
     const items = (queueMap[printingModalType] || []).map((item) => ({
       ...item,
-      isUrgent: operationOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
+      isUrgent: allOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
     }));
     return items.sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
   }, [printingModalType]);
 
-  const order = operationOrders.find((item) => item.id === id);
-  const assignedEmployee = operationEmployees.find((employee) => employee.name === order?.assignedEmployee);
+  const order = allOrders.find((item) => item.id === id);
+  const assignedEmployee = order ? { key: order.key, name: order.assignedEmployee } : null;
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const mutedBg = isDark ? '#161622' : '#faf8fb';
@@ -692,7 +719,7 @@ export default function OperationDetail() {
             <Col xs={24} md={12}>
               <Form.Item label="Assign To" name="assignee">
                 <Select>
-                  {operationEmployees.map((emp) => (
+                  {[...new Map(allOrders.filter((o) => o.assignedEmployee).map((o) => [o.assignedEmployee, { key: o.key, name: o.assignedEmployee }])).values()].map((emp) => (
                     <Option key={emp.key} value={emp.name}>{emp.name}</Option>
                   ))}
                 </Select>
@@ -780,7 +807,7 @@ export default function OperationDetail() {
                     style={{ width: '100%' }}
                     size="middle"
                   >
-                    {operationEmployees.map((emp) => (
+                    {[...new Map(allOrders.filter((o) => o.assignedEmployee).map((o) => [o.assignedEmployee, { key: o.key, name: o.assignedEmployee }])).values()].map((emp) => (
                       <Option key={emp.key} value={emp.name}>{emp.name}</Option>
                     ))}
                   </Select>

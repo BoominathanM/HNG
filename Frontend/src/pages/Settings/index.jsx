@@ -1,16 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Row, Col, Card, Form, Input, Select, Switch, Button, Typography,
-  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber, Empty
+  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber, Empty, message, Spin
 } from 'antd';
 import {
   SaveOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   UserOutlined, UploadOutlined, CheckOutlined, CloseOutlined,
-  HistoryOutlined, FileTextOutlined, BgColorsOutlined, FontColorsOutlined,
+  FileTextOutlined, BgColorsOutlined, FontColorsOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import {
+  useGetUsersQuery,
+  useCreateUserMutation,
+  useUpdateUserMutation,
+  useDeleteUserMutation,
+  useUpdatePermissionsMutation,
+  useGetDeletedRecordsQuery,
+  useGetCompanySettingsQuery,
+  useUpdateCompanySettingsMutation,
+  useUploadLogoMutation,
+  useRestoreRecordMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -94,13 +106,6 @@ const initRoles = [
     perms: buildPerms(['Dashboard','Task Management']) },
 ];
 
-const initUsers = [
-  { key: 1, name: 'Arjun Sharma',  email: 'arjun@healngl.com',  role: 'Super Admin',      department: 'Management', status: 'Active',   avatar: 'A', color: '#B11E6A' },
-  { key: 2, name: 'Priya Nair',    email: 'priya@healngl.com',  role: 'Sales Manager',    department: 'Sales',      status: 'Active',   avatar: 'P', color: '#8a1652' },
-  { key: 3, name: 'Ramesh Kumar',  email: 'ramesh@healngl.com', role: 'Operations Head',  department: 'Operations', status: 'Active',   avatar: 'R', color: '#C94F8A' },
-  { key: 4, name: 'Sunita Mehta',  email: 'sunita@healngl.com', role: 'Dispatch Manager', department: 'Dispatch',   status: 'Inactive', avatar: 'S', color: '#D85C9E' },
-  { key: 5, name: 'Kavitha S',     email: 'kavitha@healngl.com',role: 'Finance Manager',  department: 'Finance',    status: 'Active',   avatar: 'K', color: '#6b1240' },
-];
 
 export default function Settings() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -117,9 +122,67 @@ export default function Settings() {
   const [departments, setDepartments] = useState(['Sales', 'Marketing', 'Operations', 'Dispatch', 'Finance', 'Vendors']);
   const [newDept, setNewDept]         = useState('');
 
-  // Users
-  const [users, setUsers]       = useState(initUsers);
+  // Users — RTK Query
+  const { data: usersData, isLoading: usersLoading } = useGetUsersQuery();
+  const [createUserMutation] = useCreateUserMutation();
+  const [updateUserMutation] = useUpdateUserMutation();
+  const [deleteUserMutation] = useDeleteUserMutation();
+  const [updatePermissionsMutation] = useUpdatePermissionsMutation();
+
+  const users = (usersData?.data || []).map((u) => ({
+    key: u._id,
+    name: u.fullName,
+    email: u.email,
+    role: u.role,
+    department: u.department,
+    status: u.status,
+    avatar: u.fullName?.[0]?.toUpperCase() || 'U',
+    color: '#B11E6A',
+    perms: u.permissions
+      ? (u.permissions instanceof Map || Array.isArray(u.permissions)
+          ? Object.fromEntries(u.permissions)
+          : u.permissions)
+      : {},
+    targets: {
+      oldHotel: u.targetOldHotel,
+      newHotel: u.targetNewHotel,
+      payment: u.targetPayment,
+      software: u.targetSoftware,
+      people: u.targetPeople,
+      rewards: { q1: u.rewardQuarter, q2: u.rewardHalf, q3: u.rewardThreeQtr, full: u.rewardFull },
+    },
+  }));
+
   const [addUserOpen, setAddUserOpen] = useState(false);
+
+  // Deleted records — RTK Query
+  const { data: deletedData } = useGetDeletedRecordsQuery();
+  const [restoreRecordMutation] = useRestoreRecordMutation();
+  const deletedRecordsFromApi = (deletedData?.data?.parties || []).map((p) => ({
+    key: p._id,
+    module: 'Parties & Ledger',
+    name: p.name,
+    type: p.type,
+    deletedBy: 'Admin',
+    deletedAt: p.deletedAt,
+  }));
+
+  // Company settings — RTK Query
+  const { data: companyData } = useGetCompanySettingsQuery();
+  const [updateCompanyMutation] = useUpdateCompanySettingsMutation();
+  const [uploadLogoMutation] = useUploadLogoMutation();
+
+  useEffect(() => {
+    const s = companyData?.data;
+    if (s) {
+      if (s.logoUrl) setLogoUrl(s.logoUrl);
+      if (s.invoiceTheme) setInvoiceTheme(s.invoiceTheme);
+      if (s.invoiceTerms) setInvoiceTerms(s.invoiceTerms);
+      if (s.invoiceFooter) setInvoiceFooter(s.invoiceFooter);
+      if (s.gstComponent) setInvoiceGstConfig(s.gstComponent);
+    }
+  }, [companyData]);
+
   const [editingUser, setEditingUser] = useState(null);
   const [userForm] = Form.useForm();
   const watchedDept = Form.useWatch('department', userForm);
@@ -148,13 +211,7 @@ export default function Settings() {
     '1. Goods once sold will not be taken back or exchanged.\n2. All disputes are subject to local jurisdiction only.\n3. Payment should be made within the due date mentioned on the invoice.\n4. Interest @ 18% p.a. will be charged on overdue payments.\n5. E. & O.E.'
   );
 
-  // Deleted Records
-  const [deletedRecords, setDeletedRecords] = useState([
-    { key: 1, module: 'Parties & Ledger', name: 'Old Vendor XYZ', type: 'Supplier', deletedBy: 'Super Admin', deletedAt: '2026-05-10T10:30:00Z' },
-    { key: 2, module: 'Parties & Ledger', name: 'Hotel Sunshine', type: 'Customer', deletedBy: 'Super Admin', deletedAt: '2026-05-12T14:15:00Z' },
-    { key: 3, module: 'Sales', name: 'LEAD-1090', type: 'Lead', deletedBy: 'Super Admin', deletedAt: '2026-05-14T09:00:00Z' },
-    { key: 4, module: 'Inventory', name: 'Soap 30ml (Expired Batch)', type: 'Product', deletedBy: 'Super Admin', deletedAt: '2026-05-16T16:45:00Z' },
-  ]);
+  const deletedRecords = deletedRecordsFromApi;
   const [deletedSearch, setDeletedSearch] = useState('');
   const [deletedModuleFilter, setDeletedModuleFilter] = useState('all');
 
@@ -200,44 +257,53 @@ export default function Settings() {
   };
 
   const addUser = () => {
-    userForm.validateFields().then(vals => {
-      const role = roles.find(r => r.role === vals.role);
-      const userData = {
-        name: vals.name, email: vals.email,
-        role: vals.role, status: vals.status || 'Active',
+    userForm.validateFields().then(async (vals) => {
+      const payload = {
+        fullName: vals.name,
+        email: vals.email,
+        mobile: vals.mobile,
+        role: vals.role,
+        status: vals.status || 'Active',
         department: vals.department,
-        targets: {
-          oldHotel: vals.targetOldHotel,
-          newHotel: vals.targetNewHotel,
-          payment: vals.targetPayment,
-          software: vals.targetSoftware,
-          overall: (vals.targetOldHotel || 0) + (vals.targetNewHotel || 0) + (vals.targetPayment || 0) + (vals.targetSoftware || 0),
-          people: vals.targetPeople,
-          rewards: {
-            q1: vals.reward14,
-            q2: vals.reward12,
-            q3: vals.reward34,
-            full: vals.rewardFull,
-          }
-        },
-        perms: vals.perms,
-        avatar: (vals.name?.[0] || 'U').toUpperCase(), 
-        color: role?.color || '#B11E6A',
+        password: vals.password,
+        targetOldHotel: vals.targetOldHotel,
+        targetNewHotel: vals.targetNewHotel,
+        targetPayment: vals.targetPayment,
+        targetSoftware: vals.targetSoftware,
+        targetPeople: vals.targetPeople,
+        rewardQuarter: vals.reward14,
+        rewardHalf: vals.reward12,
+        rewardThreeQtr: vals.reward34,
+        rewardFull: vals.rewardFull,
+        permissions: vals.perms,
       };
-
-      if (editingUser) {
-        setUsers(prev => prev.map(u => u.key === editingUser.key ? { ...u, ...userData, key: u.key } : u));
-      } else {
-        setUsers(prev => [...prev, { ...userData, key: Date.now() }]);
+      try {
+        if (editingUser) {
+          await updateUserMutation({ id: editingUser.key, ...payload }).unwrap();
+          message.success('User updated');
+        } else {
+          await createUserMutation(payload).unwrap();
+          message.success('User created');
+        }
+        // RTK Query invalidates the Users tag and refetches automatically.
+      } catch (e) {
+        message.error(e?.data || 'Failed to save user');
+        return;
       }
-
       userForm.resetFields();
       setEditingUser(null);
       setAddUserOpen(false);
     });
   };
 
-  const removeUser = (key) => setUsers(prev => prev.filter(u => u.key !== key));
+  const removeUser = async (key) => {
+    try {
+      await deleteUserMutation(key).unwrap();
+      message.success('User deleted');
+    } catch {
+      message.error('Failed to delete user');
+    }
+  };
 
   const saveFooter = (onCancel) => (
     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}`, marginTop: 8 }}>
@@ -1032,8 +1098,11 @@ export default function Settings() {
                               size="small"
                               type="link"
                               style={{ color: '#52c41a', padding: '0 4px', fontSize: 13 }}
-                              onClick={() => {
-                                setDeletedRecords(prev => prev.filter(rec => rec.key !== r.key));
+                              onClick={async () => {
+                                try {
+                                  await restoreRecordMutation({ type: 'parties', id: r.key }).unwrap();
+                                  message.success(`${r.name} restored`);
+                                } catch { message.error('Restore failed'); }
                               }}
                             >
                               Restore

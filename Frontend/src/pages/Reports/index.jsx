@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs, Divider, DatePicker, Tag } from 'antd';
+import React, { useState, useMemo } from 'react';
+import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs, Divider, DatePicker, Tag, Empty } from 'antd';
 import { DownloadOutlined, FileExcelOutlined, FilePdfOutlined, SearchOutlined, FilterOutlined } from '@ant-design/icons';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -8,84 +8,18 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import {
+  useGetSalesReportQuery,
+  useGetPurchaseReportQuery,
+  useGetProfitLossQuery,
+  useGetBillPLQuery,
+  useGetMonthlyGstQuery,
+  useGetAuditorTaxQuery,
+  useGetPerformanceQuery,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
-
-const salesMonthData = {
-  all: [
-    { month: 'Sep', amount: 62000 }, { month: 'Oct', amount: 78000 },
-    { month: 'Nov', amount: 71000 }, { month: 'Dec', amount: 95000 },
-    { month: 'Jan', amount: 89000 }, { month: 'Feb', amount: 112000 },
-  ],
-  'Soap 50g': [
-    { month: 'Sep', amount: 18000 }, { month: 'Oct', amount: 22000 },
-    { month: 'Nov', amount: 19500 }, { month: 'Dec', amount: 28000 },
-    { month: 'Jan', amount: 25000 }, { month: 'Feb', amount: 32000 },
-  ],
-  'Shampoo 30ml': [
-    { month: 'Sep', amount: 14000 }, { month: 'Oct', amount: 18000 },
-    { month: 'Nov', amount: 16000 }, { month: 'Dec', amount: 21000 },
-    { month: 'Jan', amount: 19500 }, { month: 'Feb', amount: 26000 },
-  ],
-  'Dental Kit': [
-    { month: 'Sep', amount: 19000 }, { month: 'Oct', amount: 24000 },
-    { month: 'Nov', amount: 22000 }, { month: 'Dec', amount: 31000 },
-    { month: 'Jan', amount: 28500 }, { month: 'Feb', amount: 36000 },
-  ],
-  'Conditioner': [
-    { month: 'Sep', amount: 11000 }, { month: 'Oct', amount: 14000 },
-    { month: 'Nov', amount: 13500 }, { month: 'Dec', amount: 15000 },
-    { month: 'Jan', amount: 16000 }, { month: 'Feb', amount: 18000 },
-  ],
-};
-
-const purchaseMonthData = {
-  all: [
-    { month: 'Sep', amount: 38000 }, { month: 'Oct', amount: 47000 },
-    { month: 'Nov', amount: 42000 }, { month: 'Dec', amount: 58000 },
-    { month: 'Jan', amount: 53000 }, { month: 'Feb', amount: 68000 },
-  ],
-  'Soap Base (White)': [
-    { month: 'Sep', amount: 12000 }, { month: 'Oct', amount: 15000 },
-    { month: 'Nov', amount: 13500 }, { month: 'Dec', amount: 18500 },
-    { month: 'Jan', amount: 17000 }, { month: 'Feb', amount: 22000 },
-  ],
-  'Soap Base (Transparent)': [
-    { month: 'Sep', amount: 9500 }, { month: 'Oct', amount: 11000 },
-    { month: 'Nov', amount: 10000 }, { month: 'Dec', amount: 14000 },
-    { month: 'Jan', amount: 12500 }, { month: 'Feb', amount: 16000 },
-  ],
-  'Shampoo Concentrate': [
-    { month: 'Sep', amount: 16500 }, { month: 'Oct', amount: 21000 },
-    { month: 'Nov', amount: 18500 }, { month: 'Dec', amount: 25500 },
-    { month: 'Jan', amount: 23500 }, { month: 'Feb', amount: 30000 },
-  ],
-};
-
-const salesRawData = [
-  { key: 1, gst_no: '27AAACM9876H1Z4', customer: 'Marriott Mumbai', product: 'Soap 50g', state_code: '27', state_name: 'Maharashtra', inv_no: 'INV-2401', orig_inv_no: 'QT-2401', inv_date: '2024-01-18', inv_value: 45430, total_tax: 6930, taxable: 38500, cgst: 3465, sgst: 3465, igst: 0 },
-  { key: 2, gst_no: '07AAACT7654D1Z6', customer: 'Taj Hotels Delhi', product: 'Dental Kit', state_code: '07', state_name: 'Delhi', inv_no: 'INV-2402', orig_inv_no: 'QT-2402', inv_date: '2024-01-17', inv_value: 141600, total_tax: 21600, taxable: 120000, cgst: 0, sgst: 0, igst: 21600 },
-  { key: 3, gst_no: '19AAACI5432G1Z1', customer: 'ITC Grand Kolkata', product: 'Shampoo 30ml', state_code: '19', state_name: 'West Bengal', inv_no: 'INV-2403', orig_inv_no: 'QT-2403', inv_date: '2024-01-16', inv_value: 250000, total_tax: 0, taxable: 250000, cgst: 0, sgst: 0, igst: 0 },
-  { key: 4, gst_no: '29AAACH3456M1Z7', customer: 'Hyatt Chennai', product: 'Conditioner', state_code: '29', state_name: 'Karnataka', inv_no: 'INV-2404', orig_inv_no: 'QT-2404', inv_date: '2024-02-01', inv_value: 58000, total_tax: 8000, taxable: 50000, cgst: 4000, sgst: 4000, igst: 0 },
-];
-
-const purchaseRawData = [
-  { key: 1, vendor_gst: '27AABCG1234F1Z5', supplier: 'ChemCo India', product: 'Soap Base (White)', hsn: '34011190', gst_rate: 18, qty: 100, unit_price: 85, state_code: '27', state_name: 'Maharashtra', inv_no: 'PUR-8821', orig_inv_no: 'INV-CHEM-101', inv_date: '2024-05-01', inv_value: 10030, total_tax: 1530, taxable: 8500, cgst: 765, sgst: 765, igst: 0 },
-  { key: 2, vendor_gst: '33AABHB5678K1Z2', supplier: 'BioLife Ltd', product: 'Shampoo Concentrate', hsn: '33051010', gst_rate: 18, qty: 200, unit_price: 220, state_code: '33', state_name: 'Tamil Nadu', inv_no: 'PUR-8825', orig_inv_no: 'INV-BIO-452', inv_date: '2024-05-04', inv_value: 51920, total_tax: 7920, taxable: 44000, cgst: 3960, sgst: 3960, igst: 0 },
-  { key: 3, vendor_gst: '07AABCP9012E1Z8', supplier: 'PlastiPack', product: 'Soap Base (Transparent)', hsn: '34011920', gst_rate: 18, qty: 150, unit_price: 15, state_code: '07', state_name: 'Delhi', inv_no: 'PUR-8831', orig_inv_no: 'INV-PP-203', inv_date: '2024-05-06', inv_value: 2655, total_tax: 405, taxable: 2250, cgst: 202.5, sgst: 0, igst: 202.5 },
-  { key: 4, vendor_gst: '29AABCB1122A1Z3', supplier: 'BoxWorld', product: 'Soap Base (White)', hsn: '34011190', gst_rate: 18, qty: 120, unit_price: 100, state_code: '29', state_name: 'Karnataka', inv_no: 'PUR-8839', orig_inv_no: 'INV-BW-77', inv_date: '2024-05-10', inv_value: 14400, total_tax: 2400, taxable: 12000, cgst: 1200, sgst: 1200, igst: 0 },
-];
-
-// P&L monthly data — sales from products, cogs = purchase cost; salesGst/cogsGst for with-GST mode
-const plMonthlyData = [
-  { month: 'Sep', sales: 62000, salesGst: 11160, cogs: 38000, cogsGst: 6840, grossProfit: 24000, expenses: { rent: 3000, salary: 2500, utilities: 800, transport: 700, marketing: 500, other: 0 } },
-  { month: 'Oct', sales: 78000, salesGst: 14040, cogs: 47000, cogsGst: 8460, grossProfit: 31000, expenses: { rent: 3000, salary: 3000, utilities: 900, transport: 600, marketing: 500, other: 500 } },
-  { month: 'Nov', sales: 71000, salesGst: 12780, cogs: 42000, cogsGst: 7560, grossProfit: 29000, expenses: { rent: 3000, salary: 2800, utilities: 750, transport: 650, marketing: 500, other: 500 } },
-  { month: 'Dec', sales: 95000, salesGst: 17100, cogs: 58000, cogsGst: 10440, grossProfit: 37000, expenses: { rent: 3000, salary: 3200, utilities: 1000, transport: 800, marketing: 500, other: 500 } },
-  { month: 'Jan', sales: 89000, salesGst: 16020, cogs: 53000, cogsGst: 9540, grossProfit: 36000, expenses: { rent: 3000, salary: 3000, utilities: 950, transport: 550, marketing: 500, other: 500 } },
-  { month: 'Feb', sales: 112000, salesGst: 20160, cogs: 68000, cogsGst: 12240, grossProfit: 44000, expenses: { rent: 3000, salary: 3500, utilities: 1100, transport: 900, marketing: 500, other: 1000 } },
-];
 
 const expenseCategoryConfig = [
   { key: 'rent',      label: 'Rent',           color: '#B11E6A' },
@@ -96,90 +30,9 @@ const expenseCategoryConfig = [
   { key: 'other',     label: 'Other',          color: '#6b1240' },
 ];
 
-const productPLData = [
-  { key: 1, product: 'Soap 50g',    sales: 144500, cogs: 89000, grossProfit: 55500, soldQty: 2890, stockQty: 450 },
-  { key: 2, product: 'Shampoo 30ml', sales: 107500, cogs: 68000, grossProfit: 39500, soldQty: 3583, stockQty: 280 },
-  { key: 3, product: 'Dental Kit',  sales: 161000, cogs: 95000, grossProfit: 66000, soldQty: 2300, stockQty: 120 },
-  { key: 4, product: 'Conditioner', sales: 94000,  cogs: 56000, grossProfit: 38000, soldQty: 1880, stockQty: 340 },
-];
-
-// Per-product monthly P&L — expenses are proportional to product share of total sales
-const plProductMonthlyData = {
-  'Soap 50g': [
-    { month: 'Sep', sales: 18000, cogs: 11100, grossProfit: 6900 },
-    { month: 'Oct', sales: 22000, cogs: 13600, grossProfit: 8400 },
-    { month: 'Nov', sales: 19500, cogs: 12000, grossProfit: 7500 },
-    { month: 'Dec', sales: 28000, cogs: 17400, grossProfit: 10600 },
-    { month: 'Jan', sales: 25000, cogs: 15200, grossProfit: 9800 },
-    { month: 'Feb', sales: 32000, cogs: 19500, grossProfit: 12500 },
-  ],
-  'Shampoo 30ml': [
-    { month: 'Sep', sales: 14000, cogs: 8600, grossProfit: 5400 },
-    { month: 'Oct', sales: 18000, cogs: 11100, grossProfit: 6900 },
-    { month: 'Nov', sales: 16000, cogs: 9800, grossProfit: 6200 },
-    { month: 'Dec', sales: 21000, cogs: 13000, grossProfit: 8000 },
-    { month: 'Jan', sales: 19500, cogs: 11900, grossProfit: 7600 },
-    { month: 'Feb', sales: 26000, cogs: 15900, grossProfit: 10100 },
-  ],
-  'Dental Kit': [
-    { month: 'Sep', sales: 19000, cogs: 11700, grossProfit: 7300 },
-    { month: 'Oct', sales: 24000, cogs: 14800, grossProfit: 9200 },
-    { month: 'Nov', sales: 22000, cogs: 13500, grossProfit: 8500 },
-    { month: 'Dec', sales: 31000, cogs: 19200, grossProfit: 11800 },
-    { month: 'Jan', sales: 28500, cogs: 17400, grossProfit: 11100 },
-    { month: 'Feb', sales: 36000, cogs: 22000, grossProfit: 14000 },
-  ],
-  'Conditioner': [
-    { month: 'Sep', sales: 11000, cogs: 6800, grossProfit: 4200 },
-    { month: 'Oct', sales: 14000, cogs: 8600, grossProfit: 5400 },
-    { month: 'Nov', sales: 13500, cogs: 8300, grossProfit: 5200 },
-    { month: 'Dec', sales: 15000, cogs: 9300, grossProfit: 5700 },
-    { month: 'Jan', sales: 16000, cogs: 9900, grossProfit: 6100 },
-    { month: 'Feb', sales: 18000, cogs: 11100, grossProfit: 6900 },
-  ],
-};
-
-// Month-wise GST ledger — output (sales) and input (purchase) with CGST/SGST/IGST breakdown
-const monthlyGstData = [
-  { key: 1, month: 'Sep', year: '2024', sales_taxable: 54000, sales_cgst: 3780, sales_sgst: 3780, sales_igst: 3600, sales_total_gst: 11160, pur_taxable: 33000, pur_cgst: 2340, pur_sgst: 2340, pur_igst: 2160, pur_total_gst: 6840 },
-  { key: 2, month: 'Oct', year: '2024', sales_taxable: 68000, sales_cgst: 4680, sales_sgst: 4680, sales_igst: 4680, sales_total_gst: 14040, pur_taxable: 42000, pur_cgst: 2880, pur_sgst: 2880, pur_igst: 2700, pur_total_gst: 8460 },
-  { key: 3, month: 'Nov', year: '2024', sales_taxable: 61500, sales_cgst: 4230, sales_sgst: 4230, sales_igst: 4320, sales_total_gst: 12780, pur_taxable: 38000, pur_cgst: 2520, pur_sgst: 2520, pur_igst: 2520, pur_total_gst: 7560 },
-  { key: 4, month: 'Dec', year: '2024', sales_taxable: 83000, sales_cgst: 5700, sales_sgst: 5700, sales_igst: 5700, sales_total_gst: 17100, pur_taxable: 52000, pur_cgst: 3600, pur_sgst: 3600, pur_igst: 3240, pur_total_gst: 10440 },
-  { key: 5, month: 'Jan', year: '2025', sales_taxable: 77000, sales_cgst: 5400, sales_sgst: 5400, sales_igst: 5220, sales_total_gst: 16020, pur_taxable: 47500, pur_cgst: 3240, pur_sgst: 3240, pur_igst: 3060, pur_total_gst: 9540 },
-  { key: 6, month: 'Feb', year: '2025', sales_taxable: 98000, sales_cgst: 6840, sales_sgst: 6840, sales_igst: 6480, sales_total_gst: 20160, pur_taxable: 60500, pur_cgst: 4140, pur_sgst: 4140, pur_igst: 3960, pur_total_gst: 12240 },
-];
-
 const CHART_COLORS = ['#B11E6A', '#D85C9E', '#8a1652', '#C94F8A', '#e91e8c', '#f06292'];
 const statusColor = { Paid: '#52c41a', Pending: '#fa8c16', 'Partially Paid': '#B11E6A', Overdue: '#ff4d4f' };
 
-// Bill-wise P&L — per invoice gross profit calculation
-const billPLData = [
-  { key: 1, inv_no: 'INV-2401', date: '2024-01-18', client: 'Marriott Mumbai',   product: 'Soap 50g',    sell_taxable: 38500,  gst_collected: 6930,  sell_total: 45430,  cogs: 23700,  input_gst: 4266,  gross_profit: 14800, status: 'Partially Paid' },
-  { key: 2, inv_no: 'INV-2402', date: '2024-01-17', client: 'Taj Hotels Delhi',  product: 'Dental Kit',  sell_taxable: 120000, gst_collected: 21600, sell_total: 141600, cogs: 74000,  input_gst: 13320, gross_profit: 46000, status: 'Pending' },
-  { key: 3, inv_no: 'INV-2403', date: '2024-01-16', client: 'ITC Grand Kolkata', product: 'Shampoo 30ml', sell_taxable: 250000, gst_collected: 0,     sell_total: 250000, cogs: 155000, input_gst: 0,     gross_profit: 95000, status: 'Paid' },
-  { key: 4, inv_no: 'INV-2404', date: '2024-02-01', client: 'Hyatt Chennai',     product: 'Conditioner', sell_taxable: 50000,  gst_collected: 8000,  sell_total: 58000,  cogs: 30900,  input_gst: 5562,  gross_profit: 19100, status: 'Partially Paid' },
-  { key: 5, inv_no: 'INV-2405', date: '2024-01-15', client: 'Client Demo',       product: 'Soap 50g',    sell_taxable: 25000,  gst_collected: 4500,  sell_total: 29500,  cogs: 15400,  input_gst: 2772,  gross_profit: 9600,  status: 'Pending' },
-];
-
-// Performance data
-// Sales Person performance data
-const salesPersonData = [
-  { key: 1, name: 'Rajan Kumar',   role: 'Senior Sales', orders: 15, revenue: 250000, target: 200000, conversion: 78, complaints: 1, avgDeal: 16667, color: '#B11E6A' },
-  { key: 2, name: 'Priya Nair',    role: 'Senior Sales', orders: 12, revenue: 180000, target: 200000, conversion: 72, complaints: 2, avgDeal: 15000, color: '#C94F8A' },
-  { key: 3, name: 'Vikram Singh',  role: 'Field Sales',  orders: 11, revenue: 143000, target: 150000, conversion: 70, complaints: 3, avgDeal: 13000, color: '#8a1652' },
-  { key: 4, name: 'Arjun Sharma',  role: 'Junior Sales', orders: 9,  revenue: 95000,  target: 120000, conversion: 65, complaints: 0, avgDeal: 10556, color: '#D85C9E' },
-  { key: 5, name: 'Sunita Patel',  role: 'Junior Sales', orders: 8,  revenue: 89500,  target: 100000, conversion: 60, complaints: 1, avgDeal: 11188, color: '#e8739e' },
-];
-
-// Month-wise revenue per salesperson
-const salesPersonMonthlyData = [
-  { month: 'Sep', 'Rajan Kumar': 32000, 'Priya Nair': 28000, 'Vikram Singh': 18000, 'Arjun Sharma': 10000, 'Sunita Patel': 9500 },
-  { month: 'Oct', 'Rajan Kumar': 41000, 'Priya Nair': 31000, 'Vikram Singh': 22000, 'Arjun Sharma': 13000, 'Sunita Patel': 12000 },
-  { month: 'Nov', 'Rajan Kumar': 37000, 'Priya Nair': 27000, 'Vikram Singh': 20000, 'Arjun Sharma': 11500, 'Sunita Patel': 10500 },
-  { month: 'Dec', 'Rajan Kumar': 52000, 'Priya Nair': 38000, 'Vikram Singh': 29000, 'Arjun Sharma': 17000, 'Sunita Patel': 15000 },
-  { month: 'Jan', 'Rajan Kumar': 46000, 'Priya Nair': 33000, 'Vikram Singh': 26000, 'Arjun Sharma': 15000, 'Sunita Patel': 14000 },
-  { month: 'Feb', 'Rajan Kumar': 58000, 'Priya Nair': 42000, 'Vikram Singh': 35000, 'Arjun Sharma': 19500, 'Sunita Patel': 18000 },
-];
 
 const exportToExcel = (headers, rows, filename) => {
   const bom = '﻿';
@@ -234,8 +87,44 @@ export default function Reports() {
   // Performance state
   const [perfTab, setPerfTab] = useState('leaderboard');
 
-  const salesChartData = salesProductFilter ? (salesMonthData[salesProductFilter] || salesMonthData.all) : salesMonthData.all;
-  const purchaseChartData = purchaseProductFilter ? (purchaseMonthData[purchaseProductFilter] || purchaseMonthData.all) : purchaseMonthData.all;
+  // ── API-backed report data — RTK Query ──
+  const { data: salesReportRaw } = useGetSalesReportQuery();
+  const { data: purchaseReportRaw } = useGetPurchaseReportQuery();
+  const { data: profitLossRaw } = useGetProfitLossQuery();
+  const { data: billPLRaw } = useGetBillPLQuery();
+  const { data: monthlyGstRaw } = useGetMonthlyGstQuery();
+  const { data: performanceRaw } = useGetPerformanceQuery();
+  const { data: auditorTaxRaw } = useGetAuditorTaxQuery({ type: 'sales' });
+
+  const apiSalesData = useMemo(() => salesReportRaw || { data: [], summary: {}, chartData: [] }, [salesReportRaw]);
+  const apiPurchaseData = useMemo(() => purchaseReportRaw || { data: [], summary: {}, chartData: [] }, [purchaseReportRaw]);
+  const apiPLData = useMemo(() => profitLossRaw?.data || { summary: {}, monthlyData: [], expenseBreakdown: {} }, [profitLossRaw]);
+  const apiBillPL = useMemo(() => billPLRaw?.data || [], [billPLRaw]);
+  const apiGstData = useMemo(() => monthlyGstRaw?.data || [], [monthlyGstRaw]);
+  const apiPerformance = useMemo(() => performanceRaw?.data || { leaderboard: [] }, [performanceRaw]);
+  const apiAuditorTax = useMemo(() => auditorTaxRaw?.data || [], [auditorTaxRaw]);
+
+  const handleExport = async (type) => {
+    try {
+      const endpointMap = { sales: '/reports/sales/export', purchase: '/reports/purchase/export', gst: '/reports/monthly-gst/export' };
+      const url = endpointMap[type];
+      if (!url) return;
+      const { default: api } = await import('../../api/axios');
+      const { data } = await api.get(url, { responseType: 'blob' });
+      const blobUrl = URL.createObjectURL(new Blob([data]));
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${type}-report.csv`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch { /* silent */ }
+  };
+
+  const salesRawData = apiSalesData.data || [];
+  const purchaseRawData = apiPurchaseData.data || [];
+
+  const salesChartData = apiSalesData.chartData?.length ? apiSalesData.chartData : [];
+  const purchaseChartData = apiPurchaseData.chartData?.length ? apiPurchaseData.chartData : [];
 
   const filteredSalesData = salesRawData.filter(r => {
     const q = salesReportSearch.toLowerCase();
@@ -254,12 +143,19 @@ export default function Reports() {
   const salesTotal = filteredSalesData.reduce((s, r) => s + r.inv_value, 0);
   const purchaseTotal = filteredPurchaseData.reduce((s, r) => s + r.inv_value, 0);
 
+  const plMonthlyDataActive = apiPLData.monthlyData?.length ? apiPLData.monthlyData : [];
+  const plProductMonthlyDataActive = apiPLData.productMonthlyData || {};
+  const activeBillPLData = apiBillPL.length ? apiBillPL : [];
+  const activeGstData = apiGstData.length ? apiGstData : [];
+  const activeSalesPersonData = apiPerformance.leaderboard?.length ? apiPerformance.leaderboard : [];
+  const activeSalesPersonMonthly = apiPerformance.monthlyData || [];
+  const activeProductPLData = apiPLData.productData?.length ? apiPLData.productData : [];
+
   // P&L computed values — product-aware
   const plBaseData = (() => {
-    if (plProductFilter && plProductMonthlyData[plProductFilter]) {
-      // Attach proportional expenses from the all-products monthly row
-      return plProductMonthlyData[plProductFilter].map(pd => {
-        const allRow = plMonthlyData.find(d => d.month === pd.month);
+    if (plProductFilter && plProductMonthlyDataActive[plProductFilter]) {
+      return plProductMonthlyDataActive[plProductFilter].map(pd => {
+        const allRow = plMonthlyDataActive.find(d => d.month === pd.month);
         if (!allRow) return { ...pd, expenses: { rent: 0, salary: 0, utilities: 0, transport: 0, marketing: 0, other: 0 } };
         const ratio = allRow.sales > 0 ? pd.sales / allRow.sales : 0;
         const expenses = Object.fromEntries(
@@ -268,7 +164,7 @@ export default function Reports() {
         return { ...pd, expenses };
       });
     }
-    return plMonthlyData;
+    return plMonthlyDataActive;
   })();
 
   const plFilteredData = plSelectedMonth === 'all' ? plBaseData : plBaseData.filter(d => d.month === plSelectedMonth);
@@ -1094,7 +990,7 @@ export default function Reports() {
                     <Row gutter={[14, 14]} style={{ paddingTop: 4 }}>
                       <Col xs={24} lg={14}>
                         <ResponsiveContainer width="100%" height={200}>
-                          <BarChart data={productPLData} layout="vertical" barGap={4}>
+                          <BarChart data={activeProductPLData} layout="vertical" barGap={4}>
                             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} horizontal={false} />
                             <XAxis type="number" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
                             <YAxis type="category" dataKey="product" tick={{ fill: tickColor, fontSize: 11 }} width={90} />
@@ -1109,7 +1005,7 @@ export default function Reports() {
                       <Col xs={24} lg={10}>
                         <Table
                           size="small"
-                          dataSource={productPLData}
+                          dataSource={activeProductPLData}
                           pagination={false}
                           rowClassName={(r) => r.product === plProductFilter ? 'ant-table-row-selected' : ''}
                           onRow={(r) => ({
@@ -1171,7 +1067,7 @@ export default function Reports() {
             key: 'bill_pl',
             label: 'Bill-wise P&L',
             children: (() => {
-              const filtered = billPLData.filter(r => {
+              const filtered = activeBillPLData.filter(r => {
                 const q = billPlSearch.toLowerCase();
                 const matchSearch = !q || r.inv_no.toLowerCase().includes(q) || r.client.toLowerCase().includes(q) || r.product.toLowerCase().includes(q);
                 const matchProd = !billPlProductFilter || r.product === billPlProductFilter;
@@ -1329,17 +1225,20 @@ export default function Reports() {
             key: 'performance',
             label: 'Performance',
             children: (() => {
-              const topPerformer = [...salesPersonData].sort((a, b) => b.revenue - a.revenue)[0];
-              const teamRevenue  = salesPersonData.reduce((s, p) => s + p.revenue, 0);
-              const teamOrders   = salesPersonData.reduce((s, p) => s + p.orders, 0);
-              const avgTarget    = salesPersonData.reduce((s, p) => s + Math.round((p.revenue / p.target) * 100), 0) / salesPersonData.length;
-              const totalComplaints = salesPersonData.reduce((s, p) => s + p.complaints, 0);
+              const topPerformer = [...activeSalesPersonData].sort((a, b) => b.revenue - a.revenue)[0];
+              const teamRevenue  = activeSalesPersonData.reduce((s, p) => s + (p.revenue || 0), 0);
+              const teamOrders   = activeSalesPersonData.reduce((s, p) => s + (p.orders || 0), 0);
+              const avgTarget    = activeSalesPersonData.length > 0
+                ? activeSalesPersonData.reduce((s, p) => s + Math.round(((p.revenue || 0) / (p.target || 1)) * 100), 0) / activeSalesPersonData.length
+                : 0;
+              const totalComplaints = activeSalesPersonData.reduce((s, p) => s + (p.complaints || 0), 0);
+              if (!topPerformer) return <Empty description="No performance data available" style={{ padding: 40 }} />;
               return (
                 <div>
                   {/* KPI summary row */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                     {[
-                      { label: 'Top Performer',      value: topPerformer.name.split(' ')[0], color: '#B11E6A', sub: `₹${(topPerformer.revenue/1000).toFixed(0)}K revenue` },
+                      { label: 'Top Performer',      value: (topPerformer.name || '—').split(' ')[0], color: '#B11E6A', sub: `₹${((topPerformer.revenue || 0)/1000).toFixed(0)}K revenue` },
                       { label: 'Team Revenue',        value: `₹${(teamRevenue/100000).toFixed(2)}L`, color: '#C94F8A', sub: `${teamOrders} total orders` },
                       { label: 'Avg Target Achieved', value: `${avgTarget.toFixed(0)}%`,      color: avgTarget >= 100 ? '#52c41a' : '#fa8c16', sub: 'Across all sales persons' },
                       { label: 'Total Complaints',    value: totalComplaints,                  color: totalComplaints > 5 ? '#ff4d4f' : '#52c41a', sub: 'Assigned to team' },
@@ -1374,13 +1273,13 @@ export default function Reports() {
                       <Col xs={24} lg={14}>
                         <Card title={<Text strong style={{ color: textColor }}>Revenue Leaderboard</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
                           <ResponsiveContainer width="100%" height={270}>
-                            <BarChart data={[...salesPersonData].sort((a, b) => b.revenue - a.revenue)} layout="vertical" barGap={4}>
+                            <BarChart data={[...activeSalesPersonData].sort((a, b) => b.revenue - a.revenue)} layout="vertical" barGap={4}>
                               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} horizontal={false} />
                               <XAxis type="number" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
                               <YAxis type="category" dataKey="name" tick={{ fill: tickColor, fontSize: 11 }} width={100} />
                               <Tooltip formatter={v => `₹${v.toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                               <Bar dataKey="revenue" name="Revenue" radius={[0,4,4,0]}>
-                                {[...salesPersonData].sort((a, b) => b.revenue - a.revenue).map((p, idx) => (
+                                {[...activeSalesPersonData].sort((a, b) => b.revenue - a.revenue).map((p, idx) => (
                                   <Cell key={idx} fill={p.color} />
                                 ))}
                               </Bar>
@@ -1392,7 +1291,7 @@ export default function Reports() {
                         <Card title={<Text strong style={{ color: textColor }}>Sales Person Details</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                           <Table
                             size="small"
-                            dataSource={[...salesPersonData].sort((a, b) => b.revenue - a.revenue)}
+                            dataSource={[...activeSalesPersonData].sort((a, b) => b.revenue - a.revenue)}
                             pagination={false}
                             rowKey="key"
                             columns={[
@@ -1419,7 +1318,7 @@ export default function Reports() {
                       <Col xs={24} lg={15}>
                         <Card title={<Text strong style={{ color: textColor }}>Target vs Revenue Achieved</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
                           <ResponsiveContainer width="100%" height={280}>
-                            <BarChart data={salesPersonData} barGap={6}>
+                            <BarChart data={activeSalesPersonData} barGap={6}>
                               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                               <XAxis dataKey="name" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => v.split(' ')[0]} />
                               <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
@@ -1427,7 +1326,7 @@ export default function Reports() {
                               <Legend />
                               <Bar dataKey="target"  name="Target"   fill={isDark ? '#444' : '#e0e0e0'} radius={[4,4,0,0]} />
                               <Bar dataKey="revenue" name="Achieved" radius={[4,4,0,0]}>
-                                {salesPersonData.map((p, idx) => <Cell key={idx} fill={p.revenue >= p.target ? '#52c41a' : '#B11E6A'} />)}
+                                {activeSalesPersonData.map((p, idx) => <Cell key={idx} fill={p.revenue >= p.target ? '#52c41a' : '#B11E6A'} />)}
                               </Bar>
                             </BarChart>
                           </ResponsiveContainer>
@@ -1437,7 +1336,7 @@ export default function Reports() {
                         <Card title={<Text strong style={{ color: textColor }}>Achievement Summary</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                           <Table
                             size="small"
-                            dataSource={salesPersonData}
+                            dataSource={activeSalesPersonData}
                             pagination={false}
                             rowKey="key"
                             columns={[
@@ -1465,13 +1364,13 @@ export default function Reports() {
                       <Col xs={24} lg={16}>
                         <Card title={<Text strong style={{ color: textColor }}>Month-wise Revenue per Sales Person</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
                           <ResponsiveContainer width="100%" height={280}>
-                            <LineChart data={salesPersonMonthlyData}>
+                            <LineChart data={activeSalesPersonMonthly}>
                               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                               <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
                               <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
                               <Tooltip formatter={v => `₹${v.toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                               <Legend />
-                              {salesPersonData.map(p => (
+                              {activeSalesPersonData.map(p => (
                                 <Line key={p.name} type="monotone" dataKey={p.name} stroke={p.color} strokeWidth={2} dot={{ fill: p.color, r: 3 }} name={p.name.split(' ')[0]} />
                               ))}
                             </LineChart>
@@ -1482,7 +1381,7 @@ export default function Reports() {
                         <Card title={<Text strong style={{ color: textColor }}>Latest Month (Feb)</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }} styles={{ body: { padding: 0 } }}>
                           <Table
                             size="small"
-                            dataSource={salesPersonData.map(p => ({ ...p, febRevenue: salesPersonMonthlyData[salesPersonMonthlyData.length - 1][p.name] || 0 }))}
+                            dataSource={activeSalesPersonData.map(p => ({ ...p, febRevenue: activeSalesPersonMonthly[activeSalesPersonMonthly.length - 1][p.name] || 0 }))}
                             pagination={false}
                             rowKey="key"
                             columns={[
@@ -1491,8 +1390,8 @@ export default function Reports() {
                               {
                                 title: 'vs Jan', key: 'mom', width: 70, align: 'center',
                                 render: (_, r) => {
-                                  const jan = salesPersonMonthlyData[salesPersonMonthlyData.length - 2][r.name] || 0;
-                                  const feb = salesPersonMonthlyData[salesPersonMonthlyData.length - 1][r.name] || 0;
+                                  const jan = activeSalesPersonMonthly[activeSalesPersonMonthly.length - 2][r.name] || 0;
+                                  const feb = activeSalesPersonMonthly[activeSalesPersonMonthly.length - 1][r.name] || 0;
                                   const diff = jan > 0 ? (((feb - jan) / jan) * 100).toFixed(0) : 0;
                                   return <Tag style={{ background: diff >= 0 ? '#52c41a15' : '#ff4d4f15', color: diff >= 0 ? '#52c41a' : '#ff4d4f', border: `1px solid ${diff >= 0 ? '#52c41a33' : '#ff4d4f33'}`, borderRadius: 20, fontSize: 10, fontWeight: 700 }}>{diff >= 0 ? '+' : ''}{diff}%</Tag>;
                                 },
@@ -1513,8 +1412,8 @@ export default function Reports() {
             label: 'Monthly GST',
             children: (() => {
               const filteredGst = gstMonthFilter === 'all'
-                ? monthlyGstData
-                : monthlyGstData.filter(r => r.month === gstMonthFilter);
+                ? activeGstData
+                : activeGstData.filter(r => r.month === gstMonthFilter);
 
               const totSalesTaxable = filteredGst.reduce((s, r) => s + r.sales_taxable, 0);
               const totSalesCgst    = filteredGst.reduce((s, r) => s + r.sales_cgst, 0);
@@ -1545,7 +1444,7 @@ export default function Reports() {
                         <Text strong style={{ color: textColor, fontSize: 13 }}>Month:</Text>
                         <Select value={gstMonthFilter} onChange={setGstMonthFilter} style={{ width: 130 }}>
                           <Option value="all">All Months</Option>
-                          {monthlyGstData.map(r => (
+                          {activeGstData.map(r => (
                             <Option key={r.month} value={r.month}>{r.month} {r.year}</Option>
                           ))}
                         </Select>

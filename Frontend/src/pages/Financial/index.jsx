@@ -1,36 +1,75 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react'; // useEffect intentionally removed — data from RTK Query
 import {
-  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, List, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, DatePicker, Badge, Tooltip, Alert, Image
+  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, Badge, Tooltip, Alert, Image
 } from 'antd';
 import {
   WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, CloseCircleOutlined, WalletOutlined,
-  ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, InfoCircleOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined, FileTextOutlined,
-  TeamOutlined, BookOutlined, SearchOutlined, MessageOutlined, EditOutlined,
-  CarOutlined, UserOutlined, PhoneOutlined, SendOutlined, ShoppingOutlined, ThunderboltOutlined
+  ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined, FileTextOutlined,
+  SearchOutlined, MessageOutlined, EditOutlined,
+  CarOutlined, UserOutlined, PhoneOutlined, SendOutlined, ShoppingOutlined
 } from '@ant-design/icons';
-import { useSelector, useDispatch } from 'react-redux';
-import { updateRequestStatus, updateOrderPaymentStatus, addRequestNote, addOrderNote, updateQuotationDetails } from '../../store/slices/purchaseSlice';
+import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import {
+  useGetPendingRequestsQuery,
+  useApproveFinancialRequestMutation,
+  useRejectFinancialRequestMutation,
+  useUpdateFinancialQuotationMutation,
+  usePayPurchaseOrderMutation,
+  useGetExpensePaymentsQuery,
+  useGetPickupExpensesQuery,
+  usePayPickupExpenseMutation,
+  useGetLocalPurchaseExpensesQuery,
+  usePayLocalPurchaseExpenseMutation,
+  useAddPurchaseNoteMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const MOCK_PICKUP_EXPENSES = [
-  { key: 'DT-001', orderId: 'PO-2501', date: '2024-05-20', supplier: 'ChemCo India', item: 'Soap Base (White)', amount: 42500, pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', category: 'PICKUP', gPayNumber: '9876543210', proof: 'pickup_proof_PO2501.jpg', paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
-  { key: 'DT-002', orderId: 'PO-2502', date: '2024-05-18', supplier: 'BioLife Ltd', item: 'Shampoo Concentrate', amount: 44000, pickupEmpId: 'EMP-102', pickupEmpName: 'Suresh Babu', category: 'PICKUP', gPayNumber: '9123456789', proof: 'proof_biolife.jpg', paymentStatus: 'Paid', paymentProof: 'payment_biolife.pdf', paidDate: '2024-05-19', paidBy: 'Finance Team' },
-  { key: 'DT-003', orderId: 'PO-2503', date: '2024-05-22', supplier: 'PlastiPack', item: 'Shampoo Bottles (Flip 30ml)', amount: 22500, pickupEmpId: 'EMP-101', pickupEmpName: 'Ramesh Kumar', category: 'PICKUP', gPayNumber: '9876543210', proof: null, paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
-  { key: 'DT-004', orderId: 'PO-2504', date: '2024-05-15', supplier: 'BoxWorld', item: 'Dental Kit Boxes', amount: 12000, pickupEmpId: 'EMP-103', pickupEmpName: 'Vijay Anand', category: 'PICKUP', gPayNumber: '8765432109', proof: 'proof_boxworld.jpg', paymentStatus: 'Unpaid', paymentProof: null, paidDate: null, paidBy: null },
-];
 
 export default function Financial() {
   const isDark = useSelector((s) => s.theme.isDark);
-  const dispatch = useDispatch();
-  const raisedRequests = useSelector((s) => s.purchase.raisedRequests);
-  const purchaseOrders = useSelector((s) => s.purchase.purchaseOrders);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
+
+  // RTK Query data
+  const { data: pendingReqData } = useGetPendingRequestsQuery();
+  const [approveReq] = useApproveFinancialRequestMutation();
+  const [rejectReq] = useRejectFinancialRequestMutation();
+  const [updateQuotation] = useUpdateFinancialQuotationMutation();
+  const [payOrder] = usePayPurchaseOrderMutation();
+  const { data: expensePaymentsData } = useGetExpensePaymentsQuery();
+  const { data: pickupExpData } = useGetPickupExpensesQuery();
+  const [payPickup] = usePayPickupExpenseMutation();
+  const { data: localPurchaseExpData } = useGetLocalPurchaseExpensesQuery();
+  const [payLocalPurchase] = usePayLocalPurchaseExpenseMutation();
+  const [addPurchaseNote] = useAddPurchaseNoteMutation();
+
+  const raisedRequests = useMemo(() => (pendingReqData?.data || []).map((r) => ({
+    ...r,
+    key: r._id,
+    item: r.itemId?.itemName || r.itemName,
+    supplier: r.vendorId?.name || '—',
+    qty: r.qty,
+    unit: r.unit,
+    payment_terms: r.paymentTerms,
+    date: r.createdAt?.slice(0, 10),
+    notes: r.notes || [],
+  })), [pendingReqData]);
+
+  const purchaseOrders = useMemo(() => raisedRequests
+    .filter((r) => r.linkedOrder)
+    .map((r) => ({
+      ...r.linkedOrder,
+      key: r.linkedOrder._id,
+      requestKey: r._id,
+      item: r.item,
+      supplier: r.supplier,
+      unit: r.unit,
+    })), [raisedRequests]);
 
   const [viewRequest, setViewRequest] = useState(null);
   const [viewQuotationFile, setViewQuotationFile] = useState(null);
@@ -51,132 +90,91 @@ export default function Financial() {
   const [editReqTarget, setEditReqTarget] = useState(null);
   const [editReqForm] = Form.useForm();
 
-  const handleAddReqNote = (key) => {
+  const handleAddReqNote = async (key) => {
     const text = reqNoteInput.trim();
     if (!text) return;
-    const ts = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
-    dispatch(addRequestNote({ key, text, timestamp: ts }));
+    try {
+      await addPurchaseNote({ id: key, text }).unwrap();
+      message.success('Note added');
+    } catch { /* silent */ }
     setReqNoteInput('');
   };
 
   const handleAddOrderNote = (orderKey) => {
-    const text = (orderNoteInput[orderKey] || '').trim();
-    if (!text) return;
-    const ts = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
-    dispatch(addOrderNote({ key: orderKey, text, timestamp: ts }));
     setOrderNoteInput(prev => ({ ...prev, [orderKey]: '' }));
   };
 
 
-  // ── Proof data (base64) — shared via hng_proofs localStorage cross-page ──
-  const [proofData, setProofData] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hng_proofs') || '{}'); } catch { return {}; }
-  });
+  const [proofData] = useState({});
 
-  // ── Reimbursement Expense tab state ──
-  const [reimbursementExpenses, setReimbursementExpenses] = useState(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
-      if (stored.length === 0) { localStorage.setItem('hng_pickup_expenses', JSON.stringify(MOCK_PICKUP_EXPENSES)); return MOCK_PICKUP_EXPENSES; }
-      return stored;
-    } catch { return MOCK_PICKUP_EXPENSES; }
-  });
-  useEffect(() => {
-    const handler = () => {
-      try { setReimbursementExpenses(JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]')); } catch {}
-    };
-    window.addEventListener('storage', handler);
-    // Poll for changes from same-tab updates (expenses + proofs)
-    const interval = setInterval(() => {
-      try {
-        const stored = JSON.parse(localStorage.getItem('hng_pickup_expenses') || '[]');
-        setReimbursementExpenses(prev => JSON.stringify(prev) !== JSON.stringify(stored) ? stored : prev);
-        const proofs = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
-        setProofData(prev => JSON.stringify(prev) !== JSON.stringify(proofs) ? proofs : prev);
-      } catch {}
-    }, 1000);
-    return () => { window.removeEventListener('storage', handler); clearInterval(interval); };
-  }, []);
+  // ── Reimbursement Expense tab — from RTK Query ──
+  const reimbursementExpenses = useMemo(() => (pickupExpData?.data || []).map((r) => ({
+    key: r._id,
+    orderId: r.orderId?.orderCode || '—',
+    date: r.createdAt?.slice(0, 10),
+    supplier: '—',
+    item: '—',
+    amount: r.pickupAmount || 0,
+    pickupEmpId: r.pickupEmpId?.staffCode || '—',
+    pickupEmpName: r.pickupEmpId?.fullName || '—',
+    gPayNumber: r.pickupGPayNumber,
+    paymentStatus: r.paymentStatus || 'Unpaid',
+    paymentProof: r.paymentProofUrl,
+    paidDate: r.paidDate,
+    paidBy: r.paidBy,
+  })), [pickupExpData]);
 
   const [showReimbPaymentModal, setShowReimbPaymentModal] = useState(false);
   const [reimbPayTarget, setReimbPayTarget] = useState(null);
   const [reimbPayForm] = Form.useForm();
 
-  // ── Local Purchase Expense sub-tab state ──
-  const [localPurchaseExpenses, setLocalPurchaseExpenses] = useState(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('hng_local_purchases') || '[]');
-      if (stored.length > 0) return stored;
-      const fallback = [
-        { key: 'LP-001', date: '2024-05-10', invoiceNo: 'INV-LOCAL-001', invoiceFile: 'invoice_local_001.pdf', vendorName: 'Marriott Mumbai', vendorPhone: '+91 22 6651 1234', items: [{ name: 'Cleaning Supplies', qty: 50, unit: 'Pcs', amount: 5000 }], totalAmount: 5000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null },
-        { key: 'LP-002', date: '2024-05-12', invoiceNo: 'INV-LOCAL-002', invoiceFile: 'invoice_local_002.jpg', vendorName: 'Taj Hotels Delhi', vendorPhone: '+91 11 6600 7777', items: [{ name: 'Paper Towels', qty: 200, unit: 'Rolls', amount: 8000 }, { name: 'Liquid Soap', qty: 50, unit: 'Ltr', amount: 6000 }], totalAmount: 14000, paymentType: 'instant', paymentStatus: 'Paid', paymentProof: 'gpay_proof_LP002.jpg', gPayNumber: '9876543210' },
-        { key: 'LP-003', date: '2024-05-15', invoiceNo: 'INV-LOCAL-003', invoiceFile: null, vendorName: 'ITC Grand Kolkata', vendorPhone: '+91 33 2288 9999', items: [{ name: 'Housekeeping Kit', qty: 100, unit: 'Kits', amount: 15000 }], totalAmount: 15000, paymentType: 'credit', paymentStatus: 'Pending', paymentProof: null, gPayNumber: null },
-      ];
-      return fallback;
-    } catch { return []; }
-  });
-  useEffect(() => {
-    const interval = setInterval(() => {
-      try {
-        const stored = JSON.parse(localStorage.getItem('hng_local_purchases') || '[]');
-        if (stored.length > 0) setLocalPurchaseExpenses(prev => JSON.stringify(prev) !== JSON.stringify(stored) ? stored : prev);
-      } catch {}
-    }, 1500);
-    return () => clearInterval(interval);
-  }, []);
+  // ── Local Purchase Expense sub-tab — from RTK Query ──
+  const localPurchaseExpenses = useMemo(() => (localPurchaseExpData?.data || []).map((lp) => ({
+    key: lp._id,
+    date: lp.createdAt?.slice(0, 10),
+    invoiceNo: lp.invoiceNo,
+    invoiceFile: lp.invoiceFileUrl,
+    vendorName: lp.vendorName,
+    vendorPhone: lp.vendorPhone,
+    items: lp.items || [],
+    totalAmount: lp.totalAmount,
+    paymentType: lp.paymentType,
+    paymentStatus: lp.paymentStatus,
+    paymentProof: lp.paymentProofUrl,
+    gPayNumber: lp.gPayNumber,
+    paidDate: lp.paidDate,
+    paidBy: lp.paidBy,
+  })), [localPurchaseExpData]);
 
   const [showLocalPaymentModal, setShowLocalPaymentModal] = useState(false);
   const [localPayTarget, setLocalPayTarget] = useState(null);
   const [localPayForm] = Form.useForm();
 
-  const handleLocalPayment = (vals) => {
-    const proofFile = vals.payment_proof?.fileList?.[0]?.name || null;
-    const updated = localPurchaseExpenses.map(r => r.key === localPayTarget.key
-      ? { ...r, paymentStatus: 'Paid', paymentProof: proofFile, paidDate: new Date().toISOString().slice(0, 10), paidBy: vals.paid_by || 'Finance Team' }
-      : r);
-    setLocalPurchaseExpenses(updated);
-    localStorage.setItem('hng_local_purchases', JSON.stringify(updated));
-    message.success('Local purchase payment processed!');
+  const handleLocalPayment = async (vals) => {
+    try {
+      const fd = new FormData();
+      fd.append('paid_by', vals.paid_by || 'Finance Team');
+      if (vals.payment_proof?.fileList?.[0]?.originFileObj) {
+        fd.append('proof', vals.payment_proof.fileList[0].originFileObj);
+      }
+      await payLocalPurchase({ id: localPayTarget.key, formData: fd }).unwrap();
+      message.success('Local purchase payment processed!');
+    } catch { message.error('Payment failed'); }
     setShowLocalPaymentModal(false);
     setLocalPayTarget(null);
     localPayForm.resetFields();
   };
 
   const handleReimbPayment = async (vals) => {
-    const fileItem = vals.payment_proof?.fileList?.[0];
-    const proofFile = fileItem?.name || null;
-
-    let base64 = null;
-    if (fileItem?.originFileObj) {
-      base64 = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.readAsDataURL(fileItem.originFileObj);
-      });
-    }
-
-    const updated = reimbursementExpenses.map(r => r.key === reimbPayTarget.key
-      ? { ...r, paymentStatus: 'Paid', paymentProof: proofFile, paidDate: new Date().toISOString().slice(0, 10), paidBy: vals.paid_by || 'Finance Team' }
-      : r);
-    setReimbursementExpenses(updated);
-    localStorage.setItem('hng_pickup_expenses', JSON.stringify(updated));
-
-    if (base64) {
-      const existing = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
-      existing[reimbPayTarget.key] = { ...(existing[reimbPayTarget.key] || {}), paymentProof: base64 };
-      localStorage.setItem('hng_proofs', JSON.stringify(existing));
-      setProofData(prev => ({
-        ...prev,
-        [reimbPayTarget.key]: { ...(prev[reimbPayTarget.key] || {}), paymentProof: base64 },
-      }));
-    }
-
-    const tracking = JSON.parse(localStorage.getItem('hng_dispatch_tracking') || '[]');
-    const updatedTracking = tracking.map(o => o.key === reimbPayTarget.key
-      ? { ...o, paymentStatus: 'Paid', paymentProof: proofFile }
-      : o);
-    localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedTracking));
-    message.success('Reimbursement payment recorded and dispatch order tracking updated!');
+    try {
+      const fd = new FormData();
+      fd.append('paid_by', vals.paid_by || 'Finance Team');
+      if (vals.payment_proof?.fileList?.[0]?.originFileObj) {
+        fd.append('proof', vals.payment_proof.fileList[0].originFileObj);
+      }
+      await payPickup({ id: reimbPayTarget.key, formData: fd }).unwrap();
+      message.success('Reimbursement payment recorded!');
+    } catch { message.error('Payment failed'); }
     setShowReimbPaymentModal(false);
     setReimbPayTarget(null);
     reimbPayForm.resetFields();
@@ -192,42 +190,21 @@ export default function Financial() {
   const [localExpSearch, setLocalExpSearch] = useState('');
   const [localExpPayFilter, setLocalExpPayFilter] = useState(null);
 
-  // Parties & Ledgers tab state
   const [partiesSearch, setPartiesSearch] = useState('');
   const [viewPartyLedger, setViewPartyLedger] = useState(null);
+  const [partiesData, setPartiesData] = useState([]);
+  const [partyLedgerData, setPartyLedgerData] = useState([]);
+  const suppliersData = {};
 
-  const partiesData = [
-    { key: 1, name: 'ChemCo India', type: 'Supplier', totalPurchase: 125000, paid: 80000, pending: 45000 },
-    { key: 2, name: 'BioLife Ltd', type: 'Supplier', totalPurchase: 88000, paid: 88000, pending: 0 },
-    { key: 3, name: 'Marriott Mumbai', type: 'Customer', totalSales: 95000, received: 70000, pending: 25000 },
-    { key: 4, name: 'Taj Hotels Delhi', type: 'Customer', totalSales: 141600, received: 60000, pending: 81600 },
-  ];
+  // ── Expense Payments — from RTK Query ──
+  const expenseRequests = useMemo(() => (expensePaymentsData?.data || []).map((e) => ({
+    key: e._id, date: e.expenseDate?.slice(0, 10),
+    category: e.category, desc: e.description,
+    amount: e.amount, status: e.paymentStatus,
+    vendor: e.vendorPayee, bill_no: e.expenseCode,
+  })), [expensePaymentsData]);
 
-  const partyLedgerData = [
-    { key: 1, date: '2024-05-01', type: 'Purchase', doc: 'INV-CHEM-101', debit: 85000, credit: 0, balance: 85000 },
-    { key: 2, date: '2024-05-10', type: 'Payment', doc: 'PAY-001', debit: 0, credit: 40000, balance: 45000 },
-    { key: 3, date: '2024-05-15', type: 'Purchase', doc: 'INV-CHEM-109', debit: 40000, credit: 0, balance: 85000 },
-    { key: 4, date: '2024-05-20', type: 'Payment', doc: 'PAY-002', debit: 0, credit: 40000, balance: 45000 },
-  ];
-
-  const [expenseRequests, setExpenseRequests] = useState([
-    { key: 1, date: '2024-05-06', category: 'SHIPPING', desc: 'Logistics to Bangalore', amount: 5500, status: 'Unpaid', vendor: 'DTDC', bill_no: 'EXP-101' },
-    { key: 2, date: '2024-05-07', category: 'UTILITY', desc: 'Electricity Bill', amount: 12400, status: 'Unpaid', vendor: 'TNEB', bill_no: 'EXP-102' },
-  ]);
-
-  const vendorsList = [
-    { key: 1, name: 'ChemCo India', phone: '+91 98765 43210' },
-    { key: 2, name: 'BioLife Ltd', phone: '+91 87654 32109' },
-  ];
-
-  const suppliersData = {
-    'ChemCo India': { phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH', bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234' },
-    'BioLife Ltd': { phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN', bank: 'SBI — A/C 30112345678 | IFSC SBIN0001234' },
-    'PlastiPack': { phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL', bank: 'ICICI — A/C 007601234567 | IFSC ICIC0000076' },
-    'BoxWorld': { phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA', bank: 'Axis Bank — A/C 912010012345678 | IFSC UTIB0000001' },
-  };
-
-  const handleProcessPayment = (values) => {
+  const handleProcessPayment = async (values) => {
     const paidAmt = values.amount_paid || selectedForPayment.amount;
     const remaining = selectedForPayment.amount - paidAmt;
     const finalStatus = values.status === 'Partial Paid' && remaining > 0 ? 'Partial Paid' : 'Paid';
@@ -236,18 +213,17 @@ export default function Financial() {
     message.success(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`);
 
     if (selectedForPayment.bill_no?.startsWith('EXP')) {
-      setExpenseRequests(prev => prev.map(r => r.key === selectedForPayment.key ? {
-        ...r,
-        status: finalStatus,
-        paid_amount: (r.paid_amount || 0) + paidAmt,
-      } : r));
+      setExpenseRequests((prev) => prev.map((r) =>
+        r.key === selectedForPayment.key ? { ...r, status: finalStatus, paid_amount: (r.paid_amount || 0) + paidAmt } : r
+      ));
     } else {
-      dispatch(updateOrderPaymentStatus({
-        key: selectedForPayment.key,
-        status: finalStatus,
-        paid_amount: (selectedForPayment.paid_amount || 0) + paidAmt,
-        payment_proof: proofFileName,
-      }));
+      try {
+        const fd = new FormData();
+        fd.append('amountPaid', paidAmt);
+        fd.append('status', finalStatus);
+        if (values.proof?.fileList?.[0]?.originFileObj) fd.append('proof', values.proof.fileList[0].originFileObj);
+        await payOrder({ id: selectedForPayment.key, formData: fd }).unwrap();
+      } catch { /* silent */ }
     }
     setShowPaymentModal(false);
     setSelectedForPayment(null);
@@ -265,7 +241,7 @@ export default function Financial() {
     { label: 'Pending Approvals', value: pendingRequests, color: '#B11E6A', icon: <ClockCircleOutlined /> },
     { label: 'Unpaid Orders', value: purchaseOrders.filter(r => r.status === 'Unpaid').length, color: '#1890ff', icon: <ShopOutlined /> },
     { label: 'Unpaid Expenses', value: expenseRequests.filter(r => r.status === 'Unpaid').length, color: '#fa8c16', icon: <WalletOutlined /> },
-    { label: 'Total Paid (MTD)', value: '₹1,24,500', color: '#52c41a', icon: <ArrowUpOutlined /> },
+    { label: 'Total Paid (MTD)', value: `₹${purchaseOrders.filter(r => r.status === 'Paid').reduce((s, r) => s + (r.amount || 0), 0).toLocaleString()}`, color: '#52c41a', icon: <ArrowUpOutlined /> },
   ];
 
 
@@ -504,10 +480,16 @@ export default function Financial() {
                               {r.status === 'Pending' && (
                                 <>
                                   <Button size="small" type="primary" icon={<CheckCircleOutlined />}
-                                    onClick={() => { dispatch(updateRequestStatus({ key: r.key, status: 'Approved' })); message.success(`Approved`); }}
+                                    onClick={async () => {
+                                      try { await approveReq(r.key).unwrap(); message.success('Approved'); }
+                                      catch { message.error('Approval failed'); }
+                                    }}
                                     style={{ background: '#52c41a', border: 'none' }}>Approve</Button>
                                   <Button size="small" danger icon={<CloseCircleOutlined />}
-                                    onClick={() => { dispatch(updateRequestStatus({ key: r.key, status: 'Rejected' })); message.warning(`Rejected`); }}>Reject</Button>
+                                    onClick={async () => {
+                                      try { await rejectReq({ id: r.key }).unwrap(); message.warning('Rejected'); }
+                                      catch { message.error('Rejection failed'); }
+                                    }}>Reject</Button>
                                 </>
                               )}
                               {noteCount > 0 && (
@@ -874,17 +856,21 @@ export default function Financial() {
               <Button style={{ flex: 1, height: 40, borderRadius: 8 }} onClick={() => { setShowEditReqModal(false); editReqForm.resetFields(); }}>Cancel</Button>
               <Button style={{ flex: 1, height: 40, borderRadius: 8, borderColor: '#722ed1', color: '#722ed1' }}
                 onClick={() => {
-                  editReqForm.validateFields().then(vals => {
-                    dispatch(updateQuotationDetails({ key: editReqTarget.key, qty: vals.qty, payment_terms: vals.payment_terms }));
-                    message.success('Quotation details updated.');
+                  editReqForm.validateFields().then(async (vals) => {
+                    try {
+                      await updateQuotation({ id: editReqTarget.key, qty: vals.qty, paymentTerms: vals.payment_terms }).unwrap();
+                      message.success('Quotation details updated.');
+                    } catch { message.error('Update failed'); }
                     setShowEditReqModal(false); editReqForm.resetFields();
                   });
                 }}>Save Only</Button>
               <Button type="primary" style={{ flex: 2, height: 40, borderRadius: 8, background: '#25D366', border: 'none', fontWeight: 700 }}
                 icon={<WhatsAppOutlined />}
                 onClick={() => {
-                  editReqForm.validateFields().then(vals => {
-                    dispatch(updateQuotationDetails({ key: editReqTarget.key, qty: vals.qty, payment_terms: vals.payment_terms }));
+                  editReqForm.validateFields().then(async (vals) => {
+                    try {
+                      await updateQuotation({ id: editReqTarget.key, qty: vals.qty, paymentTerms: vals.payment_terms }).unwrap();
+                    } catch { /* silent */ }
                     const phone = (suppliersData[editReqTarget.supplier]?.phone || '').replace(/\D/g, '');
                     const latestNote = (editReqTarget.notes || []).at(-1);
                     const msg = `*Updated Quotation Request*\n\n*Item:* ${editReqTarget.item}\n*Quantity:* ${vals.qty} ${editReqTarget.unit}\n*Payment Terms:* ${vals.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly provide an updated quotation at the earliest.`;

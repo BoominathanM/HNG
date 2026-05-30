@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, Upload, Typography, Space,
@@ -14,48 +14,21 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import {
+  useGetDispatchQuery,
+  useConfirmDispatchMutation,
+  useUploadDispatchLRMutation,
+  useVerifyItemMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
-
-// ── Shared data ───────────────────────────────────────────────────────────────
-const dispatchOrders = [
-  { key: 1, id: 'ORD-2402', client: 'Marriott Mumbai', contactPerson: 'Raju', phone: '+91 9876543210', email: 'raju@marriott.com', product: 'Shampoo 30ml', qty: 1500, boxes: 30, weight: '45 Kg', payment: 'Confirmed', address: 'Mumbai, MH', destination: 'Mumbai', detailedAddress: 'Marine Drive, Nariman Point', city: 'Mumbai', state: 'MH', pincode: '400021', transport: 'Fast Cargo', status: 'Ready to Dispatch', salesPerson: 'Arun', createdAt: '2024-01-21T11:30:00Z' },
-  { key: 2, id: 'ORD-2403', client: 'Taj Hotels Delhi', contactPerson: 'Raman', phone: '+91 9123456780', email: 'raman@taj.com', product: 'Dental Kit', qty: 3000, boxes: 60, weight: '90 Kg', payment: 'Pending', address: 'Delhi, DL', destination: 'New Delhi', detailedAddress: 'Sardar Patel Marg', city: 'New Delhi', state: 'DL', pincode: '110021', transport: '-', status: 'Payment Pending', salesPerson: 'Priya', createdAt: '2024-01-22T14:15:00Z' },
-  { key: 3, id: 'ORD-2404', client: 'ITC Grand', contactPerson: 'Sonia', phone: '+91 9988776655', email: 'sonia@itc.com', product: 'Soap + Shampoo Kit', qty: 5000, boxes: 100, weight: '200 Kg', payment: 'Confirmed', address: 'Kolkata, WB', destination: 'Kolkata', detailedAddress: 'JBS Haldane Avenue', city: 'Kolkata', state: 'WB', pincode: '700046', transport: 'Blue Dart', status: 'Dispatched', salesPerson: 'Karthik', createdAt: '2024-01-23T09:45:00Z' },
-  { key: 4, id: 'ORD-2406', client: 'Hyatt Chennai', contactPerson: 'Arun', phone: '+91 9876512345', email: 'arun@hyatt.com', product: 'Conditioner 30ml', qty: 2000, boxes: 40, weight: '60 Kg', payment: 'Confirmed', address: 'Chennai, TN', destination: 'Chennai', detailedAddress: '365 Anna Salai, Teynampet', city: 'Chennai', state: 'TN', pincode: '600018', transport: '-', status: 'Packing', salesPerson: 'Arun', createdAt: '2024-01-24T10:20:00Z' },
-];
 
 const statusColor = {
   'Ready to Dispatch': '#C94F8A',
   'Payment Pending': '#D85C9E',
   'Dispatched': '#6b1240',
   'Packing': '#B11E6A',
-};
-
-const ORDER_PRODUCTS = {
-  'ORD-2402': [
-    { key: 1, name: 'Shampoo 30ml', qty: 1000, rate: 5.5, boxes: 20 },
-    { key: 2, name: 'Shampoo 50ml', qty: 500, rate: 7.0, boxes: 10 },
-  ],
-  'ORD-2403': [{ key: 1, name: 'Dental Kit', qty: 3000, rate: 12.0, boxes: 60 }],
-  'ORD-2404': [
-    { key: 1, name: 'Soap 30g', qty: 2500, rate: 3.5, boxes: 50 },
-    { key: 2, name: 'Shampoo 30ml', qty: 2500, rate: 5.5, boxes: 50 },
-  ],
-  'ORD-2406': [{ key: 1, name: 'Conditioner 30ml', qty: 2000, rate: 6.0, boxes: 40 }],
-};
-
-const MOCK_PARSED = {
-  lrNumber: 'LR-78921',
-  lrDate: '2024-01-25',
-  transportName: 'Fast Cargo Pvt Ltd',
-  fromCity: 'Coimbatore',
-  toCity: 'Mumbai',
-  weight: '45.5 Kg',
-  freight: '₹2,100',
-  packages: '30',
-  estimatedDelivery: '2024-01-28',
 };
 
 const stepIndex = (status) => {
@@ -71,7 +44,29 @@ export default function DispatchDetail() {
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
 
-  const order = dispatchOrders.find((o) => o.id === id);
+  const { data: dispatchData } = useGetDispatchQuery(id, { skip: !id });
+  const [confirmDispatch] = useConfirmDispatchMutation();
+  const [uploadLR] = useUploadDispatchLRMutation();
+  const [verifyItem] = useVerifyItemMutation();
+
+  const order = useMemo(() => {
+    const d = dispatchData?.data;
+    if (!d) return null;
+    return {
+      key: d._id, id: d.orderCode || d._id,
+      client: d.clientName || '—', contactPerson: d.contactPerson || '—',
+      phone: d.clientPhone || '', email: d.clientEmail || '',
+      product: d.product || '', qty: d.qty || 0,
+      boxes: d.boxes || 0, weight: d.weight || '',
+      payment: d.paymentStatus || 'Pending',
+      address: d.address || '', destination: d.destination || '',
+      detailedAddress: d.detailedAddress || '',
+      city: d.city || '', state: d.state || '', pincode: d.pincode || '',
+      transport: d.transportName || '', status: d.status || '',
+      salesPerson: d.salesPerson || '', items: d.items || [],
+      lrData: d.lrData || null,
+    };
+  }, [dispatchData]);
 
   const [form] = Form.useForm();
   const [lrForm] = Form.useForm();
@@ -142,8 +137,9 @@ export default function DispatchDetail() {
   const handleAIParse = () => {
     setAiParsing(true);
     setTimeout(() => {
-      setAiParsed(MOCK_PARSED);
-      lrForm.setFieldsValue(MOCK_PARSED);
+      const parsed = { lrNumber: '', lrDate: '', transportName: '', fromCity: 'Coimbatore', toCity: '', weight: '', freight: '', packages: '', estimatedDelivery: '' };
+      setAiParsed(parsed);
+      lrForm.setFieldsValue(parsed);
       setAiParsing(false);
       setLrEditMode(true);
       message.success('AI extracted lorry receipt details. Review and confirm below.');
@@ -173,7 +169,7 @@ export default function DispatchDetail() {
     );
   }
 
-  const products = ORDER_PRODUCTS[order.id] || [];
+  const products = (order?.items || []).map((item, i) => ({ key: i + 1, name: item.product || item.name, qty: item.qty || 0, rate: item.rate || 0, boxes: item.boxes || 0 }));
   const lrUploaded = lrFileList.length > 0;
 
   return (

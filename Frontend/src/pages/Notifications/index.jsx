@@ -1,20 +1,28 @@
-import React, { useState } from 'react';
-import { Card, List, Tag, Badge, Button, Typography, Space, Tabs } from 'antd';
+import React, { useMemo, useState } from 'react';
+import { Card, List, Tag, Badge, Button, Typography, Space, Tabs, Spin, Empty } from 'antd';
 import { BellOutlined, DollarOutlined, WarningOutlined, CarOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import {
+  useGetNotificationsQuery,
+  useGetStockAlertsQuery,
+  useGetPaymentAlertsQuery,
+  useMarkNotificationReadMutation,
+  useMarkAllNotificationsReadMutation,
+} from '../../store/api/apiSlice';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
-const notifications = [
-  { id: 1, type: 'payment', icon: <DollarOutlined />, color: '#6b1240', title: 'Payment Received', message: 'Advance payment of ₹60,000 received for ORD-2403 (Taj Hotels)', time: '5 mins ago', read: false },
-  { id: 2, type: 'stock', icon: <WarningOutlined />, color: '#C94F8A', title: 'Low Stock Alert', message: 'Soap Base (Transparent) stock at 45 Kg — below minimum of 100 Kg', time: '32 mins ago', read: false },
-  { id: 3, type: 'dispatch', icon: <CarOutlined />, color: '#8a1652', title: 'Dispatch Ready', message: 'Order ORD-2402 is ready for dispatch — payment confirmed', time: '1 hr ago', read: false },
-  { id: 4, type: 'payment', icon: <DollarOutlined />, color: '#B11E6A', title: 'Payment Reminder', message: 'Outstanding ₹81,600 for INV-2402 (Taj Hotels) — due in 2 days', time: '2 hrs ago', read: true },
-  { id: 5, type: 'task', icon: <CheckCircleOutlined />, color: '#D85C9E', title: 'Task Completed', message: 'Packing task TSK-103 completed by Meena Devi for ORD-2403', time: '3 hrs ago', read: true },
-  { id: 6, type: 'stock', icon: <WarningOutlined />, color: '#B11E6A', title: 'Out of Stock', message: 'Shampoo Concentrate is out of stock — reorder required immediately', time: '5 hrs ago', read: true },
-];
+const TYPE_ICON = {
+  payment: <DollarOutlined />,
+  low_stock: <WarningOutlined />,
+  dispatch: <CarOutlined />,
+  task: <CheckCircleOutlined />,
+  stock: <WarningOutlined />,
+  system: <BellOutlined />,
+};
+const TYPE_COLOR = { payment: '#6b1240', low_stock: '#C94F8A', dispatch: '#8a1652', task: '#D85C9E', stock: '#B11E6A', system: '#888' };
 
 export default function Notifications() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -22,11 +30,50 @@ export default function Notifications() {
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const [activeTab, setActiveTab] = useState('all');
 
-  const filteredNotifications = activeTab === 'all' 
-    ? notifications 
-    : notifications.filter(n => n.type === activeTab || (activeTab === 'dispatch' && n.type === 'task'));
+  const { data: notifData, isLoading: notifLoading } = useGetNotificationsQuery();
+  const { data: stockData } = useGetStockAlertsQuery();
+  const { data: paymentData } = useGetPaymentAlertsQuery();
 
-  const unread = notifications.filter((n) => !n.read).length;
+  const [markRead] = useMarkNotificationReadMutation();
+  const [markAllRead] = useMarkAllNotificationsReadMutation();
+
+  const notifications = notifData?.data || [];
+  const stockAlerts = stockData?.data || [];
+  const paymentAlerts = paymentData?.data || { overdue: [], dueSoon: [] };
+
+  const loading = notifLoading;
+
+  const handleMarkAllRead = async () => {
+    await markAllRead().unwrap().catch(() => {});
+  };
+
+  const filteredNotifications = activeTab === 'all' ? notifications
+    : notifications.filter((n) => n.type === activeTab || (activeTab === 'dispatch' && n.type === 'task'));
+
+  const unread = notifications.filter((n) => !n.isRead).length;
+
+  const buildStockList = () =>
+    stockAlerts.map((item) => ({
+      _id: item._id,
+      type: 'low_stock',
+      title: item.currentStock === 0 ? 'Out of Stock' : 'Low Stock Alert',
+      message: `${item.itemName} — ${item.currentStock}/${item.minStock} ${item.unit}`,
+      isRead: false,
+    }));
+
+  const buildPaymentList = () => [
+    ...(paymentAlerts.overdue || []).map((inv) => ({ _id: inv._id, type: 'payment', title: 'Overdue Invoice', message: `${inv.invoiceNumber} — ₹${inv.balanceDue?.toLocaleString()} overdue (${inv.partyId?.name})`, isRead: false })),
+    ...(paymentAlerts.dueSoon || []).map((inv) => ({ _id: inv._id, type: 'payment', title: 'Payment Due Soon', message: `${inv.invoiceNumber} — ₹${inv.balanceDue?.toLocaleString()} due soon (${inv.partyId?.name})`, isRead: false })),
+  ];
+
+  const getTabData = () => {
+    if (activeTab === 'stock') return buildStockList();
+    if (activeTab === 'payment') return buildPaymentList();
+    if (activeTab === 'all') return [...filteredNotifications, ...buildStockList(), ...buildPaymentList()];
+    return filteredNotifications;
+  };
+
+  const displayData = getTabData();
 
   return (
     <div className="page-container fade-in">
@@ -36,7 +83,7 @@ export default function Notifications() {
           items={[{ label: 'Notifications' }]}
           style={{ marginBottom: 0 }}
         />
-        <Button size="small">Mark All Read</Button>
+        <Button size="small" onClick={handleMarkAllRead}>Mark All Read</Button>
       </div>
 
       <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '8px 0' } }}>
@@ -46,59 +93,61 @@ export default function Notifications() {
           centered
           items={[
             { key: 'all', label: 'All Notifications' },
-            { key: 'stock', label: 'Stock Alerts' },
+            { key: 'stock', label: `Stock Alerts${stockAlerts.length ? ` (${stockAlerts.length})` : ''}` },
             { key: 'payment', label: 'Payment Updates' },
             { key: 'dispatch', label: 'Dispatch / Tasks' },
           ]}
           style={{ padding: '0 20px' }}
         />
-        <List
-          dataSource={filteredNotifications}
-          renderItem={(item, i) => {
-            // In a real app, we'd filter based on active tab.
-            // For this UI demo, we'll show based on some logic if needed,
-            // but the user just asked for tabs.
-            return (
-              <motion.div initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.06 }}>
-                <List.Item
-                  style={{
-                    padding: '16px 20px',
-                    borderBottom: `1px solid ${isDark ? '#333' : '#f5f5f5'}`,
-                    background: !item.read ? `${item.color}08` : 'transparent',
-                    cursor: 'pointer',
-                    transition: 'background 0.2s',
-                  }}
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+        ) : displayData.length === 0 ? (
+          <Empty description="No notifications" style={{ padding: 40 }} />
+        ) : (
+          <List
+            dataSource={displayData}
+            renderItem={(item, i) => {
+              const color = TYPE_COLOR[item.type] || '#888';
+              const icon = TYPE_ICON[item.type] || <BellOutlined />;
+              return (
+                <motion.div
+                  key={item._id || i}
+                  initial={{ opacity: 0, x: -16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.04 }}
                 >
-                  <List.Item.Meta
-                    avatar={
-                      <div style={{
-                        width: 44, height: 44, borderRadius: 12,
-                        background: `${item.color}18`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 20, color: item.color,
-                      }}>
-                        {item.icon}
+                  <List.Item
+                    style={{
+                      padding: '14px 20px',
+                      background: !item.isRead ? (isDark ? `${color}12` : `${color}08`) : 'transparent',
+                      borderLeft: !item.isRead ? `3px solid ${color}` : '3px solid transparent',
+                      cursor: 'pointer',
+                    }}
+                    onClick={async () => {
+                      if (!item.isRead && item._id) {
+                        await markRead(item._id).unwrap().catch(() => {});
+                      }
+                    }}
+                  >
+                    <Space align="start" size={14}>
+                      <div style={{ width: 38, height: 38, borderRadius: 10, background: `${color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, color, flexShrink: 0 }}>
+                        {icon}
                       </div>
-                    }
-                    title={
-                      <Space size={8}>
-                        <Text strong style={{ color: textColor }}>{item.title}</Text>
-                        {!item.read && <Badge dot style={{ background: '#B11E6A' }} />}
-                      </Space>
-                    }
-                    description={
                       <div>
-                        <Text style={{ color: isDark ? '#aaa' : '#555', fontSize: 13 }}>{item.message}</Text>
-                        <br />
-                        <Text style={{ color: '#999', fontSize: 11 }}>{item.time}</Text>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Text strong style={{ color: textColor, fontSize: 14 }}>{item.title}</Text>
+                          {!item.isRead && <Tag style={{ background: `${color}22`, color, border: `1px solid ${color}44`, borderRadius: 10, fontSize: 11, margin: 0 }}>New</Tag>}
+                        </div>
+                        <Text style={{ color: isDark ? '#aaa' : '#666', fontSize: 13 }}>{item.message}</Text>
+                        {item.createdAt && <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginTop: 2 }}>{new Date(item.createdAt).toLocaleString()}</Text>}
                       </div>
-                    }
-                  />
-                </List.Item>
-              </motion.div>
-            );
-          }}
-        />
+                    </Space>
+                  </List.Item>
+                </motion.div>
+              );
+            }}
+          />
+        )}
       </Card>
     </div>
   );

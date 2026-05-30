@@ -1,0 +1,10 @@
+{
+  "signal": "SIGTERM",
+  "delay": 500,
+  "watch": ["src"],
+  "ext": "js,json",
+  "ignore": ["src/utils/seeder.js", "uploads/"],
+  "env": {
+    "NODE_ENV": "development"
+  }
+}

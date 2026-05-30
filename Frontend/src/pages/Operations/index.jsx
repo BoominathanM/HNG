@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -49,17 +49,24 @@ import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import {
+  useGetOperationOrdersQuery,
+  useGetStickerRequestsQuery,
+  useUpdateOperationOrderStatusMutation,
+  useCreateStickerRequestMutation,
+  useUploadStickerDesignMutation,
+  useUpdateStickerStatusMutation,
+  useSendToStickerTeamMutation,
+  useAssignTaskMutation,
+} from '../../store/api/apiSlice';
+import {
+  buildProductionQueues,
   canAssignTaskFromChecks,
   designColor,
   designerCredentials,
-  designQueue,
   FLOW_STAGES,
   getCheckStateMap,
   getFlowStep,
   getProgressFromChecks,
-  operationEmployees,
-  operationOrders,
-  productionQueues,
   statusPill,
 } from './data';
 
@@ -98,10 +105,44 @@ export default function Operations() {
   const isDark = useSelector((state) => state.theme.isDark);
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('orders');
-  const [checkStates] = useState(getCheckStateMap());
   const [queueSearch, setQueueSearch] = useState('');
   const [queueStatusFilter, setQueueStatusFilter] = useState(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
+
+  // API-backed state — RTK Query
+  const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery();
+  const { data: stickerData } = useGetStickerRequestsQuery();
+  const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
+  const [createStickerRequest] = useCreateStickerRequestMutation();
+  const [uploadStickerDesign] = useUploadStickerDesignMutation();
+  const [updateStickerStatus] = useUpdateStickerStatusMutation();
+  const [sendToStickerTeam] = useSendToStickerTeamMutation();
+  const [assignTask] = useAssignTaskMutation();
+
+  const stickerRequests = stickerData?.data || [];
+
+  const apiOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
+    key: o._id, id: o.orderCode || o._id,
+    hotelLogo: o.clientName || '—', salesPerson: o.assignedTo?.fullName || '—',
+    createdAt: o.createdAt, orderType: o.orderType || 'Sticker',
+    clientApproval: o.clientApproval || 'Waiting',
+    designStatus: o.designStatus || 'Not Started',
+    printingStatus: o.printingStatus || 'Not Started',
+    stockStatus: o.stockStatus || 'Not Received',
+    operationStage: o.operationStage || '', taskStatus: o.taskStatus || 'Pending',
+    assignedEmployee: o.assignedTo?.fullName || '', printerSentTotal: o.printerSentTotal || 0,
+    printerVerified: o.printerVerified || false, inventoryStock: o.inventoryStock || 0,
+    orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
+    specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || '',
+    totalAmount: o.total || 0, advance: o.advancePaid || 0,
+    expectedDelivery: o.expectedDelivery, isUrgent: o.isUrgent || false,
+    items: o.items || [], readiness: o.readiness || {},
+    location: o.location || '', phone: o.clientPhone || '',
+    paymentProofs: o.paymentProofs || [],
+  })), [ordersData]);
+
+  const checkStates = useMemo(() => getCheckStateMap(apiOrders), [apiOrders]);
+  const productionQueues = useMemo(() => buildProductionQueues(apiOrders), [apiOrders]);
   const [requestOpen, setRequestOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
@@ -120,26 +161,12 @@ export default function Operations() {
   const [teamSendOpen, setTeamSendOpen] = useState(false);
   const [teamSendType, setTeamSendType] = useState('Sticker');
 
-  const [queueSteps, setQueueSteps] = useState(() => {
-    const init = {};
-    [...productionQueues.sticker, ...productionQueues.box, ...productionQueues.frosted].forEach((item) => {
-      if (item.verified || item.materialVerified || item.status === 'Completed') init[item.key] = 6;
-      else if (item.arrivalDate) init[item.key] = 5;
-      else if (item.dispatchDate) init[item.key] = 4;
-      else if (item.workStarted || item.status === 'Printing') init[item.key] = 3;
-      else if (item.status === 'Approved') init[item.key] = 2;
-      else if (item.status === 'Pending Approval' || item.status === 'In Process') init[item.key] = 1;
-      else init[item.key] = 0;
-    });
-    return init;
-  });
+  const [queueSteps, setQueueSteps] = useState({});
 
   const getQueueStep = (item) => queueSteps[item.key] ?? 0;
   const advanceStep = (itemKey, nextStep) => setQueueSteps((prev) => ({ ...prev, [itemKey]: nextStep }));
 
-  const [printingStatuses, setPrintingStatuses] = useState(
-    () => Object.fromEntries(operationOrders.map((o) => [o.id, null]))
-  );
+  const [printingStatuses, setPrintingStatuses] = useState({});
 
   const [uploadedFiles, setUploadedFiles] = useState({});
 
@@ -152,7 +179,7 @@ export default function Operations() {
   const textColor = isDark ? '#ececf1' : '#1a1a2e';
 
   const filteredOrders = useMemo(() => {
-    const result = operationOrders.filter((order) => {
+    const result = apiOrders.filter((order) => {
       const query = searchText.trim().toLowerCase();
       const matchSearch = !query || order.id.toLowerCase().includes(query) || order.hotelLogo.toLowerCase().includes(query) || order.specsSummary.toLowerCase().includes(query) || order.items.some((item) => item.product.toLowerCase().includes(query));
       const matchStatus = !orderStatusFilter || (orderStatusFilter === 'urgent' ? order.isUrgent : !order.isUrgent);
@@ -169,7 +196,7 @@ export default function Operations() {
     };
     const items = (queueMap[teamSendType] || []).map((item) => ({
       ...item,
-      isUrgent: operationOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
+      isUrgent: apiOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
     }));
     return items.sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
   }, [teamSendType]);
@@ -177,7 +204,7 @@ export default function Operations() {
   const stats = [
     {
       label: 'Order Pending',
-      value: operationOrders.filter((order) => !canAssignTaskFromChecks(checkStates[order.id])).length,
+      value: apiOrders.filter((order) => !canAssignTaskFromChecks(checkStates[order.id])).length,
       color: '#C94F8A',
     },
     {
@@ -187,7 +214,7 @@ export default function Operations() {
     },
     {
       label: 'Approval Waiting',
-      value: operationOrders.filter((order) => order.designStatus === 'Pending Approval').length,
+      value: apiOrders.filter((order) => order.designStatus === 'Pending Approval').length,
       color: '#8a1652',
     },
     {
@@ -202,7 +229,7 @@ export default function Operations() {
     },
     {
       label: 'Ready To Process',
-      value: operationOrders.filter((order) => canAssignTaskFromChecks(checkStates[order.id])).length,
+      value: apiOrders.filter((order) => canAssignTaskFromChecks(checkStates[order.id])).length,
       color: '#1677ff',
     },
   ];
@@ -303,7 +330,7 @@ export default function Operations() {
             size="small"
             icon={<MessageOutlined />}
             style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-            onClick={() => message.success(`Design for ${record.orderId} sent via WhatsApp to customer and ${operationOrders.find((o) => o.id === record.orderId)?.salesPerson || 'sales person'}`)}
+            onClick={() => message.success(`Design for ${record.orderId} sent via WhatsApp to customer and ${apiOrders.find((o) => o.id === record.orderId)?.salesPerson || 'sales person'}`)}
           >
             Send
           </Button>
@@ -346,7 +373,7 @@ export default function Operations() {
     >
       <div className="table-responsive" style={{ padding: 4 }}>
         <Table 
-          dataSource={designQueue.filter(item => item.type === type)} 
+          dataSource={stickerRequests.filter(item => item.type === type)} 
           columns={designColumns} 
           pagination={false} 
           size="small" 
@@ -361,7 +388,7 @@ export default function Operations() {
       dataIndex: 'orderId',
       render: (value) => (
         <Space size={4}>
-          {operationOrders.find((o) => o.id === value)?.isUrgent && (
+          {apiOrders.find((o) => o.id === value)?.isUrgent && (
             <Tooltip title="Urgent / Emergency Deliveries (Partial)">
               <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
             </Tooltip>
@@ -416,7 +443,7 @@ export default function Operations() {
                   title={!uploadedFiles[record.key]?.length ? 'Upload design first' : ''}
                   onClick={() => {
                     advanceStep(record.key, 1);
-                    const ord = operationOrders.find((o) => o.id === record.orderId);
+                    const ord = apiOrders.find((o) => o.id === record.orderId);
                     message.info(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team for ${record.orderId}`);
                   }}
                 >
@@ -446,7 +473,7 @@ export default function Operations() {
                   icon={<MessageOutlined />}
                   style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
                   onClick={() => {
-                    const ord = operationOrders.find((o) => o.id === record.orderId);
+                    const ord = apiOrders.find((o) => o.id === record.orderId);
                     message.success(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`);
                   }}
                 >
@@ -596,7 +623,7 @@ export default function Operations() {
                     dataIndex: 'orderId',
                     render: (v) => (
                       <Space size={4}>
-                        {operationOrders.find((o) => o.id === v)?.isUrgent && (
+                        {apiOrders.find((o) => o.id === v)?.isUrgent && (
                           <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
                         )}
                         <Text strong style={{ color: '#B11E6A' }}>{v}</Text>
@@ -776,21 +803,21 @@ export default function Operations() {
             <Col xs={24} sm={12}>
               <Form.Item label="Order ID" name="orderId" rules={[{ required: true }]}>
                 <Select placeholder="Select Order">
-                  {operationOrders.map((order) => <Option key={order.id} value={order.id}>{order.id}</Option>)}
+                  {apiOrders.map((order) => <Option key={order.id} value={order.id}>{order.id}</Option>)}
                 </Select>
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Hotel Logo" name="client" rules={[{ required: true }]}>
                 <Select placeholder="Select Hotel Logo">
-                  {operationOrders.map((order) => <Option key={order.hotelLogo} value={order.hotelLogo}>{order.hotelLogo}</Option>)}
+                  {apiOrders.map((order) => <Option key={order.hotelLogo} value={order.hotelLogo}>{order.hotelLogo}</Option>)}
                 </Select>
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Product" name="product">
                 <Select placeholder="Select Product">
-                  {operationOrders.flatMap((order) => order.items).map((item) => <Option key={item.key} value={item.product}>{item.product}</Option>)}
+                  {apiOrders.flatMap((order) => order.items).map((item) => <Option key={item.key} value={item.product}>{item.product}</Option>)}
                 </Select>
               </Form.Item>
             </Col>
@@ -859,7 +886,7 @@ export default function Operations() {
           </Form.Item>
           <Form.Item label="Assign To" name="assignee">
             <Select placeholder="Select employee">
-              {operationEmployees.map((employee) => <Option key={employee.key} value={employee.name}>{employee.name}</Option>)}
+              {apiOrders.map((o) => o.assignedEmployee).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).map((name) => <Option key={name} value={name}>{name}</Option>)}
             </Select>
           </Form.Item>
           <Form.Item label="Assigning Note" name="note">

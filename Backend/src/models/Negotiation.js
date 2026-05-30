@@ -1,0 +1,32 @@
+const mongoose = require('mongoose');
+
+const negotiationSchema = new mongoose.Schema({
+  negCode: { type: String, unique: true },
+  quotationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Quotation' },
+  leadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lead' },
+  clientName: { type: String, required: true },
+  negDate: { type: Date, default: Date.now },
+  amount: Number,
+  gstAmount: { type: Number, default: 0 },
+  total: Number,
+  advancePaid: { type: Number, default: 0 },
+  balance: Number,
+  type: { type: String, enum: ['GST', 'Non-GST'], default: 'GST' },
+  status: {
+    type: String,
+    enum: ['Unpaid', 'Partially Paid', 'Paid'],
+    default: 'Unpaid',
+  },
+  items: [{
+    itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },
+    itemName: String,
+    unit: String,
+    price: Number,
+    qty: Number,
+    lineTotal: Number,
+  }],
+  note: String,
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+}, { timestamps: true });
+
+module.exports = mongoose.model('Negotiation', negotiationSchema);

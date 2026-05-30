@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, Progress, Alert, InputNumber, List, message,
@@ -19,46 +19,25 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
+import {
+  useGetItemsQuery,
+  useCreateItemMutation,
+  useUpdateItemMutation,
+  useDeleteItemMutation,
+  useAddStockRequestMutation,
+  useSellStockRequestMutation,
+  useGetStockApprovalsQuery,
+  useApproveMovementMutation,
+  useRejectMovementMutation,
+  useGetStockHistoryQuery,
+  useSubmitStockCheckMutation,
+  useGetVendorsQuery,
+  useCreateVendorMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const inventory = [
-  { key: 1, code: 'RM-001', name: 'Soap Base (White)', category: 'Raw Material', unit: 'Kg', value: 85, valueTax: 'without_gst', defaultSize: '2.5cm x 2.5cm', current: 450, min: 100, max: 1000, price: '₹85/Kg', status: 'OK', sellers: [{ name: 'ChemCo India', stock: 300 }, { name: 'BioLife Ltd', stock: 150 }], purchasedDate: '2024-01-15' },
-  { key: 2, code: 'RM-002', name: 'Soap Base (Transparent)', category: 'Raw Material', unit: 'Kg', value: 95, valueTax: 'without_gst', defaultSize: '2.5cm x 2.5cm', current: 45, min: 100, max: 500, price: '₹95/Kg', status: 'Low', sellers: [{ name: 'BioLife Ltd', stock: 45 }], purchasedDate: '2024-01-10' },
-  { key: 3, code: 'PK-001', name: 'Shampoo Bottles (Flip 30ml)', category: 'Packaging', unit: 'Pcs', value: 4.5, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 200, min: 500, max: 5000, price: '₹4.5/Pc', status: 'Low', sellers: [{ name: 'PlastiPack', stock: 200 }], purchasedDate: '2024-01-05' },
-  { key: 4, code: 'PK-002', name: 'Dental Kit Boxes', category: 'Packaging', unit: 'Pcs', value: 12, valueTax: 'without_gst', defaultSize: 'PVK', current: 850, min: 200, max: 2000, price: '₹12/Pc', status: 'OK', sellers: [{ name: 'BoxWorld', stock: 700 }, { name: 'PlastiPack', stock: 150 }], purchasedDate: '2024-01-12' },
-  { key: 5, code: 'ST-001', name: 'Custom Stickers (Hotel Brand)', category: 'Sticker', unit: 'Pcs', value: 1.2, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 3000, min: 500, max: 10000, price: '₹1.2/Pc', status: 'OK', sellers: [{ name: 'PrintFast', stock: 3000 }], purchasedDate: '2024-01-18' },
-  { key: 6, code: 'RM-003', name: 'Shampoo Concentrate', category: 'Raw Material', unit: 'Ltr', value: 220, valueTax: 'without_gst', defaultSize: '2cm x 3cm', current: 0, min: 50, max: 500, price: '₹220/Ltr', status: 'Out', sellers: [{ name: 'ChemCo India', stock: 0 }], purchasedDate: '2023-12-20' },
-];
-
-const stockChartData = inventory.map((i) => ({
-  name: i.name.split(' ').slice(0, 2).join(' '),
-  current: i.current,
-  min: i.min,
-}));
-
-const suppliersList = [
-  { id: 1, name: 'ChemCo India', phone: '+91 98765 43210', email: 'info@chemco.in', address: 'Mumbai, MH' },
-  { id: 2, name: 'BioLife Ltd', phone: '+91 87654 32109', email: 'contact@biolife.in', address: 'Chennai, TN' },
-  { id: 3, name: 'PlastiPack', phone: '+91 76543 21098', email: 'sales@plastipack.com', address: 'Delhi, DL' },
-  { id: 4, name: 'BoxWorld', phone: '+91 65432 10987', email: 'info@boxworld.in', address: 'Bengaluru, KA' },
-];
-
-const vendorsList = [
-  { id: 1, name: 'Marriott Mumbai', phone: '+91 22 6651 1234', email: 'purchase@marriott.in', address: 'Mumbai, MH', whatsapp: '912266511234', products: ['Soap Base (White)', 'Dental Kit Boxes'] },
-  { id: 2, name: 'Taj Hotels Delhi', phone: '+91 11 6600 7777', email: 'orders@tajhotels.in', address: 'Delhi, DL', whatsapp: '911166007777', products: ['Shampoo Bottles (Flip 30ml)', 'Custom Stickers (Hotel Brand)'] },
-  { id: 3, name: 'ITC Grand Kolkata', phone: '+91 33 2288 9999', email: 'supply@itchotels.in', address: 'Kolkata, WB', whatsapp: '913322889999', products: ['Soap Base (White)', 'Soap Base (Transparent)'] },
-  { id: 4, name: 'Hyatt Chennai', phone: '+91 44 6150 1234', email: 'procurement@hyatt.in', address: 'Chennai, TN', whatsapp: '914461501234', products: ['Dental Kit Boxes', 'Shampoo Bottles (Flip 30ml)'] },
-];
-
-const initialStockHistory = [
-  { key: 1, date: '2024-01-15', item: 'Soap Base (White)', code: 'RM-001', action: 'Stock Added', qty: 100, unit: 'Kg', source: 'ChemCo India', person: 'Admin', invoiceNo: 'INV-2024-001', notes: 'Opening stock' },
-  { key: 2, date: '2024-01-10', item: 'Soap Base (Transparent)', code: 'RM-002', action: 'Stock Added', qty: 50, unit: 'Kg', source: 'BioLife Ltd', person: 'Priya', invoiceNo: 'INV-2024-002', notes: '' },
-  { key: 3, date: '2024-01-05', item: 'Shampoo Bottles (Flip 30ml)', code: 'PK-001', action: 'Stock Added', qty: 200, unit: 'Pcs', source: 'PlastiPack', person: 'Admin', invoiceNo: 'INV-2024-003', notes: 'Monthly reorder' },
-  { key: 4, date: '2024-01-18', item: 'Custom Stickers (Hotel Brand)', code: 'ST-001', action: 'Stock Added', qty: 3000, unit: 'Pcs', source: 'PrintFast', person: 'Admin', invoiceNo: 'INV-2024-004', notes: '' },
-  { key: 5, date: '2024-05-01', item: 'Soap Base (White)', code: 'RM-001', action: 'Stock Deducted', qty: 50, unit: 'Kg', source: 'Marriott Mumbai', person: 'Priya', invoiceNo: '', notes: 'Sold to client' },
-];
 
 export default function Inventory() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -67,13 +46,55 @@ export default function Inventory() {
   const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
   const sectionBg = isDark ? '#16161e' : '#fafafa';
 
-  const [suppliers, setSuppliers] = useState(suppliersList);
-  const [vendors, setVendors] = useState(vendorsList);
   const [viewBillDetail, setViewBillDetail] = useState(null);
-  const [inventoryList, setInventoryList] = useState(inventory);
-  const [pendingAdjustments, setPendingAdjustments] = useState([
-    { key: 101, date: dayjs().format('YYYY-MM-DD'), type: 'Addition', item: 'Soap Base (White)', qty: 50, unit: 'Kg', entity: 'Manual Adj', person: 'Priya', status: 'Pending', notes: '' }
-  ]);
+
+  const { data: invData, isLoading: invLoading } = useGetItemsQuery();
+  const { data: approvalsData } = useGetStockApprovalsQuery();
+  const { data: suppliersData } = useGetVendorsQuery({ type: 'raw_material' });
+  const [createItemMutation] = useCreateItemMutation();
+  const [updateItemMutation] = useUpdateItemMutation();
+  const [deleteItemMutation] = useDeleteItemMutation();
+  const [addStockRequest] = useAddStockRequestMutation();
+  const [sellStockRequest] = useSellStockRequestMutation();
+  const [approveMovement] = useApproveMovementMutation();
+  const [rejectMovement] = useRejectMovementMutation();
+  const [submitStockCheck] = useSubmitStockCheckMutation();
+
+  const suppliers = suppliersData?.data || [];
+  const { data: customersData } = useGetVendorsQuery({ type: 'customer' });
+  const [createVendorMutation] = useCreateVendorMutation();
+  const vendorsList = useMemo(() => (customersData?.data || []).map((v) => ({
+    id: v._id, name: v.name, phone: v.phone, email: v.email, address: v.address,
+  })), [customersData]);
+
+  const inventoryList = useMemo(() => (invData?.data || []).map((i) => ({
+    key: i._id,
+    code: i.itemCode,
+    name: i.itemName,
+    category: i.category,
+    unit: i.unit,
+    value: i.purchasePrice,
+    defaultSize: i.defaultSize,
+    current: i.currentStock,
+    min: i.minStock,
+    max: i.minStock * 10,
+    price: `₹${i.purchasePrice}/${i.unit}`,
+    status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
+    hsnCode: i.hsnCode,
+  })), [invData]);
+
+  const pendingAdjustments = useMemo(() => (approvalsData?.data || []).map((m) => ({
+    key: m._id,
+    date: m.createdAt?.slice(0, 10),
+    type: m.movementType === 'IN' ? 'Addition' : m.movementType === 'OUT' ? 'Deduction' : 'Adjustment',
+    item: m.itemId?.itemName || '—',
+    qty: m.qty,
+    unit: m.itemId?.unit || '',
+    entity: m.referenceType || 'Manual',
+    person: 'Staff',
+    status: m.approvalStatus,
+    notes: m.reason || '',
+  })), [approvalsData]);
 
   /* ── Manual adjustment modal ── */
   const [adjustModal, setAdjustModal] = useState({ open: false, item: null, type: null });
@@ -101,7 +122,11 @@ export default function Inventory() {
   const [showAddVendor, setShowAddVendor] = useState(false);
   const [vendorForm] = Form.useForm();
 
-  const [categories, setCategories] = useState(['Chemicals', 'Ready Stock']);
+  const [extraCategories, setExtraCategories] = useState([]);
+  const categories = useMemo(
+    () => [...new Set([...inventoryList.map((i) => i.category).filter(Boolean), ...extraCategories])],
+    [inventoryList, extraCategories]
+  );
   const [newCategoryName, setNewCategoryName] = useState('');
 
   /* ── Search & Filter ── */
@@ -112,7 +137,19 @@ export default function Inventory() {
   const [approvalType, setApprovalType] = useState(null);
   const [approvalStatus, setApprovalStatus] = useState(null);
   /* ── Stock History ── */
-  const [stockHistory, setStockHistory] = useState(initialStockHistory);
+  const { data: historyData } = useGetStockHistoryQuery();
+  const stockHistory = useMemo(() => (historyData?.data || []).map((m) => ({
+    key: m._id,
+    date: m.createdAt?.slice(0, 10),
+    item: m.itemId?.itemName || '—',
+    code: m.itemId?.itemCode || '—',
+    action: m.movementType === 'IN' ? 'Stock Added' : m.movementType === 'OUT' ? 'Stock Deducted' : 'Adjustment',
+    qty: m.qty,
+    unit: m.itemId?.unit || '',
+    source: m.referenceType || '—',
+    person: 'Admin',
+    notes: m.reason || '',
+  })), [historyData]);
   const [historySearch, setHistorySearch] = useState('');
   const [historyActionFilter, setHistoryActionFilter] = useState(null);
   const [historyDateRange, setHistoryDateRange] = useState(null);
@@ -122,7 +159,7 @@ export default function Inventory() {
 
   /* ── Live Staff Checking ── */
   const [checkSession, setCheckSession] = useState(
-    inventory.map(i => ({
+    inventoryList.map(i => ({
       key: i.key,
       code: i.code,
       name: i.name,
@@ -164,15 +201,15 @@ export default function Inventory() {
     return matchSearch && matchAction && matchDate;
   });
 
-  const lowStock = inventory.filter((i) => i.status === 'Low' || i.status === 'Out');
+  const lowStock = inventoryList.filter((i) => i.status === 'Low' || i.status === 'Out');
 
-  const filteredSuppliers = suppliersList.filter((s) =>
-    s.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-    s.phone.includes(supplierSearch)
+  const filteredSuppliers = suppliers.filter((s) =>
+    (s.name || '').toLowerCase().includes(supplierSearch.toLowerCase()) ||
+    (s.phone || '').includes(supplierSearch)
   );
   const filteredVendors = vendorsList.filter((c) =>
-    c.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
-    c.phone.includes(vendorSearch)
+    (c.name || '').toLowerCase().includes(vendorSearch.toLowerCase()) ||
+    (c.phone || '').includes(vendorSearch)
   );
 
   const onCategoryChange = (event) => setNewCategoryName(event.target.value);
@@ -180,7 +217,7 @@ export default function Inventory() {
   const addCategory = (e) => {
     e.preventDefault();
     if (newCategoryName.trim() && !categories.includes(newCategoryName.trim())) {
-      setCategories([...categories, newCategoryName.trim()]);
+      setExtraCategories((prev) => [...prev, newCategoryName.trim()]);
       setNewCategoryName('');
     }
   };
@@ -205,123 +242,72 @@ export default function Inventory() {
     setIssueOpen(true);
   };
 
-  const handleSaveSupplier = () => {
-    const vals = supplierForm.getFieldsValue();
-    const newSupplier = { id: Date.now(), name: vals.sup_name || 'New Supplier', phone: vals.sup_phone || '', email: vals.sup_email || '', address: vals.sup_address || '' };
-    setSuppliers([...suppliers, newSupplier]);
-    setSelectedSupplier(newSupplier);
-    supplierForm.resetFields();
-    setShowAddSupplier(false);
+  const handleSaveSupplier = async () => {
+    try {
+      const vals = supplierForm.getFieldsValue();
+      const result = await createVendorMutation({
+        name: vals.sup_name, phone: vals.sup_phone, email: vals.sup_email,
+        address: vals.sup_address, type: 'raw_material', taxId: vals.sup_tax, bankDetails: vals.sup_bank,
+      }).unwrap();
+      setSelectedSupplier({ id: result.data?._id || result._id, name: vals.sup_name, phone: vals.sup_phone, address: vals.sup_address });
+      supplierForm.resetFields();
+      setShowAddSupplier(false);
+      message.success('Supplier added');
+    } catch {
+      message.error('Failed to add supplier');
+    }
   };
 
-  const handleSaveVendor = () => {
-    const vals = vendorForm.getFieldsValue();
-    const newVendor = { id: Date.now(), name: vals.cust_name || 'New Vendor', phone: vals.cust_phone || '', email: vals.cust_email || '', address: vals.cust_address || '', products: [] };
-    setVendors([...vendors, newVendor]);
-    setSelectedVendor(newVendor);
-    vendorForm.resetFields();
-    setShowAddVendor(false);
+  const handleSaveVendor = async () => {
+    try {
+      const vals = vendorForm.getFieldsValue();
+      const result = await createVendorMutation({
+        name: vals.cust_name, phone: vals.cust_phone, email: vals.cust_email,
+        address: vals.cust_address, type: 'customer', taxId: vals.cust_tax, bankDetails: vals.cust_bank,
+      }).unwrap();
+      setSelectedVendor({ id: result.data?._id || result._id, name: vals.cust_name, phone: vals.cust_phone, address: vals.cust_address });
+      vendorForm.resetFields();
+      setShowAddVendor(false);
+      message.success('Vendor added');
+    } catch {
+      message.error('Failed to add vendor');
+    }
   };
 
-  const requestAdjustment = (item, type, qty, entity = 'Internal', notes = '') => {
-    const newAdj = {
-      key: Date.now(),
-      date: dayjs().format('YYYY-MM-DD'),
-      type,
-      item: item.name,
-      qty,
-      unit: item.unit,
-      entity,
-      person: 'Staff',
-      status: 'Pending',
-      notes,
-    };
-    setPendingAdjustments([newAdj, ...pendingAdjustments]);
-    message.success(`Adjustment request for ${item.name} sent to Operation Head`);
+  const handleApproveAdjustment = async (adj) => {
+    try {
+      await approveMovement(adj.key).unwrap();
+      message.success('Stock adjustment approved and applied');
+    } catch {
+      message.error('Failed to approve adjustment');
+    }
   };
 
-  const handleApproveAdjustment = (adj) => {
-    const updatedList = inventoryList.map(item => {
-      if (item.name === adj.item) {
-        const change = adj.type === 'Addition' ? adj.qty : -adj.qty;
-        const newCurrent = item.current + change;
-        const currentSellers = item.sellers || [];
-        const qty = adj.qty || 0;
-        const isExternalAdd = adj.type === 'Addition' && adj.entity && !['Manual Adj', 'Internal', 'Manual Add'].includes(adj.entity);
-        const isDeduction = adj.type === 'Deduction';
-        let newSellers = currentSellers;
-        if (isExternalAdd) {
-          newSellers = currentSellers.some(s => s.name === adj.entity)
-            ? currentSellers.map(s => s.name === adj.entity ? { ...s, stock: (s.stock || 0) + qty } : s)
-            : [...currentSellers, { name: adj.entity, stock: qty }];
-        } else if (isDeduction && currentSellers.length > 0) {
-          let remaining = qty;
-          newSellers = currentSellers.map(s => {
-            if (remaining <= 0) return s;
-            const deduct = Math.min(s.stock || 0, remaining);
-            remaining -= deduct;
-            return { ...s, stock: (s.stock || 0) - deduct };
-          }).filter(s => s.stock > 0 || currentSellers.length === 1);
-        }
-        return { ...item, current: newCurrent, status: newCurrent <= 0 ? 'Out' : newCurrent <= item.min ? 'Low' : 'OK', sellers: newSellers };
-      }
-      return item;
-    });
-    setInventoryList(updatedList);
-    setPendingAdjustments(pendingAdjustments.map(a => a.key === adj.key ? { ...a, status: 'Approved' } : a));
-
-    // Log to stock history
-    const matchedItem = updatedList.find(i => i.name === adj.item);
-    setStockHistory(prev => [{
-      key: Date.now(),
-      date: dayjs().format('YYYY-MM-DD'),
-      item: adj.item,
-      code: matchedItem?.code || '',
-      action: adj.type === 'Addition' ? 'Stock Added' : 'Stock Deducted',
-      qty: adj.qty,
-      unit: adj.unit,
-      source: adj.entity,
-      person: adj.person,
-      invoiceNo: '',
-      notes: adj.notes || '',
-    }, ...prev]);
-
-    message.success('Stock adjustment approved and applied');
-  };
-
-  const handleRejectAdjustment = (adj) => {
-    setPendingAdjustments(pendingAdjustments.map(a => a.key === adj.key ? { ...a, status: 'Rejected' } : a));
-    message.error('Adjustment request rejected');
+  const handleRejectAdjustment = async (adj) => {
+    try {
+      await rejectMovement(adj.key).unwrap();
+      message.warning('Adjustment request rejected');
+    } catch {
+      message.error('Failed to reject adjustment');
+    }
   };
 
   /* ── Submit Live Stock Check ── */
-  const handleSubmitCheck = () => {
+  const handleSubmitCheck = async () => {
     const discrepancies = checkSession.filter(i => i.physicalCount !== i.systemCount);
     const unknownItems = checkSession.filter(i => i.physicalCount < i.systemCount && i.missingType === 'unknown');
-
-    // Create adjustment requests for all discrepancies
-    discrepancies.forEach(item => {
-      const diff = item.physicalCount - item.systemCount;
-      const adj = {
-        key: Date.now() + Math.random(),
-        date: dayjs().format('YYYY-MM-DD'),
-        type: diff < 0 ? 'Deduction' : 'Addition',
-        item: item.name,
-        qty: Math.abs(diff),
-        unit: item.unit,
-        entity: 'Stock Check',
-        person: 'Staff',
-        status: 'Pending',
-        notes: diff < 0
-          ? (item.missingType === 'known' ? `Known: ${item.missingReason}` : 'Unknown shortage — reported to management')
-          : 'Extra stock found during check',
-      };
-      setPendingAdjustments(prev => [adj, ...prev]);
-    });
-
-    // Notify for unknown shortages
-    if (unknownItems.length > 0) {
-      unknownItems.forEach(item => {
+    try {
+      await submitStockCheck(
+        discrepancies.map((item) => ({
+          itemId: item.key,
+          physicalCount: item.physicalCount,
+          systemCount: item.systemCount,
+          diff: item.physicalCount - item.systemCount,
+          missingType: item.missingType,
+          missingReason: item.missingReason,
+        }))
+      ).unwrap();
+      unknownItems.forEach((item) => {
         notification.warning({
           message: 'Unknown Stock Shortage Reported',
           description: `${Math.abs(item.physicalCount - item.systemCount)} ${item.unit} of "${item.name}" is unaccounted. Super Admin and Manager have been notified.`,
@@ -329,11 +315,12 @@ export default function Inventory() {
           duration: 8,
         });
       });
+      setCheckSubmitOpen(false);
+      setCheckSubmitted(true);
+      message.success(`Stock check submitted. ${discrepancies.length} discrepancies sent for approval.`);
+    } catch {
+      message.error('Failed to submit stock check');
     }
-
-    setCheckSubmitOpen(false);
-    setCheckSubmitted(true);
-    message.success(`Stock check submitted. ${discrepancies.length} discrepancies sent for approval.`);
   };
 
   /* ── Style helpers ── */
@@ -533,10 +520,10 @@ export default function Inventory() {
       {/* Stat cards */}
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
         {[
-          { label: 'Total Items', val: inventory.length, color: '#B11E6A' },
-          { label: 'OK Stock', val: inventory.filter((i) => i.status === 'OK').length, color: '#8a1652' },
-          { label: 'Low Stock', val: inventory.filter((i) => i.status === 'Low').length, color: '#C94F8A' },
-          { label: 'Out of Stock', val: inventory.filter((i) => i.status === 'Out').length, color: '#D85C9E' },
+          { label: 'Total Items', val: inventoryList.length, color: '#B11E6A' },
+          { label: 'OK Stock', val: inventoryList.filter((i) => i.status === 'OK').length, color: '#8a1652' },
+          { label: 'Low Stock', val: inventoryList.filter((i) => i.status === 'Low').length, color: '#C94F8A' },
+          { label: 'Out of Stock', val: inventoryList.filter((i) => i.status === 'Out').length, color: '#D85C9E' },
         ].map((s, i) => (
           <Col xs={12} sm={6} key={s.label}>
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}>
@@ -556,7 +543,7 @@ export default function Inventory() {
             style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
             styles={{ body: { padding: '12px 16px 16px' } }}>
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={stockChartData} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
+              <BarChart data={inventoryList.map((i) => ({ name: i.name.split(' ').slice(0, 2).join(' '), current: i.current, min: i.min }))} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#333' : '#f0f0f0'} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: isDark ? '#aaa' : '#666' }} />
                 <YAxis tick={{ fontSize: 11, fill: isDark ? '#aaa' : '#666' }} />
@@ -744,7 +731,7 @@ export default function Inventory() {
                     </Space>
                     <Button
                       size="small"
-                      onClick={() => setCheckSession(inventory.map(i => ({ key: i.key, code: i.code, name: i.name, unit: i.unit, systemCount: i.current, physicalCount: i.current, missingType: null, missingReason: '' })))}
+                      onClick={() => setCheckSession(inventoryList.map(i => ({ key: i.key, code: i.code, name: i.name, unit: i.unit, systemCount: i.current, physicalCount: i.current, missingType: null, missingReason: '' })))}
                       style={{ borderColor: '#B11E6A44', color: '#B11E6A' }}
                     >
                       Reset All
@@ -1123,12 +1110,20 @@ export default function Inventory() {
             <Button
               type="primary"
               style={{ background: adjustModal.type === 'Addition' ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : 'linear-gradient(135deg,#8a1652,#B11E6A)', border: 'none' }}
-              onClick={() => {
-                adjustForm.validateFields().then((vals) => {
-                  requestAdjustment(adjustModal.item, adjustModal.type, vals.count, 'Manual Adj', vals.notes || '');
+              onClick={async () => {
+                try {
+                  const vals = await adjustForm.validateFields();
+                  if (adjustModal.type === 'Addition') {
+                    await addStockRequest({ id: adjustModal.item.key, qty: vals.count, reason: vals.notes || 'Manual adjustment' }).unwrap();
+                  } else {
+                    await sellStockRequest({ id: adjustModal.item.key, qty: vals.count, reason: vals.notes || 'Manual adjustment' }).unwrap();
+                  }
+                  message.success('Adjustment request submitted for approval');
                   setAdjustModal({ open: false, item: null, type: null });
                   adjustForm.resetFields();
-                });
+                } catch {
+                  message.error('Failed to submit adjustment');
+                }
               }}
             >
               OK
@@ -1229,13 +1224,18 @@ export default function Inventory() {
         styles={{ body: { padding: 0, background: isDark ? '#13131f' : '#f4f5f9' }, header: { display: 'none' } }}
         footer={
           <Button type="primary" block style={saveBtn('linear-gradient(135deg,#B11E6A,#D85C9E)')}
-            onClick={() => {
-              const vals = receiveForm.getFieldsValue();
-              requestAdjustment(activeItem, 'Addition', vals.qty || 0, selectedSupplier?.name || 'Manual Add');
-              setReceiveOpen(false);
-              setSelectedSupplier(null);
-              setShowAddSupplier(false);
-              receiveForm.resetFields();
+            onClick={async () => {
+              try {
+                const vals = receiveForm.getFieldsValue();
+                await addStockRequest({ id: activeItem.key, qty: Number(vals.qty) || 0, vendorName: selectedSupplier?.name || '', reason: vals.comment || '' }).unwrap();
+                message.success(`Stock addition request for ${activeItem.name} sent for approval`);
+                setReceiveOpen(false);
+                setSelectedSupplier(null);
+                setShowAddSupplier(false);
+                receiveForm.resetFields();
+              } catch {
+                message.error('Failed to submit stock request');
+              }
             }}
           >
             REQUEST APPROVAL FOR ADD STOCK
@@ -1366,13 +1366,18 @@ export default function Inventory() {
         styles={{ body: { padding: 0, background: isDark ? '#13131f' : '#f4f5f9' }, header: { display: 'none' } }}
         footer={
           <Button type="primary" block style={saveBtn('linear-gradient(135deg,#8a1652,#B11E6A)')}
-            onClick={() => {
-              const vals = issueForm.getFieldsValue();
-              requestAdjustment(activeIssueItem, 'Deduction', vals.qty || 0, selectedVendor?.name || 'Manual Sell');
-              setIssueOpen(false);
-              setSelectedVendor(null);
-              setShowAddVendor(false);
-              issueForm.resetFields();
+            onClick={async () => {
+              try {
+                const vals = issueForm.getFieldsValue();
+                await sellStockRequest({ id: activeIssueItem.key, qty: Number(vals.qty) || 0, vendorName: selectedVendor?.name || '', reason: vals.comment || '' }).unwrap();
+                message.success(`Stock deduction request for ${activeIssueItem.name} sent for approval`);
+                setIssueOpen(false);
+                setSelectedVendor(null);
+                setShowAddVendor(false);
+                issueForm.resetFields();
+              } catch {
+                message.error('Failed to submit stock request');
+              }
             }}
           >
             REQUEST APPROVAL FOR SELL STOCK
