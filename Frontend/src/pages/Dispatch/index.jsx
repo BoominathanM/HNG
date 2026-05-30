@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Typography, Space,
-  Descriptions, Alert, Select, Tabs, Divider, Collapse, Upload, message, InputNumber, Image,
+  Descriptions, Alert, Select, Tabs, Divider, Collapse, Upload, InputNumber, Image,
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   CarOutlined, CheckCircleOutlined, UploadOutlined, EyeOutlined,
   SearchOutlined, PrinterOutlined, SaveOutlined, EditOutlined,
@@ -258,9 +259,9 @@ export default function Dispatch() {
     setPickupOrders(updatedOrders);
     localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedOrders));
 
-    message.success(payBy === 'pickup_team'
+    enqueueSnackbar(payBy === 'pickup_team'
       ? 'Payment proof uploaded — visible to Finance team as Paid.'
-      : 'Sent to Finance team with GPay number and proof.');
+      : 'Sent to Finance team with GPay number and proof.', { variant: 'success' });
     setShowPickupPayModal(false);
     setPickupPayTarget(null);
     pickupPayForm.resetFields();
@@ -272,7 +273,7 @@ export default function Dispatch() {
       : o);
     setPickupOrders(updatedOrders);
     localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedOrders));
-    message.success(`Order ${receivedTarget?.orderId} marked as Pickup Dropped — received order process started.`);
+    enqueueSnackbar(`Order ${receivedTarget?.orderId} marked as Pickup Dropped — received order process started.`, { variant: 'success' });
     setShowReceivedModal(false);
     setReceivedTarget(null);
   };
@@ -342,7 +343,7 @@ export default function Dispatch() {
     setAiParsing(true);
     setTimeout(() => {
       setAiParsing(false);
-      message.info('AI scan complete. Please fill in the LR details manually.');
+      enqueueSnackbar('AI scan complete. Please fill in the LR details manually.', { variant: 'info' });
     }, 1200);
   };
 

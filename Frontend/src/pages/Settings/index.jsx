@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   Row, Col, Card, Form, Input, Select, Switch, Button, Typography,
-  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber, Empty, message, Spin
+  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber, Empty, Spin
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   SaveOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   UserOutlined, UploadOutlined, CheckOutlined, CloseOutlined,
@@ -280,14 +281,14 @@ export default function Settings() {
       try {
         if (editingUser) {
           await updateUserMutation({ id: editingUser.key, ...payload }).unwrap();
-          message.success('User updated');
+          enqueueSnackbar('User updated', { variant: 'success' });
         } else {
           await createUserMutation(payload).unwrap();
-          message.success('User created');
+          enqueueSnackbar('User created', { variant: 'success' });
         }
         // RTK Query invalidates the Users tag and refetches automatically.
       } catch (e) {
-        message.error(e?.data || 'Failed to save user');
+        enqueueSnackbar(e?.data || 'Failed to save user', { variant: 'error' });
         return;
       }
       userForm.resetFields();
@@ -299,9 +300,9 @@ export default function Settings() {
   const removeUser = async (key) => {
     try {
       await deleteUserMutation(key).unwrap();
-      message.success('User deleted');
+      enqueueSnackbar('User deleted', { variant: 'success' });
     } catch {
-      message.error('Failed to delete user');
+      enqueueSnackbar('Failed to delete user', { variant: 'error' });
     }
   };
 
@@ -1101,8 +1102,8 @@ export default function Settings() {
                               onClick={async () => {
                                 try {
                                   await restoreRecordMutation({ type: 'parties', id: r.key }).unwrap();
-                                  message.success(`${r.name} restored`);
-                                } catch { message.error('Restore failed'); }
+                                  enqueueSnackbar(`${r.name} restored`, { variant: 'success' });
+                                } catch { enqueueSnackbar('Restore failed', { variant: 'error' }); }
                               }}
                             >
                               Restore

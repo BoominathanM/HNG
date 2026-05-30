@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Form, Input, Button, Typography, Tag,
-  Select, Space, message
+  Select, Space
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   ArrowLeftOutlined, ThunderboltOutlined, EditOutlined,
   CheckCircleFilled, RobotOutlined, DisconnectOutlined,
@@ -47,27 +48,27 @@ export default function AIIntegration() {
   const [model, setModel] = useState('gemini-2.0-flash');
 
   const handleTestConnection = () => {
-    if (!apiKey) { message.error('Please enter an API key first.'); return; }
+    if (!apiKey) { enqueueSnackbar('Please enter an API key first.', { variant: 'error' }); return; }
     setTesting(true);
     setTimeout(() => {
       setTesting(false);
       setConnected(true);
       setEditing(false);
-      message.success('Gemini AI connected successfully!');
+      enqueueSnackbar('Gemini AI connected successfully!', { variant: 'success' });
     }, 2000);
   };
 
   const handleSave = () => {
-    if (!apiKey) { message.error('API Key is required.'); return; }
+    if (!apiKey) { enqueueSnackbar('API Key is required.', { variant: 'error' }); return; }
     setEditing(false);
-    message.success('Configuration saved!');
+    enqueueSnackbar('Configuration saved!', { variant: 'success' });
   };
 
   const handleDisconnect = () => {
     setConnected(false);
     setEditing(true);
     setApiKey('');
-    message.success('AI Integration disconnected.');
+    enqueueSnackbar('AI Integration disconnected.', { variant: 'success' });
   };
 
   return (

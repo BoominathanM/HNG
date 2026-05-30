@@ -11,7 +11,7 @@ import {
   ContactsOutlined
 } from '@ant-design/icons';
 import { toggleSidebar } from '../../store/slices/themeSlice';
-import { logout } from '../../store/slices/authSlice';
+import { useLogoutMutation } from '../../store/api/apiSlice';
 
 const { Sider } = Layout;
 const { Text } = Typography;
@@ -50,6 +50,16 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
   const dispatch = useDispatch();
   const collapsed = useSelector((s) => s.theme.sidebarCollapsed);
   const isDark = useSelector((s) => s.theme.isDark);
+  const [logout] = useLogoutMutation();
+
+  const handleLogout = async () => {
+    try {
+      await logout().unwrap();
+    } catch {
+      // logout mutation clears local auth state even if the API call fails
+    }
+    navigate('/login', { replace: true });
+  };
 
   const [expandedKeys, setExpandedKeys] = useState(() => {
     const activeParent = menuItems.find(
@@ -334,11 +344,8 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
         }}>
           <Button 
             type="text" 
-            icon={<LogoutOutlined />} 
-            onClick={() => {
-              dispatch(logout());
-              navigate('/login', { replace: true });
-            }}
+            icon={<LogoutOutlined />}
+            onClick={handleLogout}
             style={{ 
               width: '100%', 
               display: 'flex', 

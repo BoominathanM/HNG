@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import dayjs from 'dayjs';
-import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs, message } from 'antd';
+import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined, SearchOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -88,12 +89,12 @@ export default function Expenses() {
         formData.append('proof', values.proof.fileList[0].originFileObj);
       }
       await expApi.createExpense(formData);
-      message.success('Expense added successfully');
+      enqueueSnackbar('Expense added successfully', { variant: 'success' });
       loadExpenses();
       setIsModalOpen(false);
       form.resetFields();
-    } catch {
-      message.error('Failed to add expense');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add expense', { variant: 'error' });
     }
   };
 

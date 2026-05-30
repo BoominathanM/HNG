@@ -9,7 +9,6 @@ import {
   Form,
   Input,
   InputNumber,
-  message,
   Modal,
   Progress,
   Row,
@@ -36,6 +35,7 @@ import {
   PrinterOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
+import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import {
@@ -589,7 +589,7 @@ export default function OperationDetail() {
                   : printingModalType === 'box'
                   ? 'Box Team'
                   : 'Ziplock Team';
-              message.success(`Confirmed: ${printingTeamItems.length} item(s) sent to ${teamLabel}`);
+              enqueueSnackbar(`Confirmed: ${printingTeamItems.length} item(s) sent to ${teamLabel}`, { variant: 'success' });
               setPrintingModalOpen(false);
             }}
           >

@@ -1,8 +1,10 @@
 ﻿import React, { useState, useMemo } from 'react';
 import {
-  Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs,
-  Typography, Space, Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, DatePicker, message,
+  Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs, Typography, Space, 
+  Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, 
+  DatePicker,
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
@@ -84,7 +86,7 @@ export default function Tasks() {
     try {
       await updateTaskStatus({ id: resolveTaskId(taskId), status: 'In Progress' }).unwrap();
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to start task');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to start task', { variant: 'error' });
     }
   };
 
@@ -92,12 +94,12 @@ export default function Tasks() {
     try {
       await updateTaskStatus({ id: resolveTaskId(taskId), status: 'Done' }).unwrap();
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to complete task');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to complete task', { variant: 'error' });
     }
   };
 
   const handleFollowupDone = () => {
-    message.success('Follow-up marked done');
+    enqueueSnackbar('Follow-up marked done', { variant: 'success' });
   };
 
   const handleCreateTask = async () => {
@@ -111,10 +113,10 @@ export default function Tasks() {
       }).unwrap();
       form.resetFields();
       setModalOpen(false);
-      message.success('Task created');
+      enqueueSnackbar('Task created', { variant: 'success' });
     } catch (err) {
       if (err?.errorFields) return;
-      message.error(err?.data?.message || err?.data || 'Failed to create task');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create task', { variant: 'error' });
     }
   };
 
@@ -122,6 +124,18 @@ export default function Tasks() {
     setEmergencyTask(task);
     setApprovals({ sales: false, opHead: false });
     setEmergencyDispatchOpen(true);
+  };
+
+  const handleEmergencySubmit = async () => {
+    if (!approvals.sales || !approvals.opHead) return;
+    const id = emergencyTask?.key || emergencyTask?.id;
+    try {
+      await approveEmergency(id).unwrap();
+      enqueueSnackbar('Emergency dispatch approved and submitted', { variant: 'success' });
+      setEmergencyDispatchOpen(false);
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to submit emergency dispatch', { variant: 'error' });
+    }
   };
 
   // ── Inventory-based task suggestions ─────────────────────────────────
@@ -711,7 +725,7 @@ export default function Tasks() {
           <Button key="cancel" onClick={() => setEmergencyDispatchOpen(false)}>Cancel</Button>,
           <Button key="submit" type="primary" danger
             disabled={!approvals.sales || !approvals.opHead}
-            onClick={() => setEmergencyDispatchOpen(false)}>
+            onClick={handleEmergencySubmit}>
             Submit Emergency Dispatch
           </Button>,
         ]}

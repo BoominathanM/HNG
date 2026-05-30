@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import dayjs from 'dayjs';
 import {
-  Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal,
-  Form, Row, Col, Typography, Drawer, Steps, Divider, Badge,
-  InputNumber, Tooltip, Checkbox, message, Slider, Upload, Progress, DatePicker, Descriptions, Timeline, Spin,
+  Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal, Form, Row, Col, Typography, 
+  Drawer, Steps, Divider, Badge, InputNumber, Tooltip, Checkbox, Slider, Upload, Progress, 
+  DatePicker, Descriptions, Timeline, 
+  Spin,
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
   FileTextOutlined, PhoneOutlined, MailOutlined, UserOutlined,
@@ -31,6 +33,7 @@ import {
   useCreateSalesQuotationMutation,
   useConvertToNegotiationMutation,
   useConvertToOrderMutation,
+  useCreateSalesOrderMutation,
   useUpdateSalesOrderMutation,
   useUpdateSalesOrderStatusMutation,
   useCreateComplaintMutation,
@@ -696,6 +699,28 @@ const ProductHeaders = () => (
 );
 
 // ─── Main Component ────────────────────────────────────────────────────
+// Export an array of plain rows to a CSV file. Headers are derived from the
+// scalar (non-object) keys of the rows so it adapts to whatever shape the data has.
+const exportRowsToCSV = (rows, filename) => {
+  if (!rows || rows.length === 0) return false;
+  const skip = new Set(['key', '_id', '__v', 'products', 'items', 'rounds', 'revisionHistory', 'partialDates', 'splitDates']);
+  const headers = Object.keys(rows[0]).filter(
+    (k) => !skip.has(k) && rows.every((r) => r[k] == null || typeof r[k] !== 'object'),
+  );
+  const csv = [
+    headers.join(','),
+    ...rows.map((r) => headers.map((h) => `"${(r[h] ?? '').toString().replace(/"/g, '""')}"`).join(',')),
+  ].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+  return true;
+};
+
 const KNOWN_PRODUCT_NAMES = new Set([
   'Soap', 'Paste', 'Brush', 'Raizer', 'Gel', 'Face Kit Combo', 'Body Kit Combo',
   'Soap 15grm', 'Single Brush', 'Shampoo 15ml',
@@ -766,7 +791,7 @@ export default function Sales() {
   };
 
   const saveOrderEdit = () => {
-    orderEditForm.validateFields().then(vals => {
+    orderEditForm.validateFields().then(async vals => {
       const updated = {
         ...orderEditTarget,
         expectedDelivery: vals.expectedDelivery ? vals.expectedDelivery.format('YYYY-MM-DD') : orderEditTarget.expectedDelivery,
@@ -774,10 +799,15 @@ export default function Sales() {
         paymentTerms: vals.paymentTerms || orderEditTarget.paymentTerms,
         paymentReminderDate: vals.paymentReminderDate ? vals.paymentReminderDate.format('YYYY-MM-DD') : orderEditTarget.paymentReminderDate,
       };
-      setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
-      message.success('Order updated successfully');
-      setOrderEditModalOpen(false);
-      setOrderEditTarget(null);
+      try {
+        await updateSalesOrderMutation({ id: orderEditTarget._id || orderEditTarget.key, ...updated }).unwrap();
+        setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
+        enqueueSnackbar('Order updated successfully', { variant: 'success' });
+        setOrderEditModalOpen(false);
+        setOrderEditTarget(null);
+      } catch (err) {
+        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update order', { variant: 'error' });
+      }
     });
   };
 
@@ -831,6 +861,7 @@ export default function Sales() {
   const [createSalesQuotationMutation] = useCreateSalesQuotationMutation();
   const [convertToNegotiationMutation] = useConvertToNegotiationMutation();
   const [convertToOrderMutation] = useConvertToOrderMutation();
+  const [createSalesOrderMutation] = useCreateSalesOrderMutation();
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
   const [updateSalesOrderStatusMutation] = useUpdateSalesOrderStatusMutation();
   const [createComplaintMutation] = useCreateComplaintMutation();
@@ -904,16 +935,24 @@ export default function Sales() {
             ? [...(editingLead.statusHistory || []), { status: values.status, changedAt: now }]
             : (editingLead.statusHistory || []),
         };
-        if (editingLead.customerId) {
-          setCustomersData(prev => prev.map(c => c.key === editingLead.key ? updated : c));
-          message.success('Customer updated');
-        } else {
-          setLeadsData(prev => prev.map(l => l.key === editingLead.key ? updated : l));
-          message.success('Lead updated');
+        try {
+          await updateLeadMutation({ id: editingLead._id || editingLead.key, ...values }).unwrap();
+          if (statusChanged) {
+            await updateLeadStatusMutation({ id: editingLead._id || editingLead.key, status: values.status }).unwrap();
+          }
+          if (editingLead.customerId) {
+            setCustomersData(prev => prev.map(c => c.key === editingLead.key ? updated : c));
+            enqueueSnackbar('Customer updated', { variant: 'success' });
+          } else {
+            setLeadsData(prev => prev.map(l => l.key === editingLead.key ? updated : l));
+            enqueueSnackbar('Lead updated', { variant: 'success' });
+          }
+          setEditingLead(null);
+          setSelectedRecord(null);
+          setViewMode('table');
+        } catch (err) {
+          enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update lead', { variant: 'error' });
         }
-        setEditingLead(null);
-        setSelectedRecord(null);
-        setViewMode('table');
       } else {
         const SOURCES = ['Direct', 'Reference', 'Online', 'Exhibition', 'Cold Call', 'Other'];
         const payload = {
@@ -945,18 +984,18 @@ export default function Sales() {
         if (SOURCES.includes(values.source)) payload.source = values.source;
         try {
           await createLeadMutation(payload).unwrap();
-          message.success('Lead added');
+          enqueueSnackbar('Lead added', { variant: 'success' });
           setEditingLead(null);
           setSelectedRecord(null);
           setViewMode('table');
         } catch (err) {
-          message.error(err?.data?.message || err?.data || 'Failed to add lead');
+          enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add lead', { variant: 'error' });
         }
       }
     } catch (_) { }
   };
 
-  const saveSectionEdit = (section) => {
+  const saveSectionEdit = async (section) => {
     const now = new Date().toISOString();
     const fieldsBySection = {
       hotel: ['hotelName', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
@@ -971,14 +1010,22 @@ export default function Sales() {
     if (section === 'leadStatus' && values.status && values.status !== selectedRecord.status) {
       updated.statusHistory = [...(selectedRecord.statusHistory || []), { status: values.status, changedAt: now }];
     }
-    setSelectedRecord(updated);
-    if (updated.customerId) {
-      setCustomersData(prev => prev.map(c => c.key === updated.key ? updated : c));
-    } else if (updated.leadId) {
-      setLeadsData(prev => prev.map(l => l.key === updated.key ? updated : l));
+    try {
+      await updateLeadMutation({ id: updated._id || updated.key, ...values }).unwrap();
+      if (section === 'leadStatus' && values.status && values.status !== selectedRecord.status) {
+        await updateLeadStatusMutation({ id: updated._id || updated.key, status: values.status }).unwrap();
+      }
+      setSelectedRecord(updated);
+      if (updated.customerId) {
+        setCustomersData(prev => prev.map(c => c.key === updated.key ? updated : c));
+      } else if (updated.leadId) {
+        setLeadsData(prev => prev.map(l => l.key === updated.key ? updated : l));
+      }
+      setEditingSection(null);
+      enqueueSnackbar('Section updated successfully', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update section', { variant: 'error' });
     }
-    setEditingSection(null);
-    message.success('Section updated successfully');
   };
 
   const saveDraft = (lead) => {
@@ -992,7 +1039,7 @@ export default function Sales() {
         }
         : l
     ));
-    message.info('Lead saved as Draft');
+    enqueueSnackbar('Lead saved as Draft', { variant: 'info' });
   };
 
 
@@ -1005,11 +1052,11 @@ export default function Sales() {
     };
     setCustomersData(prev => [...prev, newCustomer]);
     setLeadsData(prev => prev.filter(l => l.key !== lead.key));
-    message.success(`${lead.hotelName} converted to Customer`);
+    enqueueSnackbar(`${lead.hotelName} converted to Customer`, { variant: 'success' });
     setActiveTab('customers');
   };
 
-  const convertLeadToNegotiation = (lead) => {
+  const convertLeadToNegotiation = async (lead) => {
     const newNeg = {
       key: Date.now(),
       nid: `NEG-${1000 + negotiationsData.length + 1}`,
@@ -1038,10 +1085,15 @@ export default function Sales() {
         },
       ],
     };
-    setNegotiationsData(prev => [...prev, newNeg]);
-    message.success(`${lead.hotelName} converted to Negotiation (${newNeg.nid})`);
-    setActiveTab('quotations');
-    setViewMode('table');
+    try {
+      await convertToNegotiationMutation({ id: lead._id || lead.key, ...newNeg }).unwrap();
+      setNegotiationsData(prev => [...prev, newNeg]);
+      enqueueSnackbar(`${lead.hotelName} converted to Negotiation (${newNeg.nid})`, { variant: 'success' });
+      setActiveTab('quotations');
+      setViewMode('table');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to convert to Negotiation', { variant: 'error' });
+    }
   };
 
   const startQuotationFromLead = (lead) => {
@@ -1070,7 +1122,7 @@ export default function Sales() {
         };
         setQuotationsData(prev => prev.map(q => q.key === editingQuotation.key ? updated : q));
         setSelectedRecord(updated);
-        message.success('Quotation updated');
+        enqueueSnackbar('Quotation updated', { variant: 'success' });
         setEditingQuotation(null);
       } else {
         const subtotal = calcTotal(values.products);
@@ -1097,9 +1149,9 @@ export default function Sales() {
           await createSalesQuotationMutation(payload).unwrap();
           setQuotationFromLead(null);
           setActiveTab('quotations');
-          message.success('Quotation created');
+          enqueueSnackbar('Quotation created', { variant: 'success' });
         } catch (err) {
-          message.error(err?.data?.message || err?.data || 'Failed to create quotation');
+          enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create quotation', { variant: 'error' });
         }
       }
       setViewMode('table');
@@ -1115,92 +1167,107 @@ export default function Sales() {
     }
   };
 
-  const convertToInvoice = (q) => {
-    const newOrder = {
-      key: Date.now(),
-      oid: `ORD-${2400 + ordersData.length + 1}`,
-      invId: `INV-${3000 + ordersData.length + 1}`,
-      quotationId: q.qid,
-      negotiationId: q.nid,
-      status: 'Payment Pending',
-      date: new Date().toISOString().split('T')[0],
-      totalAmount: q.totalAmount || calcTotal(q.products),
-      createdAt: new Date().toISOString(),
-      salesPerson: q.salesPerson || 'Current User',
-      hotelName: q.hotelName, billingName: q.billingName, location: q.location,
-      detailedAddress: q.detailedAddress, city: q.city, state: q.state, pincode: q.pincode,
-      billType: q.billType, paymentTerms: q.paymentTerms,
-      products: q.products, advance: 0,
+  const buildOrderPayloadFromQuotation = (q, status) => {
+    const subtotal = q.totalAmount || calcTotal(q.products);
+    const gstAmount = q.gstAmount || 0;
+    return {
+      clientName: q.hotelName || q.billingName || q.clientName || 'Client',
+      amount: subtotal,
+      gstAmount,
+      total: subtotal + gstAmount,
+      advancePaid: 0,
+      balance: subtotal + gstAmount,
+      type: q.billType === 'GST' ? 'GST' : 'Non-GST',
+      paymentTerms: q.paymentTerms,
+      status,
+      items: (q.products || []).map((p) => ({
+        itemName: p.name,
+        unit: p.unit,
+        price: Number(p.rate) || 0,
+        qty: Number(p.qty) || 0,
+        lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
+      })),
     };
-    setOrdersData(prev => [...prev, newOrder]);
-    if (q.qid) {
-      setQuotationsData(prev => prev.map(qt => qt.key === q.key ? { ...qt, status: 'Invoiced' } : qt));
+  };
+
+  const convertToInvoice = async (q) => {
+    try {
+      await createSalesOrderMutation(buildOrderPayloadFromQuotation(q, 'Payment Pending')).unwrap();
+      enqueueSnackbar('Converted to Invoice successfully! Order is now pending payment.', { variant: 'success' });
+      setActiveTab('orders');
+      setViewMode('table');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to convert to invoice', { variant: 'error' });
     }
-    if (q.nid) {
-      setNegotiationsData(prev => prev.map(n => n.key === q.key ? { ...n, status: 'Invoiced' } : n));
+  };
+
+  const recordPayment = async (order) => {
+    try {
+      await updateSalesOrderStatusMutation({ id: order.key, status: 'In Production' }).unwrap();
+      enqueueSnackbar('Payment recorded and Order is now in production!', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record payment', { variant: 'error' });
     }
-    message.success('Converted to Invoice successfully! Order is now pending payment.');
-    setActiveTab('orders');
-    setViewMode('table');
   };
 
-  const recordPayment = (order) => {
-    setOrdersData(prev => prev.map(o => o.key === order.key ? { ...o, status: 'In Production', advance: o.totalAmount } : o));
-    message.success('Payment recorded and Order is now in production!');
+  const convertOrderToInvoice = async (order) => {
+    try {
+      await updateSalesOrderStatusMutation({ id: order.key, status: 'Payment Pending' }).unwrap();
+      enqueueSnackbar('Invoice generated successfully! Order is now pending payment.', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to generate invoice', { variant: 'error' });
+    }
   };
 
-  const convertOrderToInvoice = (order) => {
-    const invId = `INV-${3000 + ordersData.length + 1}`;
-    setOrdersData(prev => prev.map(o => o.key === order.key ? { ...o, invId, status: 'Payment Pending' } : o));
-    message.success('Invoice generated successfully! Order is now pending payment.');
-  };
-
-  const startOrderFromQuotation = (q) => {
-    const newOrder = {
-      key: Date.now(),
-      oid: `ORD-${2400 + ordersData.length + 1}`,
-      quotationId: q.qid,
-      status: 'In Production',
-      date: new Date().toISOString().split('T')[0],
-      totalAmount: q.totalAmount || calcTotal(q.products),
-      createdAt: new Date().toISOString(),
-      salesPerson: q.salesPerson || 'Current User',
-      hotelName: q.hotelName, billingName: q.billingName, location: q.location,
-      detailedAddress: q.detailedAddress, city: q.city, state: q.state, pincode: q.pincode,
-      billType: q.billType, paymentTerms: q.paymentTerms,
-      products: q.products, advance: 0,
-    };
-    setOrdersData(prev => [...prev, newOrder]);
-    setQuotationsData(prev => prev.map(qt => qt.key === q.key ? { ...qt, status: 'Approved' } : qt));
-    setNegotiationsData(prev => prev.map(n => n.quotationId === q.qid ? { ...n, status: 'Approved' } : n));
-    message.success('Order confirmed successfully!');
-    setActiveTab('orders');
-    setViewMode('table');
+  const startOrderFromQuotation = async (q) => {
+    try {
+      await createSalesOrderMutation(buildOrderPayloadFromQuotation(q, 'In Production')).unwrap();
+      enqueueSnackbar('Order confirmed successfully!', { variant: 'success' });
+      setActiveTab('orders');
+      setViewMode('table');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to confirm order', { variant: 'error' });
+    }
   };
 
   const saveOrder = async () => {
+    let values;
     try {
-      const values = await orderForm.validateFields();
-      const newOrder = {
-        key: Date.now(),
-        oid: `ORD-${2400 + ordersData.length + 1}`,
-        quotationId: orderFromQuotation?.qid,
-        status: 'In Production',
-        date: new Date().toISOString().split('T')[0],
-        totalAmount: calcTotal(values.products),
-        createdAt: new Date().toISOString(),
-        salesPerson: orderFromQuotation?.salesPerson || 'Current User',
-        ...values,
-      };
-      setOrdersData(prev => [...prev, newOrder]);
-      if (orderFromQuotation) {
-        setQuotationsData(prev => prev.map(q => q.key === orderFromQuotation.key ? { ...q, status: 'Approved' } : q));
-        setNegotiationsData(prev => prev.map(n => n.key === orderFromQuotation.key ? { ...n, status: 'Approved' } : n));
-      }
-      message.success('Order confirmed!');
+      values = await orderForm.validateFields();
+    } catch (_) {
+      return; // form validation error
+    }
+    const subtotal = calcTotal(values.products);
+    const gstAmount = (values.products || []).reduce(
+      (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+    const total = subtotal + gstAmount;
+    const advancePaid = Number(values.advance) || 0;
+    const payload = {
+      clientName: values.hotelName || values.billingName || orderFromQuotation?.hotelName || 'Client',
+      amount: subtotal,
+      gstAmount,
+      total,
+      advancePaid,
+      balance: total - advancePaid,
+      type: values.billType === 'GST' ? 'GST' : 'Non-GST',
+      paymentTerms: values.paymentTerms,
+      status: 'In Production',
+      items: (values.products || []).map((p) => ({
+        itemName: p.name,
+        unit: p.unit,
+        price: Number(p.rate) || 0,
+        qty: Number(p.qty) || 0,
+        lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
+      })),
+    };
+    try {
+      await createSalesOrderMutation(payload).unwrap();
+      enqueueSnackbar('Order confirmed!', { variant: 'success' });
       setViewMode('table');
       setActiveTab('orders');
-    } catch (_) { }
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to confirm order', { variant: 'error' });
+    }
   };
 
   // ─── Complaint handlers ───────────────────────────────────────────
@@ -1222,16 +1289,16 @@ export default function Sales() {
         || ordersData.find(o => o.key === orderId || o.oid === orderId);
       const orderObjectId = resolvedOrder?.key || resolvedOrder?._id;
       if (!orderObjectId) {
-        message.error('Please select a valid order for this complaint');
+        enqueueSnackbar('Please select a valid order for this complaint', { variant: 'error' });
         return;
       }
       try {
         await createComplaintMutation({ orderId: orderObjectId, description }).unwrap();
-        message.success('Complaint raised successfully');
+        enqueueSnackbar('Complaint raised successfully', { variant: 'success' });
         setComplaintModalOpen(false);
         complaintForm.resetFields();
       } catch (err) {
-        message.error(err?.data?.message || err?.data || 'Failed to raise complaint');
+        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise complaint', { variant: 'error' });
       }
     });
   };
@@ -1251,30 +1318,20 @@ export default function Sales() {
     setViewMode('quotation-form');
   };
 
-  const convertToNegotiation = (q) => {
-    const newNeg = {
-      key: Date.now(),
-      nid: `NEG-${1000 + negotiationsData.length + 1}`,
-      quotationId: q.qid, customerId: q.customerId,
-      hotelName: q.hotelName, billingName: q.billingName, location: q.location,
-      contactPerson: q.contactPerson, phone: q.phone,
-      hotelType: q.hotelType, billType: q.billType, gstNumber: q.gstNumber, gstPercent: q.gstPercent,
-      salesPerson: q.salesPerson,
-      products: (q.products || []).map(p => ({ ...p })),
-      forwardingCharge: q.forwardingCharge, deliveryBy: q.deliveryBy, transportationBy: q.transportationBy,
-      paymentTerms: q.paymentTerms,
-      status: 'Initial', flowStep: 0,
-      date: new Date().toISOString().split('T')[0],
-      totalAmount: calcTotal(q.products),
-      createdAt: new Date().toISOString(),
-      rounds: [{ round: 1, date: q.date, by: q.salesPerson || 'Sales', type: 'Quotation', totalAmount: calcTotal(q.products), note: 'Moved from quotation to negotiation stage.' }],
-      notes: '',
-    };
-    setNegotiationsData(prev => [...prev, newNeg]);
-    setQuotationsData(prev => prev.map(qt => qt.key === q.key ? { ...qt, status: 'Negotiation', flowStep: 2 } : qt));
-    message.success('Moved to Negotiation');
-    setViewMode('table');
-    setActiveTab('quotations');
+  const convertToNegotiation = async (q) => {
+    try {
+      await convertToNegotiationMutation({
+        id: q.key,
+        amount: q.amount ?? q.totalAmount,
+        gstAmount: q.gstAmount,
+        total: q.totalAmount ?? calcTotal(q.products),
+      }).unwrap();
+      enqueueSnackbar('Moved to Negotiation', { variant: 'success' });
+      setViewMode('table');
+      setActiveTab('quotations');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to move to negotiation', { variant: 'error' });
+    }
   };
 
   const editNegotiation = (n) => {
@@ -1308,35 +1365,22 @@ export default function Sales() {
       };
       setNegotiationsData(prev => prev.map(n => n.key === editingNegotiation.key ? updated : n));
       setSelectedRecord(updated);
-      message.success('Negotiation updated');
+      enqueueSnackbar('Negotiation updated', { variant: 'success' });
       setViewMode('table');
       setActiveTab('quotations');
       setEditingNegotiation(null);
     } catch (_) { }
   };
 
-  const convertNegotiationToOrder = (n) => {
-    const newOrder = {
-      key: Date.now(),
-      oid: `ORD-${2400 + ordersData.length + 1}`,
-      quotationId: n.quotationId,
-      negotiationId: n.nid,
-      status: 'In Production',
-      date: new Date().toISOString().split('T')[0],
-      totalAmount: n.totalAmount || calcTotal(n.products),
-      createdAt: new Date().toISOString(),
-      salesPerson: n.salesPerson || 'Current User',
-      hotelName: n.hotelName, billingName: n.billingName, location: n.location,
-      detailedAddress: n.detailedAddress, city: n.city, state: n.state, pincode: n.pincode,
-      billType: n.billType, paymentTerms: n.paymentTerms,
-      products: n.products, advance: 0,
-    };
-    setOrdersData(prev => [...prev, newOrder]);
-    setNegotiationsData(prev => prev.map(neg => neg.key === n.key ? { ...neg, status: 'Approved' } : neg));
-    setQuotationsData(prev => prev.map(qt => qt.qid === n.quotationId ? { ...qt, status: 'Approved' } : qt));
-    message.success('Order confirmed successfully!');
-    setActiveTab('orders');
-    setViewMode('table');
+  const convertNegotiationToOrder = async (n) => {
+    try {
+      await convertToOrderMutation({ id: n.key }).unwrap();
+      enqueueSnackbar('Order confirmed successfully!', { variant: 'success' });
+      setActiveTab('orders');
+      setViewMode('table');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to convert to order', { variant: 'error' });
+    }
   };
 
   // ─── Table columns ────────────────────────────────────────────────
@@ -3757,7 +3801,7 @@ export default function Sales() {
           <Tooltip title="Ensure CSV follows sample format">
             <Button icon={<UploadOutlined />}>Import</Button>
           </Tooltip>
-          <Button icon={<DownloadOutlined />} onClick={() => message.info('Sample CSV download started...')}>Sample CSV</Button>
+          <Button icon={<DownloadOutlined />} onClick={() => enqueueSnackbar('Sample CSV download started...', { variant: 'info' })}>Sample CSV</Button>
           {(activeTab === 'leads' || activeTab === 'customers') && (
             <Button type="primary" icon={<PlusOutlined />}
               style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}

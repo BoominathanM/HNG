@@ -1,8 +1,9 @@
 import React, { useState, useRef, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Tabs, Descriptions
+  Typography, Space, DatePicker, Upload, InputNumber, Divider, List, Tabs, Descriptions
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, DownloadOutlined, SearchOutlined, UploadOutlined,
   EyeOutlined, FileTextOutlined, ContactsOutlined, TeamOutlined,
@@ -136,7 +137,7 @@ export default function VendorsSuppliers() {
 
   const openCameraCapture = async (setFileFn) => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      message.warning('Camera not available on this device or browser.');
+      enqueueSnackbar('Camera not available on this device or browser.', { variant: 'warning' });
       return;
     }
     try {
@@ -147,7 +148,7 @@ export default function VendorsSuppliers() {
       setCameraSetFile(() => setFileFn);
       setShowCameraModal(true);
     } catch {
-      message.error('Camera access denied. Please allow camera permissions and try again.');
+      enqueueSnackbar('Camera access denied. Please allow camera permissions and try again.', { variant: 'error' });
     }
   };
 
@@ -162,7 +163,7 @@ export default function VendorsSuppliers() {
       if (!blob) return;
       const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
       if (cameraSetFile) cameraSetFile(file);
-      message.success('Document captured successfully');
+      enqueueSnackbar('Document captured successfully', { variant: 'success' });
       closeCameraCapture();
     }, 'image/jpeg', 0.92);
   };
@@ -197,14 +198,14 @@ export default function VendorsSuppliers() {
       vendorForm.resetFields();
       setShowAddVendorModal(false);
       setVendorScannedFile(null);
-      message.success('Vendor added successfully');
+      enqueueSnackbar('Vendor added successfully', { variant: 'success' });
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to add vendor');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add vendor', { variant: 'error' });
     }
   };
 
   const handleVendorAIScan = () => {
-    if (!vendorScannedFile) { message.warning('Please upload a document first'); return; }
+    if (!vendorScannedFile) { enqueueSnackbar('Please upload a document first', { variant: 'warning' }); return; }
     setVendorScanLoading(true);
     setTimeout(() => {
       vendorForm.setFieldsValue({
@@ -218,7 +219,7 @@ export default function VendorsSuppliers() {
         cust_discount: 8,
       });
       setVendorScanLoading(false);
-      message.success('AI extracted vendor details from the document!');
+      enqueueSnackbar('AI extracted vendor details from the document!', { variant: 'success' });
     }, 2200);
   };
 
@@ -236,9 +237,9 @@ export default function VendorsSuppliers() {
       }).unwrap();
       printingSupplierForm.resetFields();
       setShowAddPrintingSupplierModal(false);
-      message.success('Printing supplier added successfully');
+      enqueueSnackbar('Printing supplier added successfully', { variant: 'success' });
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to add printing supplier');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add printing supplier', { variant: 'error' });
     }
   };
 
@@ -409,11 +410,15 @@ export default function VendorsSuppliers() {
                               </Select>
                               <Button
                                 icon={<DownloadOutlined />}
-                                onClick={() => exportToCSV(
-                                  ['Vendor Name', 'Phone', 'Email', 'Address', 'Total Paid (₹)', 'Pending (₹)'],
-                                  filteredVendors.map(v => [v.name, v.phone, v.email, v.address, v.totalPaid, v.pending]),
-                                  'vendors.csv'
-                                )}
+                                onClick={() => {
+                                  if (!filteredVendors.length) { enqueueSnackbar('No vendors to export', { variant: 'warning' }); return; }
+                                  exportToCSV(
+                                    ['Vendor Name', 'Phone', 'Email', 'Address', 'Total Paid (₹)', 'Pending (₹)'],
+                                    filteredVendors.map(v => [v.name, v.phone, v.email, v.address, v.totalPaid, v.pending]),
+                                    'vendors.csv'
+                                  );
+                                  enqueueSnackbar('Vendors exported to CSV', { variant: 'success' });
+                                }}
                               >Export</Button>
                               <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddVendorModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Vendor</Button>
                             </Space>
@@ -764,8 +769,8 @@ export default function VendorsSuppliers() {
                 icon={<ThunderboltOutlined />}
                 style={{ borderRadius: 8, background: vendorBillFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: vendorBillFile ? '#fff' : '#bbb', fontWeight: 700 }}
                 onClick={() => {
-                  if (!vendorBillFile) { message.warning('Please upload or capture a bill first'); return; }
-                  message.info('AI bill scanning will be available once the backend endpoint is ready');
+                  if (!vendorBillFile) { enqueueSnackbar('Please upload or capture a bill first', { variant: 'warning' }); return; }
+                  enqueueSnackbar('AI bill scanning will be available once the backend endpoint is ready', { variant: 'info' });
                 }}
               >
                 Scan with AI
@@ -838,12 +843,12 @@ export default function VendorsSuppliers() {
                     totalAmount: values.total_amount,
                     category: 'Purchase',
                   }).unwrap();
-                  message.success('Bill recorded as Purchase Expense');
+                  enqueueSnackbar('Bill recorded as Purchase Expense', { variant: 'success' });
                   setShowVendorBillScanModal(false);
                   vendorBillForm.resetFields();
                   setVendorBillFile(null);
                 } catch {
-                  message.error('Failed to record expense');
+                  enqueueSnackbar('Failed to record expense', { variant: 'error' });
                 }
               }}
             >
@@ -950,10 +955,19 @@ export default function VendorsSuppliers() {
           onValuesChange={(changed) => {
             if (changed.status) setCurrentStatus(changed.status);
           }}
-          onFinish={() => {
-            message.success('Status updated successfully with proofs');
-            setShowUpdateStatusModal(false);
-            statusForm.resetFields();
+          onFinish={async (vals) => {
+            try {
+              await updateVendorStatus({
+                vendorId: viewVendor?.id,
+                historyId: selectedOrder?.key,
+                status: vals.status,
+              }).unwrap();
+              enqueueSnackbar('Status updated successfully with proofs', { variant: 'success' });
+              setShowUpdateStatusModal(false);
+              statusForm.resetFields();
+            } catch (err) {
+              enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update status', { variant: 'error' });
+            }
           }}
         >
           <Form.Item label="Order Status" name="status" rules={[{ required: true }]}>

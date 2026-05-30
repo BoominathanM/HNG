@@ -5,6 +5,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { clearError } from '../../store/slices/authSlice';
 import { useLoginMutation } from '../../store/api/apiSlice';
+import { enqueueSnackbar } from 'notistack';
 import { motion } from 'framer-motion';
 
 const { Title, Text } = Typography;
@@ -20,9 +21,11 @@ export default function Login() {
   const handleSubmit = async (values) => {
     try {
       await login({ email: values.email, password: values.password }).unwrap();
+      enqueueSnackbar('Signed in successfully', { variant: 'success' });
       navigate('/', { replace: true });
-    } catch {
-      // error shown via loginError state
+    } catch (e) {
+      // error also shown via loginError state Alert
+      enqueueSnackbar(e?.data || 'Invalid email or password', { variant: 'error' });
     }
   };
 

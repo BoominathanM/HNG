@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Table, Tag, Avatar, Typography, Space, Progress, Badge,
-  Tabs, Input, Button, Modal, Form, message, Select,
+  Tabs, Input, Button, Modal, Form, Select,
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   UserOutlined, EditOutlined, TeamOutlined,
   PlusOutlined, SearchOutlined,
@@ -86,11 +87,11 @@ function StaffList({ isDark }) {
           phone: vals.phone,
           salary: vals.salary,
         }).unwrap();
-        message.success(`${vals.name} added successfully`);
+        enqueueSnackbar(`${vals.name} added successfully`, { variant: 'success' });
         form.resetFields();
         setAddOpen(false);
       } catch {
-        message.error('Failed to add staff member');
+        enqueueSnackbar('Failed to add staff member', { variant: 'error' });
       }
     });
   };

@@ -3,6 +3,7 @@ import { Card, List, Tag, Badge, Button, Typography, Space, Tabs, Spin, Empty } 
 import { BellOutlined, DollarOutlined, WarningOutlined, CarOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
+import { enqueueSnackbar } from 'notistack';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import {
   useGetNotificationsQuery,
@@ -44,7 +45,12 @@ export default function Notifications() {
   const loading = notifLoading;
 
   const handleMarkAllRead = async () => {
-    await markAllRead().unwrap().catch(() => {});
+    try {
+      await markAllRead().unwrap();
+      enqueueSnackbar('All notifications marked as read', { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Failed to mark all as read', { variant: 'error' });
+    }
   };
 
   const filteredNotifications = activeTab === 'all' ? notifications
@@ -125,7 +131,11 @@ export default function Notifications() {
                     }}
                     onClick={async () => {
                       if (!item.isRead && item._id) {
-                        await markRead(item._id).unwrap().catch(() => {});
+                        try {
+                          await markRead(item._id).unwrap();
+                        } catch {
+                          enqueueSnackbar('Failed to mark as read', { variant: 'error' });
+                        }
                       }
                     }}
                   >

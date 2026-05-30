@@ -1,7 +1,9 @@
 ﻿import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
-  Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, DatePicker, Upload, message, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, Tooltip, Badge, notification, Popover, Dropdown, Checkbox, Alert
+  Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, 
+  DatePicker, Upload, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, 
+  Tooltip, Badge, Popover, Dropdown, Checkbox, 
+  Alert,
 } from 'antd';
 import {
   PlusOutlined, DownloadOutlined, ShoppingOutlined, SearchOutlined,
@@ -27,6 +29,7 @@ import {
   useCreateLocalPurchaseMutation,
 } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
+import { enqueueSnackbar } from 'notistack';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
 
@@ -313,15 +316,9 @@ export default function Purchase() {
       setLrCopyReminderCount(0);
       lrCopyReminderRef.current = setInterval(() => {
         setLrCopyReminderCount(c => c + 1);
-        notification.warning({
-          message: 'LR Copy Pending',
-          description: `Please collect the LR copy from the purchase team for the order placed with ${selectedPlaceOrderReq?.supplier || 'supplier'}.`,
-          placement: 'topRight',
-          duration: 10,
-          key: 'lr-copy-reminder',
-        });
+        enqueueSnackbar(['LR Copy Pending', `Please collect the LR copy from the purchase team for the order placed with ${selectedPlaceOrderReq?.supplier || 'supplier'}.`].filter(Boolean).join(' — '), { variant: 'warning' });
       }, 30 * 60 * 1000);
-      message.info('30-minute LR copy reminder is now active.', 4);
+      enqueueSnackbar('30-minute LR copy reminder is now active.', { variant: 'info' });
     } else {
       if (lrCopyReminderRef.current) { clearInterval(lrCopyReminderRef.current); lrCopyReminderRef.current = null; }
     }
@@ -351,7 +348,7 @@ export default function Purchase() {
       setProductQtys(qtys);
       setInvoiceScanned(true);
       setInvoiceScanLoading(false);
-      message.success('Invoice scanned — products fetched successfully!');
+      enqueueSnackbar('Invoice scanned — products fetched successfully!', { variant: 'success' });
     }, 1800);
   };
 
@@ -371,7 +368,7 @@ export default function Purchase() {
         const fd = new FormData();
         await receiveOrderMutation({ id: receivedTarget.key, formData: fd }).unwrap();
       } catch (err) {
-        message.error(err?.data?.message || err?.data || 'Failed to mark order as received');
+        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to mark order as received', { variant: 'error' });
         return;
       }
     }
@@ -383,7 +380,7 @@ export default function Purchase() {
       partialVendorAction: vendorMissedAction,
       partialMissedBy: missedBy,
     } : o));
-    message.success(missing.length > 0 ? 'Partial delivery recorded!' : 'Order marked as Received!');
+    enqueueSnackbar(missing.length > 0 ? 'Partial delivery recorded!' : 'Order marked as Received!', { variant: 'success' });
     setShowReceivedModal(false);
     setReceivedTarget(null);
   };
@@ -427,7 +424,7 @@ export default function Purchase() {
 
   const openCameraCapture = async (setFileFn) => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      message.warning('Camera not available on this device or browser.');
+      enqueueSnackbar('Camera not available on this device or browser.', { variant: 'warning' });
       return;
     }
     try {
@@ -438,7 +435,7 @@ export default function Purchase() {
       setCameraSetFile(() => setFileFn);
       setShowCameraModal(true);
     } catch {
-      message.error('Camera access denied. Please allow camera permissions and try again.');
+      enqueueSnackbar('Camera access denied. Please allow camera permissions and try again.', { variant: 'error' });
     }
   };
 
@@ -453,7 +450,7 @@ export default function Purchase() {
       if (!blob) return;
       const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
       if (cameraSetFile) cameraSetFile(file);
-      message.success('Document captured successfully');
+      enqueueSnackbar('Document captured successfully', { variant: 'success' });
       closeCameraCapture();
     }, 'image/jpeg', 0.92);
   };
@@ -482,9 +479,9 @@ export default function Purchase() {
       }).unwrap();
       supplierForm.resetFields();
       setShowAddSupplierModal(false);
-      message.success('Supplier added successfully');
+      enqueueSnackbar('Supplier added successfully', { variant: 'success' });
     } catch (e) {
-      message.error(e?.data || 'Failed to add supplier');
+      enqueueSnackbar(e?.data || 'Failed to add supplier', { variant: 'error' });
     }
   };
 
@@ -530,7 +527,24 @@ export default function Purchase() {
       date: dayjs().format('YYYY-MM-DD'),
     };
     dispatch(addRaisedRequest(newRequest));
-    message.success(`Purchase request for ${values.product} raised — pending financial approval`);
+    // Also persist to backend via raiseRequest mutation (keep redux dispatch for current UI).
+    (async () => {
+      try {
+        const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
+        const supplierInfo = suppliers.find((s) => s.name === values.supplier);
+        await raiseRequestMutation({
+          itemName: values.product,
+          qty: Number(values.qty) || 0,
+          unit: values.unit || (selectedProduct?.unit || ''),
+          paymentTerms: values.payment_terms || 'From Quotation',
+          ...(isObjectId(supplierInfo?.id) ? { vendorId: supplierInfo.id } : {}),
+          ...(isObjectId(selectedProduct?.key) ? { itemId: selectedProduct.key } : {}),
+        }).unwrap();
+        enqueueSnackbar(`Purchase request for ${values.product} raised — pending financial approval`, { variant: 'success' });
+      } catch (err) {
+        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise purchase request', { variant: 'error' });
+      }
+    })();
     setShowAddPurchaseModal(false);
     purchaseForm.resetFields();
     setSelectedProduct(null);
@@ -545,7 +559,7 @@ export default function Purchase() {
       amount: values.total_amount,
       orderDate: values.order_date ? values.order_date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
     }));
-    message.success(`Order for ${selectedApprovedRequest.item} submitted to Financial for payment`);
+    enqueueSnackbar(`Order for ${selectedApprovedRequest.item} submitted to Financial for payment`, { variant: 'success' });
     setShowRequestOrderModal(false);
     requestOrderForm.resetFields();
     setSelectedApprovedRequest(null);
@@ -553,7 +567,7 @@ export default function Purchase() {
   };
 
   const handleRequestOrderAIScan = () => {
-    if (!requestOrderScannedFile) { message.warning('Please upload an invoice first'); return; }
+    if (!requestOrderScannedFile) { enqueueSnackbar('Please upload an invoice first', { variant: 'warning' }); return; }
     setRequestOrderScanLoading(true);
     setTimeout(() => {
       const suggestedPrice = selectedApprovedRequest ? Math.floor(Math.random() * 100 + 50) : 85;
@@ -565,12 +579,12 @@ export default function Purchase() {
         order_date: dayjs(),
       });
       setRequestOrderScanLoading(false);
-      message.success('AI extracted invoice details successfully!');
+      enqueueSnackbar('AI extracted invoice details successfully!', { variant: 'success' });
     }, 2200);
   };
 
   const handleSupplierAIScan = () => {
-    if (!supplierScannedFile) { message.warning('Please upload a document first'); return; }
+    if (!supplierScannedFile) { enqueueSnackbar('Please upload a document first', { variant: 'warning' }); return; }
     setSupplierScanLoading(true);
     setTimeout(() => {
       supplierForm.setFieldsValue({
@@ -583,18 +597,18 @@ export default function Purchase() {
         sup_notes: 'Preferred supplier for chemical raw materials. NET-30 payment terms.',
       });
       setSupplierScanLoading(false);
-      message.success('AI extracted supplier details from the document!');
+      enqueueSnackbar('AI extracted supplier details from the document!', { variant: 'success' });
     }, 2200);
   };
 
   const handleQuotationAI = () => {
-    if (!quotationFile) { message.warning('Please upload a quotation file first'); return; }
+    if (!quotationFile) { enqueueSnackbar('Please upload a quotation file first', { variant: 'warning' }); return; }
     setQuotationScanLoading(true);
     setTimeout(() => {
       const vals = purchaseForm.getFieldsValue();
       if (!vals.product || !vals.supplier) {
         setQuotationScanLoading(false);
-        message.warning('Please select product and supplier first');
+        enqueueSnackbar('Please select product and supplier first', { variant: 'warning' });
         return;
       }
       const newRequest = {
@@ -609,7 +623,7 @@ export default function Purchase() {
       };
       dispatch(addRaisedRequest(newRequest));
       setQuotationScanLoading(false);
-      message.success('Quotation scanned by AI and sent to Financial Quotation Requests!');
+      enqueueSnackbar('Quotation scanned by AI and sent to Financial Quotation Requests!', { variant: 'success' });
       setShowAddPurchaseModal(false);
       purchaseForm.resetFields();
       setSelectedProduct(null);
@@ -632,7 +646,7 @@ export default function Purchase() {
   };
 
   const handleRaiseRequestAIScan = () => {
-    if (!raiseRequestFile) { message.warning('Please upload the quotation file first'); return; }
+    if (!raiseRequestFile) { enqueueSnackbar('Please upload the quotation file first', { variant: 'warning' }); return; }
     setRaiseRequestScanLoading(true);
     setTimeout(() => {
       const suggestQty = raiseRequestProduct
@@ -641,13 +655,13 @@ export default function Purchase() {
       raiseRequestForm.setFieldsValue({ payment_terms: '100% Payment', qty: suggestQty });
       setRaiseRequestPaymentTerms('100% Payment');
       setRaiseRequestScanLoading(false);
-      message.success('AI extracted details from the quotation file!');
+      enqueueSnackbar('AI extracted details from the quotation file!', { variant: 'success' });
     }, 2000);
   };
 
   const handleRaiseRequestSubmit = () => {
     raiseRequestForm.validateFields().then(async (values) => {
-      if (!raiseRequestFile) { message.warning('Please upload a quotation file to raise a request'); return; }
+      if (!raiseRequestFile) { enqueueSnackbar('Please upload a quotation file to raise a request', { variant: 'warning' }); return; }
       const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
       const vendorId = raiseRequestSupplier?.id;
       const paymentTerms = values.payment_terms || 'From Quotation';
@@ -690,7 +704,7 @@ export default function Purchase() {
             } catch { /* file upload is best-effort */ }
           }
         }
-        message.success(`${requests.length} request(s) sent to Financial Quotation!`);
+        enqueueSnackbar(`${requests.length} request(s) sent to Financial Quotation!`, { variant: 'success' });
         setShowRaiseRequestModal(false);
         raiseRequestForm.resetFields();
         setRaiseRequestProduct(null);
@@ -700,14 +714,14 @@ export default function Purchase() {
         setRaiseRequestExtraProducts([]);
         setRaiseRequestExtraQtys({});
       } catch (err) {
-        message.error(err?.data?.message || err?.data || 'Failed to raise request');
+        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise request', { variant: 'error' });
       }
     });
   };
 
   /* ── Local Purchase handlers ── */
   const handleLocalPurchaseInvoiceScan = () => {
-    if (!localPurchaseInvoiceFile) { message.warning('Please upload an invoice first'); return; }
+    if (!localPurchaseInvoiceFile) { enqueueSnackbar('Please upload an invoice first', { variant: 'warning' }); return; }
     setLocalPurchaseScanLoading(true);
     setTimeout(() => {
       const vendorNames = vendors.map(v => v.name).filter(Boolean);
@@ -736,9 +750,9 @@ export default function Purchase() {
         totalAmount: scanned.totalAmount,
       });
       setLocalPurchaseScanLoading(false);
-      message.success(!knownVendor
+      enqueueSnackbar(!knownVendor
         ? 'AI scanned invoice — New vendor detected! Review and add to vendors list.'
-        : 'AI scanned invoice — vendor matched in existing vendors list.');
+        : 'AI scanned invoice — vendor matched in existing vendors list.', { variant: 'success' });
     }, 2000);
   };
 
@@ -776,24 +790,22 @@ export default function Purchase() {
         email: newVendor.email,
         address: newVendor.address,
       });
-      message.success('New vendor added to vendors list!');
+      enqueueSnackbar('New vendor added to vendors list!', { variant: 'success' });
     }
 
     if (newLP.paymentType === 'credit') {
       // Notify financial team every 30 minutes
       const intervalId = setInterval(() => {
-        notification.info({
-          message: 'Local Purchase Pending Payment',
-          description: `Local purchase ${newLP.invoiceNo} from ${newLP.vendorName} of ₹${newLP.totalAmount.toLocaleString()} is pending. Please process payment.`,
-          placement: 'topRight',
-          duration: 8,
-        });
+        enqueueSnackbar(
+          `Local Purchase Pending Payment — Local purchase ${newLP.invoiceNo} from ${newLP.vendorName} of ₹${newLP.totalAmount.toLocaleString()} is pending. Please process payment.`,
+          { variant: 'info', autoHideDuration: 8000 },
+        );
       }, 30 * 60 * 1000);
       localPurchaseNotifyRef.current[newLP.key] = intervalId;
       // Save to localStorage for Financial page
       const pending = JSON.parse(localStorage.getItem('hng_local_purchase_pending') || '[]');
       localStorage.setItem('hng_local_purchase_pending', JSON.stringify([...pending, newLP]));
-      message.info('Credit purchase created — financial team will be notified every 30 minutes.', 5);
+      enqueueSnackbar('Credit purchase created — financial team will be notified every 30 minutes.', { variant: 'info', autoHideDuration: 5000 });
     }
 
     try {
@@ -814,7 +826,7 @@ export default function Purchase() {
         ...(newLP.paidBy ? { paidBy: newLP.paidBy } : {}),
       }).unwrap();
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to record local purchase');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record local purchase', { variant: 'error' });
       return;
     }
     setShowAddLocalPurchaseModal(false);
@@ -824,7 +836,7 @@ export default function Purchase() {
     setLocalPurchaseNewVendorDetected(false);
     setLocalPurchasePaymentType('credit');
     setLocalPurchasePaidBy('');
-    message.success('Local purchase recorded successfully!');
+    enqueueSnackbar('Local purchase recorded successfully!', { variant: 'success' });
   };
 
   const handleAddSupplierInline = () => {
@@ -833,9 +845,9 @@ export default function Purchase() {
         await createVendorMutation({ name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', bankDetails: vals.bank || '', type: 'raw_material' }).unwrap();
         setShowAddSupplierInlineModal(false);
         addSupplierInlineForm.resetFields();
-        message.success(`Supplier "${vals.name}" added!`);
+        enqueueSnackbar(`Supplier "${vals.name}" added!`, { variant: 'success' });
       } catch (e) {
-        message.error(e?.data || 'Failed to add supplier');
+        enqueueSnackbar(e?.data || 'Failed to add supplier', { variant: 'error' });
       }
     });
   };
@@ -846,9 +858,9 @@ export default function Purchase() {
         await createVendorMutation({ name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '' }).unwrap();
         setShowAddVendorInlineModal(false);
         addVendorInlineForm.resetFields();
-        message.success(`Vendor "${vals.name}" added!`);
+        enqueueSnackbar(`Vendor "${vals.name}" added!`, { variant: 'success' });
       } catch (e) {
-        message.error(e?.data || 'Failed to add vendor');
+        enqueueSnackbar(e?.data || 'Failed to add vendor', { variant: 'error' });
       }
     });
   };
@@ -876,9 +888,9 @@ export default function Purchase() {
 
   const handleBulkAskQuotation = () => {
     const selected = bulkItems.filter(i => i.selected && i.qty > 0);
-    if (selected.length === 0) { message.warning('Select at least one product'); return; }
-    if (!bulkSupplierName) { message.warning('Select a supplier first'); return; }
-    if (!bulkPayTerms) { message.warning('Select payment terms'); return; }
+    if (selected.length === 0) { enqueueSnackbar('Select at least one product', { variant: 'warning' }); return; }
+    if (!bulkSupplierName) { enqueueSnackbar('Select a supplier first', { variant: 'warning' }); return; }
+    if (!bulkPayTerms) { enqueueSnackbar('Select payment terms', { variant: 'warning' }); return; }
     const supplierInfo = suppliers.find(s => s.name === bulkSupplierName);
     if (supplierInfo?.phone) {
       const itemLines = selected.map(i => `• ${i.name} — Qty: ${i.qty} ${i.unit}`).join('\n');
@@ -887,15 +899,15 @@ export default function Purchase() {
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}`, '_blank');
     }
     setBulkQuotationAsked(true);
-    message.success('Quotation request sent to supplier via WhatsApp!');
+    enqueueSnackbar('Quotation request sent to supplier via WhatsApp!', { variant: 'success' });
   };
 
   const handleBulkRaiseRequest = async () => {
-    if (!bulkRaiseFile) { message.warning('Please upload the quotation file received from the supplier'); return; }
+    if (!bulkRaiseFile) { enqueueSnackbar('Please upload the quotation file received from the supplier', { variant: 'warning' }); return; }
     const selected = bulkItems.filter(i => i.selected && i.qty > 0);
-    if (selected.length === 0) { message.warning('Select at least one product'); return; }
-    if (!bulkSupplierName) { message.warning('Select a supplier first'); return; }
-    if (!bulkPayTerms) { message.warning('Select payment terms'); return; }
+    if (selected.length === 0) { enqueueSnackbar('Select at least one product', { variant: 'warning' }); return; }
+    if (!bulkSupplierName) { enqueueSnackbar('Select a supplier first', { variant: 'warning' }); return; }
+    if (!bulkPayTerms) { enqueueSnackbar('Select payment terms', { variant: 'warning' }); return; }
     const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
     const vendorId = suppliers.find(s => s.name === bulkSupplierName)?.id;
     try {
@@ -920,7 +932,7 @@ export default function Purchase() {
           } catch { /* best-effort file attach */ }
         }
       }
-      message.success(`${selected.length} bulk purchase request(s) raised — sent to Financial for approval!`);
+      enqueueSnackbar(`${selected.length} bulk purchase request(s) raised — sent to Financial for approval!`, { variant: 'success' });
       setShowBulkPurchaseModal(false);
       setBulkSupplierName('');
       setBulkItems([]);
@@ -928,7 +940,7 @@ export default function Purchase() {
       setBulkQuotationAsked(false);
       setBulkRaiseFile(null);
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to raise bulk requests');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise bulk requests', { variant: 'error' });
     }
   };
 
@@ -944,13 +956,10 @@ export default function Purchase() {
     const intervalId = setInterval(() => {
       setReminderCounts(prev => {
         const newCount = (prev[itemKey] || 0) + 1;
-        notification.warning({
-          message: 'Quotation Reminder',
-          description: `Follow up with supplier for "${itemName}" quotation. This is reminder #${newCount}.`,
-          icon: <BellOutlined style={{ color: '#fa8c16' }} />,
-          duration: 8,
-          key: `reminder_${itemKey}`,
-        });
+        enqueueSnackbar(
+          `Quotation Reminder — Follow up with supplier for "${itemName}" quotation. This is reminder #${newCount}.`,
+          { variant: 'warning', autoHideDuration: 8000 },
+        );
         return { ...prev, [itemKey]: newCount };
       });
     }, 30 * 60 * 1000); // 30 minutes
@@ -1630,7 +1639,7 @@ export default function Purchase() {
                             render: (_, r) => r.paymentProof ? (
                               <Button size="small" icon={<EyeOutlined />}
                                 style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}
-                                onClick={() => message.info('Viewing payment proof: ' + r.paymentProof)}>
+                                onClick={() => enqueueSnackbar('Viewing payment proof: ' + r.paymentProof, { variant: 'info' })}>
                                 View Proof
                               </Button>
                             ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
@@ -1906,7 +1915,7 @@ export default function Purchase() {
                                     <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
                                     <Text strong>Payment Proof: </Text>
                                     <Button type="link" style={{ color: '#52c41a', padding: 0 }}
-                                      onClick={() => message.info('Opening payment proof: ' + localPurchaseDetailView.paymentProof)}
+                                      onClick={() => enqueueSnackbar('Opening payment proof: ' + localPurchaseDetailView.paymentProof, { variant: 'info' })}
                                     >{localPurchaseDetailView.paymentProof}</Button>
                                   </Space>
                                 </Card>
@@ -2233,7 +2242,7 @@ export default function Purchase() {
                             loading={quotCompareLoading}
                             style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
                             onClick={() => {
-                              message.info('AI quotation comparison will be available once the backend endpoint is ready');
+                              enqueueSnackbar('AI quotation comparison will be available once the backend endpoint is ready', { variant: 'info' });
                             }}
                           >
                             {quotCompareLoading ? 'Analysing...' : 'Compare with AI'}
@@ -2321,20 +2330,20 @@ export default function Purchase() {
                               type="primary"
                               icon={<CheckCircleOutlined />}
                               style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
-                              onClick={() => message.success(`${quotCompareResult.best.name} selected as the preferred quotation`)}
+                              onClick={() => enqueueSnackbar(`${quotCompareResult.best.name} selected as the preferred quotation`, { variant: 'success' })}
                             >
                               Select Best Quotation
                             </Button>
                             <Button
                               icon={<WhatsAppOutlined />}
                               style={{ color: '#25D366', borderColor: '#25D36644', fontWeight: 600 }}
-                              onClick={() => message.success('Comparison report shared via WhatsApp')}
+                              onClick={() => enqueueSnackbar('Comparison report shared via WhatsApp', { variant: 'success' })}
                             >
                               Share Report
                             </Button>
                             <Button
                               icon={<DownloadOutlined />}
-                              onClick={() => message.info('Downloading comparison report...')}
+                              onClick={() => enqueueSnackbar('Downloading comparison report...', { variant: 'info' })}
                             >
                               Download Report
                             </Button>
@@ -2901,7 +2910,7 @@ export default function Purchase() {
               icon={<WhatsAppOutlined />}
               onClick={() => {
                 const values = purchaseForm.getFieldsValue();
-                if (!values.supplier) { message.warning('Please select a supplier first'); return; }
+                if (!values.supplier) { enqueueSnackbar('Please select a supplier first', { variant: 'warning' }); return; }
                 const mainLine = `â€¢ *${values.product}* — Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
                 const extraLines = quotationExtraProducts.map(p => {
                   const inv = inventoryItems.find(i => i.name === p);
@@ -2915,7 +2924,7 @@ export default function Purchase() {
                   setWhatsappSentItems(prev => new Set(prev).add(selectedProduct.key));
                   // Start 30-min reminder until quotation received
                   startQuotationReminder(selectedProduct.key, selectedProduct.name, values.supplier);
-                  message.info('30-minute quotation reminders started. You will be reminded until quotation is received.', 5);
+                  enqueueSnackbar('30-minute quotation reminders started. You will be reminded until quotation is received.', { variant: 'info', autoHideDuration: 5000 });
                 }
                 setShowAddPurchaseModal(false);
                 purchaseForm.resetFields();
@@ -4016,7 +4025,7 @@ export default function Purchase() {
                         loading={bulkRaiseScanLoading}
                         onClick={() => {
                           setBulkRaiseScanLoading(true);
-                          setTimeout(() => { setBulkRaiseScanLoading(false); message.success('AI extracted details from quotation!'); }, 2000);
+                          setTimeout(() => { setBulkRaiseScanLoading(false); enqueueSnackbar('AI extracted details from quotation!', { variant: 'success' }); }, 2000);
                         }}
                         style={{ width: '100%', borderRadius: 8, borderColor: '#722ed1', color: '#722ed1', marginBottom: 8 }}
                       >
@@ -4072,14 +4081,12 @@ export default function Purchase() {
               const entry = { lrNumber: vals.lr_number, deliveryDate, fileName, paidStatus: vals.paid_status };
               setLrData(prev => ({ ...prev, [lrUploadTarget.order.key]: entry }));
               if (vals.paid_status === 'Not Paid') {
-                notification.warning({
-                  message: 'Finance Alert — Payment Pending',
-                  description: `LR uploaded for ${lrUploadTarget.order.item}. Payment is Not Paid. Finance team will be notified on receiving date (${deliveryDate}).`,
-                  duration: 8,
-                  icon: <BellOutlined style={{ color: '#fa8c16' }} />,
-                });
+                enqueueSnackbar(
+                  `Finance Alert — Payment Pending: LR uploaded for ${lrUploadTarget.order.item}. Payment is Not Paid. Finance team will be notified on receiving date (${deliveryDate}).`,
+                  { variant: 'warning', autoHideDuration: 8000 },
+                );
               } else {
-                message.success('LR copy uploaded. Payment marked as Paid.');
+                enqueueSnackbar('LR copy uploaded. Payment marked as Paid.', { variant: 'success' });
               }
               setShowLRUploadModal(false);
               setLrUploadTarget(null);
@@ -4178,7 +4185,7 @@ export default function Purchase() {
                 onClick={() => {
                   editReqForm.validateFields().then(vals => {
                     dispatch(updateQuotationDetails({ key: editQuotationTarget.key, qty: vals.qty, payment_terms: vals.payment_terms }));
-                    message.success('Quotation details updated.');
+                    enqueueSnackbar('Quotation details updated.', { variant: 'success' });
                     setShowEditQuotationModal(false);
                     editReqForm.resetFields();
                   });
@@ -4193,7 +4200,7 @@ export default function Purchase() {
                     const latestNote = (editQuotationTarget.notes || []).at(-1);
                     const msg = `*Updated Quotation Request*\n\n*Item:* ${editQuotationTarget.item}\n*Quantity:* ${vals.qty} ${editQuotationTarget.unit}\n*Payment Terms:* ${vals.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly provide an updated quotation at the earliest.`;
                     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-                    message.success('Updated quotation sent via WhatsApp!');
+                    enqueueSnackbar('Updated quotation sent via WhatsApp!', { variant: 'success' });
                     setShowEditQuotationModal(false);
                     editReqForm.resetFields();
                   });
@@ -4274,7 +4281,7 @@ export default function Purchase() {
                   financeStatus: financeDecision,
                   financeNote: financeNoteInput.trim(),
                 }));
-                message.success(financeDecision === 'Approved' ? 'Request approved by Finance!' : 'Modify note sent to Purchase team!');
+                enqueueSnackbar(financeDecision === 'Approved' ? 'Request approved by Finance!' : 'Modify note sent to Purchase team!', { variant: 'success' });
                 setShowFinanceStatusModal(false);
                 setFinanceStatusTarget(null);
                 setFinanceNoteInput('');
@@ -4390,7 +4397,7 @@ export default function Purchase() {
               });
               localStorage.setItem('hng_pickup_expenses', JSON.stringify(pickupList));
             }
-            message.success('Marked as Taken successfully!');
+            enqueueSnackbar('Marked as Taken successfully!', { variant: 'success' });
             setShowTakenModal(false);
             setTakenTarget(null);
             takenForm.resetFields();

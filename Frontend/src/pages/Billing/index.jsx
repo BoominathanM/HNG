@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
-  Typography, Space, Divider, Avatar, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, message, Switch,
+  Typography, Space, Divider, Avatar, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, Switch,
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, PrinterOutlined, DownloadOutlined, EyeOutlined,
   CheckCircleOutlined, LeftOutlined, CloseOutlined, UserOutlined,
@@ -275,7 +276,7 @@ export default function Billing() {
 
   const handleSaveParty = async () => {
     const vals = partyForm.getFieldsValue();
-    if (!vals.partyName) { message.error('Party name is required'); return; }
+    if (!vals.partyName) { enqueueSnackbar('Party name is required', { variant: 'error' }); return; }
     const catMap = { vip: 'VIP', regular: 'Regular', wholesale: 'Wholesale' };
     try {
       const res = await createBillingPartyMutation({
@@ -300,17 +301,17 @@ export default function Billing() {
       partyForm.resetFields();
       billingForm.resetFields();
       setShowBillingAddr(false);
-      message.success('Party created');
+      enqueueSnackbar('Party created', { variant: 'success' });
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to create party');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create party', { variant: 'error' });
     }
   };
 
   const handleSave = async () => {
     const partyId = selectedParty?.key || selectedParty?._id;
-    if (!partyId) { message.error('Please select a party'); return; }
+    if (!partyId) { enqueueSnackbar('Please select a party', { variant: 'error' }); return; }
     if (!isComplementary && invoiceItems.length === 0) {
-      message.error('Please add at least one item'); return;
+      enqueueSnackbar('Please add at least one item', { variant: 'error' }); return;
     }
     const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
     const payload = {
@@ -336,7 +337,7 @@ export default function Billing() {
     };
     try {
       await createInvoiceMutation(payload).unwrap();
-      message.success('Invoice created');
+      enqueueSnackbar('Invoice created', { variant: 'success' });
       setDrawerOpen(false);
       setInvoiceItems([]);
       setSelectedParty(null);
@@ -348,7 +349,7 @@ export default function Billing() {
       setIsComplementary(false);
       setComplementaryNote('');
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to create invoice');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create invoice', { variant: 'error' });
     }
   };
 
@@ -376,7 +377,7 @@ export default function Billing() {
   };
 
   const handleSavePayment = async () => {
-    if (!recordPayInv?.key) { message.error('No invoice selected'); return; }
+    if (!recordPayInv?.key) { enqueueSnackbar('No invoice selected', { variant: 'error' }); return; }
     try {
       await recordPaymentMutation({
         id: recordPayInv.key,
@@ -392,10 +393,10 @@ export default function Billing() {
         ...(payChequeBank ? { chequeBank: payChequeBank } : {}),
         ...(payParty?.key ? { partyId: payParty.key } : {}),
       }).unwrap();
-      message.success(`Payment of ₹${(payAmount || 0).toLocaleString()} recorded successfully`);
+      enqueueSnackbar(`Payment of ₹${(payAmount || 0).toLocaleString()} recorded successfully`, { variant: 'success' });
       setRecordPayOpen(false);
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to record payment');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record payment', { variant: 'error' });
     }
   };
 
@@ -414,7 +415,7 @@ export default function Billing() {
     const amt = convertAmt || convertQuot.total;
     const party = partiesList.find(p => p.name === convertQuot.client);
     if (!party?.key) {
-      message.error(`Create a billing party named "${convertQuot.client}" before converting this quotation`);
+      enqueueSnackbar(`Create a billing party named "${convertQuot.client}" before converting this quotation`, { variant: 'error' });
       return;
     }
     try {
@@ -424,11 +425,11 @@ export default function Billing() {
         amount: amt,
         includePreviousDue: convertPreviousDue > 0,
       }).unwrap();
-      message.success(`${convertQuot.quot} converted to invoice and moved to Invoices`);
+      enqueueSnackbar(`${convertQuot.quot} converted to invoice and moved to Invoices`, { variant: 'success' });
       setActiveTab('invoices');
       setConvertOpen(false);
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to convert quotation');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to convert quotation', { variant: 'error' });
     }
   };
 
@@ -440,13 +441,13 @@ export default function Billing() {
 
   const handleSaveGst = async () => {
     const newGst = gstEditValue || 0;
-    if (!gstEditInv?.key) { message.error('No invoice selected'); return; }
+    if (!gstEditInv?.key) { enqueueSnackbar('No invoice selected', { variant: 'error' }); return; }
     try {
       await updateInvoiceGstMutation({ id: gstEditInv.key, gstAmount: newGst }).unwrap();
-      message.success('GST updated successfully');
+      enqueueSnackbar('GST updated successfully', { variant: 'success' });
       setGstEditOpen(false);
     } catch (err) {
-      message.error(err?.data?.message || err?.data || 'Failed to update GST');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update GST', { variant: 'error' });
     }
   };
 
@@ -530,13 +531,13 @@ export default function Billing() {
         <Space size={4} wrap>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); }} /></Tooltip>
           <Tooltip title="Edit GST"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openGstEdit(r)} /></Tooltip>
-          <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Invoice shared on WhatsApp')} /></Tooltip>
+          <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar('Invoice shared on WhatsApp', { variant: 'success' })} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           {r.balance > 0 && (
             <>
               <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
-              <Button size="small" icon={<CalendarOutlined />} onClick={() => message.success('Reminder sent to client')} style={{ color: '#fa8c16', fontSize: 12 }}>Reminder</Button>
+              <Button size="small" icon={<CalendarOutlined />} onClick={() => enqueueSnackbar('Reminder sent to client', { variant: 'success' })} style={{ color: '#fa8c16', fontSize: 12 }}>Reminder</Button>
             </>
           )}
         </Space>
@@ -561,7 +562,7 @@ export default function Billing() {
       render: (_, r) => (
         <Space size={4} wrap>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType('quotation'); setViewModal(true); }} /></Tooltip>
-          <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => message.success('Quotation shared on WhatsApp')} /></Tooltip>
+          <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar('Quotation shared on WhatsApp', { variant: 'success' })} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
           {tabType === 'in-process' && (
@@ -1503,7 +1504,7 @@ export default function Billing() {
               <Text style={{ fontSize: 14, fontWeight: 600, color: '#1a1a2e' }}>Invoice</Text>
               <Text
                 style={{ color: '#3730a3', fontSize: 13, cursor: 'pointer', fontWeight: 500 }}
-                onClick={() => message.info('Select unpaid invoice to link')}
+                onClick={() => enqueueSnackbar('Select unpaid invoice to link', { variant: 'info' })}
               >
                 + Add Unpaid Invoice
               </Text>
@@ -1894,8 +1895,8 @@ export default function Billing() {
                 type="primary"
                 style={{ flex: 2, background: 'linear-gradient(135deg,#fa8c16,#d46b08)', border: 'none', fontWeight: 700 }}
                 onClick={() => {
-                  if (!reminderDate) { message.warning('Please select a reminder date'); return; }
-                  message.success(`Reminder scheduled for ${reminderDate.format('DD MMM YYYY')} via ${reminderMode}`);
+                  if (!reminderDate) { enqueueSnackbar('Please select a reminder date', { variant: 'warning' }); return; }
+                  enqueueSnackbar(`Reminder scheduled for ${reminderDate.format('DD MMM YYYY')} via ${reminderMode}`, { variant: 'success' });
                   setReminderOpen(false);
                 }}
               >
@@ -2024,8 +2025,8 @@ export default function Billing() {
                 type="primary"
                 style={{ flex: 2, background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 700 }}
                 onClick={() => {
-                  if (!verifierName.trim()) { message.warning('Please enter verifier name'); return; }
-                  message.success(`Payment verified by ${verifierName}`);
+                  if (!verifierName.trim()) { enqueueSnackbar('Please enter verifier name', { variant: 'warning' }); return; }
+                  enqueueSnackbar(`Payment verified by ${verifierName}`, { variant: 'success' });
                   setVerifyOpen(false);
                 }}
               >

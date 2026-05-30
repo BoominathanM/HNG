@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
   Row, Col, Card, Form, Input, Button, Typography, Tabs, Tag, Table,
-  Select, Modal, Space, Tooltip, message
+  Select, Modal, Space, Tooltip
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   ArrowLeftOutlined, SyncOutlined, PlusOutlined,
   EditOutlined, DeleteOutlined, EyeOutlined, EyeInvisibleOutlined,
@@ -67,12 +68,12 @@ export default function WhatsAppIntegration() {
 
   const handleSync = () => {
     setSyncing(true);
-    setTimeout(() => { setSyncing(false); message.success('Templates synced successfully!'); }, 2000);
+    setTimeout(() => { setSyncing(false); enqueueSnackbar('Templates synced successfully!', { variant: 'success' }); }, 2000);
   };
 
   const handleTestConnection = () => {
-    message.loading({ content: 'Testing connection...', key: 'test' });
-    setTimeout(() => message.success({ content: 'Connection successful!', key: 'test', duration: 2 }), 1500);
+    enqueueSnackbar('Testing connection...', { variant: 'info' });
+    setTimeout(() => enqueueSnackbar('Connection successful!', { variant: 'success' }), 1500);
   };
 
   const handleDisconnect = () => {
@@ -81,7 +82,7 @@ export default function WhatsAppIntegration() {
       content: 'This will remove all saved credentials. You will need to reconnect to use WhatsApp features.',
       okText: 'Disconnect',
       okButtonProps: { danger: true },
-      onOk: () => message.success('Disconnected successfully'),
+      onOk: () => enqueueSnackbar('Disconnected successfully', { variant: 'success' }),
     });
   };
 
@@ -100,7 +101,7 @@ export default function WhatsAppIntegration() {
         setMappings((prev) => [...prev, { key: Date.now(), ...vals, variablesMapped: 0 }]);
       }
       setMappingModalOpen(false);
-      message.success('Mapping saved!');
+      enqueueSnackbar('Mapping saved!', { variant: 'success' });
     });
   };
 

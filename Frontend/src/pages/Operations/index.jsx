@@ -8,7 +8,6 @@ import {
   Divider,
   Form,
   Input,
-  message,
   Modal,
   Progress,
   Row,
@@ -46,6 +45,7 @@ import {
   UserSwitchOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
+import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import {
@@ -281,9 +281,14 @@ export default function Operations() {
           style={{ width: 148 }}
           placeholder="Select"
           onClick={(e) => e.stopPropagation()}
-          onChange={(val) => {
+          onChange={async (val) => {
             setPrintingStatuses((prev) => ({ ...prev, [record.id]: val }));
-            message.success(`${record.id} status → ${val}`);
+            try {
+              await updateOrderStatus({ id: record.key, printingStatus: val }).unwrap();
+              enqueueSnackbar(`${record.id} status → ${val}`, { variant: 'success' });
+            } catch (err) {
+              enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update printing status', { variant: 'error' });
+            }
           }}
           options={[
             { value: 'Yet to Receive', label: <Tag color="orange" style={{ margin: 0 }}>Yet to Receive</Tag> },
@@ -330,7 +335,14 @@ export default function Operations() {
             size="small"
             icon={<MessageOutlined />}
             style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-            onClick={() => message.success(`Design for ${record.orderId} sent via WhatsApp to customer and ${apiOrders.find((o) => o.id === record.orderId)?.salesPerson || 'sales person'}`)}
+            onClick={async () => {
+              try {
+                await sendToStickerTeam({ id: record._id || record.key, type: record.type }).unwrap();
+                enqueueSnackbar(`Design for ${record.orderId} sent via WhatsApp to customer and ${apiOrders.find((o) => o.id === record.orderId)?.salesPerson || 'sales person'}`, { variant: 'success' });
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send design', { variant: 'error' });
+              }
+            }}
           >
             Send
           </Button>
@@ -338,14 +350,28 @@ export default function Operations() {
             size="small"
             icon={<CheckCircleOutlined />}
             style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
-            onClick={() => message.success(`${record.orderId} approved — printing can start now`)}
+            onClick={async () => {
+              try {
+                await updateStickerStatus({ id: record._id || record.key, status: 'Approved' }).unwrap();
+                enqueueSnackbar(`${record.orderId} approved — printing can start now`, { variant: 'success' });
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve design', { variant: 'error' });
+              }
+            }}
           >
             Approve
           </Button>
           <Button
             size="small"
             icon={<PrinterOutlined />}
-            onClick={() => message.info(`Printing order raised for ${record.orderId}`)}
+            onClick={async () => {
+              try {
+                await updateStickerStatus({ id: record._id || record.key, status: 'In Process' }).unwrap();
+                enqueueSnackbar(`Printing order raised for ${record.orderId}`, { variant: 'info' });
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise printing order', { variant: 'error' });
+              }
+            }}
           >
             Print
           </Button>
@@ -441,10 +467,19 @@ export default function Operations() {
                   style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
                   disabled={!uploadedFiles[record.key]?.length}
                   title={!uploadedFiles[record.key]?.length ? 'Upload design first' : ''}
-                  onClick={() => {
-                    advanceStep(record.key, 1);
+                  onClick={async () => {
                     const ord = apiOrders.find((o) => o.id === record.orderId);
-                    message.info(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team for ${record.orderId}`);
+                    try {
+                      await uploadStickerDesign({
+                        id: record._id || record.key,
+                        orderId: record.orderId,
+                        files: uploadedFiles[record.key] || [],
+                      }).unwrap();
+                      advanceStep(record.key, 1);
+                      enqueueSnackbar(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team for ${record.orderId}`, { variant: 'info' });
+                    } catch (err) {
+                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send design for approval', { variant: 'error' });
+                    }
                   }}
                 >
                   Send for Approval
@@ -472,9 +507,14 @@ export default function Operations() {
                   size="small"
                   icon={<MessageOutlined />}
                   style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-                  onClick={() => {
+                  onClick={async () => {
                     const ord = apiOrders.find((o) => o.id === record.orderId);
-                    message.success(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`);
+                    try {
+                      await sendToStickerTeam({ id: record._id || record.key, orderId: record.orderId, type: teamSendType }).unwrap();
+                      enqueueSnackbar(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`, { variant: 'success' });
+                    } catch (err) {
+                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send WhatsApp notification', { variant: 'error' });
+                    }
                   }}
                 >
                   WhatsApp
@@ -487,7 +527,7 @@ export default function Operations() {
                   title={!uploadedFiles[record.key]?.length ? 'Upload design file first' : ''}
                   onClick={() => {
                     if (!uploadedFiles[record.key]?.length) {
-                      message.error('Please upload the design file before approving');
+                      enqueueSnackbar('Please upload the design file before approving', { variant: 'error' });
                       return;
                     }
                     advanceStep(record.key, 2);
@@ -564,10 +604,10 @@ export default function Operations() {
       }).unwrap();
       requestForm.resetFields();
       setRequestOpen(false);
-      message.success(`${requestType} request submitted`);
+      enqueueSnackbar(`${requestType} request submitted`, { variant: 'success' });
     } catch (err) {
       if (err?.errorFields) return;
-      message.error(err?.data?.message || err?.data || 'Failed to submit request');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to submit request', { variant: 'error' });
     }
   };
 
@@ -951,7 +991,7 @@ export default function Operations() {
             type="primary" 
             style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
             onClick={() => {
-              message.success('Corrections updated');
+              enqueueSnackbar('Corrections updated', { variant: 'success' });
               setCorrectionOpen(false);
             }}
           >
@@ -1014,12 +1054,20 @@ export default function Operations() {
             key="dispatch" 
             type="primary" 
             style={{ background: 'linear-gradient(135deg,#1677ff,#4096ff)', border: 'none' }}
-            onClick={() => {
+            onClick={async () => {
               const vals = dispatchForm.getFieldsValue();
-              setSelectedQueueItem(prev => ({ ...prev, dispatchDate: vals.dispatchDate, dispatchTime: vals.dispatchTime }));
-              if (selectedQueueItem) advanceStep(selectedQueueItem.key, 4);
-              message.success(`Dispatched to Operations at ${vals.dispatchTime}`);
-              setDispatchOpen(false);
+              const ord = apiOrders.find((o) => o.id === selectedQueueItem?.orderId);
+              try {
+                if (ord) {
+                  await updateOrderStatus({ id: ord.key, operationStage: 'Dispatch', stockStatus: 'Dispatched' }).unwrap();
+                }
+                setSelectedQueueItem((prev) => ({ ...prev, dispatchDate: vals.dispatchDate, dispatchTime: vals.dispatchTime }));
+                if (selectedQueueItem) advanceStep(selectedQueueItem.key, 4);
+                enqueueSnackbar(`Dispatched to Operations at ${vals.dispatchTime}`, { variant: 'success' });
+                setDispatchOpen(false);
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to dispatch material', { variant: 'error' });
+              }
             }}
           >
             Confirm Dispatch
@@ -1053,11 +1101,19 @@ export default function Operations() {
             key="receive"
             type="primary"
             style={{ background: 'linear-gradient(135deg,#faad14,#ffc53d)', border: 'none' }}
-            onClick={() => {
+            onClick={async () => {
               const vals = receiveForm.getFieldsValue();
-              setSelectedQueueItem(prev => ({ ...prev, arrivalDate: vals.arrivalDate }));
-              message.success(`Stock Received with Arrival Date: ${vals.arrivalDate}`);
-              setReceiveOpen(false);
+              const ord = apiOrders.find((o) => o.id === selectedQueueItem?.orderId);
+              try {
+                if (ord) {
+                  await updateOrderStatus({ id: ord.key, stockStatus: 'Received' }).unwrap();
+                }
+                setSelectedQueueItem((prev) => ({ ...prev, arrivalDate: vals.arrivalDate }));
+                enqueueSnackbar(`Stock Received with Arrival Date: ${vals.arrivalDate}`, { variant: 'success' });
+                setReceiveOpen(false);
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to mark as received', { variant: 'error' });
+              }
             }}
           >
             Mark as Received
@@ -1092,9 +1148,17 @@ export default function Operations() {
             key="send"
             type="primary"
             style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-            onClick={() => {
-              message.success(`${teamSendItems.length} item(s) sent to ${teamSendType} Team`);
-              setTeamSendOpen(false);
+            onClick={async () => {
+              try {
+                await sendToStickerTeam({
+                  type: teamSendType,
+                  items: teamSendItems.map((i) => i.key),
+                }).unwrap();
+                enqueueSnackbar(`${teamSendItems.length} item(s) sent to ${teamSendType} Team`, { variant: 'success' });
+                setTeamSendOpen(false);
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || err?.data || `Failed to send to ${teamSendType} Team`, { variant: 'error' });
+              }
             }}
           >
             Send All to {teamSendType} Team

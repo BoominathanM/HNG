@@ -2,9 +2,10 @@ import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, Upload, Typography, Space,
-  Steps, Descriptions, Alert, Tag, DatePicker, message, Checkbox,
+  Steps, Descriptions, Alert, Tag, DatePicker, Checkbox,
   Select, Table, Divider,
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   CameraOutlined, UploadOutlined, EnvironmentOutlined,
   ArrowLeftOutlined, PrinterOutlined, SaveOutlined, ThunderboltOutlined,
@@ -127,11 +128,24 @@ export default function DispatchDetail() {
   };
 
   const handleConfirmDispatch = async () => {
-    message.loading('Confirming dispatch...', 1.2).then(() => {
+    enqueueSnackbar('Confirming dispatch...', { variant: 'info' });
+    try {
+      const formData = new FormData();
+      const vals = form.getFieldsValue();
+      formData.append('transport', vals.transport || order.transport || '');
+      formData.append('boxes', vals.boxes ?? order.boxes ?? 0);
+      formData.append('weight', vals.weight ?? order.weight ?? '');
+      formData.append('dispatchType', vals.dispatchType || dispatchType || 'Full Dispatch');
+      formData.append('invoiceNumber', vals.invoiceNumber || '');
+      formData.append('notifyAuto', notifyAuto);
+      formData.append('notifyWhatsApp', notifyWhatsApp);
+      await confirmDispatch({ id, formData }).unwrap();
       setDispatched(true);
       const notifyParts = [notifyAuto && 'Sales & Customer', notifyWhatsApp && 'WhatsApp'].filter(Boolean).join(', ');
-      message.success(`Dispatch confirmed! Notifications sent via: ${notifyParts || 'none'}.`);
-    });
+      enqueueSnackbar(`Dispatch confirmed! Notifications sent via: ${notifyParts || 'none'}.`, { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Failed to confirm dispatch.', { variant: 'error' });
+    }
   };
 
   const handleAIParse = () => {
@@ -142,22 +156,31 @@ export default function DispatchDetail() {
       lrForm.setFieldsValue(parsed);
       setAiParsing(false);
       setLrEditMode(true);
-      message.success('AI extracted lorry receipt details. Review and confirm below.');
+      enqueueSnackbar('AI extracted lorry receipt details. Review and confirm below.', { variant: 'success' });
     }, 1800);
   };
 
-  const handleFinishedDispatch = () => {
-    message.loading('Sending notifications...', 1.5).then(() => {
+  const handleFinishedDispatch = async () => {
+    enqueueSnackbar('Sending notifications...', { variant: 'info' });
+    try {
+      const lrVals = lrForm.getFieldsValue();
+      await uploadLR({
+        id,
+        lrNumber: lrVals.lrNumber || '',
+        lrDate: lrVals.lrDate || '',
+        transportName: lrVals.transportName || '',
+        packages: lrVals.packages || '',
+        fromCity: lrVals.fromCity || '',
+        toCity: lrVals.toCity || '',
+        weight: lrVals.weight || '',
+        freight: lrVals.freight || '',
+        estimatedDelivery: lrVals.estimatedDelivery || '',
+      }).unwrap();
       setFinishedDispatch(true);
-      message.success({
-        content: (
-          <span>
-            <strong>Dispatch Finished!</strong> Notifications sent to Sales ({order.salesPerson}) and Customer ({order.client}) via WhatsApp.
-          </span>
-        ),
-        duration: 4,
-      });
-    });
+      enqueueSnackbar(`Dispatch Finished! Notifications sent to Sales (${order.salesPerson}) and Customer (${order.client}) via WhatsApp.`, { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Failed to finish dispatch.', { variant: 'error' });
+    }
   };
 
   if (!order) {
@@ -452,7 +475,7 @@ export default function DispatchDetail() {
                     setLrFileList(fileList);
                     if (fileList.length > 0 && !aiParsed) {
                       // Auto-trigger AI parse hint
-                      message.info('Lorry receipt uploaded. Click "AI Parse Receipt" to extract details automatically.');
+                      enqueueSnackbar('Lorry receipt uploaded. Click "AI Parse Receipt" to extract details automatically.', { variant: 'info' });
                     }
                   }}
                 >

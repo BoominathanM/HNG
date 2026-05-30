@@ -8,7 +8,7 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { toggleTheme, toggleSidebar } from '../../store/slices/themeSlice';
-import { logout } from '../../store/slices/authSlice';
+import { useLogoutMutation } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
 
 const { Header: AntHeader } = Layout;
@@ -21,11 +21,20 @@ export default function Header({ onMobileMenuOpen }) {
   const collapsed = useSelector((s) => s.theme.sidebarCollapsed);
   const user = useSelector((s) => s.auth.user);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [logout] = useLogoutMutation();
+
+  const handleLogout = async () => {
+    try {
+      await logout().unwrap();
+    } catch {
+      // logout mutation clears local auth state even if the API call fails
+    }
+    navigate('/login', { replace: true });
+  };
 
   const handleUserMenu = ({ key }) => {
     if (key === 'logout') {
-      dispatch(logout());
-      navigate('/login', { replace: true });
+      handleLogout();
     } else if (key === 'profile') {
       setProfileOpen(true);
     }
@@ -226,9 +235,8 @@ export default function Header({ onMobileMenuOpen }) {
             block 
             icon={<LogoutOutlined />}
             onClick={() => {
-              dispatch(logout());
-              navigate('/login', { replace: true });
               setProfileOpen(false);
+              handleLogout();
             }}
             style={{ borderRadius: 8, height: 40 }}
           >

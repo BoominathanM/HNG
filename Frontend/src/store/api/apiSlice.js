@@ -400,6 +400,10 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/sales/orders/${id}` }),
       providesTags: (result, error, id) => [{ type: 'Orders', id }],
     }),
+    createSalesOrder: builder.mutation({
+      query: (data) => ({ url: '/sales/orders', method: 'post', data }),
+      invalidatesTags: ['Orders'],
+    }),
     updateSalesOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/orders/${id}`, method: 'put', data }),
       invalidatesTags: ['Orders'],
@@ -782,6 +786,7 @@ export const {
   useConvertToOrderMutation,
   useGetSalesOrdersQuery,
   useGetSalesOrderQuery,
+  useCreateSalesOrderMutation,
   useUpdateSalesOrderMutation,
   useUpdateSalesOrderStatusMutation,
   useGetComplaintsQuery,

@@ -1,7 +1,10 @@
 import React, { useState, useMemo } from 'react'; // useEffect intentionally removed — data from RTK Query
 import {
-  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, message, Tabs, Statistic, Divider, Modal, Descriptions, Upload, InputNumber, Form, Input, Badge, Tooltip, Alert, Image
+  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, Tabs, Statistic, Divider, 
+  Modal, Descriptions, Upload, InputNumber, Form, Input, Badge, Tooltip, Alert, 
+  Image,
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, CloseCircleOutlined, WalletOutlined,
   ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined, FileTextOutlined,
@@ -95,7 +98,7 @@ export default function Financial() {
     if (!text) return;
     try {
       await addPurchaseNote({ id: key, text }).unwrap();
-      message.success('Note added');
+      enqueueSnackbar('Note added', { variant: 'success' });
     } catch { /* silent */ }
     setReqNoteInput('');
   };
@@ -158,8 +161,8 @@ export default function Financial() {
         fd.append('proof', vals.payment_proof.fileList[0].originFileObj);
       }
       await payLocalPurchase({ id: localPayTarget.key, formData: fd }).unwrap();
-      message.success('Local purchase payment processed!');
-    } catch { message.error('Payment failed'); }
+      enqueueSnackbar('Local purchase payment processed!', { variant: 'success' });
+    } catch { enqueueSnackbar('Payment failed', { variant: 'error' }); }
     setShowLocalPaymentModal(false);
     setLocalPayTarget(null);
     localPayForm.resetFields();
@@ -173,8 +176,8 @@ export default function Financial() {
         fd.append('proof', vals.payment_proof.fileList[0].originFileObj);
       }
       await payPickup({ id: reimbPayTarget.key, formData: fd }).unwrap();
-      message.success('Reimbursement payment recorded!');
-    } catch { message.error('Payment failed'); }
+      enqueueSnackbar('Reimbursement payment recorded!', { variant: 'success' });
+    } catch { enqueueSnackbar('Payment failed', { variant: 'error' }); }
     setShowReimbPaymentModal(false);
     setReimbPayTarget(null);
     reimbPayForm.resetFields();
@@ -210,7 +213,7 @@ export default function Financial() {
     const finalStatus = values.status === 'Partial Paid' && remaining > 0 ? 'Partial Paid' : 'Paid';
     const proofFileName = values.proof?.fileList?.[0]?.name || null;
 
-    message.success(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`);
+    enqueueSnackbar(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`, { variant: 'success' });
 
     if (selectedForPayment.bill_no?.startsWith('EXP')) {
       setExpenseRequests((prev) => prev.map((r) =>
@@ -481,14 +484,14 @@ export default function Financial() {
                                 <>
                                   <Button size="small" type="primary" icon={<CheckCircleOutlined />}
                                     onClick={async () => {
-                                      try { await approveReq(r.key).unwrap(); message.success('Approved'); }
-                                      catch { message.error('Approval failed'); }
+                                      try { await approveReq(r.key).unwrap(); enqueueSnackbar('Approved', { variant: 'success' }); }
+                                      catch { enqueueSnackbar('Approval failed', { variant: 'error' }); }
                                     }}
                                     style={{ background: '#52c41a', border: 'none' }}>Approve</Button>
                                   <Button size="small" danger icon={<CloseCircleOutlined />}
                                     onClick={async () => {
-                                      try { await rejectReq({ id: r.key }).unwrap(); message.warning('Rejected'); }
-                                      catch { message.error('Rejection failed'); }
+                                      try { await rejectReq({ id: r.key }).unwrap(); enqueueSnackbar('Rejected', { variant: 'warning' }); }
+                                      catch { enqueueSnackbar('Rejection failed', { variant: 'error' }); }
                                     }}>Reject</Button>
                                 </>
                               )}
@@ -859,8 +862,8 @@ export default function Financial() {
                   editReqForm.validateFields().then(async (vals) => {
                     try {
                       await updateQuotation({ id: editReqTarget.key, qty: vals.qty, paymentTerms: vals.payment_terms }).unwrap();
-                      message.success('Quotation details updated.');
-                    } catch { message.error('Update failed'); }
+                      enqueueSnackbar('Quotation details updated.', { variant: 'success' });
+                    } catch { enqueueSnackbar('Update failed', { variant: 'error' }); }
                     setShowEditReqModal(false); editReqForm.resetFields();
                   });
                 }}>Save Only</Button>
@@ -875,7 +878,7 @@ export default function Financial() {
                     const latestNote = (editReqTarget.notes || []).at(-1);
                     const msg = `*Updated Quotation Request*\n\n*Item:* ${editReqTarget.item}\n*Quantity:* ${vals.qty} ${editReqTarget.unit}\n*Payment Terms:* ${vals.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly provide an updated quotation at the earliest.`;
                     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-                    message.success('Updated quotation sent via WhatsApp!');
+                    enqueueSnackbar('Updated quotation sent via WhatsApp!', { variant: 'success' });
                     setShowEditReqModal(false); editReqForm.resetFields();
                   });
                 }}>Save & Send via WhatsApp</Button>
@@ -977,7 +980,7 @@ export default function Financial() {
               type="primary"
               icon={<UploadOutlined />}
               style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
-              onClick={() => { message.success('File downloaded'); }}
+              onClick={() => { enqueueSnackbar('File downloaded', { variant: 'success' }); }}
             >
               Download File
             </Button>

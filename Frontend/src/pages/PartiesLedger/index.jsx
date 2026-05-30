@@ -1,8 +1,9 @@
 ﻿import React, { useState, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Input, Select, Typography,
-  Space, Tabs, DatePicker, Spin, message
+  Space, Tabs, DatePicker, Spin
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   SearchOutlined, EyeOutlined, LeftOutlined,
   BookOutlined, ShopOutlined, ArrowUpOutlined,
@@ -76,8 +77,10 @@ export default function PartiesLedger() {
   const deleteParty = async (party) => {
     try {
       await deletePartyMutation(party.key).unwrap();
-      message.success(`${party.name} deleted`);
-    } catch { /* silent */ }
+      enqueueSnackbar(`${party.name} deleted`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to delete party', { variant: 'error' });
+    }
   };
 
   const openParty = (party) => {

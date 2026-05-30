@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, Progress, Alert, InputNumber, List, message,
+  Typography, Space, Progress, Alert, InputNumber, List,
   Avatar, Divider, Drawer, Tabs, DatePicker, Upload, Switch, Descriptions,
-  Badge, Tooltip, notification,
+  Badge, Tooltip,
 } from 'antd';
+import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, WarningOutlined, CalculatorOutlined, SearchOutlined, CheckOutlined,
   DownloadOutlined, ShoppingOutlined, LeftOutlined, CloseOutlined,
@@ -38,6 +39,28 @@ import {
 const { Title, Text } = Typography;
 const { Option } = Select;
 
+
+// Export an array of plain rows to a CSV file. Headers are derived from the
+// scalar (non-object) keys of the rows so it adapts to whatever shape the data has.
+const exportRowsToCSV = (rows, filename) => {
+  if (!rows || rows.length === 0) return false;
+  const skip = new Set(['key', '_id', '__v']);
+  const headers = Object.keys(rows[0]).filter(
+    (k) => !skip.has(k) && rows.every((r) => r[k] == null || typeof r[k] !== 'object'),
+  );
+  const csv = [
+    headers.join(','),
+    ...rows.map((r) => headers.map((h) => `"${(r[h] ?? '').toString().replace(/"/g, '""')}"`).join(',')),
+  ].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+  return true;
+};
 
 export default function Inventory() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -252,9 +275,9 @@ export default function Inventory() {
       setSelectedSupplier({ id: result.data?._id || result._id, name: vals.sup_name, phone: vals.sup_phone, address: vals.sup_address });
       supplierForm.resetFields();
       setShowAddSupplier(false);
-      message.success('Supplier added');
+      enqueueSnackbar('Supplier added', { variant: 'success' });
     } catch {
-      message.error('Failed to add supplier');
+      enqueueSnackbar('Failed to add supplier', { variant: 'error' });
     }
   };
 
@@ -268,9 +291,9 @@ export default function Inventory() {
       setSelectedVendor({ id: result.data?._id || result._id, name: vals.cust_name, phone: vals.cust_phone, address: vals.cust_address });
       vendorForm.resetFields();
       setShowAddVendor(false);
-      message.success('Vendor added');
+      enqueueSnackbar('Vendor added', { variant: 'success' });
     } catch {
-      message.error('Failed to add vendor');
+      enqueueSnackbar('Failed to add vendor', { variant: 'error' });
     }
   };
 
@@ -293,28 +316,28 @@ export default function Inventory() {
       }).unwrap();
       addItemForm.resetFields();
       setAddItemModal(false);
-      message.success('Item added');
+      enqueueSnackbar('Item added', { variant: 'success' });
     } catch (err) {
       if (err?.errorFields) return; // form validation error — fields already highlighted
-      message.error(err?.data?.message || err?.data || 'Failed to add item');
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add item', { variant: 'error' });
     }
   };
 
   const handleApproveAdjustment = async (adj) => {
     try {
       await approveMovement(adj.key).unwrap();
-      message.success('Stock adjustment approved and applied');
+      enqueueSnackbar('Stock adjustment approved and applied', { variant: 'success' });
     } catch {
-      message.error('Failed to approve adjustment');
+      enqueueSnackbar('Failed to approve adjustment', { variant: 'error' });
     }
   };
 
   const handleRejectAdjustment = async (adj) => {
     try {
       await rejectMovement(adj.key).unwrap();
-      message.warning('Adjustment request rejected');
+      enqueueSnackbar('Adjustment request rejected', { variant: 'warning' });
     } catch {
-      message.error('Failed to reject adjustment');
+      enqueueSnackbar('Failed to reject adjustment', { variant: 'error' });
     }
   };
 
@@ -334,18 +357,16 @@ export default function Inventory() {
         }))
       ).unwrap();
       unknownItems.forEach((item) => {
-        notification.warning({
-          message: 'Unknown Stock Shortage Reported',
-          description: `${Math.abs(item.physicalCount - item.systemCount)} ${item.unit} of "${item.name}" is unaccounted. Super Admin and Manager have been notified.`,
-          icon: <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />,
-          duration: 8,
-        });
+        enqueueSnackbar(
+          ['Unknown Stock Shortage Reported', `${Math.abs(item.physicalCount - item.systemCount)} ${item.unit} of "${item.name}" is unaccounted. Super Admin and Manager have been notified.`].filter(Boolean).join(' — '),
+          { variant: 'warning' }
+        );
       });
       setCheckSubmitOpen(false);
       setCheckSubmitted(true);
-      message.success(`Stock check submitted. ${discrepancies.length} discrepancies sent for approval.`);
+      enqueueSnackbar(`Stock check submitted. ${discrepancies.length} discrepancies sent for approval.`, { variant: 'success' });
     } catch {
-      message.error('Failed to submit stock check');
+      enqueueSnackbar('Failed to submit stock check', { variant: 'error' });
     }
   };
 
@@ -688,7 +709,20 @@ export default function Inventory() {
                     </Select>
                     <DatePicker.RangePicker style={{ width: 280 }} onChange={setHistoryDateRange} />
                   </Space>
-                  <Button icon={<DownloadOutlined />} type="primary" style={{ background: '#B11E6A', border: 'none' }}>Export History</Button>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    type="primary"
+                    style={{ background: '#B11E6A', border: 'none' }}
+                    onClick={() => {
+                      if (exportRowsToCSV(filteredHistory, `stock-history-${dayjs().format('YYYY-MM-DD')}.csv`)) {
+                        enqueueSnackbar(`Exported ${filteredHistory.length} history record(s) to CSV`, { variant: 'success' });
+                      } else {
+                        enqueueSnackbar('No history records to export', { variant: 'warning' });
+                      }
+                    }}
+                  >
+                    Export History
+                  </Button>
                 </div>
                 <Table
                   size="small"
@@ -1144,11 +1178,11 @@ export default function Inventory() {
                   } else {
                     await sellStockRequest({ id: adjustModal.item.key, qty: vals.count, reason: vals.notes || 'Manual adjustment' }).unwrap();
                   }
-                  message.success('Adjustment request submitted for approval');
+                  enqueueSnackbar('Adjustment request submitted for approval', { variant: 'success' });
                   setAdjustModal({ open: false, item: null, type: null });
                   adjustForm.resetFields();
                 } catch {
-                  message.error('Failed to submit adjustment');
+                  enqueueSnackbar('Failed to submit adjustment', { variant: 'error' });
                 }
               }}
             >
@@ -1254,13 +1288,13 @@ export default function Inventory() {
               try {
                 const vals = receiveForm.getFieldsValue();
                 await addStockRequest({ id: activeItem.key, qty: Number(vals.qty) || 0, vendorName: selectedSupplier?.name || '', reason: vals.comment || '' }).unwrap();
-                message.success(`Stock addition request for ${activeItem.name} sent for approval`);
+                enqueueSnackbar(`Stock addition request for ${activeItem.name} sent for approval`, { variant: 'success' });
                 setReceiveOpen(false);
                 setSelectedSupplier(null);
                 setShowAddSupplier(false);
                 receiveForm.resetFields();
               } catch {
-                message.error('Failed to submit stock request');
+                enqueueSnackbar('Failed to submit stock request', { variant: 'error' });
               }
             }}
           >
@@ -1396,13 +1430,13 @@ export default function Inventory() {
               try {
                 const vals = issueForm.getFieldsValue();
                 await sellStockRequest({ id: activeIssueItem.key, qty: Number(vals.qty) || 0, vendorName: selectedVendor?.name || '', reason: vals.comment || '' }).unwrap();
-                message.success(`Stock deduction request for ${activeIssueItem.name} sent for approval`);
+                enqueueSnackbar(`Stock deduction request for ${activeIssueItem.name} sent for approval`, { variant: 'success' });
                 setIssueOpen(false);
                 setSelectedVendor(null);
                 setShowAddVendor(false);
                 issueForm.resetFields();
               } catch {
-                message.error('Failed to submit stock request');
+                enqueueSnackbar('Failed to submit stock request', { variant: 'error' });
               }
             }}
           >
