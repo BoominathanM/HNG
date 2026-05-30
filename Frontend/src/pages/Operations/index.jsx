@@ -552,6 +552,25 @@ export default function Operations() {
     setRequestOpen(true);
   };
 
+  const handleSubmitRequest = async () => {
+    try {
+      const vals = await requestForm.validateFields();
+      await createStickerRequest({
+        orderId: vals.orderId,
+        hotelLogo: vals.client || '',
+        stickerType: requestType === 'Box' ? 'Box' : 'Product',
+        quantity: Number(vals.qty) || 0,
+        stickerSize: vals.size || '',
+      }).unwrap();
+      requestForm.resetFields();
+      setRequestOpen(false);
+      message.success(`${requestType} request submitted`);
+    } catch (err) {
+      if (err?.errorFields) return;
+      message.error(err?.data?.message || err?.data || 'Failed to submit request');
+    }
+  };
+
   const renderQueueCard = (type, rows, label) => {
     const allActive = rows.filter((r) => getQueueStep(r) < 6);
     const closedRows = rows.filter((r) => getQueueStep(r) === 6);
@@ -792,7 +811,7 @@ export default function Operations() {
         onCancel={() => setRequestOpen(false)}
         footer={[
           <Button key="cancel" onClick={() => setRequestOpen(false)}>Cancel</Button>,
-          <Button key="submit" type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+          <Button key="submit" type="primary" onClick={handleSubmitRequest} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
             Submit Request
           </Button>,
         ]}
@@ -803,7 +822,7 @@ export default function Operations() {
             <Col xs={24} sm={12}>
               <Form.Item label="Order ID" name="orderId" rules={[{ required: true }]}>
                 <Select placeholder="Select Order">
-                  {apiOrders.map((order) => <Option key={order.id} value={order.id}>{order.id}</Option>)}
+                  {apiOrders.map((order) => <Option key={order.key} value={order.key}>{order.id}</Option>)}
                 </Select>
               </Form.Item>
             </Col>

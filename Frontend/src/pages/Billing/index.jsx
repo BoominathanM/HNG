@@ -25,6 +25,7 @@ import {
   useRecordPaymentMutation,
   useConvertQuotationToInvoiceMutation,
   useCreateBillingPartyMutation,
+  useUpdateInvoiceGstMutation,
   useGetBillingPartyLedgerQuery,
 } from '../../store/api/apiSlice';
 
@@ -61,6 +62,7 @@ export default function Billing() {
   const [recordPaymentMutation] = useRecordPaymentMutation();
   const [convertQuotationMutation] = useConvertQuotationToInvoiceMutation();
   const [createBillingPartyMutation] = useCreateBillingPartyMutation();
+  const [updateInvoiceGstMutation] = useUpdateInvoiceGstMutation();
 
   const invoiceList = useMemo(() => (invoicesData?.data || []).map((inv) => ({
     key: inv._id,
@@ -271,32 +273,83 @@ export default function Billing() {
     setPartySearch('');
   };
 
-  const handleSaveParty = () => {
+  const handleSaveParty = async () => {
     const vals = partyForm.getFieldsValue();
-    const newParty = {
-      key: Date.now(),
-      name: vals.partyName || 'New Party',
-      phone: vals.phone || '',
-      type: partyType === 'customer' ? 'Customer' : 'Supplier',
-      balance: parseFloat(vals.openingBal || 0),
-    };
-    handleSelectParty(newParty);
-    partyForm.resetFields();
-    billingForm.resetFields();
-    setShowBillingAddr(false);
+    if (!vals.partyName) { message.error('Party name is required'); return; }
+    const catMap = { vip: 'VIP', regular: 'Regular', wholesale: 'Wholesale' };
+    try {
+      const res = await createBillingPartyMutation({
+        name: vals.partyName,
+        phone: vals.phone || '',
+        type: partyType === 'supplier' ? 'Supplier' : 'Customer',
+        gstNumber: vals.gst || '',
+        panNumber: vals.pan || '',
+        openingBalance: parseFloat(vals.openingBal) || 0,
+        openingBalDir: openingBalType,
+        creditPeriod: Number(vals.creditPeriod) || 7,
+        creditLimit: vals.creditLimit != null && vals.creditLimit !== '' ? Number(vals.creditLimit) : undefined,
+        category: catMap[vals.category] || '',
+        contactPerson: vals.contactPerson || '',
+        street: vals.street || '',
+        state: vals.state || '',
+        pincode: vals.pincode || '',
+        city: vals.city || '',
+      }).unwrap();
+      const created = res.data || res;
+      handleSelectParty({ ...created, key: created._id, balance: created.openingBalance || 0 });
+      partyForm.resetFields();
+      billingForm.resetFields();
+      setShowBillingAddr(false);
+      message.success('Party created');
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to create party');
+    }
   };
 
-  const handleSave = () => {
-    setDrawerOpen(false);
-    setInvoiceItems([]);
-    setSelectedParty(null);
-    setNoteText('');
-    setAdvanceAmt(0);
-    setShowPartySearch(false);
-    setShowCreateParty(false);
-    setShowItemSearch(false);
-    setIsComplementary(false);
-    setComplementaryNote('');
+  const handleSave = async () => {
+    const partyId = selectedParty?.key || selectedParty?._id;
+    if (!partyId) { message.error('Please select a party'); return; }
+    if (!isComplementary && invoiceItems.length === 0) {
+      message.error('Please add at least one item'); return;
+    }
+    const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
+    const payload = {
+      partyId,
+      invoiceType,
+      invoiceDate: invoiceDate ? invoiceDate.toISOString() : undefined,
+      dueDate: showDueDate && dueDate ? dueDate.toISOString() : undefined,
+      subtotal,
+      gstPercent: invoiceType === 'GST' ? gstPercent : 0,
+      gstAmount: gstAmt,
+      total,
+      advanceAmount: advanceAmt || 0,
+      note: noteText || '',
+      isComplementary,
+      complementaryNote: isComplementary ? complementaryNote : '',
+      items: invoiceItems.map((i) => ({
+        itemName: i.name,
+        unit: i.unit,
+        price: i.price,
+        qty: i.qty,
+        ...(isObjectId(i.key) ? { itemId: i.key } : {}),
+      })),
+    };
+    try {
+      await createInvoiceMutation(payload).unwrap();
+      message.success('Invoice created');
+      setDrawerOpen(false);
+      setInvoiceItems([]);
+      setSelectedParty(null);
+      setNoteText('');
+      setAdvanceAmt(0);
+      setShowPartySearch(false);
+      setShowCreateParty(false);
+      setShowItemSearch(false);
+      setIsComplementary(false);
+      setComplementaryNote('');
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to create invoice');
+    }
   };
 
   const bankAccounts = ['HDFC Bank - ****1234', 'SBI Bank - ****5678', 'Axis Bank - ****9012'];
@@ -322,23 +375,28 @@ export default function Billing() {
     setRecordPayOpen(true);
   };
 
-  const handleSavePayment = () => {
-    const lastBalance = ledgerEntries.length > 0 ? ledgerEntries[ledgerEntries.length - 1].balance : 0;
-    const paid = (payAmount || 0) - (payDiscount || 0);
-    const newBalance = Math.max(0, lastBalance - paid);
-    const newEntry = {
-      key: Date.now(),
-      date: dayjs().format('YYYY-MM-DD'),
-      client: payParty?.name || '',
-      type: 'Payment',
-      doc: `REC-${paymentRefNum}`,
-      debit: 0,
-      credit: paid,
-      balance: newBalance,
-    };
-    setLedgerEntries(prev => [...prev, newEntry]);
-    message.success(`Payment of ₹${payAmount.toLocaleString()} recorded successfully`);
-    setRecordPayOpen(false);
+  const handleSavePayment = async () => {
+    if (!recordPayInv?.key) { message.error('No invoice selected'); return; }
+    try {
+      await recordPaymentMutation({
+        id: recordPayInv.key,
+        amount: Number(payAmount) || 0,
+        discount: Number(payDiscount) || 0,
+        paymentMode: payMode === 'Net Banking' ? 'Bank Transfer' : (payMode || 'Cash'),
+        note: payNote || '',
+        ...(payBankAccount ? { bankAccount: payBankAccount } : {}),
+        ...(payUpiRef ? { upiReference: payUpiRef } : {}),
+        ...(payCardLast4 ? { cardLast4: payCardLast4 } : {}),
+        ...(payTransactionRef ? { transactionRef: payTransactionRef } : {}),
+        ...(payChequeNo ? { chequeNumber: payChequeNo } : {}),
+        ...(payChequeBank ? { chequeBank: payChequeBank } : {}),
+        ...(payParty?.key ? { partyId: payParty.key } : {}),
+      }).unwrap();
+      message.success(`Payment of ₹${(payAmount || 0).toLocaleString()} recorded successfully`);
+      setRecordPayOpen(false);
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to record payment');
+    }
   };
 
   const openConvertModal = (quot) => {
@@ -351,37 +409,27 @@ export default function Billing() {
     setConvertOpen(true);
   };
 
-  const handleConvertConfirm = () => {
+  const handleConvertConfirm = async () => {
     if (!convertQuot) return;
     const amt = convertAmt || convertQuot.total;
-    const proportion = convertQuot.total > 0 ? amt / convertQuot.total : 1;
-    const currentBalance = Math.max(0, amt - Math.round(convertQuot.advance * proportion));
-    const newInv = {
-      key: Date.now(),
-      inv: `INV-${convertQuot.quot.replace('QT-', '')}`,
-      client: convertQuot.client,
-      order: convertQuot.order,
-      date: convertQuot.date,
-      amount: Math.round(convertQuot.amount * proportion),
-      gst: Math.round(convertQuot.gst * proportion),
-      total: amt,
-      advance: Math.round(convertQuot.advance * proportion),
-      balance: currentBalance + convertPreviousDue,
-      previousBalance: convertPreviousDue,
-      type: convertQuot.type,
-      status: Math.round(convertQuot.advance * proportion) >= amt ? 'Paid' : convertQuot.advance > 0 ? 'Partially Paid' : 'Pending',
-    };
-    setInvoiceList(prev => [...prev, newInv]);
-    if (amt >= convertQuot.total) {
-      setQuotationList(prev => prev.filter(q => q.key !== convertQuot.key));
-    } else {
-      setQuotationList(prev => prev.map(q =>
-        q.key === convertQuot.key ? { ...q, total: q.total - amt, balance: Math.max(0, q.balance - amt) } : q
-      ));
+    const party = partiesList.find(p => p.name === convertQuot.client);
+    if (!party?.key) {
+      message.error(`Create a billing party named "${convertQuot.client}" before converting this quotation`);
+      return;
     }
-    setActiveTab('invoices');
-    setConvertOpen(false);
-    message.success(`${convertQuot.quot} converted to ${newInv.inv} and moved to Invoices`);
+    try {
+      await convertQuotationMutation({
+        quotationId: convertQuot.key,
+        partyId: party.key,
+        amount: amt,
+        includePreviousDue: convertPreviousDue > 0,
+      }).unwrap();
+      message.success(`${convertQuot.quot} converted to invoice and moved to Invoices`);
+      setActiveTab('invoices');
+      setConvertOpen(false);
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to convert quotation');
+    }
   };
 
   const openGstEdit = (inv) => {
@@ -390,16 +438,16 @@ export default function Billing() {
     setGstEditOpen(true);
   };
 
-  const handleSaveGst = () => {
+  const handleSaveGst = async () => {
     const newGst = gstEditValue || 0;
-    setInvoiceList(prev => prev.map(inv => {
-      if (inv.key !== gstEditInv.key) return inv;
-      const newTotal = inv.amount + newGst;
-      const newBalance = Math.max(0, newTotal - inv.advance);
-      return { ...inv, gst: newGst, total: newTotal, balance: newBalance };
-    }));
-    message.success('GST updated successfully');
-    setGstEditOpen(false);
+    if (!gstEditInv?.key) { message.error('No invoice selected'); return; }
+    try {
+      await updateInvoiceGstMutation({ id: gstEditInv.key, gstAmount: newGst }).unwrap();
+      message.success('GST updated successfully');
+      setGstEditOpen(false);
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to update GST');
+    }
   };
 
   const handlePrintDocument = (docType, data) => {

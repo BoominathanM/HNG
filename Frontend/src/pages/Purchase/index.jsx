@@ -258,15 +258,18 @@ export default function Purchase() {
 
   /* ── Dispatch Order Tracking tab state — from RTK Query ── */
   const { data: dispatchTrackingData } = useGetPurchaseOrdersQuery({ dispatchStatus: 'In Transit' });
-  const dispatchTrackingOrders = useMemo(() => (dispatchTrackingData?.data || []).map((o) => ({
-    key: o._id, orderId: o.poCode, date: o.createdAt?.slice(0, 10),
-    supplier: o.vendorId?.name || '—', item: o.itemId?.itemName || o.itemName,
-    qty: o.qty, unit: o.unit, amount: o.amount,
-    lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
-    lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
-    deliveryStatus: o.dispatchStatus === 'Received' ? 'Delivered' : 'In Transit',
-    receivedStatus: o.dispatchStatus === 'Received' ? 'received' : null,
-  })), [dispatchTrackingData]);
+  const [dispatchTrackingOrders, setDispatchTrackingOrders] = useState([]);
+  useEffect(() => {
+    setDispatchTrackingOrders((dispatchTrackingData?.data || []).map((o) => ({
+      key: o._id, orderId: o.poCode, date: o.createdAt?.slice(0, 10),
+      supplier: o.vendorId?.name || '—', item: o.itemId?.itemName || o.itemName,
+      qty: o.qty, unit: o.unit, amount: o.amount,
+      lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
+      lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
+      deliveryStatus: o.dispatchStatus === 'Received' ? 'Delivered' : 'In Transit',
+      receivedStatus: o.dispatchStatus === 'Received' ? 'received' : null,
+    })));
+  }, [dispatchTrackingData]);
 
   const [showTakenModal, setShowTakenModal] = useState(false);
   const [takenTarget, setTakenTarget] = useState(null);
@@ -355,12 +358,23 @@ export default function Purchase() {
   const getMissingItems = () => invoiceProducts.filter(p => (productQtys[p.key] || 0) < p.originalQty)
     .map(p => ({ ...p, receivedQty: productQtys[p.key] || 0, missingQty: p.originalQty - (productQtys[p.key] || 0) }));
 
-  const handleConfirmReceived = () => {
+  const handleConfirmReceived = async () => {
     if (!receivedTarget) return;
     const missing = getMissingItems();
     const isPartial = missing.length > 0;
     const newStatus = isPartial ? 'partial' : 'received';
     const newDelivery = isPartial ? 'Partial Delivery' : 'Delivered';
+    // Persist a full receipt to the backend (marks Received + updates inventory stock).
+    // Partial deliveries are tracked locally only (backend has no partial-receipt model).
+    if (!isPartial && receivedTarget.key) {
+      try {
+        const fd = new FormData();
+        await receiveOrderMutation({ id: receivedTarget.key, formData: fd }).unwrap();
+      } catch (err) {
+        message.error(err?.data?.message || err?.data || 'Failed to mark order as received');
+        return;
+      }
+    }
     setDispatchTrackingOrders(prev => prev.map(o => o.key === receivedTarget.key ? {
       ...o,
       receivedStatus: newStatus,
@@ -632,43 +646,62 @@ export default function Purchase() {
   };
 
   const handleRaiseRequestSubmit = () => {
-    raiseRequestForm.validateFields().then((values) => {
+    raiseRequestForm.validateFields().then(async (values) => {
       if (!raiseRequestFile) { message.warning('Please upload a quotation file to raise a request'); return; }
-      // Main product request
-      dispatch(addRaisedRequest({
-        key: Date.now(),
-        item: values.product,
-        supplier: values.supplier,
-        qty: values.qty || 0,
-        unit: values.unit || (raiseRequestProduct?.unit || ''),
-        payment_terms: values.payment_terms || 'From Quotation',
-        date: dayjs().format('YYYY-MM-DD'),
-        quotation_file: raiseRequestFile.name,
-      }));
-      // Additional selected products
-      raiseRequestExtraProducts.forEach(productName => {
-        const invItem = inventoryItems.find(i => i.name === productName);
-        dispatch(addRaisedRequest({
-          key: Date.now() + Math.random(),
-          item: productName,
-          supplier: values.supplier,
+      const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
+      const vendorId = raiseRequestSupplier?.id;
+      const paymentTerms = values.payment_terms || 'From Quotation';
+
+      // Build the list of requests: main product + any extra products
+      const requests = [{
+        itemName: values.product,
+        itemId: raiseRequestProduct?.key,
+        qty: Number(values.qty) || 0,
+        unit: values.unit || raiseRequestProduct?.unit || '',
+      }];
+      raiseRequestExtraProducts.forEach((productName) => {
+        const invItem = inventoryItems.find((i) => i.name === productName);
+        requests.push({
+          itemName: productName,
+          itemId: invItem?.key,
           qty: raiseRequestExtraQtys[productName] || invItem?.min || 1,
           unit: invItem?.unit || 'Pcs',
-          payment_terms: values.payment_terms || 'From Quotation',
-          date: dayjs().format('YYYY-MM-DD'),
-          quotation_file: raiseRequestFile.name,
-        }));
+        });
       });
-      const totalCount = 1 + raiseRequestExtraProducts.length;
-      message.success(`${totalCount} request(s) sent to Financial Quotation!`);
-      setShowRaiseRequestModal(false);
-      raiseRequestForm.resetFields();
-      setRaiseRequestProduct(null);
-      setRaiseRequestSupplier(null);
-      setRaiseRequestFile(null);
-      setRaiseRequestPaymentTerms('');
-      setRaiseRequestExtraProducts([]);
-      setRaiseRequestExtraQtys({});
+
+      try {
+        for (const r of requests) {
+          const payload = {
+            itemName: r.itemName,
+            qty: r.qty,
+            unit: r.unit,
+            paymentTerms,
+            ...(isObjectId(vendorId) ? { vendorId } : {}),
+            ...(isObjectId(r.itemId) ? { itemId: r.itemId } : {}),
+          };
+          const res = await raiseRequestMutation(payload).unwrap();
+          const newId = res?.data?._id || res?._id;
+          // Attach the quotation file to the created request
+          if (newId && raiseRequestFile) {
+            try {
+              const fd = new FormData();
+              fd.append('quotation', raiseRequestFile);
+              await uploadQuotationFile({ id: newId, formData: fd }).unwrap();
+            } catch { /* file upload is best-effort */ }
+          }
+        }
+        message.success(`${requests.length} request(s) sent to Financial Quotation!`);
+        setShowRaiseRequestModal(false);
+        raiseRequestForm.resetFields();
+        setRaiseRequestProduct(null);
+        setRaiseRequestSupplier(null);
+        setRaiseRequestFile(null);
+        setRaiseRequestPaymentTerms('');
+        setRaiseRequestExtraProducts([]);
+        setRaiseRequestExtraQtys({});
+      } catch (err) {
+        message.error(err?.data?.message || err?.data || 'Failed to raise request');
+      }
     });
   };
 
@@ -709,7 +742,7 @@ export default function Purchase() {
     }, 2000);
   };
 
-  const handleAddLocalPurchase = (values) => {
+  const handleAddLocalPurchase = async (values) => {
     const newLP = {
       key: 'LP-' + Date.now(),
       date: dayjs().format('YYYY-MM-DD'),
@@ -763,9 +796,27 @@ export default function Purchase() {
       message.info('Credit purchase created — financial team will be notified every 30 minutes.', 5);
     }
 
-    const updated = [...localPurchases, newLP];
-    setLocalPurchases(updated);
-    localStorage.setItem('hng_local_purchases', JSON.stringify(updated));
+    try {
+      await createLocalPurchaseMutation({
+        invoiceNo: newLP.invoiceNo,
+        vendorName: newLP.vendorName,
+        vendorPhone: newLP.vendorPhone,
+        items: (newLP.items || []).map((it) => ({
+          itemName: it.itemName || it.name || 'Item',
+          qty: Number(it.qty) || 0,
+          unit: it.unit || 'Pcs',
+          amount: Number(it.amount) || 0,
+        })),
+        totalAmount: Number(newLP.totalAmount) || 0,
+        paymentType: newLP.paymentType,
+        paymentStatus: newLP.paymentStatus,
+        ...(newLP.gPayNumber ? { gPayNumber: newLP.gPayNumber } : {}),
+        ...(newLP.paidBy ? { paidBy: newLP.paidBy } : {}),
+      }).unwrap();
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to record local purchase');
+      return;
+    }
     setShowAddLocalPurchaseModal(false);
     localPurchaseForm.resetFields();
     setLocalPurchaseInvoiceFile(null);
@@ -839,29 +890,46 @@ export default function Purchase() {
     message.success('Quotation request sent to supplier via WhatsApp!');
   };
 
-  const handleBulkRaiseRequest = () => {
+  const handleBulkRaiseRequest = async () => {
     if (!bulkRaiseFile) { message.warning('Please upload the quotation file received from the supplier'); return; }
     const selected = bulkItems.filter(i => i.selected && i.qty > 0);
     if (selected.length === 0) { message.warning('Select at least one product'); return; }
     if (!bulkSupplierName) { message.warning('Select a supplier first'); return; }
     if (!bulkPayTerms) { message.warning('Select payment terms'); return; }
-    dispatch(addBulkRequests(selected.map(item => ({
-      item: item.name,
-      supplier: bulkSupplierName,
-      qty: item.qty,
-      unit: item.unit,
-      category: item.category || 'Other',
-      payment_terms: bulkPayTerms,
-      date: dayjs().format('YYYY-MM-DD'),
-      quotation_file: bulkRaiseFile.name,
-    }))));
-    message.success(`${selected.length} bulk purchase request(s) raised — sent to Financial for approval!`);
-    setShowBulkPurchaseModal(false);
-    setBulkSupplierName('');
-    setBulkItems([]);
-    setBulkPayTerms('');
-    setBulkQuotationAsked(false);
-    setBulkRaiseFile(null);
+    const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
+    const vendorId = suppliers.find(s => s.name === bulkSupplierName)?.id;
+    try {
+      const res = await createBulkRequestMutation({
+        ...(isObjectId(vendorId) ? { vendorId } : {}),
+        paymentTerms: bulkPayTerms,
+        items: selected.map(item => ({
+          ...(isObjectId(item.invKey) ? { itemId: item.invKey } : {}),
+          itemName: item.name,
+          qty: Number(item.qty) || 0,
+          unit: item.unit,
+        })),
+      }).unwrap();
+      const created = res?.data || [];
+      for (const reqDoc of created) {
+        const id = reqDoc?._id;
+        if (id && bulkRaiseFile) {
+          try {
+            const fd = new FormData();
+            fd.append('quotation', bulkRaiseFile);
+            await uploadQuotationFile({ id, formData: fd }).unwrap();
+          } catch { /* best-effort file attach */ }
+        }
+      }
+      message.success(`${selected.length} bulk purchase request(s) raised — sent to Financial for approval!`);
+      setShowBulkPurchaseModal(false);
+      setBulkSupplierName('');
+      setBulkItems([]);
+      setBulkPayTerms('');
+      setBulkQuotationAsked(false);
+      setBulkRaiseFile(null);
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to raise bulk requests');
+    }
   };
 
   // â"€â"€ WhatsApp reminder helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€

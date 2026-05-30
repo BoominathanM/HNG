@@ -181,21 +181,26 @@ export default function VendorsSuppliers() {
   );
 
   /* ── Handlers ── */
-  const handleSaveVendor = () => {
+  const handleSaveVendor = async () => {
     const vals = vendorForm.getFieldsValue();
-    const newVendor = {
-      id: Date.now(),
-      name: vals.cust_name || 'New Vendor',
-      phone: vals.cust_phone || '',
-      email: vals.cust_email || '',
-      address: vals.cust_address || '',
-      totalPaid: 0,
-      pending: 0,
-    };
-    setVendors([...vendors, newVendor]);
-    vendorForm.resetFields();
-    setShowAddVendorModal(false);
-    message.success('Vendor added successfully');
+    try {
+      await createVendor({
+        name: vals.cust_name,
+        phone: vals.cust_phone || '',
+        email: vals.cust_email || '',
+        taxId: vals.cust_tax || '',
+        address: vals.cust_address || '',
+        bankDetails: vals.cust_bank || '',
+        discountPercent: Number(vals.cust_discount) || 0,
+        vendorType: 'raw_material',
+      }).unwrap();
+      vendorForm.resetFields();
+      setShowAddVendorModal(false);
+      setVendorScannedFile(null);
+      message.success('Vendor added successfully');
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to add vendor');
+    }
   };
 
   const handleVendorAIScan = () => {
@@ -217,23 +222,24 @@ export default function VendorsSuppliers() {
     }, 2200);
   };
 
-  const handleAddPrintingSupplier = (vals) => {
-    const newSup = {
-      key: 'PRN-' + Date.now(),
-      type: vals.type,
-      name: vals.name,
-      phone: vals.phone || '',
-      email: vals.email || '',
-      taxId: vals.taxId || '',
-      address: vals.address || '',
-      bank: vals.bank || '',
-      notes: vals.notes || '',
-      orders: [],
-    };
-    setPrintingSuppliers(prev => [...prev, newSup]);
-    printingSupplierForm.resetFields();
-    setShowAddPrintingSupplierModal(false);
-    message.success('Printing supplier added successfully');
+  const handleAddPrintingSupplier = async (vals) => {
+    try {
+      await createVendor({
+        name: vals.name,
+        phone: vals.phone || '',
+        email: vals.email || '',
+        taxId: vals.taxId || '',
+        address: vals.address || '',
+        bankDetails: vals.bank || '',
+        supplierType: vals.type || '',
+        vendorType: 'printing',
+      }).unwrap();
+      printingSupplierForm.resetFields();
+      setShowAddPrintingSupplierModal(false);
+      message.success('Printing supplier added successfully');
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to add printing supplier');
+    }
   };
 
 

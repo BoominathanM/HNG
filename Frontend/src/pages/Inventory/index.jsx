@@ -274,6 +274,32 @@ export default function Inventory() {
     }
   };
 
+  const handleSaveItem = async () => {
+    try {
+      const vals = await addItemForm.validateFields();
+      const opening = Number(vals.current) || 0;
+      await createItemMutation({
+        itemName: vals.name,
+        category: vals.category || '',
+        unit: vals.unit || 'Pcs',
+        defaultSize: vals.default_size || '',
+        openingStock: opening,
+        currentStock: opening,
+        minStock: Number(vals.min) || 0,
+        purchasePrice: Number(String(vals.purchase_price ?? '').replace(/[^0-9.]/g, '')) || 0,
+        sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
+        hsnCode: vals.hsn || '',
+        discountPercent: Number(String(vals.discount ?? '').replace(/[^0-9.]/g, '')) || 0,
+      }).unwrap();
+      addItemForm.resetFields();
+      setAddItemModal(false);
+      message.success('Item added');
+    } catch (err) {
+      if (err?.errorFields) return; // form validation error — fields already highlighted
+      message.error(err?.data?.message || err?.data || 'Failed to add item');
+    }
+  };
+
   const handleApproveAdjustment = async (adj) => {
     try {
       await approveMovement(adj.key).unwrap();
@@ -1158,7 +1184,7 @@ export default function Inventory() {
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button onClick={() => { setAddItemModal(false); addItemForm.resetFields(); }}>Cancel</Button>
-            <Button type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Item</Button>
+            <Button type="primary" onClick={handleSaveItem} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Item</Button>
           </div>
         }
         width={Math.min(560, window.innerWidth - 24)} centered

@@ -1,7 +1,7 @@
 ﻿import React, { useState, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs,
-  Typography, Space, Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, DatePicker,
+  Typography, Space, Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, DatePicker, message,
 } from 'antd';
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
@@ -78,22 +78,44 @@ export default function Tasks() {
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
   // ── Handlers ─────────────────────────────────────────────────────────
-  const handleStartTask = (taskId) => {
-    setTaskList((prev) => prev.map((t) =>
-      t.id === taskId
-        ? { ...t, status: 'In Progress', startTime: new Date().toISOString(), salesFollowup: !!t.client }
-        : t
-    ));
+  const resolveTaskId = (taskId) => taskList.find((t) => t.id === taskId || t.key === taskId)?.key || taskId;
+
+  const handleStartTask = async (taskId) => {
+    try {
+      await updateTaskStatus({ id: resolveTaskId(taskId), status: 'In Progress' }).unwrap();
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to start task');
+    }
   };
 
-  const handleCompleteTask = (taskId) => {
-    setTaskList((prev) => prev.map((t) =>
-      t.id === taskId ? { ...t, status: 'Completed', endTime: new Date().toISOString() } : t
-    ));
+  const handleCompleteTask = async (taskId) => {
+    try {
+      await updateTaskStatus({ id: resolveTaskId(taskId), status: 'Done' }).unwrap();
+    } catch (err) {
+      message.error(err?.data?.message || err?.data || 'Failed to complete task');
+    }
   };
 
-  const handleFollowupDone = (taskId) => {
-    setTaskList((prev) => prev.map((t) => t.id === taskId ? { ...t, salesFollowup: false } : t));
+  const handleFollowupDone = () => {
+    message.success('Follow-up marked done');
+  };
+
+  const handleCreateTask = async () => {
+    try {
+      const vals = await form.validateFields();
+      await createTask({
+        taskName: vals.title,
+        taskType: vals.type,
+        status: 'Pending',
+        isEmergency: vals.priority === 'Urgent',
+      }).unwrap();
+      form.resetFields();
+      setModalOpen(false);
+      message.success('Task created');
+    } catch (err) {
+      if (err?.errorFields) return;
+      message.error(err?.data?.message || err?.data || 'Failed to create task');
+    }
   };
 
   const openEmergency = (task) => {
@@ -523,7 +545,7 @@ export default function Tasks() {
       <Modal title="Create New Task" open={modalOpen} onCancel={() => setModalOpen(false)}
         footer={[
           <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
-          <Button key="save" type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Create Task</Button>,
+          <Button key="save" type="primary" onClick={handleCreateTask} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Create Task</Button>,
         ]}
         width={Math.min(520, window.innerWidth - 32)}>
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>

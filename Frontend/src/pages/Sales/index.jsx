@@ -915,21 +915,43 @@ export default function Sales() {
         setSelectedRecord(null);
         setViewMode('table');
       } else {
-        const newKey = Date.now();
-        const initialStatus = values.status || 'Warm';
-        const newLead = {
-          key: newKey,
-          leadId: `LEAD-${1000 + leadsData.length + 1}`,
-          status: initialStatus,
-          createdAt: now,
-          salesPerson: values.salesPerson || 'Current User',
-          statusHistory: [{ status: initialStatus, changedAt: now }],
-          ...values,
+        const SOURCES = ['Direct', 'Reference', 'Online', 'Exhibition', 'Cold Call', 'Other'];
+        const payload = {
+          hotelName: values.hotelName,
+          phone: values.phone,
+          branch: values.branch,
+          billingName: values.billingName,
+          contactPerson: values.contactPerson,
+          pocDesignation: values.pocDesignation,
+          email: values.email,
+          locationCity: values.location,
+          destination: values.destination,
+          numRooms: Number(values.rowsInHotel) || undefined,
+          generalOccupancy: Number(values.generalOccupancy) || undefined,
+          altRole: values.alternativeRole,
+          altName: values.alternativeName,
+          altNumber: values.alternativePhone,
+          address: values.detailedAddress,
+          city: values.city,
+          state: values.state,
+          pincode: values.pincode,
+          gstNumber: values.gstNumber,
+          status: values.status || 'Warm',
+          notes: values.notes,
+          interestedSoftware: values.interestedInSoftware === 'YES',
+          previousSoftware: values.previousSoftware,
+          prevSoftwarePrice: Number(values.previousSoftwarePrice) || undefined,
         };
-        setLeadsData(prev => [...prev, newLead]);
-        setEditingLead(null);
-        setSelectedRecord(null);
-        setViewMode('table');
+        if (SOURCES.includes(values.source)) payload.source = values.source;
+        try {
+          await createLeadMutation(payload).unwrap();
+          message.success('Lead added');
+          setEditingLead(null);
+          setSelectedRecord(null);
+          setViewMode('table');
+        } catch (err) {
+          message.error(err?.data?.message || err?.data || 'Failed to add lead');
+        }
       }
     } catch (_) { }
   };
@@ -1051,26 +1073,34 @@ export default function Sales() {
         message.success('Quotation updated');
         setEditingQuotation(null);
       } else {
-        const newQ = {
-          key: Date.now(),
-          qid: `QT-${1000 + quotationsData.length + 1}`,
-          leadKey: quotationFromLead?.key,
-          customerId: quotationFromLead?.customerId,
-          status: 'Draft', flowStep: 0,
-          date: now, totalAmount: total,
-          createdAt: new Date().toISOString(),
-          salesPerson: quotationFromLead?.salesPerson || 'Current User',
-          revisionHistory: [{ version: 'v1', date: now, by: quotationFromLead?.salesPerson || 'Sales', note: 'Initial quotation created' }],
-          ...values,
+        const subtotal = calcTotal(values.products);
+        const gstAmount = (values.products || []).reduce(
+          (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+        const grandTotal = subtotal + gstAmount;
+        const payload = {
+          clientName: values.hotelName || quotationFromLead?.hotelName || 'Client',
+          amount: subtotal,
+          gstAmount,
+          total: grandTotal,
+          type: values.billType === 'GST' ? 'GST' : 'Non-GST',
+          items: (values.products || []).map((p) => ({
+            itemName: p.name,
+            unit: p.unit,
+            price: Number(p.rate) || 0,
+            qty: Number(p.qty) || 0,
+            lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
+          })),
+          note: values.note,
         };
-        setQuotationsData(prev => [...prev, newQ]);
-        if (quotationFromLead) {
-          setLeadsData(prev => prev.map(l => l.key === quotationFromLead.key ? { ...l, status: 'Quotation Sent' } : l));
+        if (quotationFromLead?.key) payload.leadId = quotationFromLead.key;
+        try {
+          await createSalesQuotationMutation(payload).unwrap();
+          setQuotationFromLead(null);
+          setActiveTab('quotations');
+          message.success('Quotation created');
+        } catch (err) {
+          message.error(err?.data?.message || err?.data || 'Failed to create quotation');
         }
-        // Note: new product purchase requests are raised via Purchase module
-        setQuotationFromLead(null);
-        setActiveTab('quotations');
-        message.success('Quotation created');
       }
       setViewMode('table');
       setActiveTab('quotations');
@@ -1186,28 +1216,23 @@ export default function Sales() {
   };
 
   const submitComplaint = () => {
-    complaintForm.validateFields().then(vals => {
-      const { raisedDate, raisedTime, orderId, ...rest } = vals;
-      let finalRaisedAt = dayjs().toISOString();
-      if (raisedDate && raisedTime) {
-        const [h, m] = raisedTime.split(':').map(Number);
-        finalRaisedAt = dayjs(raisedDate).hour(h).minute(m).second(0).toISOString();
+    complaintForm.validateFields().then(async vals => {
+      const { orderId, description } = vals;
+      const resolvedOrder = complaintOrder
+        || ordersData.find(o => o.key === orderId || o.oid === orderId);
+      const orderObjectId = resolvedOrder?.key || resolvedOrder?._id;
+      if (!orderObjectId) {
+        message.error('Please select a valid order for this complaint');
+        return;
       }
-      const resolvedOrderId = complaintOrder?.oid || orderId;
-      const resolvedOrder = complaintOrder || ordersData.find(o => o.oid === resolvedOrderId);
-      const newComplaint = {
-        key: Date.now(),
-        orderId: resolvedOrderId,
-        hotelName: resolvedOrder?.hotelName || '—',
-        salesPerson: resolvedOrder?.salesPerson || '—',
-        raisedAt: finalRaisedAt,
-        ...rest,
-        status: 'Open',
-      };
-      setComplaintsData(prev => [...prev, newComplaint]);
-      message.success('Complaint raised successfully');
-      setComplaintModalOpen(false);
-      complaintForm.resetFields();
+      try {
+        await createComplaintMutation({ orderId: orderObjectId, description }).unwrap();
+        message.success('Complaint raised successfully');
+        setComplaintModalOpen(false);
+        complaintForm.resetFields();
+      } catch (err) {
+        message.error(err?.data?.message || err?.data || 'Failed to raise complaint');
+      }
     });
   };
 
