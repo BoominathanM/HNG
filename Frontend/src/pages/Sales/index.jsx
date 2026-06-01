@@ -1220,6 +1220,11 @@ export default function Sales() {
   };
 
   const convertLeadToNegotiation = async (lead) => {
+    const validProducts = (lead.products || []).filter(p => p.name && Number(p.qty) > 0 && Number(p.rate) > 0);
+    if (!validProducts.length) {
+      enqueueSnackbar('Please add at least one product with quantity and rate before converting to Negotiation', { variant: 'warning' });
+      return;
+    }
     const newNeg = {
       key: Date.now(),
       nid: `NEG-${1000 + negotiationsData.length + 1}`,
@@ -1443,6 +1448,11 @@ export default function Sales() {
   };
 
   const startOrderFromQuotation = async (q) => {
+    const validProducts = (q.products || []).filter(p => p.name && Number(p.qty) > 0);
+    if (!validProducts.length) {
+      enqueueSnackbar('Please add product details to the quotation before converting to Order', { variant: 'warning' });
+      return;
+    }
     alertPriorComplaint(q.hotelName || q.billingName || q.clientName);
     try {
       await createSalesOrderMutation(buildOrderPayloadFromQuotation(q, 'In Production')).unwrap();
@@ -1548,6 +1558,11 @@ export default function Sales() {
   };
 
   const convertToNegotiation = async (q) => {
+    const validProducts = (q.products || []).filter(p => p.name && Number(p.qty) > 0);
+    if (!validProducts.length) {
+      enqueueSnackbar('Please add product details to the quotation before converting to Negotiation', { variant: 'warning' });
+      return;
+    }
     try {
       await convertToNegotiationMutation({
         id: q.key,
@@ -1602,6 +1617,11 @@ export default function Sales() {
   };
 
   const convertNegotiationToOrder = async (n) => {
+    const validProducts = (n.items || n.products || []).filter(p => (p.name || p.itemName) && Number(p.qty) > 0);
+    if (!validProducts.length) {
+      enqueueSnackbar('Please add product details to the negotiation before converting to Order', { variant: 'warning' });
+      return;
+    }
     alertPriorComplaint(n.hotelName || n.clientName);
     try {
       await convertToOrderMutation({ id: n.key }).unwrap();
@@ -3737,6 +3757,33 @@ export default function Sales() {
                           )}
                         </div>
                       </Col>
+                      {(record.paymentCollection || []).length > 0 && (
+                        <Col xs={24} style={{ marginTop: 12 }}>
+                          <div style={{ padding: '14px 16px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10, fontWeight: 600, letterSpacing: 0.5 }}>
+                              PAYMENT COLLECTION ({record.paymentCollection.length} entr{record.paymentCollection.length > 1 ? 'ies' : 'y'})
+                            </Text>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {record.paymentCollection.map((entry, idx) => (
+                                <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                    <DollarOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
+                                    <Text style={{ fontSize: 13, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                  </div>
+                                  <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
+                                  {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
+                                </div>
+                              ))}
+                              <div style={{ padding: '8px 12px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                                <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
+                                <Text strong style={{ color: '#52c41a', fontSize: 13 }}>
+                                  ₹{(record.paymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}
+                                </Text>
+                              </div>
+                            </div>
+                          </div>
+                        </Col>
+                      )}
                       {(record.paymentProofs || []).length > 0 && (
                         <Col xs={24} style={{ marginTop: 12 }}>
                           <div style={{ padding: '14px 16px', background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, border: '1px solid #f0f0f0' }}>
@@ -4281,15 +4328,26 @@ export default function Sales() {
                       placeholder="Lead Status"
                       value={leadStatusFilter}
                       onChange={setLeadStatusFilter}
-                      style={{ width: 190, borderRadius: 8 }}
+                      style={{ width: 200, borderRadius: 8 }}
                     >
-                      {['New', 'Interested', 'Quotation Sent', 'Converted', 'Cold(First Intro)', 'Warm(In discussion)', 'Hot(Going to close soon)', 'Negotiation', 'Managers Help'].map(s => (
+                      {['Cold', 'Warm', 'Hot', 'Quotation (Sent)', 'Quotation (Not Sent)', 'Negotiation', 'Need manager help', 'Converted', 'Rejected'].map(s => (
                         <Option key={s} value={s}>{s}</Option>
                       ))}
                     </Select>
+                    <DatePicker.RangePicker
+                      style={{ borderRadius: 8 }}
+                      onChange={(dates) => setDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                      allowClear
+                    />
                   </div>
                   <Table
-                    dataSource={filtered(leadsData).filter(r => !leadStatusFilter || r.status === leadStatusFilter)}
+                    dataSource={filtered(leadsData)
+                      .filter(r => !leadStatusFilter || r.status === leadStatusFilter)
+                      .filter(r => {
+                        if (!dateRange) return true;
+                        const d = r.createdAt ? r.createdAt.slice(0, 10) : '';
+                        return d >= dateRange[0] && d <= dateRange[1];
+                      })}
                     columns={leadColumns}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"
