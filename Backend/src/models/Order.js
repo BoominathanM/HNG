@@ -61,6 +61,7 @@ const orderSchema = new mongoose.Schema({
   stockStatus: { type: String, default: '' },
   operationStage: { type: String, default: '' },
   taskStatus: { type: String, default: '' },
+  orderCategory: { type: String, enum: ['ORDER', 'SAMPLE'], default: 'ORDER' },
   location: String,
   clientPhone: String,
   paymentProofs: [mongoose.Schema.Types.Mixed],

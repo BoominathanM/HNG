@@ -61,6 +61,7 @@ const leadSchema = new mongoose.Schema({
   // Follow-up notes posted from the lead detail view.
   notesHistory: [followupNoteSchema],
   statusHistory: [mongoose.Schema.Types.Mixed],
+  leadType: { type: String, enum: ['ORDER', 'SAMPLE'], default: 'ORDER' },
   notes: String,
   paidAmount: { type: Number, default: 0 },
   deletedAt: Date,

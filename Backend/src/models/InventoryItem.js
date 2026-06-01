@@ -13,6 +13,9 @@ const inventoryItemSchema = new mongoose.Schema({
   sellingPrice: { type: Number, default: 0 },
   hsnCode: String,
   discountPercent: { type: Number, default: 0 },
+  packingMaterial: String,
+  materialCategory: String,
+  brand: String,
   deletedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });

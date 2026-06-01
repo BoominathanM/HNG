@@ -2,9 +2,19 @@ const mongoose = require('mongoose');
 
 const kitItemSchema = new mongoose.Schema({
   productName: { type: String, required: true },
+  category: String,
   qty: { type: Number, default: 1 },
-  rate: { type: Number, default: 0 },
   unit: String,
+  defaultSize: String,
+  purchasePrice: { type: Number, default: 0 },
+  sellingPrice: { type: Number, default: 0 },
+  gst: String,
+  hsnCode: String,
+  discountPercent: { type: Number, default: 0 },
+  packingMaterial: String,
+  materialCategory: String,
+  brand: String,
+  rate: { type: Number, default: 0 },
 }, { _id: false });
 
 const kitSchema = new mongoose.Schema({

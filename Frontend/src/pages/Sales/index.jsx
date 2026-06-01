@@ -47,6 +47,7 @@ import {
   useGetHotelNamesQuery,
   useLazyLookupHotelQuery,
   useGetComplaintHistoryQuery,
+  useGetItemsQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -288,7 +289,7 @@ Miss. Priya will Contact you
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────
-function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark }) {
+function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], kits = [] }) {
   const { name, key, ...rest } = field;
   const isKit = Form.useWatch([fieldName, name, 'isKit']);
   const kitType = Form.useWatch([fieldName, name, 'kitType']);
@@ -331,12 +332,32 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           <Col flex="none" style={{ width: 220 }}>
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
             {!isKit ? (
-              <Form.Item {...rest} name={[name, 'name']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd field="productType" defaultOptions={PRODUCT_TYPE_OPTIONS} placeholder="Select Product" disabled={isItemDisabled} size="small" />
+              <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0 }}>
+                <Select
+                  showSearch
+                  allowClear
+                  optionFilterProp="label"
+                  placeholder="Select Product"
+                  disabled={isItemDisabled}
+                  size="small"
+                  style={{ width: '100%' }}
+                  options={inventoryItems}
+                  notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No items in inventory</span>}
+                />
               </Form.Item>
             ) : (
-              <Form.Item {...rest} name={[name, 'kitType']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd field="kitType" defaultOptions={KIT_CATEGORIES} placeholder="Select Kit Type" disabled={isItemDisabled} size="small" />
+              <Form.Item {...rest} name={[name, 'kitType']} style={{ marginBottom: 0 }}>
+                <Select
+                  showSearch
+                  allowClear
+                  optionFilterProp="label"
+                  placeholder="Select Kit"
+                  disabled={isItemDisabled}
+                  size="small"
+                  style={{ width: '100%' }}
+                  options={kits.map((k) => ({ value: k.kitName, label: k.kitName }))}
+                  notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No kits defined</span>}
+                />
               </Form.Item>
             )}
           </Col>
@@ -433,36 +454,35 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             </div>
           </div>
 
-          {isKit && (
-            <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#f9f9f9', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.03)', marginTop: 8 }}>
-              <Text strong style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Kit Contents:</Text>
-              {kitType === 'DENTAL_KIT' && (
-                <Row gutter={8}>
-                  <Col span={8}><Form.Item {...rest} name={[name, 'brush']} style={{ marginBottom: 0 }}><Select placeholder="Brush" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.brushes.map(b => <Option key={b} value={b}>{b}</Option>)}</Select></Form.Item></Col>
-                  <Col span={8}><Form.Item {...rest} name={[name, 'paste']} style={{ marginBottom: 0 }}><Select placeholder="Paste" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.pastes.map(p => <Option key={p} value={p}>{p}</Option>)}</Select></Form.Item></Col>
-                  <Col span={8}><Form.Item {...rest} name={[name, 'pasteType']} style={{ marginBottom: 0 }}><Select placeholder="Type" size="small" disabled={isItemDisabled}>{DENTAL_KIT_PRODUCTS.pasteTypes.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item></Col>
-                </Row>
-              )}
-              {kitType === 'SHAVING_KIT' && (
-                <Row gutter={8}>
-                  <Col span={12}><Form.Item {...rest} name={[name, 'razor']} style={{ marginBottom: 0 }}><Select placeholder="Razor" size="small" disabled={isItemDisabled}>{SHAVING_KIT_PRODUCTS.razors.map(r => <Option key={r.name} value={r.name}>{r.name}</Option>)}</Select></Form.Item></Col>
-                  <Col span={12}><Form.Item {...rest} name={[name, 'gel']} style={{ marginBottom: 0 }}><Select placeholder="Gel" size="small" disabled={isItemDisabled}>{SHAVING_KIT_PRODUCTS.gels.map(g => <Option key={g.name} value={g.name}>{g.name}</Option>)}</Select></Form.Item></Col>
-                </Row>
-              )}
-              {kitType === 'CARE_KIT' && (
-                <Form.Item {...rest} name={[name, 'careProducts']} style={{ marginBottom: 0 }}>
-                  <Select mode="multiple" placeholder="Select Products" size="small" disabled={isItemDisabled}>{CARE_KIT_PRODUCTS.products.map(p => <Option key={p} value={p}>{p}</Option>)}</Select>
-                </Form.Item>
-              )}
-            </div>
-          )}
+          {isKit && (() => {
+            const selectedKit = kits.find((k) => k.kitName === kitType);
+            const kitProducts = selectedKit?.products || [];
+            return (
+              <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#f9f9f9', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.03)', marginTop: 8 }}>
+                <Text strong style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginBottom: 8 }}>Kit Contents:</Text>
+                {kitProducts.length === 0 ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {kitType ? 'No products in this kit' : 'Select a kit to see its contents'}
+                  </Text>
+                ) : (
+                  <Space wrap size={6}>
+                    {kitProducts.map((p, i) => (
+                      <Tag key={i} style={{ borderRadius: 12, fontSize: 11, background: isDark ? 'rgba(177,30,106,0.15)' : 'rgba(177,30,106,0.08)', border: '1px solid rgba(177,30,106,0.2)', color: '#B11E6A' }}>
+                        {p.productName} ×{p.qty}{p.unit ? ` ${p.unit}` : ''}
+                      </Tag>
+                    ))}
+                  </Space>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
   );
 }
 
-function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false }) {
+function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false, inventoryItems = [], kits = [] }) {
   const isDark = useSelector((s) => s.theme.isDark);
   return (
     <Form.List name={fieldName}>
@@ -478,6 +498,8 @@ function ProductFormList({ fieldName = 'products', disabled = false, showSpecs =
               fieldName={fieldName}
               showSpecs={showSpecs}
               isDark={isDark}
+              inventoryItems={inventoryItems}
+              kits={kits}
             />
           ))}
           {!disabled && (
@@ -538,8 +560,11 @@ function SpecFormList({ form, disabled = false }) {
 function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const paymentTerms = Form.useWatch('paymentTerms');
+  const leadType = Form.useWatch('leadType');
   const is5050 = paymentTerms === '50_ADVANCE_50_AFTER';
   const isCredit = paymentTerms === 'CREDIT_10_30';
+
+  if (leadType === 'SAMPLE') return null;
 
   return (
     <Row gutter={12}>
@@ -559,8 +584,8 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
         </Form.Item>
       </Col>
       <Col xs={24} sm={12}>
-        <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
-          <Select disabled={disabled}>
+        <Form.Item label="Payment Terms" name="paymentTerms">
+          <Select disabled={disabled} allowClear>
             {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
           </Select>
         </Form.Item>
@@ -808,6 +833,8 @@ export default function Sales() {
 
   // Watched values for conditional rendering
   const watchedBillType = Form.useWatch('billType', leadForm);
+  const watchedHotelType = Form.useWatch('hotelType', leadForm);
+  const watchedLeadType = Form.useWatch('leadType', leadForm);
   const watchedProductType = Form.useWatch('productType', leadForm);
   const watchedPriority = Form.useWatch('priority', leadForm);
   const watchedStatus = Form.useWatch('status', leadForm);
@@ -856,6 +883,11 @@ export default function Sales() {
   const salesPersonOptions = (staffRaw?.data || []).map((s) => ({ value: s._id, label: s.fullName }));
   const kits = kitsRaw?.data || [];
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
+  const { data: itemsRaw } = useGetItemsQuery();
+  const inventoryItems = React.useMemo(
+    () => (itemsRaw?.data || []).map((i) => ({ value: i.itemName, label: i.itemName })),
+    [itemsRaw],
+  );
 
   // When a kit is picked in the "Products adding" card, auto-fill its products
   // into the kit product list and set the kit-level display unit & size.
@@ -2578,7 +2610,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Specifications</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" showSpecs={true} />
+                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} kits={kits} />
                 </Card>
               </Col>
 
@@ -2622,7 +2654,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Products & Revised Rates</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" showSpecs={true} />
+                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} kits={kits} />
                 </Card>
 
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -2680,7 +2712,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Quantities</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" />
+                  <ProductFormList fieldName="products" inventoryItems={inventoryItems} kits={kits} />
                 </Card>
 
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -2699,7 +2731,7 @@ export default function Sales() {
                               <Col xs={24} sm={8}>
                                 <Form.Item {...rest} name={[name, 'product']} label="Product" style={{ marginBottom: 6 }}>
                                   <Select size="small" placeholder="Select product" allowClear>
-                                    {(watchedOrderProducts || []).filter(p => p?.name || p?.kitType).map((p, i) => (
+                                    {(Array.isArray(watchedOrderProducts) ? watchedOrderProducts : []).filter(p => p?.name || p?.kitType).map((p, i) => (
                                       <Option key={i} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
                                     ))}
                                   </Select>
@@ -2971,12 +3003,25 @@ export default function Sales() {
                   <Row gutter={16}>
                     <Col xs={24} sm={6}>
                       <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
-                        <Select placeholder="Select hotel type">
+                        <Select
+                          placeholder="Select hotel type"
+                          onChange={(val) => { if (val !== 'NEW') leadForm.setFieldValue('leadType', undefined); }}
+                        >
                           <Option value="OLD">Old Hotel</Option>
                           <Option value="NEW">New Hotel</Option>
                         </Select>
                       </Form.Item>
                     </Col>
+                    {watchedHotelType === 'NEW' && (
+                      <Col xs={24} sm={6}>
+                        <Form.Item label="Order / Sample" name="leadType">
+                          <Select placeholder="Select type" allowClear>
+                            <Option value="ORDER">Order</Option>
+                            <Option value="SAMPLE">Sample</Option>
+                          </Select>
+                        </Form.Item>
+                      </Col>
+                    )}
                     <Col xs={24} sm={6}>
                       <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
                         <AutoComplete
@@ -3158,8 +3203,10 @@ export default function Sales() {
                         <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
                         <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
                         <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
-                        <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType" rules={[{ required: true }]}><Select placeholder="Select Bill Type"><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
-                        {watchedBillType === 'GST' && (
+                        {watchedLeadType !== 'SAMPLE' && (
+                          <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType"><Select placeholder="Select Bill Type" allowClear><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
+                        )}
+                        {watchedLeadType !== 'SAMPLE' && watchedBillType === 'GST' && (
                           <>
                             <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
                             <Col xs={24} sm={12}><Form.Item label="GST %" name="gstPercent"><InputNumber style={{ width: '100%' }} placeholder="18" /></Form.Item></Col>
@@ -3550,6 +3597,8 @@ export default function Sales() {
                                   fieldName="products"
                                   showSpecs={isAddLead || isAddCustomer}
                                   isDark={isDark}
+                                  inventoryItems={inventoryItems}
+                                  kits={kits}
                                 />
                               ))}
                               <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: true })} icon={<PlusOutlined />} block
@@ -3581,6 +3630,8 @@ export default function Sales() {
                                   fieldName="products"
                                   showSpecs={isAddLead || isAddCustomer}
                                   isDark={isDark}
+                                  inventoryItems={inventoryItems}
+                                  kits={kits}
                                 />
                               ))}
                               <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: false })} icon={<PlusOutlined />} block
@@ -3750,7 +3801,7 @@ export default function Sales() {
                                         <Col xs={24} sm={8}>
                                           <Form.Item {...prodRest} name={[prodName, 'product']} label="Product" style={{ marginBottom: 0 }}>
                                             <Select size="small" placeholder="Select product" allowClear>
-                                              {(watchedLeadProducts || []).filter(p => p?.name || p?.kitType).map((p, pi) => (
+                                              {(Array.isArray(watchedLeadProducts) ? watchedLeadProducts : []).filter(p => p?.name || p?.kitType).map((p, pi) => (
                                                 <Option key={pi} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
                                               ))}
                                             </Select>
@@ -3790,6 +3841,7 @@ export default function Sales() {
                     )}
                   </Form.List>
 
+                  {watchedLeadType !== 'SAMPLE' && <>
                   <Divider style={{ margin: '16px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
                     <Space><DollarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Collection</span></Space>
                   </Divider>
@@ -3828,6 +3880,7 @@ export default function Sales() {
                       </>
                     )}
                   </Form.List>
+                  </>}
 
                   <DeliveryPaymentFields showUpload />
                   </>

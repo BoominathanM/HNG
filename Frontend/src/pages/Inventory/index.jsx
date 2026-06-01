@@ -44,6 +44,19 @@ import SelectWithAdd from '../../components/common/SelectWithAdd';
 const { Title, Text } = Typography;
 const { Option } = Select;
 
+const PACKING_MATERIAL_OPTIONS = [
+  { value: 'Plastic Box', label: 'Plastic Box' },
+  { value: 'Paper Box', label: 'Paper Box' },
+  { value: 'Pouch', label: 'Pouch' },
+  { value: 'Wrapper', label: 'Wrapper' },
+];
+
+const MATERIAL_CATEGORY_OPTIONS = [
+  { value: 'Eco Friendly', label: 'Eco Friendly' },
+  { value: 'Plastic', label: 'Plastic' },
+  { value: 'Wooden', label: 'Wooden' },
+];
+
 
 // Export an array of plain rows to a CSV file. Headers are derived from the
 // scalar (non-object) keys of the rows so it adapts to whatever shape the data has.
@@ -175,9 +188,19 @@ export default function Inventory() {
         size: vals.size || '',
         products: (vals.products || []).filter((p) => p && p.productName).map((p) => ({
           productName: p.productName,
+          category: p.category || '',
           qty: Number(p.qty) || 1,
-          rate: Number(p.rate) || 0,
           unit: p.unit || '',
+          defaultSize: p.defaultSize || '',
+          purchasePrice: Number(String(p.purchasePrice ?? '').replace(/[^0-9.]/g, '')) || 0,
+          sellingPrice: Number(String(p.sellingPrice ?? '').replace(/[^0-9.]/g, '')) || 0,
+          gst: p.gst || '',
+          hsnCode: p.hsnCode || '',
+          discountPercent: Number(String(p.discountPercent ?? '').replace(/[^0-9.]/g, '')) || 0,
+          packingMaterial: p.packingMaterial || '',
+          materialCategory: p.materialCategory || '',
+          brand: p.brand || '',
+          rate: Number(String(p.purchasePrice ?? '').replace(/[^0-9.]/g, '')) || 0,
         })),
       };
       if (editingKit) {
@@ -254,6 +277,13 @@ export default function Inventory() {
   const [historySearch, setHistorySearch] = useState('');
   const [historyActionFilter, setHistoryActionFilter] = useState(null);
   const [historyDateRange, setHistoryDateRange] = useState(null);
+
+  /* ── Active tab ── */
+  const [activeInvTab, setActiveInvTab] = useState('stock');
+
+  /* ── Category & Kit expand ── */
+  const [expandedCategory, setExpandedCategory] = useState(null);
+  const [expandedKit, setExpandedKit] = useState(null);
 
   /* ── Item Detail Drawer (row click) ── */
   const [detailItem, setDetailItem] = useState(null);
@@ -391,6 +421,9 @@ export default function Inventory() {
         sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         hsnCode: vals.hsn || '',
         discountPercent: Number(String(vals.discount ?? '').replace(/[^0-9.]/g, '')) || 0,
+        packingMaterial: vals.packingMaterial || '',
+        materialCategory: vals.materialCategory || '',
+        brand: vals.brand || '',
       }).unwrap();
       addItemForm.resetFields();
       setAddItemModal(false);
@@ -633,7 +666,9 @@ export default function Inventory() {
     <div className="page-container fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Inventory" items={[{ label: 'Inventory' }]} style={{ marginBottom: 0 }} />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddItemModal(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add Item</Button>
+        {activeInvTab !== 'kit' && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddItemModal(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add Item</Button>
+        )}
       </div>
 
       {lowStock.length > 0 && (
@@ -684,40 +719,102 @@ export default function Inventory() {
       {/* ════════════════════════════════════════
           INVENTORY TABS
       ════════════════════════════════════════ */}
-      <Tabs defaultActiveKey="stock" style={{ marginBottom: 20 }}
+      <Tabs activeKey={activeInvTab} onChange={setActiveInvTab} style={{ marginBottom: 20 }}
         items={[
           /* ── Tab 1: Stock Inventory ── */
           {
             key: 'stock',
             label: <Space><ShoppingOutlined />Stock Inventory</Space>,
-            children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
-                <div style={{ padding: '10px 16px 8px', borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item, code, vendor..." allowClear value={invSearch} onChange={(e) => setInvSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
-                  <Select allowClear placeholder="Category" value={invCategory} onChange={setInvCategory} style={{ width: 160, borderRadius: 8 }}>
-                    {[...new Set(inventoryList.map(i => i.category))].map(c => <Option key={c} value={c}>{c}</Option>)}
-                  </Select>
-                  <Select allowClear placeholder="Stock Status" value={invStatus} onChange={setInvStatus} style={{ width: 150, borderRadius: 8 }}>
-                    <Option value="OK">OK</Option>
-                    <Option value="Low">Low Stock</Option>
-                    <Option value="Out">Out of Stock</Option>
-                  </Select>
-                  <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>Click any row for details</Text>
-                </div>
-                <div className="table-responsive" style={{ padding: '4px' }}>
-                  <Table
-                    dataSource={filteredInventory}
-                    columns={columns}
-                    pagination={{ pageSize: 8, size: 'small' }}
-                    size="small"
-                    onRow={(record) => ({
-                      onClick: () => setDetailItem(record),
-                      style: { cursor: 'pointer' },
+            children: (() => {
+              // Group filtered items by category
+              const grouped = categories.reduce((acc, cat) => {
+                const items = filteredInventory.filter(i => i.category === cat);
+                if (items.length > 0) acc[cat] = items;
+                return acc;
+              }, {});
+              // Also include items with no category or category not in list
+              const uncategorized = filteredInventory.filter(i => !i.category || !categories.includes(i.category));
+              if (uncategorized.length > 0) grouped['Uncategorized'] = uncategorized;
+
+              const allGroupKeys = Object.keys(grouped);
+
+              return (
+                <div>
+                  {/* Search & filter bar */}
+                  <div style={{ padding: '10px 0 14px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item, code..." allowClear value={invSearch} onChange={(e) => { setInvSearch(e.target.value); setExpandedCategory(null); }} style={{ width: 240, borderRadius: 8 }} />
+                    <Select allowClear placeholder="Stock Status" value={invStatus} onChange={setInvStatus} style={{ width: 150, borderRadius: 8 }}>
+                      <Option value="OK">OK</Option>
+                      <Option value="Low">Low Stock</Option>
+                      <Option value="Out">Out of Stock</Option>
+                    </Select>
+                    <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>Click a category to expand</Text>
+                  </div>
+
+                  {allGroupKeys.length === 0 && (
+                    <Card style={{ borderRadius: 14, border: 'none', background: cardBg, textAlign: 'center', padding: 32 }}>
+                      <Text type="secondary">No items found</Text>
+                    </Card>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {allGroupKeys.map((cat) => {
+                      const items = grouped[cat];
+                      const okCount = items.filter(i => i.status === 'OK').length;
+                      const lowCount = items.filter(i => i.status === 'Low').length;
+                      const outCount = items.filter(i => i.status === 'Out').length;
+                      const isExpanded = expandedCategory === cat || (invSearch && items.length > 0);
+
+                      return (
+                        <div key={cat} style={{ borderRadius: 14, overflow: 'hidden', border: `1px solid ${isExpanded ? '#B11E6A44' : borderColor}`, background: cardBg, boxShadow: isExpanded ? '0 4px 20px rgba(177,30,106,0.10)' : '0 2px 8px rgba(0,0,0,0.04)', transition: 'all 0.2s' }}>
+                          {/* Category header — click to expand */}
+                          <div
+                            onClick={() => setExpandedCategory(expandedCategory === cat ? null : cat)}
+                            style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer', background: isExpanded ? (isDark ? 'rgba(177,30,106,0.12)' : 'rgba(177,30,106,0.05)') : 'transparent', borderBottom: isExpanded ? `1px solid ${borderColor}` : 'none', transition: 'background 0.2s' }}
+                          >
+                            {/* Category icon circle */}
+                            <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <ShoppingOutlined style={{ color: '#fff', fontSize: 18 }} />
+                            </div>
+
+                            <div style={{ flex: 1 }}>
+                              <Text strong style={{ fontSize: 15, color: textColor, display: 'block' }}>{cat}</Text>
+                              <Text type="secondary" style={{ fontSize: 12 }}>{items.length} item{items.length !== 1 ? 's' : ''}</Text>
+                            </div>
+
+                            {/* Status chips */}
+                            <Space wrap size={6}>
+                              {okCount > 0 && <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', margin: 0 }}>OK: {okCount}</Tag>}
+                              {lowCount > 0 && <Tag style={{ borderRadius: 20, fontSize: 11, background: '#fa8c1615', color: '#fa8c16', border: '1px solid #fa8c1633', margin: 0 }} icon={<WarningOutlined />}>Low: {lowCount}</Tag>}
+                              {outCount > 0 && <Tag style={{ borderRadius: 20, fontSize: 11, background: '#ff4d4f15', color: '#ff4d4f', border: '1px solid #ff4d4f33', margin: 0 }}>Out: {outCount}</Tag>}
+                            </Space>
+
+                            {/* Expand chevron */}
+                            <div style={{ fontSize: 16, color: '#B11E6A', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▾</div>
+                          </div>
+
+                          {/* Expanded items table */}
+                          {isExpanded && (
+                            <div className="table-responsive" style={{ padding: '4px' }}>
+                              <Table
+                                dataSource={items}
+                                columns={columns}
+                                pagination={items.length > 8 ? { pageSize: 8, size: 'small' } : false}
+                                size="small"
+                                onRow={(record) => ({
+                                  onClick: () => setDetailItem(record),
+                                  style: { cursor: 'pointer' },
+                                })}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
                     })}
-                  />
+                  </div>
                 </div>
-              </Card>
-            )
+              );
+            })(),
           },
 
           /* ── Tab 2: Approvals ── */
@@ -1029,10 +1126,11 @@ export default function Inventory() {
             key: 'kit',
             label: <Space><ContainerOutlined />Kit</Space>,
             children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
-                <div style={{ padding: '12px 16px', borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <div>
+                {/* Kit tab header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
                   <Space>
-                    <Text strong style={{ color: textColor }}>Kits</Text>
+                    <Text strong style={{ color: textColor, fontSize: 15 }}>Kits</Text>
                     <Tag color="magenta" style={{ borderRadius: 20 }}>{kitsList.length}</Tag>
                   </Space>
                   <Button type="primary" icon={<PlusOutlined />}
@@ -1041,38 +1139,92 @@ export default function Inventory() {
                     Add Kit
                   </Button>
                 </div>
-                <Table
-                  dataSource={kitsList}
-                  size="small"
-                  pagination={{ pageSize: 8, size: 'small' }}
-                  columns={[
-                    { title: 'Code', dataIndex: 'kitCode', width: 110, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v || '—'}</Text> },
-                    { title: 'Kit Name', dataIndex: 'kitName', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
-                    { title: 'Display Unit', dataIndex: 'displayUnit', render: v => v ? v.replace(/_/g, ' ') : '—' },
-                    { title: 'Size', dataIndex: 'size', render: v => v || '—' },
-                    {
-                      title: 'Products', dataIndex: 'products',
-                      render: (products) => (
-                        <Space wrap size={4}>
-                          {(products || []).length === 0 ? <Text type="secondary">—</Text> :
-                            (products || []).map((p, i) => (
-                              <Tag key={i} style={{ borderRadius: 12, fontSize: 11 }}>{p.productName} ×{p.qty}</Tag>
-                            ))}
-                        </Space>
-                      ),
-                    },
-                    {
-                      title: 'Actions', width: 110,
-                      render: (_, kit) => (
-                        <Space>
-                          <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => openAddKit(kit)} />
-                          <Button type="text" size="small" danger icon={<CloseOutlined />} onClick={() => handleDeleteKit(kit)} />
-                        </Space>
-                      ),
-                    },
-                  ]}
-                />
-              </Card>
+
+                {kitsList.length === 0 && (
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, textAlign: 'center', padding: 40 }}>
+                    <ContainerOutlined style={{ fontSize: 40, color: '#D85C9E', marginBottom: 12 }} />
+                    <div><Text type="secondary">No kits yet. Click "Add Kit" to create one.</Text></div>
+                  </Card>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {kitsList.map((kit) => {
+                    const isKitExpanded = expandedKit === kit._id;
+                    return (
+                      <div key={kit._id} style={{ borderRadius: 14, overflow: 'hidden', border: `1px solid ${isKitExpanded ? '#B11E6A44' : borderColor}`, background: cardBg, boxShadow: isKitExpanded ? '0 4px 20px rgba(177,30,106,0.10)' : '0 2px 8px rgba(0,0,0,0.04)', transition: 'all 0.2s' }}>
+                        {/* Kit card header — click to expand */}
+                        <div
+                          onClick={() => setExpandedKit(isKitExpanded ? null : kit._id)}
+                          style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer', background: isKitExpanded ? (isDark ? 'rgba(177,30,106,0.12)' : 'rgba(177,30,106,0.05)') : 'transparent', borderBottom: isKitExpanded ? `1px solid ${borderColor}` : 'none', transition: 'background 0.2s' }}
+                        >
+                          {/* Kit icon */}
+                          <div style={{ width: 44, height: 44, borderRadius: 12, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <ContainerOutlined style={{ color: '#fff', fontSize: 18 }} />
+                          </div>
+
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Space align="center" size={8}>
+                              <Text strong style={{ fontSize: 15, color: textColor }}>{kit.kitName}</Text>
+                              {kit.kitCode && <Tag style={{ borderRadius: 20, fontSize: 10, background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33' }}>{kit.kitCode}</Tag>}
+                            </Space>
+                            <div style={{ marginTop: 2 }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                {(kit.products || []).length} product{(kit.products || []).length !== 1 ? 's' : ''}
+                                {kit.displayUnit ? ` · ${kit.displayUnit.replace(/_/g, ' ')}` : ''}
+                                {kit.size ? ` · ${kit.size}` : ''}
+                              </Text>
+                            </div>
+                          </div>
+
+                          {/* Product count chip */}
+                          <Tag style={{ borderRadius: 20, fontSize: 12, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', padding: '2px 12px' }}>
+                            {(kit.products || []).length} items
+                          </Tag>
+
+                          {/* Actions */}
+                          <Space onClick={(e) => e.stopPropagation()}>
+                            <Button type="text" size="small" icon={<EyeOutlined />} style={{ color: '#B11E6A' }} onClick={() => openAddKit(kit)} />
+                            <Button type="text" size="small" danger icon={<CloseOutlined />} onClick={() => handleDeleteKit(kit)} />
+                          </Space>
+
+                          {/* Chevron */}
+                          <div style={{ fontSize: 16, color: '#B11E6A', transform: isKitExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▾</div>
+                        </div>
+
+                        {/* Expanded: kit products table */}
+                        {isKitExpanded && (
+                          <div style={{ padding: '12px 16px 16px' }}>
+                            {(kit.products || []).length === 0 ? (
+                              <Text type="secondary" style={{ fontSize: 13 }}>No products in this kit yet.</Text>
+                            ) : (
+                              <Table
+                                dataSource={(kit.products || []).map((p, i) => ({ key: i, ...p }))}
+                                size="small"
+                                pagination={false}
+                                columns={[
+                                  {
+                                    title: '#', key: 'idx', width: 40,
+                                    render: (_, __, i) => (
+                                      <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{i + 1}</Text>
+                                      </div>
+                                    ),
+                                  },
+                                  { title: 'Product Name', dataIndex: 'productName', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
+                                  { title: 'Qty', dataIndex: 'qty', width: 80, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                                  { title: 'Rate (₹)', dataIndex: 'rate', width: 100, render: v => v ? `₹${Number(v).toLocaleString()}` : '—' },
+                                  { title: 'Unit', dataIndex: 'unit', width: 80, render: v => v || '—' },
+                                ]}
+                                style={{ borderRadius: 10, overflow: 'hidden' }}
+                              />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )
           },
         ]}
@@ -1087,10 +1239,12 @@ export default function Inventory() {
         onCancel={() => { setKitModal(false); setEditingKit(null); }}
         onOk={handleSaveKit}
         okText={editingKit ? 'Update Kit' : 'Add Kit'}
-        width={680}
+        width={Math.min(780, window.innerWidth - 24)}
         okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       >
         <Form form={kitForm} layout="vertical">
+          {/* Kit header fields */}
           <Row gutter={12}>
             <Col xs={24} sm={8}>
               <Form.Item label="Kit Name" name="kitName" rules={[{ required: true, message: 'Kit name required' }]}>
@@ -1115,52 +1269,129 @@ export default function Inventory() {
           </Row>
 
           <Divider style={{ margin: '4px 0 12px' }}>Products in this Kit</Divider>
+
+          {/* Product cards — same fields as Add Item */}
           <Form.List name="products">
             {(fields, { add, remove }) => (
               <>
-                <Row gutter={8} style={{ marginBottom: 4 }}>
-                  <Col flex="auto"><Text type="secondary" style={{ fontSize: 12 }}>Product Name</Text></Col>
-                  <Col style={{ width: 80 }}><Text type="secondary" style={{ fontSize: 12 }}>Qty</Text></Col>
-                  <Col style={{ width: 100 }}><Text type="secondary" style={{ fontSize: 12 }}>Rate (₹)</Text></Col>
-                  <Col style={{ width: 90 }}><Text type="secondary" style={{ fontSize: 12 }}>Unit</Text></Col>
-                  <Col style={{ width: 32 }} />
-                </Row>
-                {fields.map((field) => (
-                  <Row gutter={8} key={field.key} style={{ marginBottom: 8 }} align="middle">
-                    <Col flex="auto">
-                      <Form.Item {...field} name={[field.name, 'productName']} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                        <SelectWithAdd field="productType" defaultOptions={[
-                          { value: 'Soap', label: 'Soap' },
-                          { value: 'Paste', label: 'Paste' },
-                          { value: 'Brush', label: 'Brush' },
-                          { value: 'Razor', label: 'Razor' },
-                          { value: 'Gel', label: 'Gel' },
-                          { value: 'Box', label: 'Box' },
-                          { value: 'Cover', label: 'Cover' },
-                        ]} placeholder="Select / Add product" />
-                      </Form.Item>
-                    </Col>
-                    <Col style={{ width: 80 }}>
-                      <Form.Item {...field} name={[field.name, 'qty']} style={{ marginBottom: 0 }}>
-                        <InputNumber min={1} style={{ width: '100%' }} placeholder="Qty" />
-                      </Form.Item>
-                    </Col>
-                    <Col style={{ width: 100 }}>
-                      <Form.Item {...field} name={[field.name, 'rate']} style={{ marginBottom: 0 }}>
-                        <InputNumber min={0} step={0.01} style={{ width: '100%' }} placeholder="Rate" />
-                      </Form.Item>
-                    </Col>
-                    <Col style={{ width: 90 }}>
-                      <Form.Item {...field} name={[field.name, 'unit']} style={{ marginBottom: 0 }}>
-                        <Input placeholder="pcs" />
-                      </Form.Item>
-                    </Col>
-                    <Col style={{ width: 32 }}>
-                      <Button type="text" danger icon={<MinusOutlined />} onClick={() => remove(field.name)} />
-                    </Col>
-                  </Row>
+                {fields.map((field, idx) => (
+                  <div
+                    key={field.key}
+                    style={{ marginBottom: 14, border: '1px solid rgba(177,30,106,0.15)', borderRadius: 12, overflow: 'hidden', background: isDark ? '#1a1a2e' : '#fff' }}
+                  >
+                    {/* Product card header */}
+                    <div style={{ background: isDark ? 'rgba(177,30,106,0.10)' : 'rgba(177,30,106,0.04)', padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(177,30,106,0.10)' }}>
+                      <Space>
+                        <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>{idx + 1}</Text>
+                        </div>
+                        <Text strong style={{ fontSize: 13, color: isDark ? '#e0e0e0' : '#1a1a2e' }}>Product {idx + 1}</Text>
+                      </Space>
+                      <Button type="text" danger size="small" icon={<MinusOutlined />} onClick={() => remove(field.name)} />
+                    </div>
+
+                    {/* Product fields — same layout as Add Item */}
+                    <div style={{ padding: '12px 14px' }}>
+                      <Row gutter={[12, 0]}>
+                        <Col xs={24} sm={12}>
+                          <Form.Item {...field} label="Item Name" name={[field.name, 'productName']} rules={[{ required: true, message: 'Required' }]}>
+                            <Select
+                              showSearch
+                              optionFilterProp="label"
+                              placeholder="Select product from inventory"
+                              style={{ width: '100%' }}
+                              options={inventoryList.map((i) => ({ value: i.name, label: i.name }))}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item {...field} label="Category" name={[field.name, 'category']}>
+                            <SelectWithAdd
+                              field="inventoryCategory"
+                              defaultOptions={categories.map((c) => ({ label: c, value: c }))}
+                              placeholder="Select / Add category"
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item {...field} label="Unit" name={[field.name, 'unit']}>
+                            <Select placeholder="Select unit">
+                              <Option value="Kg">Kg</Option>
+                              <Option value="Ltr">Ltr</Option>
+                              <Option value="Pcs">Pcs</Option>
+                              <Option value="ml">ml</Option>
+                              <Option value="gram">gram</Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item {...field} label="Default Size" name={[field.name, 'defaultSize']}>
+                            <Input placeholder="e.g. 2.5cm x 2.5cm" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="Qty in Kit" name={[field.name, 'qty']}>
+                            <InputNumber min={1} style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="Purchase Price" name={[field.name, 'purchasePrice']}>
+                            <Input prefix="₹" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="Selling Price" name={[field.name, 'sellingPrice']}>
+                            <Input prefix="₹" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="GST" name={[field.name, 'gst']}>
+                            <Select defaultValue="None">
+                              <Option value="None">None</Option>
+                              <Option value="5%">5%</Option>
+                              <Option value="12%">12%</Option>
+                              <Option value="18%">18%</Option>
+                              <Option value="28%">28%</Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="HSN Code" name={[field.name, 'hsnCode']}>
+                            <Input placeholder="Ex: 6704" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="Discount on Sales Price" name={[field.name, 'discountPercent']}>
+                            <Input suffix="%" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="Packing Material" name={[field.name, 'packingMaterial']}>
+                            <SelectWithAdd field="packingMaterial" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="Material Category" name={[field.name, 'materialCategory']}>
+                            <SelectWithAdd field="materialCategory" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...field} label="Brand" name={[field.name, 'brand']}>
+                            <SelectWithAdd field="brand" defaultOptions={[]} placeholder="Select / Add brand" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </div>
+                  </div>
                 ))}
-                <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ productName: '', qty: 1, rate: 0 })} style={{ borderRadius: 8, marginTop: 4 }}>
+
+                <Button
+                  type="dashed"
+                  block
+                  icon={<PlusOutlined />}
+                  onClick={() => add({ productName: '', qty: 1, gst: 'None' })}
+                  style={{ borderRadius: 10, height: 44, borderColor: '#B11E6A66', color: '#B11E6A', marginTop: 4 }}
+                >
                   Add Product to Kit
                 </Button>
               </>
@@ -1481,6 +1712,21 @@ export default function Inventory() {
             <Col xs={24} sm={8}><Form.Item label="GST" name="gst"><Select defaultValue="None"><Option value="None">None</Option><Option value="5%">5%</Option><Option value="12%">12%</Option><Option value="18%">18%</Option><Option value="28%">28%</Option></Select></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="HSN" name="hsn"><Input placeholder="Ex: 6704" /></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Discount on Sales Price" name="discount"><Input suffix="%" /></Form.Item></Col>
+            <Col xs={24} sm={8}>
+              <Form.Item label="Packing Material" name="packingMaterial">
+                <SelectWithAdd field="packingMaterial" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Form.Item label="Material Category" name="materialCategory">
+                <SelectWithAdd field="materialCategory" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Form.Item label="Brand" name="brand">
+                <SelectWithAdd field="brand" defaultOptions={[]} placeholder="Select / Add brand" />
+              </Form.Item>
+            </Col>
           </Row>
         </Form>
       </Modal>

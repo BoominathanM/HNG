@@ -129,6 +129,7 @@ export default function Operations() {
     key: o._id, id: o.orderCode || o._id,
     hotelLogo: o.clientName || '—', salesPerson: o.assignedTo?.fullName || '—',
     createdAt: o.createdAt, orderType: o.orderType || 'Sticker',
+    orderCategory: o.orderCategory || 'ORDER',
     clientApproval: o.clientApproval || 'Waiting',
     designStatus: o.designStatus || 'Not Started',
     printingStatus: o.printingStatus || 'Not Started',
@@ -254,6 +255,21 @@ export default function Operations() {
       ),
     },
     { title: 'Hotel Name', dataIndex: 'hotelLogo' },
+    {
+      title: 'Type', dataIndex: 'orderCategory',
+      render: (v) => (
+        <Tag
+          style={{
+            borderRadius: 20, fontWeight: 600, fontSize: 11,
+            background: v === 'SAMPLE' ? '#722ed115' : '#B11E6A15',
+            color: v === 'SAMPLE' ? '#722ed1' : '#B11E6A',
+            border: `1px solid ${v === 'SAMPLE' ? '#722ed133' : '#B11E6A33'}`,
+          }}
+        >
+          {v === 'SAMPLE' ? 'Sample' : 'Order'}
+        </Tag>
+      ),
+    },
     {
       title: 'Order Delivery Date',
       dataIndex: 'createdAt',
