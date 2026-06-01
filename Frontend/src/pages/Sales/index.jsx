@@ -429,22 +429,22 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'nowrap' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={isItemDisabled} size="small" /> {/* binary — not persisted */}
+              <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} style={{ marginBottom: 0 }}>
+                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd field="packingMaterial" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd field="materialCategory" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} style={{ marginBottom: 0 }}>
                 <SelectWithAdd field="brand" defaultOptions={[]} placeholder="Select / Add brand" disabled={isItemDisabled} size="small" />
               </Form.Item>
             </div>
@@ -1222,7 +1222,11 @@ export default function Sales() {
           enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add lead', { variant: 'error' });
         }
       }
-    } catch (_) { }
+    } catch (validationErr) {
+      if (validationErr?.errorFields?.length) {
+        enqueueSnackbar(`Please fill required fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
+      }
+    }
   };
 
   const saveSectionEdit = async (section) => {
@@ -3074,20 +3078,49 @@ export default function Sales() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ background: isDark ? 'transparent' : '#fff' }}>
                       <Descriptions.Item label="Hotel / Company" span={1}>{record.hotelName}</Descriptions.Item>
-                      <Descriptions.Item label="Billing Name" span={2}>{record.billingName || '—'}</Descriptions.Item>
-                      <Descriptions.Item label="No. of Rooms">{record.rowsInHotel}</Descriptions.Item>
+                      <Descriptions.Item label="Billing Name" span={1}>{record.billingName || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Hotel Type" span={1}>
+                        <Tag color={record.hotelType === 'OLD' ? 'blue' : 'green'}>{record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}</Tag>
+                        {record.hotelType === 'NEW' && record.leadType && (
+                          <Tag color="orange" style={{ marginLeft: 4 }}>{record.leadType}</Tag>
+                        )}
+                      </Descriptions.Item>
+                      {record.branch && <Descriptions.Item label="Branch">{record.branch}</Descriptions.Item>}
+                      <Descriptions.Item label="No. of Rooms">{record.numRooms || record.rowsInHotel || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Occupancy (%)">{record.generalOccupancy ? `${record.generalOccupancy}%` : '—'}</Descriptions.Item>
-                      <Descriptions.Item label="Hotel Type">{record.hotelType}</Descriptions.Item>
+                      <Descriptions.Item label="Contact Person">{record.contactPerson || '—'}</Descriptions.Item>
                       <Descriptions.Item label="POC Designation">{record.pocDesignation || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Phone">{record.phone || '—'}</Descriptions.Item>
-                      <Descriptions.Item label="Alternative Name">{record.alternativeName || '—'}</Descriptions.Item>
-                      <Descriptions.Item label="Alternative Role">{record.alternativeRole || '—'}</Descriptions.Item>
-                      <Descriptions.Item label="Alternative Number" span={1}>{record.alternativePhone || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Email">{record.email || '—'}</Descriptions.Item>
-                      <Descriptions.Item label="Assigned To">{record.salesPerson}</Descriptions.Item>
-                      <Descriptions.Item label="Location">{record.location}</Descriptions.Item>
+                      <Descriptions.Item label="Alt. Name">{record.alternativeName || record.altName || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Alt. Role">{record.alternativeRole || record.altRole || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Alt. Number">{record.alternativePhone || record.altNumber || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Location">{record.location || record.locationCity || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Destination">{record.destination || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Assigned To">{record.salesPerson || '—'}</Descriptions.Item>
+                      {record.source && <Descriptions.Item label="Source">{record.source}</Descriptions.Item>}
                     </Descriptions>
+                    {/* Software Interest */}
+                    {record.interestedInSoftware && (
+                      <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ background: isDark ? 'transparent' : '#fff' }}
+                        title={<Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 700 }}>Software Interest</Text>}
+                      >
+                        <Descriptions.Item label="Interested in Software">
+                          <Tag color={record.interestedInSoftware === 'YES' ? 'green' : 'default'}>{record.interestedInSoftware}</Tag>
+                        </Descriptions.Item>
+                        {record.interestedInSoftware === 'YES' && (
+                          <>
+                            <Descriptions.Item label="Previous Software">{record.previousSoftware || '—'}</Descriptions.Item>
+                            <Descriptions.Item label="Previous Price">
+                              {record.previousSoftwarePrice || record.prevSoftwarePrice ? `₹${(record.previousSoftwarePrice || record.prevSoftwarePrice).toLocaleString()}` : '—'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Expiry Date">
+                              {record.softwareExpiryDate ? new Date(record.softwareExpiryDate).toLocaleDateString('en-IN') : '—'}
+                            </Descriptions.Item>
+                          </>
+                        )}
+                      </Descriptions>
+                    )}
                   </div>
                 ) : (
                   <Row gutter={16}>
@@ -3114,14 +3147,18 @@ export default function Sales() {
                     )}
                     <Col xs={24} sm={6}>
                       <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
-                        <AutoComplete
-                          options={hotelNameOptions}
-                          placeholder="e.g. Hotel Blue Star"
-                          filterOption={(input, option) => (option?.value || '').toLowerCase().includes(input.toLowerCase())}
-                          onSelect={() => setTimeout(handleOldHotelLookup, 0)}
-                          onBlur={handleOldHotelLookup}
-                          style={{ width: '100%' }}
-                        />
+                        {watchedHotelType === 'NEW' ? (
+                          <Input placeholder="Enter new hotel / company name" />
+                        ) : (
+                          <AutoComplete
+                            options={hotelNameOptions}
+                            placeholder="Search existing hotel..."
+                            filterOption={(input, option) => (option?.value || '').toLowerCase().includes(input.toLowerCase())}
+                            onSelect={() => setTimeout(handleOldHotelLookup, 0)}
+                            onBlur={handleOldHotelLookup}
+                            style={{ width: '100%' }}
+                          />
+                        )}
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={6}>
@@ -3568,54 +3605,60 @@ export default function Sales() {
                                 </div>
                               </div>
 
-                              {/* Specifications */}
-                              {p.specs && typeof p.specs === 'object' && Object.values(p.specs).some(Boolean) && (
+                              {/* Specifications — read from flat fields (logo, sticker, etc.) */}
+                              {(p.logo || p.sticker || p.packingMaterial || p.materialCategory || p.brand || p.gst || p.otherSpecs) && (
                                 <div style={{ padding: '14px 18px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
                                   <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 12 }}>SPECIFICATIONS</Text>
                                   <Row gutter={[12, 14]}>
-                                    {p.specs.logo && (
+                                    {p.logo && (
                                       <Col xs={12} sm={8}>
                                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Logo</Text>
-                                        <Tag color={p.specs.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
-                                          {p.specs.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}
+                                        <Tag color={p.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
+                                          {p.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}
                                         </Tag>
                                       </Col>
                                     )}
-                                    {p.specs.sticker && (
+                                    {p.sticker && (
                                       <Col xs={12} sm={8}>
                                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Sticker / Printing</Text>
-                                        <Tag color={p.specs.sticker === 'YES' ? 'blue' : p.specs.sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
-                                          {p.specs.sticker === 'YES' ? '✓ Yes' : p.specs.sticker === 'PRINTING' ? 'Printing' : '✗ No'}
+                                        <Tag color={p.sticker === 'YES' ? 'blue' : p.sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 12 }}>
+                                          {p.sticker === 'YES' ? '✓ Yes' : p.sticker === 'PRINTING' ? 'Printing' : '✗ No'}
                                         </Tag>
                                       </Col>
                                     )}
-                                    {p.specs.packingMaterial && (
+                                    {p.gst && (
                                       <Col xs={12} sm={8}>
-                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Packing Material</Text>
-                                        <Text strong style={{ fontSize: 13 }}>{p.specs.packingMaterial}</Text>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>GST %</Text>
+                                        <Text strong style={{ fontSize: 13 }}>{p.gst}%</Text>
                                       </Col>
                                     )}
-                                    {p.specs.materialCategory && (
+                                    {p.packingMaterial && (
+                                      <Col xs={12} sm={8}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Packing Material</Text>
+                                        <Text strong style={{ fontSize: 13 }}>{p.packingMaterial}</Text>
+                                      </Col>
+                                    )}
+                                    {p.materialCategory && (
                                       <Col xs={12} sm={8}>
                                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Material Category</Text>
                                         <Tag
-                                          color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'}
+                                          color={p.materialCategory === 'Eco Friendly' ? 'green' : p.materialCategory === 'Wooden' ? 'orange' : 'blue'}
                                           style={{ borderRadius: 20, fontSize: 12 }}
                                         >
-                                          {p.specs.materialCategory}
+                                          {p.materialCategory}
                                         </Tag>
                                       </Col>
                                     )}
-                                    {p.specs.brand && (
+                                    {p.brand && (
                                       <Col xs={12} sm={8}>
                                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Brand</Text>
-                                        <Text strong style={{ fontSize: 13 }}>{p.specs.brand}</Text>
+                                        <Text strong style={{ fontSize: 13 }}>{p.brand}</Text>
                                       </Col>
                                     )}
-                                    {p.specs.product && (
+                                    {p.otherSpecs && (
                                       <Col xs={12} sm={8}>
-                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Product Type</Text>
-                                        <Tag color="orange" style={{ borderRadius: 20, fontSize: 12 }}>{p.specs.product}</Tag>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Other Specs</Text>
+                                        <Text style={{ fontSize: 13 }}>{p.otherSpecs}</Text>
                                       </Col>
                                     )}
                                   </Row>
