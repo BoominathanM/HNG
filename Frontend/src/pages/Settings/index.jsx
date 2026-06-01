@@ -159,12 +159,12 @@ export default function Settings() {
   // Deleted records — RTK Query
   const { data: deletedData } = useGetDeletedRecordsQuery();
   const [restoreRecordMutation] = useRestoreRecordMutation();
-  const deletedRecordsFromApi = (deletedData?.data?.parties || []).map((p) => ({
+  const deletedRecordsFromApi = (deletedData?.data?.records || []).map((p) => ({
     key: p._id,
-    module: 'Parties & Ledger',
+    module: p.module,
     name: p.name,
     type: p.type,
-    deletedBy: 'Admin',
+    deletedBy: p.deletedBy || 'System',
     deletedAt: p.deletedAt,
   }));
 
@@ -173,16 +173,90 @@ export default function Settings() {
   const [updateCompanyMutation] = useUpdateCompanySettingsMutation();
   const [uploadLogoMutation] = useUploadLogoMutation();
 
+  // Form instances for the General + GST tabs (so their Save buttons can persist)
+  const [generalForm] = Form.useForm();
+  const [gstForm] = Form.useForm();
+  const [notifPrefs, setNotifPrefs] = useState({ pay: true, stock: true, dispatch: true, task: true, wa: false, email: false });
+
   useEffect(() => {
     const s = companyData?.data;
     if (s) {
       if (s.logoUrl) setLogoUrl(s.logoUrl);
       if (s.invoiceTheme) setInvoiceTheme(s.invoiceTheme);
+      if (s.invoiceFontStyle) setInvoiceFont(s.invoiceFontStyle);
       if (s.invoiceTerms) setInvoiceTerms(s.invoiceTerms);
       if (s.invoiceFooter) setInvoiceFooter(s.invoiceFooter);
       if (s.gstComponent) setInvoiceGstConfig(s.gstComponent);
+      if (s.notifPrefs) setNotifPrefs((p) => ({ ...p, ...s.notifPrefs }));
+      if (s.invoiceToggles) {
+        const t = s.invoiceToggles instanceof Map ? Object.fromEntries(s.invoiceToggles) : s.invoiceToggles;
+        if (t.gstin !== undefined) setInvoiceShowGstin(t.gstin);
+        if (t.hsn !== undefined) setInvoiceShowHsn(t.hsn);
+        if (t.taxRate !== undefined) setInvoiceShowTaxRate(t.taxRate);
+        if (t.logo !== undefined) setInvoiceShowLogo(t.logo);
+        if (t.bank !== undefined) setInvoiceShowBank(t.bank);
+        if (t.terms !== undefined) setInvoiceShowTerms(t.terms);
+        if (t.sign !== undefined) setInvoiceShowSign(t.sign);
+      }
+      generalForm.setFieldsValue({
+        companyName: s.companyName,
+        gstNumber: s.gstNumber,
+        currency: s.currency || 'INR',
+        dateFormat: s.dateFormat || 'DD/MM/YYYY',
+        address: s.address,
+      });
+      gstForm.setFieldsValue({
+        defaultGst: String(s.defaultGst || '18'),
+        cgst: s.cgst || '9%',
+        sgst: s.sgst || '9%',
+        igst: s.igst || '18%',
+        hsnCode: s.hsnCode || '',
+        invoicePrefix: s.invoicePrefix || 'INV-',
+      });
     }
-  }, [companyData]);
+  }, [companyData, generalForm, gstForm]);
+
+  // ─── Save handlers (persist via updateCompanySettings) ───
+  const persistCompany = async (patch, label) => {
+    try {
+      await updateCompanyMutation(patch).unwrap();
+      enqueueSnackbar(label || 'Settings saved', { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data || 'Failed to save settings', { variant: 'error' });
+    }
+  };
+
+  const saveGeneral = () => generalForm.validateFields().then((v) => persistCompany(v, 'General settings saved'));
+  const saveGst = () => gstForm.validateFields().then((v) => persistCompany(v, 'GST & Tax settings saved'));
+  const saveNotifications = () => persistCompany({ notifPrefs }, 'Notification settings saved');
+  const saveInvoiceSettings = () => persistCompany({
+    invoiceTheme,
+    invoiceFontStyle: invoiceFont,
+    gstComponent: invoiceGstConfig,
+    invoiceTerms,
+    invoiceFooter,
+    invoiceToggles: {
+      gstin: invoiceShowGstin, hsn: invoiceShowHsn, taxRate: invoiceShowTaxRate,
+      logo: invoiceShowLogo, bank: invoiceShowBank, terms: invoiceShowTerms, sign: invoiceShowSign,
+    },
+  }, 'Invoice settings saved');
+
+  const handleLogoUpload = async (file) => {
+    // Local preview immediately, then persist to the server.
+    const reader = new FileReader();
+    reader.onload = (e) => setLogoUrl(e.target.result);
+    reader.readAsDataURL(file);
+    try {
+      const fd = new FormData();
+      fd.append('logo', file);
+      const res = await uploadLogoMutation(fd).unwrap();
+      if (res?.logoUrl) setLogoUrl(res.logoUrl);
+      enqueueSnackbar('Logo uploaded', { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data || 'Logo upload failed', { variant: 'error' });
+    }
+    return false;
+  };
 
   const [editingUser, setEditingUser] = useState(null);
   const [userForm] = Form.useForm();
@@ -325,7 +399,7 @@ export default function Settings() {
             label: 'General',
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-                <Form layout="vertical">
+                <Form layout="vertical" form={generalForm}>
                   <Form.Item label={<Text strong style={{ color: textColor }}>Company Logo</Text>} style={{ marginBottom: 20 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
                       <div style={{ width: 100, height: 100, borderRadius: 12, border: `2px dashed ${isDark ? '#444' : '#ddd'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: subBg }}>
@@ -337,12 +411,7 @@ export default function Settings() {
                         <Upload
                           accept="image/*"
                           showUploadList={false}
-                          beforeUpload={(file) => {
-                            const reader = new FileReader();
-                            reader.onload = (e) => setLogoUrl(e.target.result);
-                            reader.readAsDataURL(file);
-                            return false;
-                          }}
+                          beforeUpload={handleLogoUpload}
                         >
                           <Button icon={<UploadOutlined />} style={{ marginBottom: 8, display: 'block', color: '#B11E6A', borderColor: '#B11E6A55' }}>Upload Logo</Button>
                         </Upload>
@@ -353,15 +422,15 @@ export default function Settings() {
                   </Form.Item>
                   <Divider style={{ margin: '4px 0 20px' }} />
                   <Row gutter={16}>
-                    <Col xs={24} sm={12}><Form.Item label="Company Name"><Input defaultValue="Heal N Glow" /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="GST Number"><Input defaultValue="29ABCDE1234F1Z5" /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="Primary Currency"><Select defaultValue="INR"><Option value="INR">₹ Indian Rupee</Option></Select></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="Date Format"><Select defaultValue="DD/MM/YYYY"><Option value="DD/MM/YYYY">DD/MM/YYYY</Option><Option value="MM/DD/YYYY">MM/DD/YYYY</Option></Select></Form.Item></Col>
-                    <Col xs={24}><Form.Item label="Business Address"><Input.TextArea rows={3} defaultValue="123, Industrial Area, Bengaluru - 560001, Karnataka" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Company Name" name="companyName"><Input placeholder="Company name" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GST number" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Primary Currency" name="currency"><Select><Option value="INR">₹ Indian Rupee</Option><Option value="USD">$ US Dollar</Option></Select></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Date Format" name="dateFormat"><Select><Option value="DD/MM/YYYY">DD/MM/YYYY</Option><Option value="MM/DD/YYYY">MM/DD/YYYY</Option></Select></Form.Item></Col>
+                    <Col xs={24}><Form.Item label="Business Address" name="address"><Input.TextArea rows={3} placeholder="Business address" /></Form.Item></Col>
                   </Row>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>
-                    <Button>Cancel</Button>
-                    <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Settings</Button>
+                    <Button onClick={() => generalForm.resetFields()}>Cancel</Button>
+                    <Button type="primary" icon={<SaveOutlined />} onClick={saveGeneral} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Settings</Button>
                   </div>
                 </Form>
               </Card>
@@ -668,12 +737,12 @@ export default function Settings() {
                         <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{n.label}</Text>
                         <Text style={{ fontSize: 12, color: '#aaa' }}>{n.desc}</Text>
                       </div>
-                      <Switch defaultChecked={n.default} style={{ background: n.default ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                      <Switch checked={notifPrefs[n.key]} onChange={(v) => setNotifPrefs((p) => ({ ...p, [n.key]: v }))} style={{ background: notifPrefs[n.key] ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
                     </div>
                   ))}
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 8 }}>
                     <Button>Cancel</Button>
-                    <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
+                    <Button type="primary" icon={<SaveOutlined />} onClick={saveNotifications} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
                   </div>
                 </Form>
               </Card>
@@ -684,11 +753,11 @@ export default function Settings() {
             label: 'GST & Tax',
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-                <Form layout="vertical">
+                <Form layout="vertical" form={gstForm}>
                   <Row gutter={16}>
                     <Col xs={24} sm={12}>
-                      <Form.Item label="Default GST Rate">
-                        <Select defaultValue="18">
+                      <Form.Item label="Default GST Rate" name="defaultGst">
+                        <Select>
                           <Option value="5">5%</Option>
                           <Option value="12">12%</Option>
                           <Option value="18">18%</Option>
@@ -696,15 +765,15 @@ export default function Settings() {
                         </Select>
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={12}><Form.Item label="CGST"><Input defaultValue="9%" /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="SGST"><Input defaultValue="9%" /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="IGST (Interstate)"><Input defaultValue="18%" /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="HSN Code (Default)"><Input placeholder="Ex: 3401" /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="Tax Invoice Prefix"><Input defaultValue="INV-" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="CGST" name="cgst"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="SGST" name="sgst"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="IGST (Interstate)" name="igst"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="HSN Code (Default)" name="hsnCode"><Input placeholder="Ex: 3401" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Tax Invoice Prefix" name="invoicePrefix"><Input /></Form.Item></Col>
                   </Row>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 4 }}>
-                    <Button>Cancel</Button>
-                    <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
+                    <Button onClick={() => gstForm.resetFields()}>Cancel</Button>
+                    <Button type="primary" icon={<SaveOutlined />} onClick={saveGst} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
                   </div>
                 </Form>
               </Card>
@@ -1026,7 +1095,7 @@ export default function Settings() {
                 {/* Save */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                   <Button>Cancel</Button>
-                  <Button type="primary" icon={<SaveOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+                  <Button type="primary" icon={<SaveOutlined />} onClick={saveInvoiceSettings} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
                     Save Invoice Settings
                   </Button>
                 </div>
@@ -1049,13 +1118,14 @@ export default function Settings() {
                       style={{ width: 220, borderRadius: 8 }}
                       allowClear
                     />
-                    <Select value={deletedModuleFilter} onChange={setDeletedModuleFilter} style={{ width: 160 }}>
+                    <Select value={deletedModuleFilter} onChange={setDeletedModuleFilter} style={{ width: 180 }}>
                       <Option value="all">All Modules</Option>
                       <Option value="Parties & Ledger">Parties & Ledger</Option>
-                      <Option value="Sales">Sales</Option>
+                      <Option value="Sales Team">Sales Team</Option>
                       <Option value="Inventory">Inventory</Option>
-                      <Option value="Purchase">Purchase</Option>
-                      <Option value="Billing">Billing</Option>
+                      <Option value="Vendors">Vendors</Option>
+                      <Option value="Staff Management">Staff Management</Option>
+                      <Option value="Settings">Settings</Option>
                     </Select>
                   </Space>
                 </div>
@@ -1101,7 +1171,7 @@ export default function Settings() {
                               style={{ color: '#52c41a', padding: '0 4px', fontSize: 13 }}
                               onClick={async () => {
                                 try {
-                                  await restoreRecordMutation({ type: 'parties', id: r.key }).unwrap();
+                                  await restoreRecordMutation({ type: r.type, id: r.key }).unwrap();
                                   enqueueSnackbar(`${r.name} restored`, { variant: 'success' });
                                 } catch { enqueueSnackbar('Restore failed', { variant: 'error' }); }
                               }}

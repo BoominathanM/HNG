@@ -38,12 +38,15 @@ const userSchema = new mongoose.Schema({
   targetPayment: { type: Number, default: 0 },
   targetSoftware: { type: Number, default: 0 },
   targetPeople: { type: Number, default: 0 },
-  rewardQuarter: { type: Number, default: 0 },
-  rewardHalf: { type: Number, default: 0 },
-  rewardThreeQtr: { type: Number, default: 0 },
-  rewardFull: { type: Number, default: 0 },
+  overallTarget: { type: Number, default: 0 },
+  // Reward milestone names (1/4, 1/2, 3/4, Full) — stored as text labels per the doc
+  rewardQuarter: { type: String, default: '', trim: true },
+  rewardHalf: { type: String, default: '', trim: true },
+  rewardThreeQtr: { type: String, default: '', trim: true },
+  rewardFull: { type: String, default: '', trim: true },
   refreshToken: { type: String, select: false },
   deletedAt: Date,
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

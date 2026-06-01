@@ -94,6 +94,7 @@ exports.deleteUser = asyncHandler(async (req, res, next) => {
   const user = await User.findOne({ _id: req.params.id, deletedAt: null });
   if (!user) return next(new AppError('User not found', 404));
   user.deletedAt = Date.now();
+  user.deletedBy = req.user._id;
   await user.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, message: 'User deleted' });
 });
@@ -111,18 +112,60 @@ exports.updatePermissions = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: { permissions: Object.fromEntries(user.permissions) } });
 });
 
-// ─── Deleted Records ─────────────────────────────────────────────────────────
+// ─── Deleted Records (across all soft-deleted modules) ───────────────────────
+// Map of restore "type" -> { model, module label, fields to surface, label resolver }
+const DELETED_SOURCES = {
+  parties: { model: 'Party', module: 'Parties & Ledger', label: (d) => d.name },
+  leads: { model: 'Lead', module: 'Sales Team', label: (d) => d.hotelName || d.clientName },
+  orders: { model: 'Order', module: 'Sales Team', label: (d) => d.orderCode || d.clientName },
+  quotations: { model: 'Quotation', module: 'Sales Team', label: (d) => d.quotCode || d.clientName },
+  inventory: { model: 'InventoryItem', module: 'Inventory', label: (d) => d.name },
+  kits: { model: 'Kit', module: 'Inventory', label: (d) => d.name },
+  vendors: { model: 'Vendor', module: 'Vendors', label: (d) => d.name },
+  staff: { model: 'Staff', module: 'Staff Management', label: (d) => d.fullName || d.name },
+  users: { model: 'User', module: 'Settings', label: (d) => d.fullName },
+};
+
+const getModel = (name) => {
+  try { return require(`../../models/${name}`); } catch { return null; }
+};
+
 exports.getDeletedRecords = asyncHandler(async (req, res) => {
-  const parties = await Party.find({ deletedAt: { $ne: null } }).select('name type phone deletedAt');
-  res.status(200).json({ success: true, data: { parties } });
+  const result = {};
+  const all = [];
+  for (const [type, cfg] of Object.entries(DELETED_SOURCES)) {
+    const Model = getModel(cfg.model);
+    if (!Model) continue;
+    const docs = await Model.find({ deletedAt: { $ne: null } })
+      .populate({ path: 'deletedBy', select: 'fullName' })
+      .lean();
+    result[type] = docs;
+    docs.forEach((d) => {
+      all.push({
+        _id: d._id,
+        type,
+        module: cfg.module,
+        name: cfg.label(d) || '—',
+        deletedAt: d.deletedAt,
+        deletedBy: d.deletedBy?.fullName || 'System',
+      });
+    });
+  }
+  all.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+  // `records` is the flat, UI-friendly list; the per-type buckets remain for back-compat.
+  res.status(200).json({ success: true, data: { ...result, records: all } });
 });
 
 exports.restoreRecord = asyncHandler(async (req, res, next) => {
   const { type, id } = req.params;
-  let doc;
-  if (type === 'parties') doc = await Party.findById(id);
+  const cfg = DELETED_SOURCES[type];
+  if (!cfg) return next(new AppError(`Unknown record type: ${type}`, 400));
+  const Model = getModel(cfg.model);
+  if (!Model) return next(new AppError('Model not available', 400));
+  const doc = await Model.findById(id);
   if (!doc) return next(new AppError('Record not found', 404));
   doc.deletedAt = undefined;
+  doc.deletedBy = undefined;
   await doc.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, message: 'Record restored successfully' });
 });

@@ -22,6 +22,10 @@ import {
   useUploadDispatchLRMutation,
   useConfirmDispatchMutation,
   useVerifyItemMutation,
+  useGetTransportsQuery,
+  useGetPickupOrdersQuery,
+  useUpdatePickupOrderMutation,
+  useUpdateTransportStatusMutation,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -125,12 +129,27 @@ export default function Dispatch() {
     items: d.items || [],
   })), [dispatchData]);
 
-  const transportData = useMemo(() => dispatchOrders.filter((d) => d.lrNumber).map((d) => ({
-    key: d.key, lrNumber: d.lrNumber, orderId: d.id,
-    client: d.client, transport: d.transport,
-    dispatchDate: d.dispatchedAt?.slice(0, 10),
-    status: d.status === 'Dispatched' ? 'In Transit' : 'Delivered',
-  })), [dispatchOrders]);
+  // Transport records (real Transport collection, created on LR upload).
+  const { data: transportRaw } = useGetTransportsQuery();
+  const [updateTransportStatus] = useUpdateTransportStatusMutation();
+  const transportData = useMemo(() => {
+    const fromApi = (transportRaw?.data || []).map((t) => ({
+      key: t._id, lrNumber: t.lrNumber, orderId: t.orderCode, client: t.clientName,
+      transport: t.transportCompany || t.lrNumber || '—',
+      boxes: t.boxes, weight: t.weight, freight: t.freight,
+      trackingUrl: t.trackingUrl,
+      dispatchDate: (t.dispatchedAt || '').slice(0, 10),
+      status: t.status || 'In Transit',
+    }));
+    if (fromApi.length) return fromApi;
+    // Fallback: derive from dispatch records that carry an LR number.
+    return dispatchOrders.filter((d) => d.lrNumber).map((d) => ({
+      key: d.key, lrNumber: d.lrNumber, orderId: d.id,
+      client: d.client, transport: d.transport,
+      dispatchDate: d.dispatchedAt?.slice(0, 10),
+      status: d.status === 'Dispatched' ? 'In Transit' : 'Delivered',
+    }));
+  }, [transportRaw, dispatchOrders]);
 
   // ── Pickup reimbursements — RTK Query ─────────────────────────────────────
   const { data: pickupExpData } = useGetPickupExpensesQuery();
@@ -149,8 +168,27 @@ export default function Dispatch() {
   })), [pickupExpData]);
 
   // ── Pick Up Order tab state ────────────────────────────────────────────────
+  const { data: pickupOrdersRaw } = useGetPickupOrdersQuery();
+  const [updatePickupOrder] = useUpdatePickupOrderMutation();
   const [pickupOrders, setPickupOrders] = useState([]);
   const [pickupSubTab, setPickupSubTab] = useState('pickup_orders');
+
+  // Load pickup orders from the backend (falls back to any locally-tracked entries).
+  useEffect(() => {
+    if (pickupOrdersRaw?.data) {
+      setPickupOrders(pickupOrdersRaw.data.map((p) => ({
+        key: p._id,
+        orderId: p.orderCode || '—',
+        client: p.clientName || '—',
+        destination: p.destination || '—',
+        pickupPerson: p.pickupPersonName || p.pickupEmpId?.fullName || '—',
+        taken: p.taken,
+        amount: p.amount || 0,
+        paymentBy: p.paymentBy || '',
+        paymentStatus: p.paymentStatus || 'Unpaid',
+      })));
+    }
+  }, [pickupOrdersRaw]);
 
   // ── Proof data (base64) — shared via hng_proofs localStorage cross-page ──
   const [proofData, setProofData] = useState(() => {
@@ -503,7 +541,8 @@ export default function Dispatch() {
     return s && p && st;
   });
 
-  const todayOrders = filteredOrders.filter(o => isToday(o.createdAt));
+  // Today's Orders = scheduled for today (dispatch day / expected delivery), not creation date.
+  const todayOrders = filteredOrders.filter(o => isToday(o.dispatchedAt || o.expectedDeliveryDate || o.createdAt));
 
   // Expandable config for all orders table
   const expandable = {

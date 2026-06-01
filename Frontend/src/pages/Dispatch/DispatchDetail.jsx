@@ -20,6 +20,9 @@ import {
   useConfirmDispatchMutation,
   useUploadDispatchLRMutation,
   useVerifyItemMutation,
+  useSaveAsDraftMutation,
+  useUploadBoxPhotosMutation,
+  useVerifyInvoiceMutation,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -49,28 +52,65 @@ export default function DispatchDetail() {
   const [confirmDispatch] = useConfirmDispatchMutation();
   const [uploadLR] = useUploadDispatchLRMutation();
   const [verifyItem] = useVerifyItemMutation();
+  const [saveAsDraft] = useSaveAsDraftMutation();
+  const [uploadBoxPhotos] = useUploadBoxPhotosMutation();
+  const [verifyInvoice] = useVerifyInvoiceMutation();
+  const [invoiceVerdict, setInvoiceVerdict] = useState(null);
+
+  const handleBoxPhotoUpload = async (type, file) => {
+    try {
+      const fd = new FormData();
+      fd.append('photos', file);
+      fd.append('type', type);
+      await uploadBoxPhotos({ id, formData: fd }).unwrap();
+      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo uploaded`, { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Box photo upload failed', { variant: 'error' });
+    }
+    return false; // prevent antd auto-upload
+  };
+
+  const handleVerifyInvoice = async () => {
+    try {
+      const vals = form.getFieldsValue();
+      const res = await verifyInvoice({ id, invoiceNumber: vals.invoiceNumber, invoiceTotal: order?.total }).unwrap();
+      setInvoiceVerdict(res.data);
+      enqueueSnackbar(`Invoice ${res.data.verdict} (${res.data.score})`, { variant: res.data.verdict === 'verified' ? 'success' : res.data.verdict === 'failed' ? 'error' : 'warning' });
+    } catch {
+      enqueueSnackbar('Invoice verification failed', { variant: 'error' });
+    }
+  };
 
   const order = useMemo(() => {
     const d = dispatchData?.data;
     if (!d) return null;
+    // getDispatch populates `orderId` as a nested object — read order context from there,
+    // falling back to any denormalized fields on the dispatch root.
+    const o = (d.orderId && typeof d.orderId === 'object') ? d.orderId : {};
+    // Payment is "Confirmed" for dispatch purposes once the order balance is cleared.
+    const paymentConfirmed = (o.balance != null && o.balance <= 0) || o.status === 'Completed' || d.paymentStatus === 'Paid';
     return {
-      key: d._id, id: d.orderCode || d._id,
-      client: d.clientName || '—', contactPerson: d.contactPerson || '—',
-      phone: d.clientPhone || '', email: d.clientEmail || '',
-      product: d.product || '', qty: d.qty || 0,
+      key: d._id, id: o.orderCode || d.orderCode || d._id,
+      orderObjectId: o._id || d.orderId,
+      client: o.clientName || d.clientName || '—', contactPerson: o.contactPerson || d.contactPerson || '—',
+      phone: o.clientPhone || d.clientPhone || '', email: o.clientEmail || d.clientEmail || '',
+      product: o.product || d.product || '', qty: o.qty || d.qty || 0,
       boxes: d.boxes || 0, weight: d.weight || '',
-      payment: d.paymentStatus || 'Pending',
-      address: d.address || '', destination: d.destination || '',
+      payment: paymentConfirmed ? 'Confirmed' : 'Pending',
+      address: o.address || d.address || '', destination: o.destination || d.destination || '',
       detailedAddress: d.detailedAddress || '',
       city: d.city || '', state: d.state || '', pincode: d.pincode || '',
       transport: d.transportName || '', status: d.status || '',
-      salesPerson: d.salesPerson || '', items: d.items || [],
+      salesPerson: o.assignedTo?.fullName || d.salesPerson || '',
+      // dispatch line items (these carry _id for per-product verification)
+      items: (d.items && d.items.length ? d.items : (o.items || [])),
       lrData: d.lrData || null,
     };
   }, [dispatchData]);
 
   const [form] = Form.useForm();
   const [lrForm] = Form.useForm();
+  const [trackingForm] = Form.useForm();
 
   // Dispatch verification state
   const [dispatchType, setDispatchType] = useState(null);
@@ -91,12 +131,21 @@ export default function DispatchDetail() {
   const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
   const sectionBg = isDark ? '#161622' : '#fafbff';
 
-  const toggleVerify = (productKey) => {
+  const toggleVerify = async (productKey, itemId) => {
+    const willVerify = !verifiedProducts.has(productKey);
     setVerifiedProducts(prev => {
       const next = new Set(prev);
       next.has(productKey) ? next.delete(productKey) : next.add(productKey);
       return next;
     });
+    // Persist verification to the backend (only when marking verified and we have a real item id)
+    if (willVerify && itemId) {
+      try {
+        await verifyItem({ id, itemId }).unwrap();
+      } catch {
+        enqueueSnackbar('Failed to persist verification', { variant: 'error' });
+      }
+    }
   };
 
   const handlePrintDispatchDetails = () => {
@@ -137,14 +186,36 @@ export default function DispatchDetail() {
       formData.append('weight', vals.weight ?? order.weight ?? '');
       formData.append('dispatchType', vals.dispatchType || dispatchType || 'Full Dispatch');
       formData.append('invoiceNumber', vals.invoiceNumber || '');
-      formData.append('notifyAuto', notifyAuto);
-      formData.append('notifyWhatsApp', notifyWhatsApp);
+      if (vals.invoiceDate) formData.append('invoiceDate', vals.invoiceDate.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate);
+      // Backend reads autoNotify / sendWhatsapp (FormData sends them as strings).
+      formData.append('autoNotify', notifyAuto);
+      formData.append('sendWhatsapp', notifyWhatsApp);
+      // Attach the invoice file if one was selected (confirm route accepts upload.single('invoice')).
+      const invoiceFile = vals.invoiceFile?.[0]?.originFileObj || vals.invoiceFile?.file?.originFileObj;
+      if (invoiceFile) formData.append('invoice', invoiceFile);
       await confirmDispatch({ id, formData }).unwrap();
       setDispatched(true);
       const notifyParts = [notifyAuto && 'Sales & Customer', notifyWhatsApp && 'WhatsApp'].filter(Boolean).join(', ');
       enqueueSnackbar(`Dispatch confirmed! Notifications sent via: ${notifyParts || 'none'}.`, { variant: 'success' });
     } catch {
       enqueueSnackbar('Failed to confirm dispatch.', { variant: 'error' });
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    try {
+      const vals = form.getFieldsValue();
+      await saveAsDraft({
+        id,
+        dispatchType: vals.dispatchType || dispatchType || undefined,
+        invoiceNumber: vals.invoiceNumber || undefined,
+        invoiceDate: vals.invoiceDate?.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate,
+        autoNotify: notifyAuto,
+        sendWhatsapp: notifyWhatsApp,
+      }).unwrap();
+      enqueueSnackbar('Saved as draft', { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Failed to save draft', { variant: 'error' });
     }
   };
 
@@ -164,18 +235,38 @@ export default function DispatchDetail() {
     enqueueSnackbar('Sending notifications...', { variant: 'info' });
     try {
       const lrVals = lrForm.getFieldsValue();
-      await uploadLR({
-        id,
-        lrNumber: lrVals.lrNumber || '',
-        lrDate: lrVals.lrDate || '',
-        transportName: lrVals.transportName || '',
-        packages: lrVals.packages || '',
-        fromCity: lrVals.fromCity || '',
-        toCity: lrVals.toCity || '',
-        weight: lrVals.weight || '',
-        freight: lrVals.freight || '',
-        estimatedDelivery: lrVals.estimatedDelivery || '',
-      }).unwrap();
+      const trackVals = trackingForm.getFieldsValue();
+      const lrFile = lrFileList?.[0]?.originFileObj;
+      let payload;
+      if (lrFile) {
+        // Send multipart so the LR receipt file is actually uploaded (route uses upload.single('lr')).
+        const fd = new FormData();
+        fd.append('lr', lrFile);
+        Object.entries({
+          lrNumber: lrVals.lrNumber || trackVals.trackingLR || '',
+          trackingUrl: trackVals.trackingUrl || '',
+          lrDate: lrVals.lrDate || '', transportName: lrVals.transportName || '',
+          packages: lrVals.packages || '', fromCity: lrVals.fromCity || '',
+          toCity: lrVals.toCity || '', weight: lrVals.weight || '',
+          freight: lrVals.freight || '', estimatedDelivery: lrVals.estimatedDelivery || '',
+        }).forEach(([k, v]) => fd.append(k, v));
+        payload = { id, formData: fd };
+      } else {
+        payload = {
+          id,
+          lrNumber: lrVals.lrNumber || trackVals.trackingLR || '',
+          trackingUrl: trackVals.trackingUrl || '',
+          lrDate: lrVals.lrDate || '',
+          transportName: lrVals.transportName || '',
+          packages: lrVals.packages || '',
+          fromCity: lrVals.fromCity || '',
+          toCity: lrVals.toCity || '',
+          weight: lrVals.weight || '',
+          freight: lrVals.freight || '',
+          estimatedDelivery: lrVals.estimatedDelivery || '',
+        };
+      }
+      await uploadLR(payload).unwrap();
       setFinishedDispatch(true);
       enqueueSnackbar(`Dispatch Finished! Notifications sent to Sales (${order.salesPerson}) and Customer (${order.client}) via WhatsApp.`, { variant: 'success' });
     } catch {
@@ -192,7 +283,9 @@ export default function DispatchDetail() {
     );
   }
 
-  const products = (order?.items || []).map((item, i) => ({ key: i + 1, name: item.product || item.name, qty: item.qty || 0, rate: item.rate || 0, boxes: item.boxes || 0 }));
+  const products = (order?.items || []).map((item, i) => ({ key: i + 1, itemId: item._id, name: item.product || item.name || item.itemName, qty: item.qty || item.qtyOrdered || 0, rate: item.rate || item.price || 0, boxes: item.boxes || 0, verified: item.verified }));
+  // Doc: every product must be verified before dispatch can be confirmed.
+  const allProductsVerified = products.length > 0 && products.every((p) => verifiedProducts.has(p.key) || p.verified);
   const lrUploaded = lrFileList.length > 0;
 
   return (
@@ -354,7 +447,7 @@ export default function DispatchDetail() {
                           render: (_, row) => (
                             <Button size="small" icon={<CheckSquareOutlined />}
                               style={verifiedProducts.has(row.key) ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                              onClick={() => toggleVerify(row.key)}
+                              onClick={() => toggleVerify(row.key, row.itemId)}
                             >
                               {verifiedProducts.has(row.key) ? 'Unverify' : 'Verify'}
                             </Button>
@@ -365,18 +458,18 @@ export default function DispatchDetail() {
                   </div>
                 )}
 
-                {/* Box Photos */}
+                {/* Box Photos (multiple, uploaded immediately) */}
                 <Row gutter={12}>
                   <Col xs={24} sm={12}>
-                    <Form.Item label="Open Box Photo">
-                      <Upload listType="picture" maxCount={1} beforeUpload={() => false}>
+                    <Form.Item label="Open Box Photos">
+                      <Upload listType="picture" multiple beforeUpload={(file) => handleBoxPhotoUpload('open', file)} accept="image/*">
                         <Button icon={<CameraOutlined />} block>Open Box</Button>
                       </Upload>
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>
-                    <Form.Item label="Close Box Photo">
-                      <Upload listType="picture" maxCount={1} beforeUpload={() => false}>
+                    <Form.Item label="Closed Box Photos">
+                      <Upload listType="picture" multiple beforeUpload={(file) => handleBoxPhotoUpload('close', file)} accept="image/*">
                         <Button icon={<CameraOutlined />} block>Close Box</Button>
                       </Upload>
                     </Form.Item>
@@ -401,13 +494,30 @@ export default function DispatchDetail() {
                       </Form.Item>
                     </Col>
                     <Col xs={24}>
-                      <Form.Item label="Upload Invoice" name="invoiceFile" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList} style={{ marginBottom: 0 }}>
+                      <Form.Item label="Upload Invoice" name="invoiceFile" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList} style={{ marginBottom: 8 }}>
                         <Upload listType="picture" maxCount={3} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
                           <Button icon={<UploadOutlined />} block style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
                             Upload Invoice (PDF / Image)
                           </Button>
                         </Upload>
                       </Form.Item>
+                    </Col>
+                    <Col xs={24}>
+                      <Button icon={<FileDoneOutlined />} onClick={handleVerifyInvoice} style={{ borderColor: '#1677ff', color: '#1677ff' }}>
+                        AI Verify Invoice
+                      </Button>
+                      {invoiceVerdict && (
+                        <div style={{ marginTop: 8 }}>
+                          <Tag color={invoiceVerdict.verdict === 'verified' ? 'success' : invoiceVerdict.verdict === 'failed' ? 'error' : 'warning'}>
+                            {invoiceVerdict.verdict.toUpperCase()} · {invoiceVerdict.score}
+                          </Tag>
+                          <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12 }}>
+                            {invoiceVerdict.checks.map((c, i) => (
+                              <li key={i} style={{ color: c.pass ? '#52c41a' : '#ff4d4f' }}>{c.pass ? '✓' : '✗'} {c.label}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </Col>
                   </Row>
                 </div>
@@ -433,14 +543,14 @@ export default function DispatchDetail() {
                 <Button icon={<PrinterOutlined />} onClick={handlePrintDispatchDetails}>
                   Print Dispatch Details
                 </Button>
-                <Button icon={<SaveOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>
+                <Button icon={<SaveOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }} onClick={handleSaveDraft}>
                   Save as Draft
                 </Button>
                 <Button
                   type="primary"
                   icon={<CarOutlined />}
-                  disabled={order.payment !== 'Confirmed' || dispatched}
-                  style={{ background: (order.payment === 'Confirmed' && !dispatched) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
+                  disabled={order.payment !== 'Confirmed' || dispatched || !allProductsVerified}
+                  style={{ background: (order.payment === 'Confirmed' && !dispatched && allProductsVerified) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
                   onClick={handleConfirmDispatch}
                 >
                   {dispatched ? 'Dispatched ✓' : 'Confirm Dispatch'}
@@ -596,7 +706,7 @@ export default function DispatchDetail() {
                   <LinkOutlined style={{ color: '#B11E6A', fontSize: 15 }} />
                   <Text strong style={{ color: textColor, fontSize: 13 }}>Tracking via Lorry Service</Text>
                 </div>
-                <Form layout="vertical" size="small">
+                <Form form={trackingForm} layout="vertical" size="small">
                   <Row gutter={12}>
                     <Col xs={24} sm={14}>
                       <Form.Item label="Tracking URL (from lorry service web app)" name="trackingUrl" style={{ marginBottom: 8 }}>

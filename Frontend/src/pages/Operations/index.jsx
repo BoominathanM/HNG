@@ -57,6 +57,8 @@ import {
   useUpdateStickerStatusMutation,
   useSendToStickerTeamMutation,
   useAssignTaskMutation,
+  useSetOrderEmergencyMutation,
+  useApproveStickerRequestMutation,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -118,6 +120,8 @@ export default function Operations() {
   const [updateStickerStatus] = useUpdateStickerStatusMutation();
   const [sendToStickerTeam] = useSendToStickerTeamMutation();
   const [assignTask] = useAssignTaskMutation();
+  const [setOrderEmergency] = useSetOrderEmergencyMutation();
+  const [approveStickerRequest] = useApproveStickerRequestMutation();
 
   const stickerRequests = stickerData?.data || [];
 
@@ -286,6 +290,11 @@ export default function Operations() {
             try {
               await updateOrderStatus({ id: record.key, printingStatus: val }).unwrap();
               enqueueSnackbar(`${record.id} status → ${val}`, { variant: 'success' });
+              // Doc: when printing status is Closed, redirect to the task assignment page.
+              if (val === 'Closed') {
+                enqueueSnackbar('Printing closed — opening task assignment', { variant: 'info' });
+                navigate(`/operations/${record.id}?assign=1`);
+              }
             } catch (err) {
               enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update printing status', { variant: 'error' });
             }
@@ -302,9 +311,25 @@ export default function Operations() {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
-        <Tooltip title="View full operation screen">
-          <Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/operations/${record.id}`); }} />
-        </Tooltip>
+        <Space size={4}>
+          <Tooltip title="View full operation screen">
+            <Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/operations/${record.id}`); }} />
+          </Tooltip>
+          <Tooltip title={record.isUrgent ? 'Unmark emergency' : 'Mark as emergency'}>
+            <Button
+              size="small"
+              icon={<AlertFilled />}
+              danger={record.isUrgent}
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  await setOrderEmergency({ id: record.key, isEmergency: !record.isUrgent }).unwrap();
+                  enqueueSnackbar(record.isUrgent ? 'Emergency removed' : 'Marked as emergency', { variant: 'success' });
+                } catch { enqueueSnackbar('Failed to update', { variant: 'error' }); }
+              }}
+            />
+          </Tooltip>
+        </Space>
       ),
     },
   ];
@@ -346,21 +371,40 @@ export default function Operations() {
           >
             Send
           </Button>
-          <Button
-            size="small"
-            icon={<CheckCircleOutlined />}
-            style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
-            onClick={async () => {
-              try {
-                await updateStickerStatus({ id: record._id || record.key, status: 'Approved' }).unwrap();
-                enqueueSnackbar(`${record.orderId} approved — printing can start now`, { variant: 'success' });
-              } catch (err) {
-                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve design', { variant: 'error' });
-              }
-            }}
-          >
-            Approve
-          </Button>
+          <Tooltip title={record.salesApproved ? 'Sales approved ✓' : 'Sales person approval'}>
+            <Button
+              size="small"
+              icon={<CheckCircleOutlined />}
+              style={record.salesApproved ? { background: '#52c41a', borderColor: '#52c41a', color: '#fff' } : { borderColor: '#52c41a', color: '#52c41a' }}
+              onClick={async () => {
+                try {
+                  const res = await approveStickerRequest({ id: record._id || record.key, role: 'sales' }).unwrap();
+                  enqueueSnackbar(res?.data?.status === 'Approved' ? `${record.orderId} fully approved — printing can start` : 'Sales approved — awaiting Ops Head', { variant: 'success' });
+                } catch (err) {
+                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                }
+              }}
+            >
+              Sales OK
+            </Button>
+          </Tooltip>
+          <Tooltip title={record.opsHeadApproved ? 'Ops Head approved ✓' : 'Operations head approval'}>
+            <Button
+              size="small"
+              icon={<CheckCircleOutlined />}
+              style={record.opsHeadApproved ? { background: '#52c41a', borderColor: '#52c41a', color: '#fff' } : { borderColor: '#1677ff', color: '#1677ff' }}
+              onClick={async () => {
+                try {
+                  const res = await approveStickerRequest({ id: record._id || record.key, role: 'opsHead' }).unwrap();
+                  enqueueSnackbar(res?.data?.status === 'Approved' ? `${record.orderId} fully approved — printing can start` : 'Ops Head approved — awaiting Sales', { variant: 'success' });
+                } catch (err) {
+                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                }
+              }}
+            >
+              Ops OK
+            </Button>
+          </Tooltip>
           <Button
             size="small"
             icon={<PrinterOutlined />}

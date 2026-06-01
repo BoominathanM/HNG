@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import dayjs from 'dayjs';
 import {
-  Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal, Form, Row, Col, Typography, 
-  Drawer, Steps, Divider, Badge, InputNumber, Tooltip, Checkbox, Slider, Upload, Progress, 
-  DatePicker, Descriptions, Timeline, 
+  Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal, Form, Row, Col, Typography,
+  Drawer, Steps, Divider, Badge, InputNumber, Tooltip, Checkbox, Slider, Upload, Progress,
+  DatePicker, Descriptions, Timeline, AutoComplete,
   Spin,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
@@ -32,6 +32,7 @@ import {
   useAssignLeadMutation,
   useCreateSalesQuotationMutation,
   useConvertToNegotiationMutation,
+  useConvertLeadToNegotiationMutation,
   useConvertToOrderMutation,
   useCreateSalesOrderMutation,
   useUpdateSalesOrderMutation,
@@ -41,6 +42,11 @@ import {
   useGetMyPerformanceQuery,
   useGetStaffQuery,
   useGetKitsQuery,
+  useGetPartiesQuery,
+  useGetRemindersQuery,
+  useGetHotelNamesQuery,
+  useLazyLookupHotelQuery,
+  useGetComplaintHistoryQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -780,7 +786,16 @@ export default function Sales() {
         paymentReminderDate: vals.paymentReminderDate ? vals.paymentReminderDate.format('YYYY-MM-DD') : orderEditTarget.paymentReminderDate,
       };
       try {
-        await updateSalesOrderMutation({ id: orderEditTarget._id || orderEditTarget.key, ...updated }).unwrap();
+        // Map UI field names to the Order schema field names so edits actually persist
+        const backendPatch = {
+          id: orderEditTarget._id || orderEditTarget.key,
+          expectedDeliveryDate: updated.expectedDelivery || undefined,
+          advancePaidAmount: updated.advance,
+          advancePaid: updated.advance,
+          paymentTerms: updated.paymentTerms,
+          paymentReminderDate: updated.paymentReminderDate || undefined,
+        };
+        await updateSalesOrderMutation(backendPatch).unwrap();
         setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
         enqueueSnackbar('Order updated successfully', { variant: 'success' });
         setOrderEditModalOpen(false);
@@ -826,6 +841,12 @@ export default function Sales() {
   const { data: negotiationsRaw } = useGetNegotiationsQuery();
   const { data: ordersRaw } = useGetSalesOrdersQuery();
   const { data: complaintsRaw } = useGetComplaintsQuery();
+  const { data: partiesRaw } = useGetPartiesQuery();
+  const { data: remindersRaw } = useGetRemindersQuery();
+  const { data: hotelNamesRaw } = useGetHotelNamesQuery();
+  const [lookupHotel] = useLazyLookupHotelQuery();
+  const remindersData = remindersRaw?.data || [];
+  const hotelNameOptions = (hotelNamesRaw?.data || []).map((n) => ({ value: n, label: n }));
   const { data: perfRaw, isLoading: perfLoading } = useGetMyPerformanceQuery();
   const { data: staffRaw } = useGetStaffQuery();
   const { data: kitsRaw } = useGetKitsQuery();
@@ -873,6 +894,7 @@ export default function Sales() {
   const [assignLeadMutation] = useAssignLeadMutation();
   const [createSalesQuotationMutation] = useCreateSalesQuotationMutation();
   const [convertToNegotiationMutation] = useConvertToNegotiationMutation();
+  const [convertLeadToNegotiationMutation] = useConvertLeadToNegotiationMutation();
   const [convertToOrderMutation] = useConvertToOrderMutation();
   const [createSalesOrderMutation] = useCreateSalesOrderMutation();
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
@@ -890,11 +912,23 @@ export default function Sales() {
     if (negotiationsRaw?.data) setNegotiationsData((negotiationsRaw.data).map((n) => ({ ...n, key: n._id, hotelName: n.clientName, status: n.status, salesPerson: n.salesPerson })));
   }, [negotiationsRaw]);
   useEffect(() => {
-    if (ordersRaw?.data) setOrdersData((ordersRaw.data).map((o) => ({ ...o, key: o._id, oid: o.orderCode, hotelName: o.clientName, status: o.status, salesPerson: o.salesPerson, totalAmount: o.total, date: o.createdAt?.slice(0, 10) })));
+    if (ordersRaw?.data) setOrdersData((ordersRaw.data).map((o) => ({ ...o, key: o._id, oid: o.orderCode, hotelName: o.clientName, status: o.status, salesPerson: o.salesPerson, totalAmount: o.total, date: o.createdAt?.slice(0, 10), expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : o.expectedDelivery, advance: o.advancePaidAmount ?? o.advancePaid ?? 0 })));
   }, [ordersRaw]);
   useEffect(() => {
     if (complaintsRaw?.data) setComplaintsData((complaintsRaw.data).map((c) => ({ ...c, key: c._id, orderId: c.orderId?.orderCode || c.orderId, hotelName: c.clientName, description: c.description, raisedAt: c.createdAt, salesPerson: c.salesPerson, status: c.status })));
   }, [complaintsRaw]);
+  useEffect(() => {
+    if (partiesRaw?.data) setCustomersData((partiesRaw.data).map((p) => ({
+      ...p,
+      key: p._id,
+      customerId: p.partyCode || (p._id ? `CUST-${String(p._id).slice(-5)}` : '—'),
+      hotelName: p.name || p.clientName,
+      location: p.city || p.location || '—',
+      phone: p.phone,
+      salesPerson: p.assignedTo?.fullName || p.salesPerson || '—',
+      createdAt: p.createdAt,
+    })));
+  }, [partiesRaw]);
 
   useEffect(() => {
     if (viewMode === 'order-detail' && selectedRecord?.gstNumber) {
@@ -1183,8 +1217,15 @@ export default function Sales() {
       ],
     };
     try {
-      await convertToNegotiationMutation({ id: lead._id || lead.key, ...newNeg }).unwrap();
-      setNegotiationsData(prev => [...prev, newNeg]);
+      await convertLeadToNegotiationMutation({
+        id: lead._id || lead.key,
+        clientName: lead.hotelName || lead.billingName,
+        billType: lead.billType,
+        gstAmount: lead.gstAmount || 0,
+        totalAmount: calcTotal(lead.products),
+        total: calcTotal(lead.products),
+        items: (lead.products || []).map(mapOrderItem),
+      }).unwrap();
       enqueueSnackbar(`${lead.hotelName} converted to Negotiation (${newNeg.nid})`, { variant: 'success' });
       setActiveTab('quotations');
       setViewMode('table');
@@ -1264,6 +1305,65 @@ export default function Sales() {
     }
   };
 
+  // Infer which packaging queue (Sticker / Box / Frosted Ziplock) a product belongs to.
+  // Operations builds its Sticker/Box/Frosted queues by filtering order items on logoType.
+  const inferLogoType = (p) => {
+    const hay = `${p?.printing || ''} ${p?.sticker || ''} ${p?.packingMaterial || ''} ${p?.materialCategory || ''} ${p?.logoType || ''}`.toLowerCase();
+    if (hay.includes('frosted') || hay.includes('ziplock')) return 'Frosted Ziplock';
+    if (hay.includes('box')) return 'Box';
+    if (hay.includes('sticker')) return 'Sticker';
+    return p?.logoType || 'Sticker';
+  };
+
+  // Build an order item, carrying the operations/packaging fields the Operations module reads.
+  const mapOrderItem = (p) => ({
+    itemName: p.name,
+    unit: p.unit,
+    price: Number(p.rate) || 0,
+    qty: Number(p.qty) || 0,
+    lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
+    logoType: inferLogoType(p),
+    size: p.size,
+    packaging: p.packingMaterial,
+    material: p.materialCategory,
+    rate: Number(p.rate) || 0,
+    boxes: Number(p.boxes) || 0,
+  });
+
+  // Old Hotel: auto-fetch existing hotel details (by name + branch) and prefill the lead form.
+  const handleOldHotelLookup = async () => {
+    const hotelType = leadForm.getFieldValue('hotelType');
+    if (hotelType !== 'OLD') return;
+    const name = leadForm.getFieldValue('hotelName');
+    const branch = leadForm.getFieldValue('branch');
+    if (!name) return;
+    try {
+      const res = await lookupHotel({ name, branch }).unwrap();
+      const d = res?.data;
+      if (d) {
+        leadForm.setFieldsValue({
+          billingName: d.billingName, contactPerson: d.contactPerson, pocDesignation: d.pocDesignation,
+          phone: d.phone, email: d.email, locationCity: d.locationCity || d.city, destination: d.destination,
+          gstNumber: d.gstNumber, gstPercent: d.gstPercent, branch: d.branch || branch,
+          altRole: d.altRole, altName: d.altName, altNumber: d.altNumber,
+          generalOccupancy: d.generalOccupancy, numRooms: d.numRooms || d.rowsInHotel,
+        });
+        enqueueSnackbar(`Auto-filled details for ${name}`, { variant: 'success' });
+      } else {
+        enqueueSnackbar(`No existing record found for ${name}`, { variant: 'info' });
+      }
+    } catch { /* lookup is best-effort */ }
+  };
+
+  // Doc: when a new order is placed for a customer with a prior complaint, surface an alert.
+  const alertPriorComplaint = (clientName) => {
+    if (!clientName) return;
+    const prior = complaintsData.filter((c) => (c.hotelName || '').toLowerCase() === clientName.toLowerCase());
+    if (prior.length) {
+      enqueueSnackbar(`Note: ${clientName} has ${prior.length} previous complaint(s). Review before proceeding.`, { variant: 'warning', autoHideDuration: 6000 });
+    }
+  };
+
   const buildOrderPayloadFromQuotation = (q, status) => {
     const subtotal = q.totalAmount || calcTotal(q.products);
     const gstAmount = q.gstAmount || 0;
@@ -1277,13 +1377,7 @@ export default function Sales() {
       type: q.billType === 'GST' ? 'GST' : 'Non-GST',
       paymentTerms: q.paymentTerms,
       status,
-      items: (q.products || []).map((p) => ({
-        itemName: p.name,
-        unit: p.unit,
-        price: Number(p.rate) || 0,
-        qty: Number(p.qty) || 0,
-        lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
-      })),
+      items: (q.products || []).map(mapOrderItem),
     };
   };
 
@@ -1317,6 +1411,7 @@ export default function Sales() {
   };
 
   const startOrderFromQuotation = async (q) => {
+    alertPriorComplaint(q.hotelName || q.billingName || q.clientName);
     try {
       await createSalesOrderMutation(buildOrderPayloadFromQuotation(q, 'In Production')).unwrap();
       enqueueSnackbar('Order confirmed successfully!', { variant: 'success' });
@@ -1339,6 +1434,9 @@ export default function Sales() {
       (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
     const total = subtotal + gstAmount;
     const advancePaid = Number(values.advance) || 0;
+    const hasPartial = Array.isArray(values.splitDates) && values.splitDates.length > 0;
+    // Persist payment-proof metadata (file names) so the proof list round-trips.
+    const proofMeta = (values.paymentProofs || []).map((f) => ({ name: f.name || f.fileName, uid: f.uid }));
     const payload = {
       clientName: values.hotelName || values.billingName || orderFromQuotation?.hotelName || 'Client',
       amount: subtotal,
@@ -1349,14 +1447,16 @@ export default function Sales() {
       type: values.billType === 'GST' ? 'GST' : 'Non-GST',
       paymentTerms: values.paymentTerms,
       status: 'In Production',
-      items: (values.products || []).map((p) => ({
-        itemName: p.name,
-        unit: p.unit,
-        price: Number(p.rate) || 0,
-        qty: Number(p.qty) || 0,
-        lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
-      })),
+      items: (values.products || []).map(mapOrderItem),
+      // Emergency partial delivery → flags the order so Operations/Dispatch pick it up.
+      deliveryType: hasPartial ? 'Partial' : 'Full',
+      isEmergency: hasPartial,
+      isUrgent: hasPartial,
+      splitDates: values.splitDates || [],
+      paymentProofs: proofMeta,
+      expectedDeliveryDate: values.orderDeliveryDate ? (values.orderDeliveryDate.format ? values.orderDeliveryDate.format('YYYY-MM-DD') : values.orderDeliveryDate) : undefined,
     };
+    alertPriorComplaint(payload.clientName);
     try {
       await createSalesOrderMutation(payload).unwrap();
       enqueueSnackbar('Order confirmed!', { variant: 'success' });
@@ -1470,6 +1570,7 @@ export default function Sales() {
   };
 
   const convertNegotiationToOrder = async (n) => {
+    alertPriorComplaint(n.hotelName || n.clientName);
     try {
       await convertToOrderMutation({ id: n.key }).unwrap();
       enqueueSnackbar('Order confirmed successfully!', { variant: 'success' });
@@ -1671,6 +1772,16 @@ export default function Sales() {
     },
   ];
 
+  const handleComplaintStatus = async (r, status) => {
+    try {
+      await updateComplaintStatusMutation({ id: r._id || r.key, status }).unwrap();
+      setComplaintsData(prev => prev.map(c => (c.key === r.key ? { ...c, status } : c)));
+      enqueueSnackbar(`Complaint marked ${status}`, { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data || 'Failed to update complaint', { variant: 'error' });
+    }
+  };
+
   const complaintColumns = [
     { title: 'Complaint ID', dataIndex: 'key', width: 120, render: (v) => <Text strong style={{ color: '#ff4d4f', fontSize: 13 }}>CMP-{v.toString().slice(-4)}</Text> },
     { title: 'Order ID', dataIndex: 'orderId', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
@@ -1678,13 +1789,30 @@ export default function Sales() {
     { title: 'Description', dataIndex: 'description', ellipsis: true, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Raised At', dataIndex: 'raisedAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
     { title: 'Sales Person', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Status', dataIndex: 'status', width: 95, render: (v) => <Tag color={v === 'Open' ? 'error' : 'success'} style={{ fontSize: 13 }}>{v}</Tag> },
+    {
+      title: 'Status', dataIndex: 'status', width: 130,
+      render: (v, r) => (
+        <Select
+          size="small"
+          value={v}
+          style={{ width: 120 }}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(val) => handleComplaintStatus(r, val)}
+          options={[
+            { value: 'Open', label: 'Open' },
+            { value: 'In Progress', label: 'In Progress' },
+            { value: 'Resolved', label: 'Resolved' },
+            { value: 'Closed', label: 'Closed' },
+          ]}
+        />
+      ),
+    },
     {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space size={4}>
-          <Tooltip title="View Details"><Button size="small" icon={<EyeOutlined />} /></Tooltip>
-          <Tooltip title="Mark Resolved"><Button size="small" icon={<CheckOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }} /></Tooltip>
+          <Tooltip title="View Details"><Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); Modal.info({ title: `Complaint CMP-${r.key.toString().slice(-4)}`, width: 560, content: (<div><p><b>Hotel:</b> {r.hotelName}</p><p><b>Order:</b> {r.orderId || '—'}</p><p><b>Status:</b> {r.status}</p><p><b>Raised:</b> {fmtDateTimeShort(r.raisedAt)}</p><p><b>Description:</b></p><p>{r.description}</p>{(r.statusHistory && r.statusHistory.length > 0) && (<><Divider style={{ margin: '12px 0' }} /><p><b>History</b></p><Timeline items={r.statusHistory.map((h) => ({ color: h.status === 'Resolved' ? 'green' : h.status === 'Closed' ? 'gray' : 'blue', children: (<div><Text strong>{h.status}</Text> <Text type="secondary" style={{ fontSize: 11 }}>{h.at ? new Date(h.at).toLocaleString('en-IN') : ''}{h.byName ? ` · ${h.byName}` : ''}</Text>{h.note && <div style={{ fontSize: 12 }}>{h.note}</div>}</div>) }))} /></>)}</div>) }); }} /></Tooltip>
+          <Tooltip title="Mark Resolved"><Button size="small" icon={<CheckOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }} onClick={(e) => { e.stopPropagation(); handleComplaintStatus(r, 'Resolved'); }} /></Tooltip>
         </Space>
       ),
     },
@@ -2851,12 +2979,19 @@ export default function Sales() {
                     </Col>
                     <Col xs={24} sm={6}>
                       <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
-                        <Input placeholder="e.g. Hotel Blue Star" prefix={<BankOutlined style={{ color: '#ccc' }} />} />
+                        <AutoComplete
+                          options={hotelNameOptions}
+                          placeholder="e.g. Hotel Blue Star"
+                          filterOption={(input, option) => (option?.value || '').toLowerCase().includes(input.toLowerCase())}
+                          onSelect={() => setTimeout(handleOldHotelLookup, 0)}
+                          onBlur={handleOldHotelLookup}
+                          style={{ width: '100%' }}
+                        />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={6}>
                       <Form.Item label="Branch" name="branch">
-                        <Input placeholder="e.g. Main Branch" />
+                        <Input placeholder="e.g. Main Branch" onBlur={handleOldHotelLookup} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={6}>
@@ -4134,41 +4269,40 @@ export default function Sales() {
                       onChange={setReminderTypeFilter}
                       style={{ width: 200, borderRadius: 8 }}
                     >
-                      {['Payment Overdue Alert', 'Follow-up Reminder', 'Occupancy Alert', 'Call Reminder'].map(t => (
+                      {['Lead Follow-up', 'Payment Due', 'Order Status'].map(t => (
                         <Option key={t} value={t}>{t}</Option>
                       ))}
                     </Select>
                   </div>
                   <Table
-                    dataSource={REMINDERS_DATA.filter(r => {
+                    dataSource={remindersData.filter(r => {
                       const q = searchText.toLowerCase();
-                      const matchSearch = !q || (r.customer || '').toLowerCase().includes(q) || (r.leadId || '').toLowerCase().includes(q);
-                      const matchType = !reminderTypeFilter || r.type === reminderTypeFilter;
+                      const matchSearch = !q || (r.title || '').toLowerCase().includes(q) || (r.refCode || '').toLowerCase().includes(q);
+                      const matchType = !reminderTypeFilter || r.kind === reminderTypeFilter;
                       return matchSearch && matchType;
                     })}
                     columns={[
-                      { title: 'Lead ID', dataIndex: 'leadId', key: 'leadId', width: 110, render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace' }}>{v || '—'}</Text> },
-                      { title: 'Type', dataIndex: 'type', key: 'type', width: 150, render: (t) => <Tag color={t.includes('Payment') ? 'error' : t.includes('Alert') ? 'warning' : 'processing'}>{t}</Tag> },
-                      { title: 'Party', dataIndex: 'customer', key: 'customer', width: 150, render: (v) => <Text>{v}</Text> },
+                      { title: 'Ref', dataIndex: 'refCode', key: 'refCode', width: 110, render: (v) => <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace' }}>{v || '—'}</Text> },
+                      { title: 'Type', dataIndex: 'kind', key: 'kind', width: 150, render: (t) => <Tag color={(t || '').includes('Payment') ? 'error' : (t || '').includes('Order') ? 'processing' : 'warning'}>{t}</Tag> },
+                      { title: 'Reminder', dataIndex: 'title', key: 'title', render: (v) => <Text>{v}</Text> },
+                      { title: 'Status', dataIndex: 'status', key: 'status', width: 120, render: (v) => <Tag color={STATUS_COLORS[v] || 'default'}>{v}</Tag> },
                       {
-                        title: 'Details', key: 'details', width: 200, render: (_, r) => (
-                          <Text>{r.amount ? `₹${r.amount.toLocaleString()} (${r.daysDelayed} days overdue)` : r.topic || `${r.occupancy} occupancy`}</Text>
+                        title: 'Details', key: 'details', width: 160, render: (_, r) => (
+                          <Text>{r.amount ? `₹${Number(r.amount).toLocaleString()} due` : (r.owner || '—')}</Text>
                         )
                       },
                       {
-                        title: 'Reminder Date & Time', key: 'reminderDateTime', width: 160, render: (_, r) => (
+                        title: 'Due', key: 'due', width: 150, render: (_, r) => (
                           <Space direction="vertical" size={0}>
-                            <Text strong style={{ color: '#B11E6A' }}>{r.reminderDate || r.dueDate || '—'}</Text>
-                            <Text type="secondary" style={{ fontSize: 11 }}>{r.reminderTime || '—'}</Text>
+                            <Text strong style={{ color: r.overdue ? '#ff4d4f' : '#B11E6A' }}>{r.dueDate ? new Date(r.dueDate).toLocaleDateString('en-IN') : '—'}</Text>
+                            <Text type="secondary" style={{ fontSize: 11 }}>{r.time || (r.overdue ? 'Overdue' : '')}</Text>
                           </Space>
                         )
                       },
-                      { title: 'Action', key: 'action', width: 140, render: (_, r) => <Text>{r.dueDate ? 'Review Quotation' : r.action || 'Follow Up'}</Text> },
-                      { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', width: 130, render: (v) => <Text>{v}</Text> },
                     ]}
-                    pagination={{ pageSize: 8, size: 'small' }}
+                    pagination={{ pageSize: 10, size: 'small' }}
                     size="small"
-                    rowKey="key"
+                    rowKey="id"
                     scroll={{ x: 'max-content' }}
                   />
                 </div>

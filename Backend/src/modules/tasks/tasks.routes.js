@@ -6,6 +6,7 @@ const { protect } = require('../../middleware/auth');
 router.use(protect);
 
 router.get('/', ctrl.getTasks);
+router.get('/suggested', ctrl.getSuggestedTasks);
 router.post('/', ctrl.createTask);
 router.get('/:id', ctrl.getTask);
 router.patch('/:id/status', ctrl.updateTaskStatus);

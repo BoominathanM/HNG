@@ -29,6 +29,7 @@ export const apiSlice = createApi({
     'Reports', 'Notifications', 'Settings', 'Users', 'DeletedRecords',
     'Parties', 'PartyLedger', 'Expenses', 'Tasks', 'Operations', 'Stickers',
     'Dashboard', 'Kits', 'Options',
+    'Reminders', 'Transport', 'Pickups', 'HotelDesigns', 'SuggestedTasks',
   ],
   endpoints: (builder) => ({
 
@@ -239,12 +240,43 @@ export const apiSlice = createApi({
       invalidatesTags: ['Dispatch'],
     }),
     uploadDispatchLR: builder.mutation({
-      query: ({ id, ...data }) => ({ url: `/dispatch/${id}/lr`, method: 'patch', data }),
+      query: ({ id, formData, ...data }) => ({ url: `/dispatch/${id}/lr`, method: 'patch', data: formData || data }),
       invalidatesTags: ['Dispatch'],
     }),
     verifyItem: builder.mutation({
       query: ({ id, itemId, formData }) => ({ url: `/dispatch/${id}/items/${itemId}/verify`, method: 'patch', data: formData }),
       invalidatesTags: ['Dispatch'],
+    }),
+    verifyInvoice: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/dispatch/${id}/verify-invoice`, method: 'post', data }),
+    }),
+    uploadBoxPhotos: builder.mutation({
+      query: ({ id, formData }) => ({ url: `/dispatch/${id}/box-photos`, method: 'post', data: formData }),
+      invalidatesTags: ['Dispatch'],
+    }),
+    getTodaysDispatches: builder.query({
+      query: () => ({ url: '/dispatch/today' }),
+      providesTags: ['Dispatch'],
+    }),
+    getTransports: builder.query({
+      query: () => ({ url: '/dispatch/transports' }),
+      providesTags: ['Transport'],
+    }),
+    updateTransportStatus: builder.mutation({
+      query: ({ id, status }) => ({ url: `/dispatch/transports/${id}/status`, method: 'patch', data: { status } }),
+      invalidatesTags: ['Transport'],
+    }),
+    getPickupOrders: builder.query({
+      query: () => ({ url: '/dispatch/pickups' }),
+      providesTags: ['Pickups'],
+    }),
+    createPickupOrder: builder.mutation({
+      query: (data) => ({ url: '/dispatch/pickups', method: 'post', data }),
+      invalidatesTags: ['Pickups'],
+    }),
+    updatePickupOrder: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/dispatch/pickups/${id}`, method: 'patch', data }),
+      invalidatesTags: ['Pickups'],
     }),
 
     // ── Inventory ────────────────────────────────────────────────────────────
@@ -401,6 +433,10 @@ export const apiSlice = createApi({
       query: ({ id, ...data }) => ({ url: `/sales/quotations/${id}/convert-negotiation`, method: 'post', data }),
       invalidatesTags: ['Quotations', 'Negotiations'],
     }),
+    convertLeadToNegotiation: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/sales/leads/${id}/convert-negotiation`, method: 'post', data }),
+      invalidatesTags: ['Leads', 'Negotiations'],
+    }),
     getNegotiations: builder.query({
       query: (params) => ({ url: '/sales/negotiations', params }),
       providesTags: ['Negotiations'],
@@ -438,8 +474,23 @@ export const apiSlice = createApi({
       invalidatesTags: ['Complaints'],
     }),
     updateComplaintStatus: builder.mutation({
-      query: ({ id, status }) => ({ url: `/sales/complaints/${id}/status`, method: 'patch', data: { status } }),
+      query: ({ id, status, note }) => ({ url: `/sales/complaints/${id}/status`, method: 'patch', data: { status, note } }),
       invalidatesTags: ['Complaints'],
+    }),
+    getComplaintHistory: builder.query({
+      query: (clientName) => ({ url: '/sales/complaints/history', params: { clientName } }),
+      providesTags: ['Complaints'],
+    }),
+    getReminders: builder.query({
+      query: () => ({ url: '/sales/reminders' }),
+      providesTags: ['Reminders'],
+    }),
+    getHotelNames: builder.query({
+      query: () => ({ url: '/sales/hotels' }),
+      providesTags: ['Leads'],
+    }),
+    lookupHotel: builder.query({
+      query: ({ name, branch }) => ({ url: '/sales/hotels/lookup', params: { name, branch } }),
     }),
 
     // ── Billing ──────────────────────────────────────────────────────────────
@@ -519,6 +570,10 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/tasks', params }),
       providesTags: ['Tasks'],
     }),
+    getSuggestedTasks: builder.query({
+      query: () => ({ url: '/tasks/suggested' }),
+      providesTags: ['SuggestedTasks', 'Tasks', 'Inventory'],
+    }),
     getTask: builder.query({
       query: (id) => ({ url: `/tasks/${id}` }),
       providesTags: (result, error, id) => [{ type: 'Tasks', id }],
@@ -554,12 +609,36 @@ export const apiSlice = createApi({
       providesTags: ['Operations'],
     }),
     updateOperationOrderStatus: builder.mutation({
-      query: ({ id, status }) => ({ url: `/operations/orders/${id}/status`, method: 'patch', data: { status } }),
-      invalidatesTags: ['Operations'],
+      query: ({ id, ...data }) => ({ url: `/operations/orders/${id}/status`, method: 'patch', data }),
+      invalidatesTags: ['Operations', 'Tasks'],
     }),
     assignTask: builder.mutation({
       query: ({ orderId, ...data }) => ({ url: `/operations/orders/${orderId}/assign-task`, method: 'post', data }),
       invalidatesTags: ['Operations', 'Tasks'],
+    }),
+    assignTasksPerProduct: builder.mutation({
+      query: ({ orderId, ...data }) => ({ url: `/operations/orders/${orderId}/assign-tasks-per-product`, method: 'post', data }),
+      invalidatesTags: ['Operations', 'Tasks'],
+    }),
+    setOrderEmergency: builder.mutation({
+      query: ({ id, isEmergency }) => ({ url: `/operations/orders/${id}/emergency`, method: 'patch', data: { isEmergency } }),
+      invalidatesTags: ['Operations'],
+    }),
+    splitPartialDelivery: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/operations/orders/${id}/partial-split`, method: 'post', data }),
+      invalidatesTags: ['Operations'],
+    }),
+    getHotelDesigns: builder.query({
+      query: (params) => ({ url: '/operations/hotel-designs', params }),
+      providesTags: ['HotelDesigns'],
+    }),
+    saveHotelDesign: builder.mutation({
+      query: (data) => ({ url: '/operations/hotel-designs', method: 'post', data }),
+      invalidatesTags: ['HotelDesigns'],
+    }),
+    approveStickerRequest: builder.mutation({
+      query: ({ id, role }) => ({ url: `/operations/stickers/${id}/approve`, method: 'patch', data: { role } }),
+      invalidatesTags: ['Stickers'],
     }),
     getStickerRequests: builder.query({
       query: (params) => ({ url: '/operations/stickers', params }),
@@ -570,7 +649,16 @@ export const apiSlice = createApi({
       invalidatesTags: ['Stickers'],
     }),
     uploadStickerDesign: builder.mutation({
-      query: ({ id, formData }) => ({ url: `/operations/stickers/${id}/upload-design`, method: 'post', data: formData }),
+      // Tolerant of either { id, formData } or { id, files } (antd fileList).
+      query: ({ id, formData, files }) => {
+        let data = formData;
+        if (!data && files?.length) {
+          data = new FormData();
+          const f = files[0]?.originFileObj || files[0];
+          if (f) data.append('design', f);
+        }
+        return { url: `/operations/stickers/${id}/upload-design`, method: 'post', data };
+      },
       invalidatesTags: ['Stickers'],
     }),
     updateStickerStatus: builder.mutation({
@@ -578,7 +666,15 @@ export const apiSlice = createApi({
       invalidatesTags: ['Stickers'],
     }),
     sendToStickerTeam: builder.mutation({
-      query: (ids) => ({ url: '/operations/stickers/send-to-team', method: 'post', data: { ids } }),
+      // Accept an array, { ids }, { items:[{id|_id}] }, or { id } and normalize to an id array.
+      query: (arg) => {
+        let ids = [];
+        if (Array.isArray(arg)) ids = arg;
+        else if (arg?.ids) ids = arg.ids;
+        else if (arg?.items) ids = arg.items.map((i) => i.id || i._id || i.key).filter(Boolean);
+        else if (arg?.id) ids = [arg.id];
+        return { url: '/operations/stickers/send-to-team', method: 'post', data: { ids } };
+      },
       invalidatesTags: ['Stickers'],
     }),
 
@@ -770,6 +866,25 @@ export const {
   useSaveAsDraftMutation,
   useUploadInvoiceMutation,
   useConfirmDispatchMutation,
+  useVerifyInvoiceMutation,
+  useUploadBoxPhotosMutation,
+  useGetTodaysDispatchesQuery,
+  useGetTransportsQuery,
+  useUpdateTransportStatusMutation,
+  useGetPickupOrdersQuery,
+  useCreatePickupOrderMutation,
+  useUpdatePickupOrderMutation,
+  useGetComplaintHistoryQuery,
+  useGetRemindersQuery,
+  useGetHotelNamesQuery,
+  useLazyLookupHotelQuery,
+  useGetSuggestedTasksQuery,
+  useAssignTasksPerProductMutation,
+  useSetOrderEmergencyMutation,
+  useSplitPartialDeliveryMutation,
+  useGetHotelDesignsQuery,
+  useSaveHotelDesignMutation,
+  useApproveStickerRequestMutation,
   useUploadDispatchLRMutation,
   useVerifyItemMutation,
   // Inventory
@@ -812,6 +927,7 @@ export const {
   useGetSalesQuotationsQuery,
   useCreateSalesQuotationMutation,
   useConvertToNegotiationMutation,
+  useConvertLeadToNegotiationMutation,
   useGetNegotiationsQuery,
   useConvertToOrderMutation,
   useGetSalesOrdersQuery,

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Button,
@@ -42,6 +42,10 @@ import {
   useGetOperationOrdersQuery,
   useUpdateOperationOrderStatusMutation,
   useAssignTaskMutation,
+  useAssignTasksPerProductMutation,
+  useSplitPartialDeliveryMutation,
+  useGetHotelDesignsQuery,
+  useSaveHotelDesignMutation,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -89,6 +93,9 @@ export default function OperationDetail() {
   const { data: ordersData } = useGetOperationOrdersQuery();
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
   const [assignTask] = useAssignTaskMutation();
+  const [assignTasksPerProduct] = useAssignTasksPerProductMutation();
+  const [splitPartialDelivery] = useSplitPartialDeliveryMutation();
+  const [saveHotelDesign] = useSaveHotelDesignMutation();
 
   const allOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
@@ -138,6 +145,35 @@ export default function OperationDetail() {
     setAssignModalOpen(true);
   };
 
+  const submitAssignTask = async () => {
+    let vals;
+    try {
+      vals = await assignModalForm.validateFields();
+    } catch { return; }
+    const cleanSubTasks = subTasks
+      .filter((t) => t.description || t.qty || t.assignee)
+      .map((t) => ({ label: t.description, qty: Number(t.qty) || 0, assigneeName: t.assignee }));
+    const payload = {
+      orderId: order?.key || order?._id || id,
+      taskName: vals.taskName,
+      taskType: vals.taskType,
+      product: vals.product,
+      printingType: vals.printing,
+      qty: taskRequiredQty,
+      assigneeName: vals.assignee,
+      clientName: order?.hotelName || order?.clientName,
+      subTasks: cleanSubTasks,
+      status: 'Pending',
+    };
+    try {
+      await assignTask(payload).unwrap();
+      enqueueSnackbar('Task created and assigned', { variant: 'success' });
+      setAssignModalOpen(false);
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to assign task', { variant: 'error' });
+    }
+  };
+
   const addSubTask = () => {
     setSubTasks((prev) => [...prev, { id: Date.now(), description: '', qty: '', assignee: '' }]);
   };
@@ -179,6 +215,64 @@ export default function OperationDetail() {
 
   const order = allOrders.find((item) => item.id === id);
   const assignedEmployee = order ? { key: order.key, name: order.assignedEmployee } : null;
+
+  // Approved designs for this hotel (reuse in future orders).
+  const { data: hotelDesignsRaw } = useGetHotelDesignsQuery(
+    { hotelName: order?.hotelLogo },
+    { skip: !order?.hotelLogo }
+  );
+  const hotelDesigns = hotelDesignsRaw?.data || [];
+
+  // Per-product task fan-out: one task per order line item in a single click.
+  const handleAssignAllProducts = async () => {
+    if (!order) return;
+    try {
+      const res = await assignTasksPerProduct({ orderId: order.key, taskType: 'Production' }).unwrap();
+      enqueueSnackbar(`Created ${res.total || res.data?.length || 0} product task(s)`, { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to assign tasks', { variant: 'error' });
+    }
+  };
+
+  // Partial-delivery split: record a partial qty; the balance becomes a follow-on entry.
+  const [partialModalOpen, setPartialModalOpen] = useState(false);
+  const [partialQtyInput, setPartialQtyInput] = useState(0);
+  const handlePartialSplit = async () => {
+    if (!order) return;
+    try {
+      await splitPartialDelivery({ id: order.key, partialQty: Number(partialQtyInput) || 0 }).unwrap();
+      enqueueSnackbar('Partial delivery recorded — balance tracked separately', { variant: 'success' });
+      setPartialModalOpen(false);
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to split delivery', { variant: 'error' });
+    }
+  };
+
+  // Save the current order's design as an approved hotel design for reuse.
+  const handleSaveDesign = async (product, type) => {
+    if (!order) return;
+    try {
+      await saveHotelDesign({ hotelName: order.hotelLogo, product, type: type || 'Sticker' }).unwrap();
+      enqueueSnackbar('Design saved for reuse on this hotel', { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data || 'Failed to save design', { variant: 'error' });
+    }
+  };
+
+  // Printing-status "Closed" redirect lands here with ?assign=1 — auto-open the Assign Task modal.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('assign') === '1' && order && !assignModalOpen) {
+      const firstItem = (order.items || [])[0];
+      if (firstItem) {
+        openAssignModal(
+          { product: firstItem.itemName || firstItem.product, qty: firstItem.qty, key: 0, processTask: '' },
+          order
+        );
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, order?.id]);
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const mutedBg = isDark ? '#161622' : '#faf8fb';
@@ -325,7 +419,43 @@ export default function OperationDetail() {
           title={`Operation: ${order.id}`}
           items={[{ label: 'Operations', link: '/operations' }, { label: order.id }]}
         />
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button icon={<TeamOutlined />} onClick={handleAssignAllProducts} style={{ color: '#B11E6A', borderColor: '#B11E6A55' }}>
+            Assign Tasks (All Products)
+          </Button>
+          <Button onClick={() => { setPartialQtyInput(0); setPartialModalOpen(true); }} style={{ color: '#1677ff', borderColor: '#1677ff55' }}>
+            Partial Delivery Split
+          </Button>
+        </div>
       </div>
+
+      {order.deliveryType === 'Partial' && (order.balanceQty > 0 || order.partialQty > 0) && (
+        <Tag color="orange" style={{ marginBottom: 8 }}>
+          Partial: {order.partialQty || 0} now · Balance {order.balanceQty || 0} (same order ID)
+        </Tag>
+      )}
+
+      {hotelDesigns.length > 0 && (
+        <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, background: '#f6ffed', border: '1px solid #b7eb8f' }}>
+          <Text style={{ fontSize: 12, color: '#389e0d' }}>
+            ♻ {hotelDesigns.length} approved design(s) on file for {order.hotelLogo} — reusable for this order.
+          </Text>
+        </div>
+      )}
+
+      <Modal
+        title="Partial Delivery Split"
+        open={partialModalOpen}
+        onCancel={() => setPartialModalOpen(false)}
+        onOk={handlePartialSplit}
+        okText="Record Partial"
+      >
+        <Text style={{ display: 'block', marginBottom: 8 }}>
+          Total order qty: {order.qty || (order.items || []).reduce((s, it) => s + (it.qty || 0), 0)}
+        </Text>
+        <Text style={{ display: 'block', marginBottom: 8 }}>Enter the quantity being delivered now. The balance is tracked as a follow-on entry under the same order ID.</Text>
+        <InputNumber min={0} value={partialQtyInput} onChange={setPartialQtyInput} style={{ width: '100%' }} placeholder="Partial quantity" />
+      </Modal>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} lg={8}>
@@ -853,7 +983,7 @@ export default function OperationDetail() {
                 fontWeight: 600,
                 boxShadow: '0 4px 15px rgba(177,30,106,0.3)',
               }}
-              onClick={() => setAssignModalOpen(false)}
+              onClick={submitAssignTask}
             >
               Create and Assign Task
             </Button>

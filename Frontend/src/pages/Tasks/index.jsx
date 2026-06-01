@@ -15,6 +15,7 @@ import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import {
   useGetTasksQuery,
+  useGetSuggestedTasksQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useApproveEmergencyMutation,
@@ -40,6 +41,8 @@ const kanbanCols = [
 export default function Tasks() {
   const isDark = useSelector((s) => s.theme.isDark);
   const { data: tasksData, isLoading: tasksLoading } = useGetTasksQuery();
+  const { data: suggestedData } = useGetSuggestedTasksQuery();
+  const suggestedList = suggestedData?.data || [];
   const [createTask] = useCreateTaskMutation();
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [approveEmergency] = useApproveEmergencyMutation();
@@ -51,12 +54,22 @@ export default function Tasks() {
     type: t.taskType || 'Packing',
     name: t.taskName || t.taskCode,
     order: t.orderId?.orderCode || '—',
-    client: t.orderId?.clientName || '—',
+    client: t.orderId?.clientName || t.clientName || '—',
     product: t.product || '—',
-    assignedTo: t.assignedTo?.fullName || '—',
-    status: t.status,
-    priority: t.isEmergency ? 'High' : 'Normal',
-    payment: 'Pending',
+    assignedTo: t.assignedTo?.fullName || t.assigneeName || '—',
+    assignee: t.assignedTo?.fullName || t.assigneeName || '',
+    // Backend stores 'Done'; the UI keys everything off 'Completed'. Normalize for display.
+    status: t.status === 'Done' ? 'Completed' : t.status,
+    priority: t.priority || (t.isEmergency ? 'High' : 'Normal'),
+    isEmergency: t.isEmergency,
+    payment: t.paymentStatus || 'Pending',
+    paymentStatus: t.paymentStatus || 'Pending',
+    salesPerson: t.assignedTo?.fullName || t.assigneeName || '—',
+    // Needs sales follow-up: work done but payment not yet collected.
+    salesFollowup: t.status === 'Done' && (t.paymentStatus || 'Pending') !== 'Paid',
+    due: t.dueDate ? t.dueDate.slice(0, 10) : undefined,
+    qty: t.qty,
+    subTasks: t.subTasks || [],
     createdAt: t.createdAt,
   })), [tasksData]);
   const [searchText, setSearchText] = useState('');
@@ -102,12 +115,36 @@ export default function Tasks() {
     enqueueSnackbar('Follow-up marked done', { variant: 'success' });
   };
 
+  // Kanban drag-and-drop: dropping a card into a column transitions its status.
+  const [draggedTaskId, setDraggedTaskId] = useState(null);
+  const colKeyToStatus = { Pending: 'Pending', 'In Progress': 'In Progress', Completed: 'Done' };
+  const handleKanbanDrop = async (colKey) => {
+    const id = draggedTaskId;
+    setDraggedTaskId(null);
+    if (!id) return;
+    const task = taskList.find((t) => t.id === id || t.key === id);
+    if (!task || task.status === colKey) return;
+    try {
+      await updateTaskStatus({ id: task.key, status: colKeyToStatus[colKey] || colKey }).unwrap();
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to move task', { variant: 'error' });
+    }
+  };
+
   const handleCreateTask = async () => {
     try {
       const vals = await form.validateFields();
+      // Only forward orderId if it's a real Mongo ObjectId (the mock ORD-xxxx codes are not).
+      const realOrderId = /^[a-f0-9]{24}$/i.test(vals.orderId || '') ? vals.orderId : undefined;
       await createTask({
         taskName: vals.title,
         taskType: vals.type,
+        priority: vals.priority,
+        clientName: vals.client,
+        assigneeName: vals.assignee,
+        dueDate: vals.due ? vals.due.toISOString() : undefined,
+        description: vals.desc || vals.description,
+        orderId: realOrderId,
         status: 'Pending',
         isEmergency: vals.priority === 'Urgent',
       }).unwrap();
@@ -117,6 +154,25 @@ export default function Tasks() {
     } catch (err) {
       if (err?.errorFields) return;
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create task', { variant: 'error' });
+    }
+  };
+
+  // Assign a task directly from a Suggested-Task readiness card.
+  const handleAssignSuggested = async (s) => {
+    try {
+      await createTask({
+        taskName: `Production — ${s.product}`,
+        taskType: 'Production',
+        orderId: s.orderId,
+        product: s.product,
+        productIndex: typeof s.id === 'string' ? Number(s.id.split('-').pop()) : undefined,
+        qty: s.qty,
+        clientName: s.client,
+        status: 'Pending',
+      }).unwrap();
+      enqueueSnackbar(`Task created for ${s.product}`, { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to create task', { variant: 'error' });
     }
   };
 
@@ -404,6 +460,8 @@ export default function Tasks() {
                     {kanbanCols.map((col) => (
                       <Col xs={24} md={8} key={col.key}>
                         <Card
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={() => handleKanbanDrop(col.key)}
                           title={
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <div style={{ width: 10, height: 10, borderRadius: '50%', background: col.color }} />
@@ -411,11 +469,18 @@ export default function Tasks() {
                               <Badge count={taskList.filter((t) => t.status === col.key).length} style={{ background: col.color }} />
                             </div>
                           }
-                          style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', minHeight: 400 }}
+                          style={{ borderRadius: 14, border: draggedTaskId ? `1px dashed ${col.color}` : 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', minHeight: 400 }}
                           styles={{ body: { padding: '8px' } }}
                         >
                           {filtered.filter((t) => t.status === col.key).map((task) => (
-                            <motion.div key={task.id} whileHover={{ y: -2 }}>
+                            <motion.div
+                              key={task.id}
+                              whileHover={{ y: -2 }}
+                              draggable
+                              onDragStart={() => setDraggedTaskId(task.id)}
+                              onDragEnd={() => setDraggedTaskId(null)}
+                              style={{ cursor: 'grab' }}
+                            >
                               <Card size="small" style={{ marginBottom: 10, borderRadius: 10, border: `1px solid ${col.color}20` }} styles={{ body: { padding: '10px 12px' } }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                                   <Button type="link" style={{ padding: 0, color: '#B11E6A', fontWeight: 700, height: 'auto' }}
@@ -474,8 +539,8 @@ export default function Tasks() {
               <Space size={6}>
                 <BulbOutlined />
                 Suggested Task
-                {taskList.filter((t) => !t.assignee).length > 0 && (
-                  <Badge count={taskList.filter((t) => !t.assignee).length} style={{ background: '#B11E6A' }} />
+                {suggestedList.length > 0 && (
+                  <Badge count={suggestedList.length} style={{ background: '#B11E6A' }} />
                 )}
               </Space>
             ),
@@ -485,23 +550,26 @@ export default function Tasks() {
                   type="info"
                   showIcon
                   icon={<BulbOutlined />}
-                  message="Suggested Tasks — Unassigned"
-                  description="Tasks waiting to be assigned. Smart suggestions are based on current inventory stock and order status."
+                  message="Suggested Tasks — Resource Readiness"
+                  description="Order products ready (or partially ready) for production. Readiness is computed from inventory stock, packaging and sticker/printing status. Items with pending components are still shown to help plan the workflow."
                   style={{ marginBottom: 16, borderRadius: 8 }}
                 />
                 <Row gutter={[16, 16]}>
-                  {taskList.filter((t) => !t.assignee).length === 0 ? (
+                  {suggestedList.length === 0 ? (
                     <Col xs={24}>
                       <div style={{ textAlign: 'center', padding: '48px 0' }}>
                         <BulbOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
-                        <Text type="secondary">No unassigned tasks at the moment</Text>
+                        <Text type="secondary">No products awaiting task assignment</Text>
                       </div>
                     </Col>
                   ) : (
-                    taskList.filter((t) => !t.assignee).map((task) => {
-                      const suggestion = getSmartSuggestion(task);
+                    suggestedList.map((s) => {
+                      const readyAlertType = s.fullyReady ? 'success' : 'warning';
+                      const readyText = s.fullyReady
+                        ? 'All resources ready — safe to assign and start production.'
+                        : `Ready to plan. Pending: ${s.pending.join(', ')}.`;
                       return (
-                        <Col xs={24} md={12} lg={8} key={task.key}>
+                        <Col xs={24} md={12} lg={8} key={s.id}>
                           <motion.div whileHover={{ y: -2 }}>
                             <Card
                               style={{ borderRadius: 12, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
@@ -509,38 +577,35 @@ export default function Tasks() {
                             >
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                                 <Space size={4} wrap>
-                                  <Tag color={typeColor[task.type]} style={{ borderRadius: 20, fontSize: 11 }}>{task.type}</Tag>
-                                  <Tag color={priorityColor[task.priority]} style={{ fontSize: 11 }}>{task.priority}</Tag>
+                                  {s.isUrgent && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
+                                  {s.logoType && <Tag color="purple" style={{ fontSize: 11 }}>{s.logoType}</Tag>}
                                 </Space>
-                                <Text style={{ fontSize: 11, color: '#999' }}>{task.id}</Text>
+                                <Text style={{ fontSize: 11, color: '#999' }}>{s.orderCode}</Text>
                               </div>
-                              <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{task.title}</Text>
-                              {task.client && (
-                                <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666', display: 'block', marginBottom: 8 }}>
-                                  {task.client}{task.product ? ` • ${task.product}` : ''}
-                                </Text>
-                              )}
-                              {task.qty > 0 && (
-                                <Tag color="blue" style={{ marginBottom: 10 }}>{task.qty.toLocaleString()} units</Tag>
-                              )}
+                              <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{s.product}</Text>
+                              <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666', display: 'block', marginBottom: 8 }}>
+                                {s.client}
+                              </Text>
+                              <Space size={4} wrap style={{ marginBottom: 10 }}>
+                                {s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
+                                <Tag color={s.stockReady ? 'green' : 'red'}>Stock {s.inventoryStock}</Tag>
+                                <Tag color={s.stickerReady ? 'green' : 'orange'}>Sticker {s.stickerReady ? '✓' : '⏳'}</Tag>
+                                <Tag color={s.printingReady ? 'green' : 'orange'}>Print {s.printingReady ? '✓' : '⏳'}</Tag>
+                              </Space>
                               <Alert
-                                type={suggestion.alertType}
+                                type={readyAlertType}
                                 showIcon
-                                message={suggestion.text}
+                                message={readyText}
                                 style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
                               />
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Text style={{ fontSize: 11, color: '#999' }}>Due: {task.due || '—'}</Text>
-                                <Space>
-                                  <Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedTask(task); setTaskDetailOpen(true); }}>View</Button>
-                                  <Button
-                                    size="small" type="primary" icon={<UserOutlined />}
-                                    disabled={!suggestion.canStart}
-                                    style={suggestion.canStart ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' } : {}}
-                                  >
-                                    Assign
-                                  </Button>
-                                </Space>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                <Button
+                                  size="small" type="primary" icon={<UserOutlined />}
+                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                                  onClick={() => handleAssignSuggested(s)}
+                                >
+                                  Assign Task
+                                </Button>
                               </div>
                             </Card>
                           </motion.div>

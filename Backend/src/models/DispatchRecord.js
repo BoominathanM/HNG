@@ -12,6 +12,18 @@ const dispatchRecordSchema = new mongoose.Schema({
   lrNumber: String,
   trackingUrl: String,
   lrFileUrl: String,
+  // Extra lorry-receipt / transport tracking details
+  lrDate: String,
+  transportName: String,
+  fromCity: String,
+  toCity: String,
+  weight: String,
+  freight: String,
+  packages: String,
+  estimatedDelivery: String,
+  // Open/Close box verification photos (multiple allowed)
+  openBoxPhotos: [String],
+  closeBoxPhotos: [String],
   status: { type: String, enum: ['Draft', 'Confirmed', 'Dispatched'], default: 'Draft' },
   dispatchedAt: Date,
   items: [{

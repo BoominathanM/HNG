@@ -71,43 +71,43 @@ export const getFlowStep = (order) => {
 
 export const buildProductionQueues = (orders = []) => ({
   sticker: orders.flatMap((order) =>
-    (order.items || []).filter((item) => item.logoType === 'Sticker').map((item) => ({
-      key: `${order.id}-${item.key}-sticker`,
+    (order.items || []).map((item, idx) => ({ item, idx })).filter(({ item }) => item.logoType === 'Sticker').map(({ item, idx }) => ({
+      key: `${order.id}-${idx}-sticker`,
       orderId: order.id,
       hotelLogo: order.hotelLogo || order.clientName,
-      product: item.product,
+      product: item.product || item.itemName,
       qty: item.qty,
-      size: item.size || getDefaultSize(item.product),
+      size: item.size || getDefaultSize(item.product || item.itemName),
       status: order.designStatus,
-      sent: order.printingStatus === 'Not Started' ? 0 : Math.round(item.qty * 0.7),
+      sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.7),
       verified: order.stockStatus === 'Received',
       note: (order.notifications || [])[0] || '',
     }))
   ),
   box: orders.flatMap((order) =>
-    (order.items || []).filter((item) => item.logoType === 'Box').map((item) => ({
-      key: `${order.id}-${item.key}-box`,
+    (order.items || []).map((item, idx) => ({ item, idx })).filter(({ item }) => item.logoType === 'Box').map(({ item, idx }) => ({
+      key: `${order.id}-${idx}-box`,
       orderId: order.id,
       hotelLogo: order.hotelLogo || order.clientName,
-      product: item.product,
+      product: item.product || item.itemName,
       qty: item.qty,
       size: item.size,
       status: order.designStatus,
-      sent: order.printingStatus === 'Not Started' ? 0 : Math.round(item.qty * 0.65),
+      sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.65),
       verified: false,
       note: 'Box manufacturing follows same approval flow as sticker printing',
     }))
   ),
   frosted: orders.flatMap((order) =>
-    (order.items || []).filter((item) => item.logoType === 'Frosted Ziplock').map((item) => ({
-      key: `${order.id}-${item.key}-frosted`,
+    (order.items || []).map((item, idx) => ({ item, idx })).filter(({ item }) => item.logoType === 'Frosted Ziplock').map(({ item, idx }) => ({
+      key: `${order.id}-${idx}-frosted`,
       orderId: order.id,
       hotelLogo: order.hotelLogo || order.clientName,
-      product: item.product,
+      product: item.product || item.itemName,
       qty: item.qty,
       size: item.size,
       status: order.designStatus,
-      sent: order.printingStatus === 'Not Started' ? 0 : Math.round(item.qty * 0.5),
+      sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.5),
       verified: order.stockStatus === 'Received',
       note: 'Dispatch and received updates should be verified by operations',
     }))

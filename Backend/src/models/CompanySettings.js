@@ -9,7 +9,11 @@ const companySettingsSchema = new mongoose.Schema({
   gstNumber: String,
   panNumber: String,
   invoicePrefix: { type: String, default: 'INV-' },
-  defaultGst: { type: Number, default: 18 },
+  defaultGst: { type: mongoose.Schema.Types.Mixed, default: 18 },
+  cgst: String,
+  sgst: String,
+  igst: String,
+  hsnCode: String,
   customGstSlabs: [{ label: String, value: Number }],
   invoiceTheme: { type: String, default: 'classic' },
   invoiceFontSize: { type: String, default: 'medium' },
@@ -18,6 +22,15 @@ const companySettingsSchema = new mongoose.Schema({
   invoiceToggles: { type: Map, of: Boolean },
   invoiceTerms: String,
   invoiceFooter: String,
+  // Notification preferences (enable/disable per event type)
+  notifPrefs: {
+    pay: { type: Boolean, default: true },
+    stock: { type: Boolean, default: true },
+    dispatch: { type: Boolean, default: true },
+    task: { type: Boolean, default: true },
+    wa: { type: Boolean, default: false },
+    email: { type: Boolean, default: false },
+  },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
