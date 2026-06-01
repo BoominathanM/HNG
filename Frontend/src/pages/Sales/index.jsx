@@ -48,6 +48,7 @@ import {
   useLazyLookupHotelQuery,
   useGetComplaintHistoryQuery,
   useGetItemsQuery,
+  useUploadFilesMutation,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -561,6 +562,17 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const paymentTerms = Form.useWatch('paymentTerms');
   const leadType = Form.useWatch('leadType');
+  const [uploadFilesMutation] = useUploadFilesMutation();
+  const makeCloudinaryRequest = (folder) => async ({ file, onSuccess, onError }) => {
+    const formData = new FormData();
+    formData.append('files', file);
+    try {
+      const res = await uploadFilesMutation({ formData, folder }).unwrap();
+      const uploaded = res.data?.[0];
+      if (uploaded) { file.url = uploaded.url; file.cloudPublicId = uploaded.public_id; file.thumbUrl = uploaded.url; onSuccess(uploaded, file); }
+      else onError(new Error('Upload failed'));
+    } catch (err) { onError(err); }
+  };
   const is5050 = paymentTerms === '50_ADVANCE_50_AFTER';
   const isCredit = paymentTerms === 'CREDIT_10_30';
 
@@ -648,7 +660,7 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
             <Upload
               multiple
               listType="picture"
-              beforeUpload={() => false}
+              customRequest={makeCloudinaryRequest('payment-proofs')}
               accept="image/*,.pdf"
             >
               <Button icon={<UploadOutlined />}>Upload Payment Proof (multiple files allowed)</Button>
@@ -933,6 +945,28 @@ export default function Sales() {
   const [updateSalesOrderStatusMutation] = useUpdateSalesOrderStatusMutation();
   const [createComplaintMutation] = useCreateComplaintMutation();
   const [updateComplaintStatusMutation] = useUpdateComplaintStatusMutation();
+  const [uploadFilesMutation] = useUploadFilesMutation();
+
+  // Reusable Cloudinary upload handler for AntD Upload components.
+  const makeCloudinaryRequest = (folder) => async ({ file, onSuccess, onError, onProgress }) => {
+    const formData = new FormData();
+    formData.append('files', file);
+    try {
+      const res = await uploadFilesMutation({ formData, folder }).unwrap();
+      const uploaded = res.data?.[0];
+      if (uploaded) {
+        file.url = uploaded.url;
+        file.cloudPublicId = uploaded.public_id;
+        file.thumbUrl = uploaded.url;
+        onSuccess(uploaded, file);
+      } else {
+        onError(new Error('Upload failed'));
+      }
+    } catch (err) {
+      onError(err);
+      enqueueSnackbar('File upload failed', { variant: 'error' });
+    }
+  };
 
   useEffect(() => {
     if (leadsRaw?.data) setLeadsData((leadsRaw.data).map((l) => ({ ...l, key: l._id, leadId: l.leadCode, hotelName: l.hotelName, status: l.status, salesPerson: l.salesPerson, createdAt: l.createdAt })));
@@ -996,20 +1030,53 @@ export default function Sales() {
   // other modules. This is what makes "fetch all details on edit" work.
   const buildLeadPayload = (values) => {
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
+    // Get billing fields explicitly from the form store to ensure they're captured
+    // even when the billing section card is in read/collapsed mode
+    const formStore = leadForm.getFieldsValue(true);
+    const billType = values.billType || formStore.billType || 'GST';
+    const detailedAddress = values.detailedAddress || formStore.detailedAddress;
+    const city = values.city || formStore.city;
+    const state = values.state || formStore.state;
+    const pincode = values.pincode || formStore.pincode;
+    // Extract Cloudinary URLs from file list fields
+    const hotelLogoUrl = (values.hotelLogo || []).find(f => f.url)?.url || undefined;
+    const paymentProofFiles = (values.paymentProofs || []).map(f => ({
+      name: f.name || f.originFileObj?.name,
+      url: f.url || f.response?.url,
+      public_id: f.cloudPublicId || f.response?.public_id,
+      uid: f.uid,
+    })).filter(f => f.url);
     return {
       ...values,
+      billType,
+      detailedAddress,
+      city,
+      state,
+      pincode,
+      address: detailedAddress,
       locationCity: values.location,
+      location: values.location,
+      salesPerson: values.salesPerson,
+      hotelType: values.hotelType,
       numRooms: Number(values.rowsInHotel) || undefined,
       generalOccupancy: Number(values.generalOccupancy) || undefined,
       altRole: values.alternativeRole,
       altName: values.alternativeName,
       altNumber: values.alternativePhone,
-      address: values.detailedAddress,
       interestedSoftware: values.interestedInSoftware === 'YES' || values.interestedInSoftware === true,
+      interestedInSoftware: values.interestedInSoftware,
       prevSoftwarePrice: Number(values.previousSoftwarePrice) || undefined,
+      previousSoftwarePrice: Number(values.previousSoftwarePrice) || undefined,
       followupDate: toStr(values.followUpDate),
       followupTime: values.followUpTime,
+      followUpDate: toStr(values.followUpDate),
+      followUpTime: values.followUpTime,
       displayUnit: values.kitDisplayUnit || values.displayUnit,
+      hotelLogoUrl: hotelLogoUrl || undefined,
+      paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
+      priority: Number(values.priority) || 0,
+      isPriority: Number(values.priority) > 0,
+      priorityNote: values.mentionPriority,
     };
   };
 
@@ -2907,6 +2974,9 @@ export default function Sales() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+              {isDetail && record.hotelLogoUrl && (
+                <img src={record.hotelLogoUrl} alt="Hotel Logo" style={{ height: 48, maxWidth: 120, objectFit: 'contain', borderRadius: 8, border: '1px solid #B11E6A22', padding: 4, background: '#fff' }} />
+              )}
               {isDetail && (
                 <Space>
                   {record.qid && <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{record.qid}</Tag>}
@@ -3061,7 +3131,12 @@ export default function Sales() {
                     </Col>
                     <Col xs={24} sm={6}>
                       <Form.Item label="Hotel Logo" name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
-                        <Upload beforeUpload={() => false} accept="image/*,.pdf,.svg,.ai" maxCount={1} listType="picture">
+                        <Upload
+                          customRequest={makeCloudinaryRequest('logos')}
+                          accept="image/*,.pdf,.svg,.ai"
+                          maxCount={1}
+                          listType="picture"
+                        >
                           <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Logo</Button>
                         </Upload>
                       </Form.Item>
@@ -3215,7 +3290,7 @@ export default function Sales() {
                         <Col xs={24} sm={12}><InfoRow label="City" value={record.city} /></Col>
                         <Col xs={24} sm={12}><InfoRow label="State" value={record.state} /></Col>
                         <Col xs={24} sm={12}><InfoRow label="Pincode" value={record.pincode} /></Col>
-                        <Col xs={24}><InfoRow label="Detailed Address" value={record.detailedAddress} /></Col>
+                        <Col xs={24}><InfoRow label="Detailed Address" value={record.detailedAddress || record.address} /></Col>
                       </Row>
                     ) : (
                       <Row gutter={12}>
@@ -3224,7 +3299,7 @@ export default function Sales() {
                         <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
                         <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
                         {watchedLeadType !== 'SAMPLE' && (
-                          <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType"><Select placeholder="Select Bill Type" allowClear><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
+                          <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType" rules={[{ required: true, message: 'Select bill type' }]}><Select placeholder="Select Bill Type"><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
                         )}
                         {watchedLeadType !== 'SAMPLE' && watchedBillType === 'GST' && (
                           <>
@@ -3792,11 +3867,12 @@ export default function Sales() {
                             </Text>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                               {record.paymentProofs.map((file, idx) => (
-                                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid #d9d9d9', background: '#fff', cursor: 'pointer' }}>
+                                <a key={idx} href={file.url || '#'} target="_blank" rel="noopener noreferrer"
+                                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid #d9d9d9', background: '#fff', textDecoration: 'none' }}>
                                   <FileTextOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
                                   <Text style={{ fontSize: 12 }}>{file.name || `Proof ${idx + 1}`}</Text>
-                                  {file.size && <Text type="secondary" style={{ fontSize: 11 }}>({(file.size / 1024).toFixed(0)} KB)</Text>}
-                                </div>
+                                  {file.url && <Text type="secondary" style={{ fontSize: 11, color: '#1890ff' }}>↗ View</Text>}
+                                </a>
                               ))}
                             </div>
                           </div>
@@ -4169,6 +4245,7 @@ export default function Sales() {
             <Button type="primary" icon={<PlusOutlined />}
               style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
               onClick={() => {
+                setEditingLead(null);
                 setSelectedRecord(null);
                 leadForm.resetFields();
                 leadForm.setFieldsValue(newLeadDefaults);
@@ -4594,7 +4671,7 @@ export default function Sales() {
                 valuePropName="fileList"
                 getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
               >
-                <Upload beforeUpload={() => false} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
+                <Upload customRequest={makeCloudinaryRequest('complaints')} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
                   <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Files</Button>
                 </Upload>
               </Form.Item>

@@ -55,7 +55,7 @@ exports.uploadInvoice = asyncHandler(async (req, res, next) => {
   if (!req.file) return next(new AppError('Please upload invoice file', 400));
   const dispatch = await DispatchRecord.findByIdAndUpdate(
     req.params.id,
-    { invoiceFileUrl: `/uploads/${req.file.filename}` },
+    { invoiceFileUrl: req.file.path },
     { new: true }
   );
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
@@ -73,7 +73,7 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   // FormData sends booleans as strings; treat 'false' (string or boolean) as disabled.
   dispatch.autoNotify = req.body.autoNotify !== false && req.body.autoNotify !== 'false';
   dispatch.sendWhatsapp = req.body.sendWhatsapp !== false && req.body.sendWhatsapp !== 'false';
-  if (req.file) dispatch.invoiceFileUrl = `/uploads/${req.file.filename}`;
+  if (req.file) dispatch.invoiceFileUrl = req.file.path;
   dispatch.dispatchedAt = Date.now();
   await dispatch.save({ validateBeforeSave: false });
 
@@ -144,7 +144,7 @@ exports.verifyInvoice = asyncHandler(async (req, res, next) => {
 exports.uploadBoxPhotos = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id);
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
-  const urls = (req.files || []).map((f) => `/uploads/${f.filename}`);
+  const urls = (req.files || []).map((f) => `f.path`);
   const type = req.body.type || req.query.type;
   if (type === 'close') dispatch.closeBoxPhotos = [...(dispatch.closeBoxPhotos || []), ...urls];
   else dispatch.openBoxPhotos = [...(dispatch.openBoxPhotos || []), ...urls];
@@ -172,7 +172,7 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
   ['lrDate', 'transportName', 'fromCity', 'toCity', 'weight', 'freight', 'packages', 'estimatedDelivery'].forEach((k) => {
     if (req.body[k] !== undefined && req.body[k] !== '') update[k] = req.body[k];
   });
-  if (req.file) update.lrFileUrl = `/uploads/${req.file.filename}`;
+  if (req.file) update.lrFileUrl = req.file.path;
   const dispatch = await DispatchRecord.findByIdAndUpdate(req.params.id, update, { new: true }).populate('orderId', 'orderCode clientName assignedTo clientPhone');
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
 
@@ -235,7 +235,7 @@ exports.verifyItem = asyncHandler(async (req, res, next) => {
   const item = dispatch.items.id(req.params.itemId);
   if (item) {
     item.verified = true;
-    if (req.file) item.boxPhotoUrl = `/uploads/${req.file.filename}`;
+    if (req.file) item.boxPhotoUrl = req.file.path;
   }
   await dispatch.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, data: dispatch });

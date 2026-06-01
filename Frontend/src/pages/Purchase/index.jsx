@@ -1,4 +1,5 @@
 ﻿import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, 
   DatePicker, Upload, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, 
@@ -54,6 +55,7 @@ const exportToCSV = (headers, rows, filename) => {
 // All data loaded from backend API via useEffect below
 
 export default function Purchase() {
+  const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
   const dispatch = useDispatch();
   const raisedRequests = useSelector((s) => s.purchase.raisedRequests);
@@ -2594,7 +2596,7 @@ export default function Purchase() {
                   name="paymentProofFile"
                   style={{ marginBottom: 0 }}
                 >
-                  <Upload.Dragger maxCount={1} beforeUpload={() => false} accept=".jpg,.jpeg,.png,.pdf" style={{ borderRadius: 8 }}>
+                  <Upload.Dragger maxCount={1} customRequest={makeUpload('purchase/payment-proofs')} accept=".jpg,.jpeg,.png,.pdf" style={{ borderRadius: 8 }}>
                     <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#52c41a', fontSize: 20 }} /></p>
                     <p className="ant-upload-text" style={{ fontSize: 12 }}>
                       {localPurchasePaidBy === 'purchase_person' ? 'Upload receipt / bill for reimbursement claim' : 'Upload GPay / UPI / bank payment screenshot'}
@@ -4117,7 +4119,7 @@ export default function Purchase() {
               </Select>
             </Form.Item>
             <Form.Item label="Upload LR Copy" name="lr_file">
-              <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: isDark ? '#1a1a2e' : '#fafafa', borderRadius: 8 }}>
+              <Upload.Dragger maxCount={1} customRequest={makeUpload('purchase/lr')} style={{ background: isDark ? '#1a1a2e' : '#fafafa', borderRadius: 8 }}>
                 <p className="ant-upload-drag-icon"><FileTextOutlined style={{ color: '#1890ff' }} /></p>
                 <p className="ant-upload-text">Click or drag LR document to upload</p>
                 <p className="ant-upload-hint">PDF or Image of Lorry Receipt / Bilty</p>
@@ -4409,7 +4411,7 @@ export default function Purchase() {
               <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Pickup: {takenTarget.pickupEmpName} ({takenTarget.pickupEmpId})</Text>
             </div>
             <Form.Item label="Pickup Person Payment — Upload Proof" name="pickup_proof">
-              <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+              <Upload maxCount={1} customRequest={makeUpload('purchase/pickup-proofs')} accept=".pdf,.jpg,.jpeg,.png">
                 <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
               </Upload>
             </Form.Item>
@@ -4483,7 +4485,7 @@ export default function Purchase() {
             <div style={{ background: isDark ? '#161622' : '#f8f9ff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px dashed ${isDark ? '#3a3a5a' : '#d6e4ff'}` }}>
               <Text strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>Invoice Upload & Scan</Text>
               <Space wrap>
-                <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+                <Upload maxCount={1} customRequest={makeUpload('purchase/invoices')} accept=".pdf,.jpg,.jpeg,.png">
                   <Button icon={<UploadOutlined />} style={{ borderColor: '#1890ff', color: '#1890ff' }}>Upload Invoice</Button>
                 </Upload>
                 <Button icon={<QrcodeOutlined />} style={{ borderColor: '#722ed1', color: '#722ed1' }} onClick={() => openCameraCapture(() => {})} >

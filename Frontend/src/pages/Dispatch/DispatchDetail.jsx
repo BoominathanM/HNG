@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, Upload, Typography, Space,
@@ -44,6 +45,7 @@ const stepIndex = (status) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function DispatchDetail() {
+  const makeUpload = useCloudinaryUpload();
   const { id } = useParams();
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
@@ -495,7 +497,7 @@ export default function DispatchDetail() {
                     </Col>
                     <Col xs={24}>
                       <Form.Item label="Upload Invoice" name="invoiceFile" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList} style={{ marginBottom: 8 }}>
-                        <Upload listType="picture" maxCount={3} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+                        <Upload listType="picture" maxCount={3} customRequest={makeUpload('dispatch/invoices')} accept=".pdf,.jpg,.jpeg,.png">
                           <Button icon={<UploadOutlined />} block style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
                             Upload Invoice (PDF / Image)
                           </Button>
@@ -579,12 +581,11 @@ export default function DispatchDetail() {
                   listType="picture"
                   fileList={lrFileList}
                   maxCount={3}
-                  beforeUpload={() => false}
+                  customRequest={makeUpload('dispatch/lr')}
                   accept=".pdf,.jpg,.jpeg,.png"
                   onChange={({ fileList }) => {
                     setLrFileList(fileList);
                     if (fileList.length > 0 && !aiParsed) {
-                      // Auto-trigger AI parse hint
                       enqueueSnackbar('Lorry receipt uploaded. Click "AI Parse Receipt" to extract details automatically.', { variant: 'info' });
                     }
                   }}

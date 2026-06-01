@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const ctrl = require('./sales.controller');
 const { protect } = require('../../middleware/auth');
+const { uploadCloud } = require('../../config/cloudinary');
 
 router.use(protect);
 
@@ -41,5 +42,9 @@ router.get('/complaints', ctrl.getComplaints);
 router.get('/complaints/history', ctrl.getComplaintHistory);
 router.post('/complaints', ctrl.createComplaint);
 router.patch('/complaints/:id/status', ctrl.updateComplaintStatus);
+
+// File upload (Cloudinary)
+router.post('/upload', uploadCloud.array('files', 10), ctrl.uploadFiles);
+router.delete('/upload', ctrl.deleteFile);
 
 module.exports = router;

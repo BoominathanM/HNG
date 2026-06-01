@@ -7,6 +7,7 @@ const Party = require('../../models/Party');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const { cloudinary } = require('../../config/cloudinary');
 
 // ─── LEADS ───────────────────────────────────────────────────────────────────
 exports.getLeads = asyncHandler(async (req, res) => {
@@ -41,8 +42,8 @@ exports.createLead = asyncHandler(async (req, res) => {
 exports.updateLead = asyncHandler(async (req, res, next) => {
   const lead = await Lead.findOneAndUpdate(
     { _id: req.params.id, deletedAt: null },
-    req.body,
-    { new: true, runValidators: true }
+    { $set: req.body },
+    { new: true, runValidators: false }
   );
   if (!lead) return next(new AppError('Lead not found', 404));
   res.status(200).json({ success: true, data: lead });
@@ -347,4 +348,29 @@ exports.getComplaintHistory = asyncHandler(async (req, res) => {
     .populate('orderId', 'orderCode')
     .sort('-createdAt').lean();
   res.status(200).json({ success: true, total: complaints.length, data: complaints });
+});
+
+// ─── FILE UPLOAD (Cloudinary) ─────────────────────────────────────────────────
+// Receives files already uploaded by multer-storage-cloudinary middleware
+// and returns their Cloudinary URLs.
+exports.uploadFiles = asyncHandler(async (req, res, next) => {
+  if (!req.files || req.files.length === 0) {
+    return next(new AppError('No files provided', 400));
+  }
+  const files = req.files.map((f) => ({
+    name: f.originalname,
+    url: f.path,
+    public_id: f.filename,
+    size: f.size,
+    mimetype: f.mimetype,
+  }));
+  res.status(200).json({ success: true, data: files });
+});
+
+// Delete a file from Cloudinary by public_id.
+exports.deleteFile = asyncHandler(async (req, res) => {
+  const { publicId } = req.body;
+  if (!publicId) return res.status(400).json({ success: false, message: 'publicId required' });
+  await cloudinary.uploader.destroy(publicId);
+  res.status(200).json({ success: true, message: 'File deleted' });
 });

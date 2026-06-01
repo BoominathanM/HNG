@@ -81,7 +81,7 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
 
   const amountPaid = req.body.amountPaid || order.amount;
   order.paidAmount = (order.paidAmount || 0) + amountPaid;
-  if (req.file) order.paymentProofUrl = `/uploads/${req.file.filename}`;
+  order.paymentProofUrl = req.file?.path || req.body.proofUrl || order.paymentProofUrl;
 
   const remaining = (order.amount || 0) - order.paidAmount;
   if (remaining <= 0) order.paymentStatus = 'Paid';
@@ -119,7 +119,7 @@ exports.getExpensePayments = asyncHandler(async (req, res) => {
 exports.payExpense = asyncHandler(async (req, res, next) => {
   const expense = await Expense.findById(req.params.id);
   if (!expense) return next(new AppError('Expense not found', 404));
-  if (req.file) expense.proofUrl = `/uploads/${req.file.filename}`;
+  expense.proofUrl = req.file?.path || req.body.proofUrl || expense.proofUrl;
   expense.paymentStatus = req.body.status || 'Paid';
   expense.paidBy = req.body.paidBy || req.user.fullName;
   expense.paidDate = new Date();
@@ -141,7 +141,7 @@ exports.getPickupExpenses = asyncHandler(async (req, res) => {
 exports.payPickupExpense = asyncHandler(async (req, res, next) => {
   const record = await DispatchRecord.findById(req.params.id);
   if (!record) return next(new AppError('Dispatch record not found', 404));
-  if (req.file) record.paymentProofUrl = `/uploads/${req.file.filename}`;
+  record.paymentProofUrl = req.file?.path || req.body.proofUrl || record.paymentProofUrl;
   record.paymentStatus = 'Paid';
   record.paidDate = new Date();
   record.paidBy = req.body.paidBy || req.user.fullName;
@@ -160,7 +160,7 @@ exports.getLocalPurchaseExpenses = asyncHandler(async (req, res) => {
 exports.payLocalPurchase = asyncHandler(async (req, res, next) => {
   const lp = await LocalPurchase.findById(req.params.id);
   if (!lp) return next(new AppError('Local purchase not found', 404));
-  if (req.file) lp.paymentProofUrl = `/uploads/${req.file.filename}`;
+  lp.paymentProofUrl = req.file?.path || req.body.proofUrl || lp.paymentProofUrl;
   lp.paymentStatus = 'Paid';
   lp.paidDate = new Date();
   lp.paidBy = req.body.paidBy || req.user.fullName;

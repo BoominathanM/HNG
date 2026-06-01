@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import dayjs from 'dayjs';
 import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs } from 'antd';
 import { enqueueSnackbar } from 'notistack';
@@ -26,6 +27,7 @@ const EXPENSE_CATEGORIES = [
 
 
 export default function Expenses() {
+  const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -85,8 +87,11 @@ export default function Expenses() {
       formData.append('description', values.desc);
       formData.append('amount', values.amount);
       if (values.vendor) formData.append('vendorPayee', values.vendor);
-      if (values.proof?.fileList?.[0]?.originFileObj) {
-        formData.append('proof', values.proof.fileList[0].originFileObj);
+      const expProofFile = values.proof?.fileList?.[0];
+      if (expProofFile?.url) {
+        formData.append('proofUrl', expProofFile.url);
+      } else if (expProofFile?.originFileObj) {
+        formData.append('proof', expProofFile.originFileObj);
       }
       await expApi.createExpense(formData);
       enqueueSnackbar('Expense added successfully', { variant: 'success' });
@@ -396,7 +401,7 @@ export default function Expenses() {
             />
           </Form.Item>
           <Form.Item label="Upload Proof / Receipt" name="proof">
-            <Upload maxCount={1} listType="picture" beforeUpload={() => false}>
+            <Upload maxCount={1} listType="picture" customRequest={makeUpload('expenses')}>
               <Button icon={<UploadOutlined />} style={{ width: '100%', borderRadius: 8 }}>Select File</Button>
             </Upload>
           </Form.Item>

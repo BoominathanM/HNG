@@ -44,7 +44,7 @@ exports.updateCompanySettings = asyncHandler(async (req, res) => {
 
 exports.uploadLogo = asyncHandler(async (req, res, next) => {
   if (!req.file) return next(new AppError('Please upload a file', 400));
-  const logoUrl = `/uploads/${req.file.filename}`;
+  const logoUrl = req.file.path;
   const settings = await CompanySettings.findOneAndUpdate(
     {},
     { logoUrl },

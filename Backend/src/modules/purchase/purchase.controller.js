@@ -57,7 +57,7 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
   if (!req.file) return next(new AppError('Please upload a file', 400));
   const request = await PurchaseRequest.findByIdAndUpdate(
     req.params.id,
-    { quotationFileUrl: `/uploads/${req.file.filename}` },
+    { quotationFileUrl: req.file.path },
     { new: true }
   );
   if (!request) return next(new AppError('Request not found', 404));
@@ -90,7 +90,7 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
   if (!order) return next(new AppError('Purchase order not found', 404));
   if (order.stockUpdated) return next(new AppError('Stock already updated for this order', 400));
 
-  if (req.file) order.invoiceFileUrl = `/uploads/${req.file.filename}`;
+  if (req.file) order.invoiceFileUrl = req.file.path;
   order.dispatchStatus = 'Received';
   order.receivedAt = Date.now();
   order.stockUpdated = true;
@@ -129,7 +129,7 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
     {
       lrNumber: req.body.lrNumber,
       trackingUrl: req.body.trackingUrl,
-      ...(req.file && { lrFileUrl: `/uploads/${req.file.filename}` }),
+      ...(req.file && { lrFileUrl: req.file.path }),
       dispatchStatus: 'In Transit',
     },
     { new: true }

@@ -492,6 +492,16 @@ export const apiSlice = createApi({
     lookupHotel: builder.query({
       query: ({ name, branch }) => ({ url: '/sales/hotels/lookup', params: { name, branch } }),
     }),
+    uploadFiles: builder.mutation({
+      query: ({ formData, folder }) => ({
+        url: `/sales/upload${folder ? `?folder=${folder}` : ''}`,
+        method: 'post',
+        data: formData,
+      }),
+    }),
+    deleteFile: builder.mutation({
+      query: (publicId) => ({ url: '/sales/upload', method: 'delete', data: { publicId } }),
+    }),
 
     // ── Billing ──────────────────────────────────────────────────────────────
     getBillingParties: builder.query({
@@ -1010,4 +1020,6 @@ export const {
   useGetAuditorTaxQuery,
   useGetMyPerformanceQuery,
   useGetPerformanceQuery,
+  useUploadFilesMutation,
+  useDeleteFileMutation,
 } = apiSlice;

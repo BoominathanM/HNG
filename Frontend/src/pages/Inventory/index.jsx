@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, Progress, Alert, InputNumber, List,
@@ -81,6 +82,7 @@ const exportRowsToCSV = (rows, filename) => {
 };
 
 export default function Inventory() {
+  const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -1825,8 +1827,8 @@ export default function Inventory() {
                 </Form.Item>
                 <Row gutter={12}>
                   <Col span={14}>
-                    <Form.Item label={<Text style={{ fontSize: 13 }}>Upload Invoice</Text>} name="invoice" style={{ marginBottom: 0 }}>
-                      <Upload maxCount={1} beforeUpload={() => false}>
+                    <Form.Item label={<Text style={{ fontSize: 13 }}>Upload Invoice</Text>} name="invoice" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList} style={{ marginBottom: 0 }}>
+                      <Upload maxCount={1} customRequest={makeUpload('inventory/invoices')}>
                         <Button icon={<UploadOutlined />} style={{ width: '100%', borderRadius: 8 }}>Invoice File</Button>
                       </Upload>
                     </Form.Item>

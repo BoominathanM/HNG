@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Form, Input, Select, Switch, Button, Typography,
   Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber, Empty, Spin
@@ -109,6 +110,7 @@ const initRoles = [
 
 
 export default function Settings() {
+  const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg     = isDark ? '#1E1E2E' : '#ffffff';
   const textColor  = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -664,7 +666,7 @@ export default function Settings() {
                         </Col>
                         <Col xs={24} sm={12}>
                           <Form.Item label="Profile Photo">
-                            <Upload showUploadList={false} beforeUpload={() => false}>
+                            <Upload showUploadList={false} customRequest={makeUpload('settings/profiles')}>
                               <Button icon={<UploadOutlined />} style={{ borderRadius: 8, width: '100%', height: 40 }}>Upload Image</Button>
                             </Upload>
                           </Form.Item>

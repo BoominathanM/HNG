@@ -1,4 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react';
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, DatePicker, Upload, InputNumber, Divider, List, Tabs, Descriptions
@@ -44,6 +45,7 @@ const exportToCSV = (headers, rows, filename) => {
 };
 
 export default function VendorsSuppliers() {
+  const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -985,7 +987,7 @@ export default function VendorsSuppliers() {
               rules={[{ required: true, message: 'Please upload transport bill' }]}
               extra="Upload PDF or Image of transport bill"
             >
-              <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
+              <Upload.Dragger maxCount={1} customRequest={makeUpload('vendors/proofs')} style={{ background: '#fafafa', borderRadius: 8 }}>
                 <p className="ant-upload-drag-icon"><FileTextOutlined style={{ color: '#B11E6A' }} /></p>
                 <p className="ant-upload-text">Click or drag transport bill to upload</p>
               </Upload.Dragger>
@@ -999,7 +1001,7 @@ export default function VendorsSuppliers() {
               rules={[{ required: true, message: 'Please upload delivery proof' }]}
               extra="Upload photo of signed delivery note"
             >
-              <Upload.Dragger maxCount={1} beforeUpload={() => false} style={{ background: '#fafafa', borderRadius: 8 }}>
+              <Upload.Dragger maxCount={1} customRequest={makeUpload('vendors/proofs')} style={{ background: '#fafafa', borderRadius: 8 }}>
                 <p className="ant-upload-drag-icon"><CameraOutlined style={{ color: '#B11E6A' }} /></p>
                 <p className="ant-upload-text">Upload Signed Delivery Note</p>
               </Upload.Dragger>

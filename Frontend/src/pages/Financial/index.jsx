@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react'; // useEffect intentionally removed — data from RTK Query
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Typography, Space, Select, Tabs, Statistic, Divider, 
   Modal, Descriptions, Upload, InputNumber, Form, Input, Badge, Tooltip, Alert, 
@@ -33,6 +34,7 @@ const { Option } = Select;
 
 
 export default function Financial() {
+  const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -157,8 +159,11 @@ export default function Financial() {
     try {
       const fd = new FormData();
       fd.append('paid_by', vals.paid_by || 'Finance Team');
-      if (vals.payment_proof?.fileList?.[0]?.originFileObj) {
-        fd.append('proof', vals.payment_proof.fileList[0].originFileObj);
+      const localProofFile = vals.payment_proof?.fileList?.[0];
+      if (localProofFile?.url) {
+        fd.append('proofUrl', localProofFile.url);
+      } else if (localProofFile?.originFileObj) {
+        fd.append('proof', localProofFile.originFileObj);
       }
       await payLocalPurchase({ id: localPayTarget.key, formData: fd }).unwrap();
       enqueueSnackbar('Local purchase payment processed!', { variant: 'success' });
@@ -172,8 +177,11 @@ export default function Financial() {
     try {
       const fd = new FormData();
       fd.append('paid_by', vals.paid_by || 'Finance Team');
-      if (vals.payment_proof?.fileList?.[0]?.originFileObj) {
-        fd.append('proof', vals.payment_proof.fileList[0].originFileObj);
+      const reimbProofFile = vals.payment_proof?.fileList?.[0];
+      if (reimbProofFile?.url) {
+        fd.append('proofUrl', reimbProofFile.url);
+      } else if (reimbProofFile?.originFileObj) {
+        fd.append('proof', reimbProofFile.originFileObj);
       }
       await payPickup({ id: reimbPayTarget.key, formData: fd }).unwrap();
       enqueueSnackbar('Reimbursement payment recorded!', { variant: 'success' });
@@ -224,7 +232,9 @@ export default function Financial() {
         const fd = new FormData();
         fd.append('amountPaid', paidAmt);
         fd.append('status', finalStatus);
-        if (values.proof?.fileList?.[0]?.originFileObj) fd.append('proof', values.proof.fileList[0].originFileObj);
+        const poProofFile = values.proof?.fileList?.[0];
+        if (poProofFile?.url) fd.append('proofUrl', poProofFile.url);
+        else if (poProofFile?.originFileObj) fd.append('proof', poProofFile.originFileObj);
         await payOrder({ id: selectedForPayment.key, formData: fd }).unwrap();
       } catch { /* silent */ }
     }
@@ -934,10 +944,10 @@ export default function Financial() {
             </Row>
 
             <Form.Item label="Upload Payment Proof (Receipt/Screenshot)" name="proof">
-              <Upload.Dragger 
+              <Upload.Dragger
                 style={{ background: isDark ? '#1a1a2e' : '#fafafa' }}
                 maxCount={1}
-                beforeUpload={() => false}
+                customRequest={makeUpload('financial/proofs')}
               >
                 <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#B11E6A' }} /></p>
                 <p className="ant-upload-text">Click or drag payment receipt</p>
@@ -1095,7 +1105,7 @@ export default function Financial() {
               <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
             </Form.Item>
             <Form.Item label="Upload Payment Proof" name="payment_proof" rules={[{ required: true, message: 'Please upload payment proof' }]}>
-              <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+              <Upload maxCount={1} customRequest={makeUpload('financial/proofs')} accept=".pdf,.jpg,.jpeg,.png">
                 <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
               </Upload>
             </Form.Item>
@@ -1140,7 +1150,7 @@ export default function Financial() {
               <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
             </Form.Item>
             <Form.Item label="Upload Payment Proof" name="payment_proof" rules={[{ required: true, message: 'Please upload payment proof' }]}>
-              <Upload maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+              <Upload maxCount={1} customRequest={makeUpload('financial/proofs')} accept=".pdf,.jpg,.jpeg,.png">
                 <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
               </Upload>
             </Form.Item>

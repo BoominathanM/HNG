@@ -148,7 +148,7 @@ exports.uploadStickerDesign = asyncHandler(async (req, res, next) => {
   if (!req.file) return next(new AppError('Please upload a design file', 400));
   const sticker = await StickerRequest.findByIdAndUpdate(
     req.params.id,
-    { designFileUrl: `/uploads/${req.file.filename}` },
+    { designFileUrl: req.file.path },
     { new: true }
   );
   if (!sticker) return next(new AppError('Sticker request not found', 404));

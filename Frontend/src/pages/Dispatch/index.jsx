@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Typography, Space,
@@ -67,6 +68,7 @@ const exportCSV = (data, filename) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function Dispatch() {
+  const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
   const navigate = useNavigate();
 
@@ -228,20 +230,12 @@ export default function Dispatch() {
 
   const handlePickupPaySubmit = async (vals) => {
     const fileItem = vals.proof?.fileList?.[0];
-    const proofFile = fileItem?.name || null;
+    // Use Cloudinary URL if file was already uploaded via customRequest
+    const proofUrl = fileItem?.url || fileItem?.name || null;
     const payBy = pickupPayTarget.payBy;
     const gPayNum = vals.gPayNumber || null;
     const amt = vals.amount || 0;
     const expenseKey = `DT-${Date.now()}`;
-
-    let base64 = null;
-    if (fileItem?.originFileObj) {
-      base64 = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.readAsDataURL(fileItem.originFileObj);
-      });
-    }
 
     const newExpense = {
       key: expenseKey,
@@ -254,10 +248,10 @@ export default function Dispatch() {
       pickupEmpName: pickupPayTarget.pickupEmpName || '—',
       category: 'PICKUP',
       gPayNumber: gPayNum,
-      proof: proofFile,
+      proof: proofUrl,
       paymentSource: payBy === 'finance' ? 'Finance' : 'Pickup Team',
       paymentStatus: payBy === 'pickup_team' ? 'Paid' : 'Pending',
-      paymentProof: payBy === 'pickup_team' ? proofFile : null,
+      paymentProof: payBy === 'pickup_team' ? proofUrl : null,
       paidDate: payBy === 'pickup_team' ? new Date().toISOString().slice(0, 10) : null,
       paidBy: payBy === 'pickup_team' ? 'Pickup Team' : null,
     };
@@ -266,14 +260,14 @@ export default function Dispatch() {
     setReimbExpenses(updatedExpenses);
     localStorage.setItem('hng_pickup_expenses', JSON.stringify(updatedExpenses));
 
-    const proofEntry = {
-      proof: base64,
-      ...(payBy === 'pickup_team' ? { paymentProof: base64 } : {}),
-    };
-    if (base64) {
+    if (proofUrl) {
+      const proofEntry = {
+        proof: proofUrl,
+        ...(payBy === 'pickup_team' ? { paymentProof: proofUrl } : {}),
+      };
       const existing = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
       existing[expenseKey] = proofEntry;
-      existing[pickupPayTarget.key] = proofEntry; // also keyed by tracking order key
+      existing[pickupPayTarget.key] = proofEntry;
       localStorage.setItem('hng_proofs', JSON.stringify(existing));
       setProofData(prev => ({
         ...prev,
@@ -1110,7 +1104,7 @@ export default function Dispatch() {
               name="proof"
               rules={[{ required: true, message: 'Please upload proof' }]}
             >
-              <Upload.Dragger maxCount={1} beforeUpload={() => false} accept=".pdf,.jpg,.jpeg,.png">
+              <Upload.Dragger maxCount={1} customRequest={makeUpload('dispatch/proofs')} accept=".pdf,.jpg,.jpeg,.png">
                 <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#B11E6A' }} /></p>
                 <p className="ant-upload-text" style={{ fontSize: 13 }}>
                   {pickupPayTarget.payBy === 'finance'

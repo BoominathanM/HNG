@@ -32,7 +32,7 @@ exports.createExpense = asyncHandler(async (req, res) => {
   const expense = await Expense.create({
     ...req.body,
     expenseCode,
-    ...(req.file && { proofUrl: `/uploads/${req.file.filename}` }),
+    proofUrl: req.file?.path || req.body.proofUrl || undefined,
     createdBy: req.user._id,
   });
   res.status(201).json({ success: true, data: expense });

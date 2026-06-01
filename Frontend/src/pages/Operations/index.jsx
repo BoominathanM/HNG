@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -103,6 +104,7 @@ const statusIcons = {
 };
 
 export default function Operations() {
+  const makeUpload = useCloudinaryUpload();
   const navigate = useNavigate();
   const isDark = useSelector((state) => state.theme.isDark);
   const [searchText, setSearchText] = useState('');
@@ -970,8 +972,8 @@ export default function Operations() {
               </>
             )}
           </Row>
-          <Form.Item label="Hotel Logo (Upload)" name="logo">
-            <Upload.Dragger beforeUpload={() => false} maxCount={1} accept=".jpg,.jpeg,.png,.pdf,.ai,.svg">
+          <Form.Item label="Hotel Logo (Upload)" name="logo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
+            <Upload.Dragger customRequest={makeUpload('operations/logos')} maxCount={1} accept=".jpg,.jpeg,.png,.pdf,.ai,.svg">
               <p className="ant-upload-drag-icon">
                 <UploadOutlined style={{ color: '#B11E6A' }} />
               </p>
