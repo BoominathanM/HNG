@@ -4,10 +4,10 @@ const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
 
 const signToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' });
+  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '30d' });
 
 const signRefreshToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' });
+  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '365d' });
 
 const sendTokens = async (user, statusCode, res) => {
   const token = signToken(user._id);

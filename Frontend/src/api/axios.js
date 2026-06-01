@@ -59,8 +59,15 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${newToken}`;
         return api(original);
       } catch (refreshErr) {
-        localStorage.removeItem('hng_auth');
-        window.location.href = '/login';
+        // Only force-logout when the server genuinely rejects the refresh token
+        // (400 = missing, 401 = invalid/expired). Transient failures — network
+        // drop, timeout, or a 5xx — must NOT end the session; keep the user
+        // logged in and let the request fail/retry instead.
+        const status = refreshErr.response?.status;
+        if (status === 400 || status === 401) {
+          localStorage.removeItem('hng_auth');
+          window.location.href = '/login';
+        }
         return Promise.reject(refreshErr);
       }
     }
