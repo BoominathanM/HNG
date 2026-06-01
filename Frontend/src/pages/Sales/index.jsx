@@ -3408,7 +3408,31 @@ export default function Sales() {
                         {record.followUpDate && (
                           <div style={{ padding: '10px', background: 'rgba(82,196,26,0.08)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)' }}>
                             <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>NEXT FOLLOW-UP</Text>
-                            <Text strong style={{ color: '#52c41a', fontSize: 13 }}>{record.followUpDate} {record.followUpTime}</Text>
+                            <Text strong style={{ color: '#52c41a', fontSize: 13 }}>{record.followUpDate ? dayjs(record.followUpDate).format('DD MMM YYYY') : ''} {record.followUpTime}</Text>
+                          </div>
+                        )}
+                        {/* Current follow-up note */}
+                        {(record.followUpName || record.notes) && (
+                          <div style={{ padding: '10px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#fffbe6', borderRadius: 10, border: '1px solid rgba(250,173,20,0.3)' }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>FOLLOW-UP NOTE</Text>
+                            <Text style={{ fontSize: 13 }}>{record.followUpName || record.notes}</Text>
+                          </div>
+                        )}
+                        {/* Notes history */}
+                        {(record.notesHistory || []).length > 0 && (
+                          <div style={{ marginTop: 4 }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>NOTES HISTORY</Text>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {[...(record.notesHistory || [])].reverse().map((n, i) => (
+                                <div key={i} style={{ padding: '8px 12px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa', border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}` }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                    <Text style={{ fontSize: 11, color: '#B11E6A', fontWeight: 600 }}>{n.person || 'Team'}</Text>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>{n.date} {n.time}</Text>
+                                  </div>
+                                  <Text style={{ fontSize: 12 }}>{n.text}</Text>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                         {(record.statusHistory || []).length > 1 && (
