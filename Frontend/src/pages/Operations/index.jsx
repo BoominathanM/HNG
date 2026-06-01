@@ -660,7 +660,7 @@ export default function Operations() {
       await createStickerRequest({
         orderId: vals.orderId,
         hotelLogo: vals.client || '',
-        stickerType: requestType === 'Box' ? 'Box' : 'Product',
+        stickerType: requestType,
         quantity: Number(vals.qty) || 0,
         stickerSize: vals.size || '',
       }).unwrap();

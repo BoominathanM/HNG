@@ -9,7 +9,7 @@ import {
   BookOutlined, ShopOutlined, ArrowUpOutlined,
   WalletOutlined, TeamOutlined,
   PhoneOutlined, MailOutlined, EnvironmentOutlined,
-  FileTextOutlined, PrinterOutlined, DownloadOutlined, DeleteOutlined
+  FileTextOutlined, PrinterOutlined, DownloadOutlined, DeleteOutlined, UserOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -53,8 +53,14 @@ export default function PartiesLedger() {
     type: p.type,
     phone: p.phone,
     email: '',
-    address: [p.street, p.city, p.state].filter(Boolean).join(', '),
+    address: [p.street, p.city, p.state, p.pincode].filter(Boolean).join(', '),
     gst: p.gstNumber,
+    pan: p.panNumber,
+    contactPerson: p.contactPerson,
+    creditPeriod: p.creditPeriod,
+    creditLimit: p.creditLimit,
+    openingBalance: p.openingBalance || 0,
+    openingBalDir: p.openingBalDir,
     totalPurchase: p.totalSales || 0,
     totalSales: p.totalSales || 0,
     paid: p.received || 0,
@@ -309,6 +315,12 @@ export default function PartiesLedger() {
             )}
             {viewParty.gst && (
               <Col><Space size={4}><FileTextOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>Lic/GST: {viewParty.gst}</Text></Space></Col>
+            )}
+            {viewParty.pan && (
+              <Col><Space size={4}><FileTextOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>PAN: {viewParty.pan}</Text></Space></Col>
+            )}
+            {viewParty.contactPerson && (
+              <Col><Space size={4}><UserOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>Contact: {viewParty.contactPerson}</Text></Space></Col>
             )}
           </Row>
         </div>

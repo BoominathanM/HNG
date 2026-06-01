@@ -69,16 +69,31 @@ export default function Billing() {
     key: inv._id,
     inv: inv.invoiceNumber,
     client: inv.partyId?.name || '—',
+    partyPhone: inv.partyId?.phone || '',
+    partyGst: inv.partyId?.gstNumber || '',
     order: inv.orderId?.orderCode || '—',
     date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
+    dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
     amount: inv.subtotal,
     gst: inv.gstAmount,
+    gstPercent: inv.gstPercent,
     total: inv.total,
     advance: inv.advanceAmount,
     balance: inv.balanceDue,
     previousBalance: inv.previousBalance || 0,
     type: inv.invoiceType,
     status: inv.status,
+    note: inv.note || '',
+    isComplementary: inv.isComplementary,
+    complementaryNote: inv.complementaryNote || '',
+    items: (inv.items || []).map(i => ({
+      key: i._id || i.itemId,
+      name: i.itemName,
+      unit: i.unit,
+      price: i.price,
+      qty: i.qty,
+      lineTotal: i.lineTotal ?? (i.price * i.qty),
+    })),
   })), [invoicesData]);
 
   const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => ({
@@ -94,6 +109,15 @@ export default function Billing() {
     balance: q.balance,
     type: q.type,
     status: q.status,
+    note: q.note || '',
+    items: (q.items || []).map(i => ({
+      key: i._id || i.itemId,
+      name: i.itemName,
+      unit: i.unit,
+      price: i.price,
+      qty: i.qty,
+      lineTotal: i.lineTotal ?? (i.price * i.qty),
+    })),
   })), [quotationsData]);
 
   const partiesList = useMemo(() => (partiesData?.data || []).map((p) => ({
@@ -102,9 +126,19 @@ export default function Billing() {
     phone: p.phone || '',
     type: p.type,
     balance: p.runningBalance || 0,
+    openingBalance: p.openingBalance || 0,
+    openingBalDir: p.openingBalDir,
     gstNumber: p.gstNumber,
+    panNumber: p.panNumber,
     creditPeriod: p.creditPeriod,
     creditLimit: p.creditLimit,
+    category: p.category,
+    contactPerson: p.contactPerson,
+    dob: p.dob,
+    street: p.street,
+    state: p.state,
+    pincode: p.pincode,
+    city: p.city,
   })), [partiesData]);
 
   const itemsList = useMemo(() => (invItemsData?.data || []).map((i) => ({
@@ -295,6 +329,7 @@ export default function Billing() {
         state: vals.state || '',
         pincode: vals.pincode || '',
         city: vals.city || '',
+        ...(vals.dob ? { dob: vals.dob.format ? vals.dob.format('YYYY-MM-DD') : vals.dob } : {}),
       }).unwrap();
       const created = res.data || res;
       handleSelectParty({ ...created, key: created._id, balance: created.openingBalance || 0 });
@@ -391,6 +426,7 @@ export default function Billing() {
         ...(payTransactionRef ? { transactionRef: payTransactionRef } : {}),
         ...(payChequeNo ? { chequeNumber: payChequeNo } : {}),
         ...(payChequeBank ? { chequeBank: payChequeBank } : {}),
+        ...(payChequeDate ? { chequeDate: payChequeDate.format ? payChequeDate.format('YYYY-MM-DD') : payChequeDate } : {}),
         ...(payParty?.key ? { partyId: payParty.key } : {}),
       }).unwrap();
       enqueueSnackbar(`Payment of ₹${(payAmount || 0).toLocaleString()} recorded successfully`, { variant: 'success' });

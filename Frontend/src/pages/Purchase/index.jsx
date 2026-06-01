@@ -128,11 +128,13 @@ export default function Purchase() {
   useEffect(() => {
     const mapped = (localPurchasesData?.data || []).map((lp) => ({
       key: lp._id, date: lp.createdAt?.slice(0, 10),
+      lpCode: lp.lpCode,
       invoiceNo: lp.invoiceNo, invoiceFile: lp.invoiceFileUrl,
       vendorName: lp.vendorName, vendorPhone: lp.vendorPhone,
       items: lp.items || [], totalAmount: lp.totalAmount,
       paymentType: lp.paymentType, paymentStatus: lp.paymentStatus,
       paymentProof: lp.paymentProofUrl, gPayNumber: lp.gPayNumber,
+      paidBy: lp.paidBy, paidDate: lp.paidDate?.slice(0, 10),
     }));
     if (mapped.length > 0) setLocalPurchases(mapped);
   }, [localPurchasesData]);
@@ -1865,8 +1867,9 @@ export default function Purchase() {
                               <Card size="small" style={{ borderRadius: 10, background: isDark ? '#16192a' : '#fafbff', border: `1px solid ${isDark ? '#2a2d40' : '#e8eeff'}` }}>
                                 <Text strong style={{ display: 'block', marginBottom: 10, color: '#B11E6A' }}>Vendor Details</Text>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {localPurchaseDetailView.lpCode && <div><Text type="secondary" style={{ fontSize: 12 }}>LP Code: </Text><Text strong style={{ color: '#B11E6A' }}>{localPurchaseDetailView.lpCode}</Text></div>}
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Vendor Name: </Text><Text strong>{localPurchaseDetailView.vendorName}</Text></div>
-                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Phone: </Text><Text>{localPurchaseDetailView.vendorPhone}</Text></div>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Phone: </Text><Text>{localPurchaseDetailView.vendorPhone || '—'}</Text></div>
                                 </div>
                               </Card>
                             </Col>
@@ -1877,6 +1880,8 @@ export default function Purchase() {
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Type: </Text><Tag color={localPurchaseDetailView.paymentType === 'instant' ? 'green' : 'orange'}>{localPurchaseDetailView.paymentType === 'instant' ? 'Instant' : 'Credit'}</Tag></div>
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Status: </Text><Tag color={localPurchaseDetailView.paymentStatus === 'Paid' ? 'success' : 'error'}>{localPurchaseDetailView.paymentStatus}</Tag></div>
                                   {localPurchaseDetailView.gPayNumber && <div><Text type="secondary" style={{ fontSize: 12 }}>GPay: </Text><Text>{localPurchaseDetailView.gPayNumber}</Text></div>}
+                                  {localPurchaseDetailView.paidBy && <div><Text type="secondary" style={{ fontSize: 12 }}>Paid By: </Text><Text strong>{localPurchaseDetailView.paidBy}</Text></div>}
+                                  {localPurchaseDetailView.paidDate && <div><Text type="secondary" style={{ fontSize: 12 }}>Paid Date: </Text><Text>{localPurchaseDetailView.paidDate}</Text></div>}
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Total: </Text><Text strong style={{ color: '#B11E6A' }}>₹{localPurchaseDetailView.totalAmount?.toLocaleString()}</Text></div>
                                 </div>
                               </Card>
@@ -1889,7 +1894,7 @@ export default function Purchase() {
                                   dataSource={localPurchaseDetailView.items || []}
                                   pagination={false}
                                   columns={[
-                                    { title: 'Item', dataIndex: 'name', render: v => <Text strong>{v}</Text> },
+                                    { title: 'Item', dataIndex: 'itemName', render: v => <Text strong>{v}</Text> },
                                     { title: 'Qty', dataIndex: 'qty' },
                                     { title: 'Unit', dataIndex: 'unit' },
                                     { title: 'Amount', dataIndex: 'amount', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>₹{v?.toLocaleString()}</Text> },
@@ -1904,8 +1909,8 @@ export default function Purchase() {
                                     <FileTextOutlined style={{ color: '#B11E6A', fontSize: 16 }} />
                                     <Text strong>Invoice File: </Text>
                                     <Button type="link" style={{ color: '#1890ff', padding: 0 }}
-                                      onClick={() => window.open(URL.createObjectURL(new Blob([], { type: 'application/pdf' })), '_blank')}
-                                    >{localPurchaseDetailView.invoiceFile}</Button>
+                                      onClick={() => window.open(localPurchaseDetailView.invoiceFile, '_blank')}
+                                    >View Invoice</Button>
                                   </Space>
                                 </Card>
                               </Col>
@@ -1960,7 +1965,7 @@ export default function Purchase() {
                             size="small"
                             dataSource={localPurchases.filter((lp) => {
                               const q = localSearch.toLowerCase();
-                              const matchSearch = !q || (lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.name || '').toLowerCase().includes(q));
+                              const matchSearch = !q || (lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.itemName || i.name || '').toLowerCase().includes(q));
                               const matchPay = !localPayFilter || lp.paymentStatus === localPayFilter;
                               return matchSearch && matchPay;
                             })}
@@ -1992,7 +1997,7 @@ export default function Purchase() {
                                   <div>
                                     {(r.items || []).map((item, idx) => (
                                       <div key={idx} style={{ fontSize: 11 }}>
-                                        <Text strong>{item.name}</Text>
+                                        <Text strong>{item.itemName || item.name}</Text>
                                         <Text type="secondary"> — {item.qty} {item.unit}</Text>
                                       </div>
                                     ))}

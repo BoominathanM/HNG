@@ -129,6 +129,12 @@ export default function Dispatch() {
     createdAt: d.createdAt,
     dispatchedAt: d.dispatchedAt,
     items: d.items || [],
+    contactPerson: d.orderId?.contactPerson || d.orderId?.clientName || '—',
+    phone: d.orderId?.phone || d.orderId?.clientPhone || '—',
+    detailedAddress: d.orderId?.detailedAddress || d.orderId?.address || '—',
+    city: d.orderId?.city || '—',
+    state: d.orderId?.state || '—',
+    pincode: d.orderId?.pincode || '—',
   })), [dispatchData]);
 
   // Transport records (real Transport collection, created on LR upload).
@@ -280,11 +286,11 @@ export default function Dispatch() {
       ? {
           ...o,
           takenStatus: 'taken',
-          takenProof: proofFile,
+          takenProof: proofUrl,
           paymentBy: payBy,
           expenseKey,
           paymentStatus: payBy === 'pickup_team' ? 'Paid' : 'Pending',
-          paymentProof: payBy === 'pickup_team' ? proofFile : null,
+          paymentProof: payBy === 'pickup_team' ? proofUrl : null,
           paidBy: payBy === 'pickup_team' ? 'Pickup Team' : null,
         }
       : o);

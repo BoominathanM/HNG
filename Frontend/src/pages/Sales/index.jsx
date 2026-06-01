@@ -213,6 +213,12 @@ const fmtDateTimeShort = (v) =>
 function prepareFormValues(data) {
   if (!data) return data;
   const processed = { ...data };
+  // Map backend field names → form field names for alt contact
+  if (processed.altRole !== undefined && processed.alternativeRole === undefined) processed.alternativeRole = processed.altRole;
+  if (processed.altName !== undefined && processed.alternativeName === undefined) processed.alternativeName = processed.altName;
+  if (processed.altNumber !== undefined && processed.alternativePhone === undefined) processed.alternativePhone = processed.altNumber;
+  // Map backend priorityNote → form mentionPriority
+  if (processed.priorityNote !== undefined && processed.mentionPriority === undefined) processed.mentionPriority = processed.priorityNote;
   const dateFields = [
     'followUpDate', 'orderDeliveryDate', 'quotationDate',
     'paymentReminderDate', 'date', 'expectedDelivery',
@@ -892,7 +898,9 @@ export default function Sales() {
 
   const performanceTargets = perfRaw?.data?.targets || [];
   const performanceRewards = perfRaw?.data?.rewards || {};
-  const salesPersonOptions = (staffRaw?.data || []).map((s) => ({ value: s._id, label: s.fullName }));
+  const salesPersonOptions = (staffRaw?.data || [])
+    .filter((s) => s.fullName)
+    .map((s) => ({ value: s.fullName, label: s.fullName }));
   const kits = kitsRaw?.data || [];
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
   const { data: itemsRaw } = useGetItemsQuery();
@@ -1173,7 +1181,9 @@ export default function Sales() {
     setEditingLead(lead);
     setSelectedRecord(lead);
     leadForm.resetFields();
-    const defaults = lead ? { ...lead } : newLeadDefaults;
+    const defaults = lead
+      ? { ...lead }
+      : { ...newLeadDefaults, salesPerson: currentUser?.fullName || currentUser?.name || '' };
     leadForm.setFieldsValue(prepareFormValues(defaults));
     setViewMode(lead?.customerId ? 'add-customer' : 'add-lead');
   };
@@ -1594,7 +1604,7 @@ export default function Sales() {
 
   const submitComplaint = () => {
     complaintForm.validateFields().then(async vals => {
-      const { orderId, description } = vals;
+      const { orderId, description, files } = vals;
       const resolvedOrder = complaintOrder
         || ordersData.find(o => o.key === orderId || o.oid === orderId);
       const orderObjectId = resolvedOrder?.key || resolvedOrder?._id;
@@ -1602,8 +1612,17 @@ export default function Sales() {
         enqueueSnackbar('Please select a valid order for this complaint', { variant: 'error' });
         return;
       }
+      const clientName = resolvedOrder?.hotelName || resolvedOrder?.clientName || resolvedOrder?.billingName || '';
+      const evidenceUrls = (files || [])
+        .map(f => f?.url || f?.response?.url || f?.response?.secure_url || null)
+        .filter(Boolean);
       try {
-        await createComplaintMutation({ orderId: orderObjectId, description }).unwrap();
+        await createComplaintMutation({
+          orderId: orderObjectId,
+          description,
+          clientName,
+          ...(evidenceUrls.length ? { evidenceUrls } : {}),
+        }).unwrap();
         enqueueSnackbar('Complaint raised successfully', { variant: 'success' });
         setComplaintModalOpen(false);
         complaintForm.resetFields();
@@ -3244,7 +3263,19 @@ export default function Sales() {
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="Assign Lead To" name="salesPerson" rules={[{ required: true, message: 'Please assign this lead' }]}>
-                        <SelectWithAdd field="salesPerson" defaultOptions={salesPersonOptions} placeholder="Select / Add Sales Person" />
+                        <Select
+                          showSearch
+                          placeholder="Select sales person"
+                          optionFilterProp="label"
+                          options={
+                            currentUser?.fullName || currentUser?.name
+                              ? [
+                                  { value: currentUser.fullName || currentUser.name, label: `${currentUser.fullName || currentUser.name} (Me)` },
+                                  ...salesPersonOptions.filter((o) => o.value !== (currentUser.fullName || currentUser.name)),
+                                ]
+                              : salesPersonOptions
+                          }
+                        />
                       </Form.Item>
                     </Col>
 

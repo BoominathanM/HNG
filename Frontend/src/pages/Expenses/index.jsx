@@ -50,6 +50,9 @@ export default function Expenses() {
     vendor: e.vendorPayee,
     expenseCode: e.expenseCode,
     source: e.expenseSource || 'manual',
+    proofUrl: e.proofUrl,
+    paidBy: e.paidBy,
+    paidDate: e.paidDate?.slice(0, 10),
   })), [expData]);
 
   // Purchase expenses filtered from all expenses
@@ -93,9 +96,8 @@ export default function Expenses() {
       } else if (expProofFile?.originFileObj) {
         formData.append('proof', expProofFile.originFileObj);
       }
-      await expApi.createExpense(formData);
+      await createExpense(formData).unwrap();
       enqueueSnackbar('Expense added successfully', { variant: 'success' });
-      loadExpenses();
       setIsModalOpen(false);
       form.resetFields();
     } catch (err) {
@@ -325,33 +327,39 @@ export default function Expenses() {
                 style={{ width: 260 }}
               />
             </div>
-            <Table
-              size="small"
-              dataSource={[
-                { key: 1, date: '2024-03-01', desc: historyItem.desc, amount: historyItem.amount * 0.8, status: 'Paid', vendor: historyItem.vendor },
-                { key: 2, date: '2024-04-01', desc: historyItem.desc, amount: historyItem.amount * 0.9, status: 'Paid', vendor: historyItem.vendor },
-                { key: 3, date: historyItem.date, desc: historyItem.desc, amount: historyItem.amount, status: historyItem.status, vendor: historyItem.vendor },
-              ].filter(r => {
+            {(() => {
+              const relatedRows = expenses.filter(e =>
+                (historyItem.vendor ? e.vendor === historyItem.vendor : e.category === historyItem.category)
+              ).filter(r => {
                 if (!historyDateRange || !historyDateRange[0] || !historyDateRange[1]) return true;
                 const d = dayjs(r.date);
                 return d.isAfter(historyDateRange[0].subtract(1, 'day')) && d.isBefore(historyDateRange[1].add(1, 'day'));
-              })}
-              columns={[
-                { title: 'Date', dataIndex: 'date', key: 'date' },
-                { title: 'Description', dataIndex: 'desc', key: 'desc' },
-                { title: 'Vendor', dataIndex: 'vendor', key: 'vendor' },
-                { title: 'Amount', dataIndex: 'amount', key: 'amount', render: a => <Text strong style={{ color: '#B11E6A' }}>₹{Math.round(a).toLocaleString()}</Text> },
-                { title: 'Status', dataIndex: 'status', key: 'status', render: s => <Tag color={s === 'Paid' ? 'success' : s === 'Partially Paid' ? 'warning' : 'error'} style={{ borderRadius: 10 }}>{s}</Tag> },
-              ]}
-              pagination={false}
-            />
-            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                Total shown: <Text strong style={{ color: '#B11E6A' }}>
-                  ₹{[historyItem.amount * 0.8, historyItem.amount * 0.9, historyItem.amount].reduce((a, b) => a + b, 0).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                </Text>
-              </Text>
-            </div>
+              });
+              const totalShown = relatedRows.reduce((s, r) => s + (r.amount || 0), 0);
+              return (
+                <>
+                  <Table
+                    size="small"
+                    dataSource={relatedRows}
+                    rowKey="key"
+                    columns={[
+                      { title: 'Date', dataIndex: 'date', key: 'date' },
+                      { title: 'Description', dataIndex: 'desc', key: 'desc' },
+                      { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', render: v => v || '—' },
+                      { title: 'Amount', dataIndex: 'amount', key: 'amount', render: a => <Text strong style={{ color: '#B11E6A' }}>₹{(a || 0).toLocaleString()}</Text> },
+                      { title: 'Status', dataIndex: 'status', key: 'status', render: s => <Tag color={s === 'Paid' ? 'success' : s === 'Partial Paid' ? 'warning' : 'error'} style={{ borderRadius: 10 }}>{s || 'Unpaid'}</Tag> },
+                      { title: 'Proof', dataIndex: 'proofUrl', key: 'proof', render: v => v ? <Button type="link" size="small" onClick={() => window.open(v, '_blank')}>View</Button> : '—' },
+                    ]}
+                    pagination={false}
+                  />
+                  <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Total shown: <Text strong style={{ color: '#B11E6A' }}>₹{totalShown.toLocaleString()}</Text>
+                    </Text>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
       </Modal>
