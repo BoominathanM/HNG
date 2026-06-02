@@ -1102,6 +1102,7 @@ export default function Purchase() {
                       <Table
                         size="small"
                         dataSource={inventoryItems.filter((inv) => {
+                          if (inv.status !== 'Low' && inv.status !== 'Out') return false;
                           const q = stockSearch.toLowerCase();
                           const matchSearch = !q || (inv.name || '').toLowerCase().includes(q) || (inv.category || '').toLowerCase().includes(q) || (inv.code || '').toLowerCase().includes(q);
                           const linkedReq = raisedRequests.find(req => req.item === inv.name);
