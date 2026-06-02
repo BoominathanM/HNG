@@ -32,6 +32,7 @@ router.put('/negotiations/:id', ctrl.updateNegotiation);
 router.post('/negotiations/:id/convert-order', ctrl.convertToOrder);
 
 // Orders
+router.get('/orders/by-hotel', ctrl.getOrdersByHotelName);
 router.get('/orders', ctrl.getOrders);
 router.post('/orders', ctrl.createDirectOrder);
 router.get('/orders/:id', ctrl.getOrder);

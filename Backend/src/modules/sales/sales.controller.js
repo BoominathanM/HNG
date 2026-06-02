@@ -230,16 +230,29 @@ exports.getNegotiations = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, total: negotiations.length, data: negotiations });
 });
 
+// Finds or creates a Customer party by name; returns its _id.
+async function upsertPartyByName(clientName, createdBy) {
+  if (!clientName) return null;
+  const nameRe = new RegExp(`^${clientName.trim()}$`, 'i');
+  let party = await Party.findOne({ name: nameRe, deletedAt: null });
+  if (!party) {
+    party = await Party.create({ name: clientName.trim(), type: 'Customer', createdBy });
+  }
+  return party._id;
+}
+
 exports.convertToOrder = asyncHandler(async (req, res, next) => {
   const negotiation = await Negotiation.findById(req.params.id);
   if (!negotiation) return next(new AppError('Negotiation not found', 404));
   const orderCode = await generateCode('ORD');
+  const clientPartyId = await upsertPartyByName(negotiation.clientName, req.user._id);
   const order = await Order.create({
     orderCode,
     leadId: negotiation.leadId,
     negotiationId: negotiation._id,
     quotationId: negotiation.quotationId,
     clientName: negotiation.clientName,
+    clientPartyId,
     amount: negotiation.amount,
     gstAmount: negotiation.gstAmount,
     total: negotiation.total,
@@ -257,11 +270,23 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
 });
 
 // ─── ORDERS ───────────────────────────────────────────────────────────────────
+exports.getOrdersByHotelName = asyncHandler(async (req, res) => {
+  const { name } = req.query;
+  if (!name) return res.status(400).json({ success: false, message: 'name query param required' });
+  const nameRe = new RegExp(`^${name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+  const orders = await Order.find({ clientName: nameRe, deletedAt: null })
+    .populate('assignedTo', 'fullName')
+    .sort('-createdAt');
+  res.status(200).json({ success: true, total: orders.length, data: orders });
+});
+
 exports.createDirectOrder = asyncHandler(async (req, res) => {
   const orderCode = await generateCode('ORD');
+  const clientPartyId = req.body.clientPartyId || await upsertPartyByName(req.body.clientName, req.user._id);
   const order = await Order.create({
     ...req.body,
     orderCode,
+    clientPartyId,
     assignedTo: req.user._id,
     createdBy: req.user._id,
   });

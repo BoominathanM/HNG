@@ -2,6 +2,7 @@ const Party = require('../../models/Party');
 const LedgerEntry = require('../../models/LedgerEntry');
 const Invoice = require('../../models/Invoice');
 const Payment = require('../../models/Payment');
+const Order = require('../../models/Order');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 
@@ -52,6 +53,17 @@ exports.getVendorsLedger = asyncHandler(async (req, res) => {
     return { party: p, recentEntries: entries, balance };
   }));
   res.status(200).json({ success: true, data });
+});
+
+exports.getPartyOrders = asyncHandler(async (req, res, next) => {
+  const party = await Party.findOne({ _id: req.params.id, deletedAt: null });
+  if (!party) return next(new AppError('Party not found', 404));
+  const nameRe = new RegExp(`^${party.name.trim()}$`, 'i');
+  const orders = await Order.find({
+    $or: [{ clientPartyId: party._id }, { clientName: nameRe }],
+    deletedAt: null,
+  }).populate('assignedTo', 'fullName').sort('-createdAt');
+  res.status(200).json({ success: true, total: orders.length, data: orders });
 });
 
 exports.deleteParty = asyncHandler(async (req, res, next) => {

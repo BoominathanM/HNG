@@ -453,6 +453,10 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/sales/orders', params }),
       providesTags: ['Orders'],
     }),
+    getOrdersByHotelName: builder.query({
+      query: (name) => ({ url: '/sales/orders/by-hotel', params: { name } }),
+      providesTags: (result, error, name) => [{ type: 'Orders', id: `hotel-${name}` }],
+    }),
     getSalesOrder: builder.query({
       query: (id) => ({ url: `/sales/orders/${id}` }),
       providesTags: (result, error, id) => [{ type: 'Orders', id }],
@@ -778,6 +782,10 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/parties/${id}/ledger` }),
       providesTags: (result, error, id) => [{ type: 'PartyLedger', id }],
     }),
+    getPartyOrders: builder.query({
+      query: (id) => ({ url: `/parties/${id}/orders` }),
+      providesTags: (result, error, id) => [{ type: 'PartyOrders', id }],
+    }),
     deleteParty: builder.mutation({
       query: (id) => ({ url: `/parties/${id}`, method: 'delete' }),
       invalidatesTags: ['Parties'],
@@ -946,6 +954,7 @@ export const {
   useUpdateNegotiationMutation,
   useConvertToOrderMutation,
   useGetSalesOrdersQuery,
+  useGetOrdersByHotelNameQuery,
   useGetSalesOrderQuery,
   useCreateSalesOrderMutation,
   useUpdateSalesOrderMutation,
@@ -1013,6 +1022,7 @@ export const {
   // Parties
   useGetPartiesQuery,
   useGetPartyLedgerQuery,
+  useGetPartyOrdersQuery,
   useDeletePartyMutation,
   useGetCustomersLedgerQuery,
   useGetVendorsLedgerQuery,

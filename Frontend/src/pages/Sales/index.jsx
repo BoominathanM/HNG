@@ -44,6 +44,8 @@ import {
   useGetStaffQuery,
   useGetKitsQuery,
   useGetPartiesQuery,
+  useGetPartyOrdersQuery,
+  useGetOrdersByHotelNameQuery,
   useGetRemindersQuery,
   useGetHotelNamesQuery,
   useLazyLookupHotelQuery,
@@ -864,6 +866,7 @@ export default function Sales() {
   const [gstApiData, setGstApiData] = useState(null);
   const [gstApiLoading, setGstApiLoading] = useState(false);
   const [gstApiError, setGstApiError] = useState(null);
+  const [expandedPartyKeys, setExpandedPartyKeys] = useState([]);
 
   const fetchGstDetails = async (gstin) => {
     if (!gstin) return;
@@ -1046,18 +1049,27 @@ export default function Sales() {
   useEffect(() => {
     if (complaintsRaw?.data) setComplaintsData((complaintsRaw.data).map((c) => ({ ...c, key: c._id, orderId: c.orderId?.orderCode || c.orderId, hotelName: c.clientName, description: c.description, raisedAt: c.createdAt, salesPerson: c.salesPerson, status: c.status })));
   }, [complaintsRaw]);
+  // Derive one row per unique hotel from leads (most-recent lead wins)
   useEffect(() => {
-    if (partiesRaw?.data) setCustomersData((partiesRaw.data).map((p) => ({
-      ...p,
-      key: p._id,
-      customerId: p.partyCode || (p._id ? `CUST-${String(p._id).slice(-5)}` : '—'),
-      hotelName: p.name || p.clientName,
-      location: p.city || p.location || '—',
-      phone: p.phone,
-      salesPerson: p.assignedTo?.fullName || p.salesPerson || '—',
-      createdAt: p.createdAt,
+    if (!leadsData.length) return;
+    const map = new Map();
+    [...leadsData]
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .forEach(lead => {
+        const key = (lead.hotelName || '').toLowerCase().trim();
+        if (key && !map.has(key)) map.set(key, lead);
+      });
+    setCustomersData(Array.from(map.values()).map((lead, i) => ({
+      ...lead,
+      key: lead.key || lead._id || i,
+      customerId: lead.customerId || `HOTEL-${String(lead._id || i).slice(-5)}`,
+      hotelName: lead.hotelName,
+      location: lead.location || lead.locationCity || '—',
+      phone: lead.phone,
+      salesPerson: lead.salesPerson || '—',
+      createdAt: lead.createdAt,
     })));
-  }, [partiesRaw]);
+  }, [leadsData]);
 
   useEffect(() => {
     if (viewMode === 'order-detail' && selectedRecord?.gstNumber) {
@@ -1086,6 +1098,7 @@ export default function Sales() {
     leadForm.setFieldsValue(prepareFormValues(record));
     setViewMode('detail');
   };
+
 
   // Build the payload sent to the API. The Lead schema is permissive, so we
   // persist every raw form field (products, productType, kit info, follow-ups,
@@ -4858,8 +4871,16 @@ export default function Sales() {
                     size="small"
                     rowKey="key"
                     scroll={{ x: 'max-content' }}
-                    onRow={(record) => ({ onClick: () => openDetailNextScreen(record) })}
                     style={{ cursor: 'pointer' }}
+                    expandable={{
+                      expandedRowKeys: expandedPartyKeys,
+                      onExpandedRowsChange: setExpandedPartyKeys,
+                      expandRowByClick: true,
+                      showExpandColumn: false,
+                      expandedRowRender: (record) => (
+                        <ExpandedPartyOrders hotelName={record.hotelName} />
+                      ),
+                    }}
                   />
                 </div>
               ),
@@ -5017,6 +5038,81 @@ export default function Sales() {
         </Form>
       </Modal>
 
+    </div>
+  );
+}
+
+const ORDER_STATUS_COLORS = {
+  'In Production': '#B11E6A', 'Dispatch Ready': '#8a1652',
+  'Payment Pending': '#fa8c16', Completed: '#52c41a',
+  Dispatched: '#1890ff', Closed: '#aaa', Cancelled: '#ff4d4f',
+};
+
+function ExpandedPartyOrders({ hotelName }) {
+  const { data, isLoading } = useGetOrdersByHotelNameQuery(hotelName, { skip: !hotelName });
+  const orders = data?.data || [];
+
+  if (isLoading) {
+    return <div style={{ padding: '16px 24px' }}><Spin size="small" /> Loading orders…</div>;
+  }
+
+  if (!orders.length) {
+    return (
+      <div style={{ padding: '16px 24px', color: '#aaa', fontSize: 13 }}>
+        No orders found for this hotel.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '8px 24px 16px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+      <div style={{ fontSize: 12, color: '#888', marginBottom: 10, fontWeight: 600, letterSpacing: 0.3 }}>
+        {orders.length} ORDER{orders.length !== 1 ? 'S' : ''}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {orders.map((order, i) => {
+          const items = order.items?.length ? order.items : (order.products || []);
+          const amount = order.total || order.amount || 0;
+          return (
+            <div
+              key={order._id || i}
+              style={{
+                display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12,
+                background: '#fff', borderRadius: 8, padding: '10px 14px',
+                border: '1px solid #f0f0f0', fontSize: 13,
+              }}
+            >
+              <Text strong style={{ color: '#B11E6A', width: 110, flexShrink: 0 }}>
+                {order.orderCode || `#${i + 1}`}
+              </Text>
+              <div style={{ flex: '1 1 160px', minWidth: 120 }}>
+                {items.length ? (
+                  items.map((it, j) => (
+                    <div key={j} style={{ fontSize: 12, lineHeight: '18px' }}>
+                      {it.itemName || it.name || '—'}{it.qty ? ` × ${it.qty}` : ''}
+                    </div>
+                  ))
+                ) : (
+                  <Text style={{ color: '#aaa' }}>—</Text>
+                )}
+              </div>
+              <Text strong style={{ width: 90, flexShrink: 0 }}>
+                ₹{amount.toLocaleString()}
+              </Text>
+              <div style={{ width: 130, flexShrink: 0 }}>
+                <Tag color={ORDER_STATUS_COLORS[order.status] || '#ccc'} style={{ fontSize: 12 }}>
+                  {order.status || '—'}
+                </Tag>
+              </div>
+              <Text style={{ color: '#888', fontSize: 12, flexShrink: 0 }}>
+                {order.createdAt
+                  ? new Date(order.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—'}
+              </Text>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
