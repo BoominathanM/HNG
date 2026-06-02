@@ -23,6 +23,7 @@ import {
   useGetLeadsQuery,
   useGetSalesQuotationsQuery,
   useGetNegotiationsQuery,
+  useUpdateNegotiationMutation,
   useGetSalesOrdersQuery,
   useGetComplaintsQuery,
   useCreateLeadMutation,
@@ -221,8 +222,8 @@ function prepareFormValues(data) {
   if (processed.priorityNote !== undefined && processed.mentionPriority === undefined) processed.mentionPriority = processed.priorityNote;
   const dateFields = [
     'followUpDate', 'orderDeliveryDate', 'quotationDate',
-    'paymentReminderDate', 'date', 'expectedDelivery',
-    'raisedDate', 'quotationDate', 'softwareExpiryDate',
+    'paymentReminderDate', 'creditDueDate', 'date', 'expectedDelivery',
+    'raisedDate', 'softwareExpiryDate', 'negDate', 'quoteDate',
   ];
 
   dateFields.forEach(field => {
@@ -947,6 +948,7 @@ export default function Sales() {
   const [createSalesQuotationMutation] = useCreateSalesQuotationMutation();
   const [convertToNegotiationMutation] = useConvertToNegotiationMutation();
   const [convertLeadToNegotiationMutation] = useConvertLeadToNegotiationMutation();
+  const [updateNegotiationMutation] = useUpdateNegotiationMutation();
   const [convertToOrderMutation] = useConvertToOrderMutation();
   const [createSalesOrderMutation] = useCreateSalesOrderMutation();
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
@@ -976,17 +978,70 @@ export default function Sales() {
     }
   };
 
+  // Helper to normalize backend `items` → frontend `products` (name/qty/rate shape)
+  const itemsToProducts = (items = []) =>
+    items.map((i) => ({
+      name: i.itemName,
+      qty: i.qty,
+      rate: i.price,
+      unit: i.unit,
+      lineTotal: i.lineTotal,
+      logoType: i.logoType,
+      size: i.size,
+      packaging: i.packaging,
+      material: i.material,
+      gst: i.gst,
+    }));
+
   useEffect(() => {
     if (leadsRaw?.data) setLeadsData((leadsRaw.data).map((l) => ({ ...l, key: l._id, leadId: l.leadCode, hotelName: l.hotelName, status: l.status, salesPerson: l.salesPerson, createdAt: l.createdAt })));
   }, [leadsRaw]);
   useEffect(() => {
-    if (quotationsRaw?.data) setQuotationsData((quotationsRaw.data).map((q) => ({ ...q, key: q._id, qid: q.quotCode, hotelName: q.clientName, status: q.status, salesPerson: q.salesPerson, totalAmount: q.total, date: q.createdAt?.slice(0, 10) })));
+    if (quotationsRaw?.data) setQuotationsData((quotationsRaw.data).map((q) => ({
+      ...q,
+      key: q._id,
+      qid: q.quotCode,
+      hotelName: q.clientName,
+      status: q.status,
+      location: q.location || q.locationCity,
+      salesPerson: q.salesPerson || q.assignedTo?.fullName,
+      totalAmount: q.total,
+      date: q.createdAt?.slice(0, 10),
+      billType: q.billType || (q.type === 'GST' ? 'GST' : q.type === 'Non-GST' ? 'NON_GST' : q.type),
+      products: q.products?.length ? q.products : itemsToProducts(q.items),
+    })));
   }, [quotationsRaw]);
   useEffect(() => {
-    if (negotiationsRaw?.data) setNegotiationsData((negotiationsRaw.data).map((n) => ({ ...n, key: n._id, hotelName: n.clientName, status: n.status, salesPerson: n.salesPerson })));
+    if (negotiationsRaw?.data) setNegotiationsData((negotiationsRaw.data).map((n) => ({
+      ...n,
+      key: n._id,
+      nid: n.negCode,
+      hotelName: n.clientName,
+      status: n.status,
+      location: n.location || n.locationCity,
+      salesPerson: n.salesPerson || n.assignedTo?.fullName,
+      totalAmount: n.total,
+      date: n.createdAt?.slice(0, 10),
+      billType: n.billType || (n.type === 'GST' ? 'GST' : n.type === 'Non-GST' ? 'NON_GST' : n.type),
+      products: n.products?.length ? n.products : itemsToProducts(n.items),
+    })));
   }, [negotiationsRaw]);
   useEffect(() => {
-    if (ordersRaw?.data) setOrdersData((ordersRaw.data).map((o) => ({ ...o, key: o._id, oid: o.orderCode, hotelName: o.clientName, status: o.status, salesPerson: o.salesPerson, totalAmount: o.total, date: o.createdAt?.slice(0, 10), expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : o.expectedDelivery, advance: o.advancePaidAmount ?? o.advancePaid ?? 0 })));
+    if (ordersRaw?.data) setOrdersData((ordersRaw.data).map((o) => ({
+      ...o,
+      key: o._id,
+      oid: o.orderCode,
+      hotelName: o.clientName,
+      status: o.status,
+      location: o.location || o.locationCity,
+      salesPerson: o.salesPerson || o.assignedTo?.fullName,
+      totalAmount: o.total,
+      date: o.createdAt?.slice(0, 10),
+      expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : o.expectedDelivery,
+      advance: o.advancePaidAmount ?? o.advancePaid ?? 0,
+      billType: o.billType || (o.type === 'GST' ? 'GST' : o.type === 'Non-GST' ? 'NON_GST' : o.type),
+      products: o.products?.length ? o.products : itemsToProducts(o.items),
+    })));
   }, [ordersRaw]);
   useEffect(() => {
     if (complaintsRaw?.data) setComplaintsData((complaintsRaw.data).map((c) => ({ ...c, key: c._id, orderId: c.orderId?.orderCode || c.orderId, hotelName: c.clientName, description: c.description, raisedAt: c.createdAt, salesPerson: c.salesPerson, status: c.status })));
@@ -1176,15 +1231,46 @@ export default function Sales() {
     }
   };
 
+  // Null-out every date field so resetFields never restores an ISO string to a DatePicker
+  const DATE_FIELD_NULLS = {
+    followUpDate: null, quotationDate: null, paymentReminderDate: null,
+    creditDueDate: null, softwareExpiryDate: null, orderDeliveryDate: null,
+    negDate: null, quoteDate: null,
+  };
+
   // ─── Lead handlers ────────────────────────────────────────────────
   const openAddLead = (lead = null) => {
     setEditingLead(lead);
     setSelectedRecord(lead);
     leadForm.resetFields();
-    const defaults = lead
-      ? { ...lead }
-      : { ...newLeadDefaults, salesPerson: currentUser?.fullName || currentUser?.name || '' };
-    leadForm.setFieldsValue(prepareFormValues(defaults));
+    if (lead) {
+      leadForm.setFieldsValue(prepareFormValues({ ...lead }));
+    } else {
+      // Explicitly reset every field that appears in the form so no old lead data bleeds through
+      leadForm.setFieldsValue({
+        ...newLeadDefaults,
+        ...DATE_FIELD_NULLS,
+        salesPerson: currentUser?.fullName || currentUser?.name || '',
+        hotelName: undefined, billingName: undefined, branch: undefined,
+        rowsInHotel: undefined, generalOccupancy: undefined,
+        contactPerson: undefined, pocDesignation: undefined,
+        phone: undefined, email: undefined,
+        alternativeRole: undefined, alternativeName: undefined, alternativePhone: undefined,
+        location: undefined, destination: undefined, source: undefined,
+        gstNumber: undefined, gstPercent: undefined,
+        detailedAddress: undefined, city: undefined, state: undefined, pincode: undefined,
+        status: undefined, quotationNo: undefined, followUpName: undefined, followUpTime: undefined, followUpStep: undefined,
+        interestedInSoftware: undefined, previousSoftware: undefined, previousSoftwarePrice: undefined,
+        mentionPriority: undefined, notes: undefined,
+        selectedKit: undefined, kitDisplayUnit: undefined, kitSize: undefined,
+        specifications: [],
+        notesHistory: [],
+        hotelLogo: [],
+        paymentProofs: [],
+        splitDates: [],
+        partialDates: [],
+      });
+    }
     setViewMode(lead?.customerId ? 'add-customer' : 'add-lead');
   };
 
@@ -1241,6 +1327,7 @@ export default function Sales() {
 
   const saveSectionEdit = async (section) => {
     const now = new Date().toISOString();
+    const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
     const fieldsBySection = {
       hotel: ['hotelName', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
       billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber', 'gstPercent'],
@@ -1249,7 +1336,14 @@ export default function Sales() {
       personalization: ['productType', 'displayUnit'],
       delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'paymentProofs'],
     };
-    const values = leadForm.getFieldsValue(fieldsBySection[section]);
+    const rawValues = leadForm.getFieldsValue(fieldsBySection[section]);
+    const values = { ...rawValues };
+    ['followUpDate', 'quotationDate', 'softwareExpiryDate', 'orderDeliveryDate', 'paymentReminderDate'].forEach(f => {
+      if (values[f]) values[f] = toStr(values[f]);
+    });
+    if (values.splitDates) {
+      values.splitDates = values.splitDates.map(sd => ({ ...sd, date: toStr(sd.date) }));
+    }
     const updated = { ...selectedRecord, ...values };
     if (section === 'leadStatus' && values.status && values.status !== selectedRecord.status) {
       updated.statusHistory = [...(selectedRecord.statusHistory || []), { status: values.status, changedAt: now }];
@@ -1339,10 +1433,31 @@ export default function Sales() {
         id: lead._id || lead.key,
         clientName: lead.hotelName || lead.billingName,
         billType: lead.billType,
+        type: lead.billType === 'GST' ? 'GST' : 'Non-GST',
         gstAmount: lead.gstAmount || 0,
         totalAmount: calcTotal(lead.products),
         total: calcTotal(lead.products),
         items: (lead.products || []).map(mapOrderItem),
+        products: lead.products || [],
+        // Contact + billing fields
+        hotelName: lead.hotelName,
+        billingName: lead.billingName,
+        location: lead.location,
+        detailedAddress: lead.detailedAddress,
+        city: lead.city,
+        state: lead.state,
+        pincode: lead.pincode,
+        contactPerson: lead.contactPerson,
+        phone: lead.phone,
+        email: lead.email,
+        salesPerson: lead.salesPerson,
+        hotelType: lead.hotelType,
+        gstNumber: lead.gstNumber,
+        gstPercent: lead.gstPercent,
+        forwardingCharge: lead.forwardingCharge,
+        deliveryBy: lead.deliveryBy,
+        transportationBy: lead.transportationBy,
+        paymentTerms: lead.paymentTerms,
       }).unwrap();
       enqueueSnackbar(`${lead.hotelName} converted to Negotiation (${newNeg.nid})`, { variant: 'success' });
       setActiveTab('quotations');
@@ -1356,7 +1471,11 @@ export default function Sales() {
     setEditingQuotation(null);
     setQuotationFromLead(lead);
     quotationForm.resetFields();
-    quotationForm.setFieldsValue(prepareFormValues(lead));
+    quotationForm.setFieldsValue({
+      ...prepareFormValues(lead),
+      location: lead.location || lead.locationCity,
+      billType: lead.billType || 'GST',
+    });
     setViewMode('quotation-form');
   };
 
@@ -1385,12 +1504,23 @@ export default function Sales() {
         const gstAmount = (values.products || []).reduce(
           (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
         const grandTotal = subtotal + gstAmount;
+        const src = quotationFromLead || {};
+        const effectiveBillType = values.billType || src.billType || 'GST';
+        const advancePaid = Number(src.paidAmount || src.advancePaid) || 0;
+        const balance = grandTotal - advancePaid;
+        const payStatus = advancePaid >= grandTotal && grandTotal > 0 ? 'Paid'
+          : advancePaid > 0 ? 'Partially Paid'
+          : 'Unpaid';
         const payload = {
-          clientName: values.hotelName || quotationFromLead?.hotelName || 'Client',
+          clientName: values.hotelName || src.hotelName || 'Client',
           amount: subtotal,
           gstAmount,
           total: grandTotal,
-          type: values.billType === 'GST' ? 'GST' : 'Non-GST',
+          advancePaid,
+          balance,
+          status: payStatus,
+          type: effectiveBillType === 'GST' ? 'GST' : 'Non-GST',
+          billType: effectiveBillType,
           items: (values.products || []).map((p) => ({
             itemName: p.name,
             unit: p.unit,
@@ -1398,9 +1528,36 @@ export default function Sales() {
             qty: Number(p.qty) || 0,
             lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
           })),
+          products: values.products || [],
           note: values.note,
+          // Contact + billing fields carried forward from the lead
+          hotelName: values.hotelName || src.hotelName,
+          billingName: values.billingName || src.billingName,
+          location: values.location || src.location || src.locationCity,
+          detailedAddress: values.detailedAddress || src.detailedAddress,
+          city: values.city || src.city,
+          state: values.state || src.state,
+          pincode: values.pincode || src.pincode,
+          contactPerson: src.contactPerson,
+          phone: src.phone,
+          email: src.email,
+          salesPerson: src.salesPerson || src.assignedTo?.fullName,
+          hotelType: values.hotelType || src.hotelType,
+          gstNumber: src.gstNumber,
+          gstPercent: src.gstPercent,
+          // Order details
+          specifications: src.specifications || [],
+          logoNeeded: src.logoNeeded,
+          logoProducts: src.logoProducts,
+          orderDeliveryDate: src.orderDeliveryDate,
+          splitDates: src.splitDates || [],
+          // Delivery & payment
+          forwardingCharge: values.forwardingCharge ?? src.forwardingCharge,
+          deliveryBy: values.deliveryBy || src.deliveryBy,
+          transportationBy: values.transportationBy || src.transportationBy,
+          paymentTerms: values.paymentTerms || src.paymentTerms,
         };
-        if (quotationFromLead?.key) payload.leadId = quotationFromLead.key;
+        if (src.key || src._id) payload.leadId = src._id || src.key;
         try {
           await createSalesQuotationMutation(payload).unwrap();
           setQuotationFromLead(null);
@@ -1493,9 +1650,29 @@ export default function Sales() {
       advancePaid: 0,
       balance: subtotal + gstAmount,
       type: q.billType === 'GST' ? 'GST' : 'Non-GST',
+      billType: q.billType,
       paymentTerms: q.paymentTerms,
       status,
       items: (q.products || []).map(mapOrderItem),
+      // Carry all contact + billing + delivery fields through
+      hotelName: q.hotelName || q.clientName,
+      billingName: q.billingName,
+      location: q.location,
+      clientPhone: q.phone,
+      contactPerson: q.contactPerson,
+      phone: q.phone,
+      email: q.email,
+      salesPerson: q.salesPerson,
+      hotelType: q.hotelType,
+      gstNumber: q.gstNumber,
+      gstPercent: q.gstPercent,
+      detailedAddress: q.detailedAddress,
+      city: q.city,
+      state: q.state,
+      pincode: q.pincode,
+      forwardingCharge: q.forwardingCharge,
+      deliveryBy: q.deliveryBy,
+      transportationBy: q.transportationBy,
     };
   };
 
@@ -1679,29 +1856,40 @@ export default function Sales() {
     try {
       const values = await negotiationForm.validateFields();
       const total = calcTotal(values.products);
-      const updated = {
-        ...editingNegotiation,
+      const nextStep = Math.min((editingNegotiation.flowStep || 0) + 1, 3);
+      const nextStatus = ['Initial', 'Counter Offer', 'Final Terms', 'Approved'][nextStep] || 'Final Terms';
+      const updatedRounds = [
+        ...(editingNegotiation.rounds || []),
+        {
+          round: (editingNegotiation.rounds?.length || 0) + 1,
+          date: new Date().toISOString().split('T')[0],
+          by: 'Sales Team',
+          type: 'Counter Offer',
+          totalAmount: total,
+          note: values.negotiationNote || 'Terms updated',
+        },
+      ];
+      const patch = {
         ...values,
+        total,
+        amount: total,
         totalAmount: total,
-        flowStep: Math.min((editingNegotiation.flowStep || 0) + 1, 3),
-        status: ['Initial', 'Counter Offer', 'Final Terms', 'Approved'][(editingNegotiation.flowStep || 0) + 1] || 'Final Terms',
-        rounds: [
-          ...(editingNegotiation.rounds || []),
-          {
-            round: (editingNegotiation.rounds?.length || 0) + 1,
-            date: new Date().toISOString().split('T')[0],
-            by: 'Sales Team',
-            type: 'Counter Offer',
-            totalAmount: total,
-            note: values.negotiationNote || 'Terms updated',
-          },
-        ],
+        flowStep: nextStep,
+        status: nextStatus,
+        rounds: updatedRounds,
+        items: (values.products || []).map(mapOrderItem),
       };
+      const updated = { ...editingNegotiation, ...patch };
+      try {
+        await updateNegotiationMutation({ id: editingNegotiation._id || editingNegotiation.key, ...patch }).unwrap();
+      } catch (apiErr) {
+        enqueueSnackbar(apiErr?.data?.message || 'Failed to save negotiation', { variant: 'error' });
+        return;
+      }
       setNegotiationsData(prev => prev.map(n => n.key === editingNegotiation.key ? updated : n));
       setSelectedRecord(updated);
       enqueueSnackbar('Negotiation updated', { variant: 'success' });
-      setViewMode('table');
-      setActiveTab('quotations');
+      setViewMode('negotiation-detail');
       setEditingNegotiation(null);
     } catch (_) { }
   };
@@ -3058,7 +3246,7 @@ export default function Sales() {
               { label: 'Total Value', value: `₹${totalValue.toLocaleString()}`, icon: <CreditCardOutlined /> },
               { label: 'Products', value: `${record.products?.length || 0} items`, icon: <ShoppingCartOutlined /> },
               { label: 'Hotel Type', value: record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel', icon: <BankOutlined /> },
-              { label: 'Next Follow-up', value: record.followUpDate || 'Not set', icon: <HistoryOutlined /> },
+              { label: 'Next Follow-up', value: record.followUpDate ? `${dayjs(record.followUpDate).format('DD MMM YYYY')}${record.followUpTime ? ' · ' + record.followUpTime : ''}` : 'Not set', icon: <HistoryOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
                 <Card size="small" style={{ borderRadius: 12, border: '1px solid #B11E6A22', background: isDark ? '#1E1E2E' : '#fff' }} styles={{ body: { padding: '12px 14px' } }}>
@@ -3070,7 +3258,7 @@ export default function Sales() {
           </Row>
         )}
 
-        <Form form={leadForm} layout="vertical" initialValues={isDetail ? record : undefined}>
+        <Form form={leadForm} layout="vertical">
           <Row gutter={20}>
             <Col span={24}>
               <Card

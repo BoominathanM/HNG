@@ -27,6 +27,6 @@ const negotiationSchema = new mongoose.Schema({
   }],
   note: String,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 module.exports = mongoose.model('Negotiation', negotiationSchema);

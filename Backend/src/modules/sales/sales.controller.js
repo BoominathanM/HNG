@@ -162,7 +162,13 @@ exports.convertToNegotiation = asyncHandler(async (req, res, next) => {
   const quotation = await Quotation.findById(req.params.id);
   if (!quotation) return next(new AppError('Quotation not found', 404));
   const negCode = await generateCode('NEG');
+  const qObj = quotation.toObject ? quotation.toObject() : { ...quotation._doc };
+  // Copy all non-schema fields stored on the quotation (location, contactPerson, phone, etc.)
+  const extraFields = {};
+  const knownFields = ['_id','__v','quotCode','leadId','clientName','quoteDate','amount','gstAmount','total','advancePaid','balance','type','status','items','note','deletedAt','createdBy','createdAt','updatedAt'];
+  Object.keys(qObj).forEach(k => { if (!knownFields.includes(k)) extraFields[k] = qObj[k]; });
   const negotiation = await Negotiation.create({
+    ...extraFields,
     negCode,
     quotationId: quotation._id,
     leadId: quotation.leadId,
@@ -207,6 +213,16 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
 });
 
 // ─── NEGOTIATIONS ──────────────────────────────────────────────────────────────
+exports.updateNegotiation = asyncHandler(async (req, res, next) => {
+  const negotiation = await Negotiation.findByIdAndUpdate(
+    req.params.id,
+    { $set: req.body },
+    { new: true, runValidators: false }
+  );
+  if (!negotiation) return next(new AppError('Negotiation not found', 404));
+  res.status(200).json({ success: true, data: negotiation });
+});
+
 exports.getNegotiations = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.leadId) filter.leadId = req.query.leadId;

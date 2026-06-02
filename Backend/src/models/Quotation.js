@@ -27,6 +27,6 @@ const quotationSchema = new mongoose.Schema({
   note: String,
   deletedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 module.exports = mongoose.model('Quotation', quotationSchema);

@@ -28,6 +28,7 @@ router.post('/quotations/:id/convert-negotiation', ctrl.convertToNegotiation);
 
 // Negotiations
 router.get('/negotiations', ctrl.getNegotiations);
+router.put('/negotiations/:id', ctrl.updateNegotiation);
 router.post('/negotiations/:id/convert-order', ctrl.convertToOrder);
 
 // Orders

@@ -427,11 +427,11 @@ export const apiSlice = createApi({
     }),
     createSalesQuotation: builder.mutation({
       query: (data) => ({ url: '/sales/quotations', method: 'post', data }),
-      invalidatesTags: ['Quotations'],
+      invalidatesTags: ['Quotations', 'Leads'],
     }),
     convertToNegotiation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/quotations/${id}/convert-negotiation`, method: 'post', data }),
-      invalidatesTags: ['Quotations', 'Negotiations'],
+      invalidatesTags: ['Quotations', 'Negotiations', 'Leads'],
     }),
     convertLeadToNegotiation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/leads/${id}/convert-negotiation`, method: 'post', data }),
@@ -441,9 +441,13 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/sales/negotiations', params }),
       providesTags: ['Negotiations'],
     }),
+    updateNegotiation: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/sales/negotiations/${id}`, method: 'put', data }),
+      invalidatesTags: ['Negotiations'],
+    }),
     convertToOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/negotiations/${id}/convert-order`, method: 'post', data }),
-      invalidatesTags: ['Negotiations', 'Orders'],
+      invalidatesTags: ['Negotiations', 'Orders', 'Leads', 'Quotations'],
     }),
     getSalesOrders: builder.query({
       query: (params) => ({ url: '/sales/orders', params }),
@@ -455,7 +459,7 @@ export const apiSlice = createApi({
     }),
     createSalesOrder: builder.mutation({
       query: (data) => ({ url: '/sales/orders', method: 'post', data }),
-      invalidatesTags: ['Orders'],
+      invalidatesTags: ['Orders', 'Leads'],
     }),
     updateSalesOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/orders/${id}`, method: 'put', data }),
@@ -939,6 +943,7 @@ export const {
   useConvertToNegotiationMutation,
   useConvertLeadToNegotiationMutation,
   useGetNegotiationsQuery,
+  useUpdateNegotiationMutation,
   useConvertToOrderMutation,
   useGetSalesOrdersQuery,
   useGetSalesOrderQuery,
