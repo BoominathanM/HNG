@@ -206,6 +206,19 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     total: req.body.total || req.body.totalAmount || 0,
     type: req.body.billType === 'GST' ? 'GST' : 'Non-GST',
     items,
+    // Copy lead contact details so they flow through to the eventual order
+    location: lead.location || lead.locationCity,
+    phone: lead.phone,
+    contactPerson: lead.contactPerson,
+    billingName: lead.billingName || lead.hotelName,
+    gstNumber: lead.gstNumber,
+    gstPercent: lead.gstPercent,
+    salesPerson: lead.salesPerson,
+    billType: lead.billType,
+    detailedAddress: lead.detailedAddress || lead.address,
+    city: lead.city,
+    state: lead.state,
+    pincode: lead.pincode,
     createdBy: req.user._id,
   });
   await Lead.findByIdAndUpdate(lead._id, { status: 'Negotiation' });
@@ -246,6 +259,15 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
   if (!negotiation) return next(new AppError('Negotiation not found', 404));
   const orderCode = await generateCode('ORD');
   const clientPartyId = await upsertPartyByName(negotiation.clientName, req.user._id);
+
+  // Resolve contact details: negotiation extras (strict:false) → lead fallback
+  const negObj = negotiation.toObject();
+  let lead = null;
+  if (negotiation.leadId) {
+    lead = await Lead.findById(negotiation.leadId).lean();
+  }
+  const resolveField = (...sources) => sources.find(v => v != null && v !== '');
+
   const order = await Order.create({
     orderCode,
     leadId: negotiation.leadId,
@@ -260,6 +282,19 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     balance: negotiation.balance,
     type: negotiation.type,
     items: negotiation.items,
+    // Contact & billing details copied from negotiation extras or lead
+    location: resolveField(negObj.location, lead?.location, lead?.locationCity),
+    clientPhone: resolveField(negObj.phone, negObj.clientPhone, lead?.phone),
+    contactPerson: resolveField(negObj.contactPerson, lead?.contactPerson),
+    billingName: resolveField(negObj.billingName, lead?.billingName, negotiation.clientName),
+    gstNumber: resolveField(negObj.gstNumber, lead?.gstNumber),
+    gstPercent: resolveField(negObj.gstPercent, lead?.gstPercent),
+    salesPerson: resolveField(negObj.salesPerson, lead?.salesPerson),
+    billType: resolveField(negObj.billType, lead?.billType, negotiation.type === 'GST' ? 'GST' : 'NON_GST'),
+    detailedAddress: resolveField(negObj.detailedAddress, lead?.detailedAddress, lead?.address),
+    city: resolveField(negObj.city, lead?.city),
+    state: resolveField(negObj.state, lead?.state),
+    pincode: resolveField(negObj.pincode, lead?.pincode),
     assignedTo: req.user._id,
     createdBy: req.user._id,
   });
@@ -311,7 +346,11 @@ exports.getOrders = asyncHandler(async (req, res) => {
 
 exports.getOrder = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null })
-    .populate('clientPartyId').populate('assignedTo', 'fullName email');
+    .populate('clientPartyId')
+    .populate('assignedTo', 'fullName email')
+    .populate('leadId', 'leadCode hotelName phone contactPerson location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode')
+    .populate('negotiationId', 'negCode')
+    .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));
   res.status(200).json({ success: true, data: order });
 });

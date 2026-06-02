@@ -25,6 +25,7 @@ import {
   useGetNegotiationsQuery,
   useUpdateNegotiationMutation,
   useGetSalesOrdersQuery,
+  useGetSalesOrderQuery,
   useGetComplaintsQuery,
   useCreateLeadMutation,
   useUpdateLeadMutation,
@@ -100,7 +101,11 @@ const STATUS_COLORS = {
   'Quotation (Not Sent)': '#d9d9d9',
   Negotiation: '#fa8c16',
   Invoiced: '#722ed1',
-  Rejected: '#ff4d4f',
+  // Payment statuses
+  Paid: '#52c41a',
+  'Partially Paid': '#fa8c16',
+  Unpaid: '#ff4d4f',
+  'In Process': '#1890ff',
 };
 
 const LEAD_STEPS = [
@@ -889,6 +894,10 @@ export default function Sales() {
   const { data: quotationsRaw } = useGetSalesQuotationsQuery();
   const { data: negotiationsRaw } = useGetNegotiationsQuery();
   const { data: ordersRaw } = useGetSalesOrdersQuery();
+  const { data: singleOrderRaw } = useGetSalesOrderQuery(
+    selectedRecord?._id,
+    { skip: viewMode !== 'order-detail' || !selectedRecord?._id }
+  );
   const { data: complaintsRaw } = useGetComplaintsQuery();
   const { data: partiesRaw } = useGetPartiesQuery();
   const { data: remindersRaw } = useGetRemindersQuery();
@@ -1000,51 +1009,95 @@ export default function Sales() {
     if (leadsRaw?.data) setLeadsData((leadsRaw.data).map((l) => ({ ...l, key: l._id, leadId: l.leadCode, hotelName: l.hotelName, status: l.status, salesPerson: l.salesPerson, createdAt: l.createdAt })));
   }, [leadsRaw]);
   useEffect(() => {
-    if (quotationsRaw?.data) setQuotationsData((quotationsRaw.data).map((q) => ({
-      ...q,
-      key: q._id,
-      qid: q.quotCode,
-      hotelName: q.clientName,
-      status: q.status,
-      location: q.location || q.locationCity,
-      salesPerson: q.salesPerson || q.assignedTo?.fullName,
-      totalAmount: q.total,
-      date: q.createdAt?.slice(0, 10),
-      billType: q.billType || (q.type === 'GST' ? 'GST' : q.type === 'Non-GST' ? 'NON_GST' : q.type),
-      products: q.products?.length ? q.products : itemsToProducts(q.items),
-    })));
+    if (quotationsRaw?.data) setQuotationsData((quotationsRaw.data).map((q) => {
+      const collected = (q.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const paidTotal = collected || Number(q.paidAmount || 0) || Number(q.advancePaid || 0);
+      const total = Number(q.total || 0);
+      const paymentStatus = total > 0
+        ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
+        : (q.status || 'Unpaid');
+      return {
+        ...q,
+        key: q._id,
+        qid: q.quotCode,
+        hotelName: q.clientName,
+        status: paymentStatus,
+        location: q.location || q.locationCity,
+        salesPerson: q.salesPerson || q.assignedTo?.fullName,
+        totalAmount: total,
+        paidAmount: paidTotal,
+        balance: total - paidTotal,
+        date: q.createdAt?.slice(0, 10),
+        billType: q.billType || (q.type === 'GST' ? 'GST' : q.type === 'Non-GST' ? 'NON_GST' : q.type),
+        products: q.products?.length ? q.products : itemsToProducts(q.items),
+        itemCount: (q.products?.length || q.items?.length || 0),
+      };
+    }));
   }, [quotationsRaw]);
   useEffect(() => {
-    if (negotiationsRaw?.data) setNegotiationsData((negotiationsRaw.data).map((n) => ({
-      ...n,
-      key: n._id,
-      nid: n.negCode,
-      hotelName: n.clientName,
-      status: n.status,
-      location: n.location || n.locationCity,
-      salesPerson: n.salesPerson || n.assignedTo?.fullName,
-      totalAmount: n.total,
-      date: n.createdAt?.slice(0, 10),
-      billType: n.billType || (n.type === 'GST' ? 'GST' : n.type === 'Non-GST' ? 'NON_GST' : n.type),
-      products: n.products?.length ? n.products : itemsToProducts(n.items),
-    })));
+    if (negotiationsRaw?.data) setNegotiationsData((negotiationsRaw.data).map((n) => {
+      const collected = (n.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const paidTotal = collected || Number(n.paidAmount || 0) || Number(n.advancePaid || 0);
+      const total = Number(n.total || 0);
+      const paymentStatus = total > 0
+        ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
+        : (n.status || 'Unpaid');
+      return {
+        ...n,
+        key: n._id,
+        nid: n.negCode,
+        hotelName: n.clientName,
+        status: paymentStatus,
+        location: n.location || n.locationCity,
+        salesPerson: n.salesPerson || n.assignedTo?.fullName,
+        totalAmount: total,
+        paidAmount: paidTotal,
+        balance: total - paidTotal,
+        date: n.createdAt?.slice(0, 10),
+        billType: n.billType || (n.type === 'GST' ? 'GST' : n.type === 'Non-GST' ? 'NON_GST' : n.type),
+        products: n.products?.length ? n.products : itemsToProducts(n.items),
+        itemCount: (n.products?.length || n.items?.length || 0),
+      };
+    }));
   }, [negotiationsRaw]);
   useEffect(() => {
-    if (ordersRaw?.data) setOrdersData((ordersRaw.data).map((o) => ({
-      ...o,
-      key: o._id,
-      oid: o.orderCode,
-      hotelName: o.clientName,
-      status: o.status,
-      location: o.location || o.locationCity,
-      salesPerson: o.salesPerson || o.assignedTo?.fullName,
-      totalAmount: o.total,
-      date: o.createdAt?.slice(0, 10),
-      expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : o.expectedDelivery,
-      advance: o.advancePaidAmount ?? o.advancePaid ?? 0,
-      billType: o.billType || (o.type === 'GST' ? 'GST' : o.type === 'Non-GST' ? 'NON_GST' : o.type),
-      products: o.products?.length ? o.products : itemsToProducts(o.items),
-    })));
+    if (ordersRaw?.data) setOrdersData((ordersRaw.data).map((o) => {
+      const advance = o.advancePaidAmount ?? o.advancePaid ?? 0;
+      const collectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const paidTotal = collectionTotal || Number(o.paidAmount || 0) || Number(advance);
+      const total = Number(o.total || 0);
+      const paymentStatus = total > 0
+        ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
+        : (advance > 0 ? 'Partially Paid' : 'Unpaid');
+      return {
+        ...o,
+        key: o._id,
+        oid: o.orderCode,
+        hotelName: o.clientName,
+        status: o.status,
+        paymentStatus,
+        location: o.location || o.locationCity,
+        phone: o.clientPhone || o.phone,
+        contactPerson: o.contactPerson,
+        billingName: o.billingName || o.clientName,
+        gstNumber: o.gstNumber,
+        gstPercent: o.gstPercent,
+        salesPerson: o.salesPerson || o.assignedTo?.fullName,
+        detailedAddress: o.detailedAddress,
+        city: o.city,
+        state: o.state,
+        pincode: o.pincode,
+        totalAmount: total,
+        paidAmount: paidTotal,
+        balance: total - paidTotal,
+        date: o.createdAt?.slice(0, 10),
+        expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : o.expectedDelivery,
+        advance,
+        billType: o.billType || (o.type === 'GST' ? 'GST' : o.type === 'Non-GST' ? 'NON_GST' : o.type),
+        products: o.products?.length ? o.products : itemsToProducts(o.items),
+        itemCount: (o.products?.length || o.items?.length || 0),
+      };
+    }));
   }, [ordersRaw]);
   useEffect(() => {
     if (complaintsRaw?.data) setComplaintsData((complaintsRaw.data).map((c) => ({ ...c, key: c._id, orderId: c.orderId?.orderCode || c.orderId, hotelName: c.clientName, description: c.description, raisedAt: c.createdAt, salesPerson: c.salesPerson, status: c.status })));
@@ -2002,7 +2055,27 @@ export default function Sales() {
     { title: 'Hotel', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag color={STATUS_COLORS[v] || 'orange'} style={{ fontSize: 13 }}>{v}</Tag> },
+    {
+      title: 'Amount', key: 'negAmt', width: 120, responsive: ['sm'],
+      render: (_, r) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{(r.totalAmount || 0).toLocaleString()}</Text>,
+    },
+    {
+      title: 'Payment Status', key: 'payStatus', width: 150,
+      render: (_, r) => {
+        const color = r.status === 'Paid' ? 'success' : r.status === 'Partially Paid' ? 'warning' : 'error';
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{r.status || 'Unpaid'}</Tag>
+            {r.paidAmount > 0 && (
+              <Text type="secondary" style={{ fontSize: 11 }}>₹{r.paidAmount.toLocaleString()} / ₹{(r.totalAmount || 0).toLocaleString()}</Text>
+            )}
+            {r.balance > 0 && r.paidAmount > 0 && (
+              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{r.balance.toLocaleString()} due</Text>
+            )}
+          </Space>
+        );
+      },
+    },
     { title: 'Created At', dataIndex: 'createdAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
     {
       title: 'Actions', key: 'actions',
@@ -2025,10 +2098,10 @@ export default function Sales() {
     { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'GST Number', dataIndex: 'gstNumber', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
-      title: 'Items / Amount', key: 'amt', width: 140, responsive: ['sm'],
+      title: 'Items / Amount', key: 'amt', width: 160, responsive: ['sm'],
       render: (_, r) => (
         <div>
-          <Text style={{ fontSize: 13 }}>{r.products?.length || 0} items</Text><br />
+          <Text style={{ fontSize: 13 }}>{r.itemCount ?? r.products?.length ?? 0} items</Text><br />
           <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{(r.totalAmount || calcTotal(r.products)).toLocaleString()}</Text>
         </div>
       ),
@@ -2037,7 +2110,25 @@ export default function Sales() {
       title: 'Bill', dataIndex: 'billType', width: 90, responsive: ['md'],
       render: (v) => <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', fontSize: 13 }}>{v === 'GST' ? 'GST' : 'Non-GST'}</Tag>,
     },
-    { title: 'Status', dataIndex: 'status', width: 120, render: (v) => <Tag color={STATUS_COLORS[v]} style={{ fontSize: 13 }}>{v}</Tag> },
+    {
+      title: 'Payment Status', key: 'payStatus', width: 150,
+      render: (_, r) => {
+        const color = r.status === 'Paid' ? 'success' : r.status === 'Partially Paid' ? 'warning' : 'error';
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{r.status || 'Unpaid'}</Tag>
+            {r.paidAmount > 0 && (
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                ₹{r.paidAmount.toLocaleString()} / ₹{(r.totalAmount || 0).toLocaleString()}
+              </Text>
+            )}
+            {r.balance > 0 && r.paidAmount > 0 && (
+              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{r.balance.toLocaleString()} due</Text>
+            )}
+          </Space>
+        );
+      },
+    },
     {
       title: 'Created At', dataIndex: 'createdAt', width: 145, responsive: ['md'],
       render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTime(v)}</Text>,
@@ -2078,10 +2169,23 @@ export default function Sales() {
       render: (v) => <Text strong style={{ fontSize: 13 }}>₹{(v || 0).toLocaleString()}</Text>,
     },
     {
-      title: 'Advance', dataIndex: 'advance', width: 115, responsive: ['md'],
-      render: (v) => <Text style={{ color: '#52c41a', fontSize: 13 }}>₹{(v || 0).toLocaleString()}</Text>,
+      title: 'Payment', key: 'payStatus', width: 155,
+      render: (_, r) => {
+        const color = r.paymentStatus === 'Paid' ? 'success' : r.paymentStatus === 'Partially Paid' ? 'warning' : 'error';
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{r.paymentStatus || 'Unpaid'}</Tag>
+            {r.paidAmount > 0 && (
+              <Text type="secondary" style={{ fontSize: 11 }}>₹{r.paidAmount.toLocaleString()} / ₹{(r.totalAmount || 0).toLocaleString()}</Text>
+            )}
+            {r.balance > 0 && r.paidAmount > 0 && (
+              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{r.balance.toLocaleString()} due</Text>
+            )}
+          </Space>
+        );
+      },
     },
-    { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag color={STATUS_COLORS[v]} style={{ fontSize: 13 }}>{v}</Tag> },
+    { title: 'Order Status', dataIndex: 'status', width: 130, render: (v) => <Tag color={STATUS_COLORS[v]} style={{ fontSize: 13 }}>{v}</Tag> },
     {
       title: 'Created At', dataIndex: 'createdAt', width: 145, responsive: ['md'],
       render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTime(v)}</Text>,
@@ -2596,7 +2700,28 @@ export default function Sales() {
 
     // ── Order detail ───────────────────────────────────────────────
     if (viewMode === 'order-detail') {
-      const o = selectedRecord || {};
+      const base = selectedRecord || {};
+      const full = singleOrderRaw?.data || {};
+      // Merge list record with populated single-order fetch
+      const o = {
+        ...base,
+        phone: base.phone || full.clientPhone || full.phone,
+        contactPerson: base.contactPerson || full.contactPerson,
+        billingName: base.billingName || full.billingName || base.hotelName,
+        gstNumber: base.gstNumber || full.gstNumber,
+        gstPercent: base.gstPercent ?? full.gstPercent,
+        salesPerson: base.salesPerson || full.salesPerson || full.assignedTo?.fullName,
+        detailedAddress: base.detailedAddress || full.detailedAddress,
+        city: base.city || full.city,
+        state: base.state || full.state,
+        pincode: base.pincode || full.pincode,
+        // Readable linked codes from populated references
+        leadCode: full.leadId?.leadCode || base.leadCode,
+        leadName: full.leadId?.hotelName || base.leadName || base.hotelName,
+        quotationCode: full.quotationId?.quotCode || base.quotationCode,
+        negotiationCode: full.negotiationId?.negCode || base.negotiationCode,
+        statusHistory: full.statusHistory || base.statusHistory || [],
+      };
       const ORDER_STEPS = [
         { title: 'Confirmed', description: 'Order placed' },
         { title: 'In Production', description: 'Manufacturing' },
@@ -2662,12 +2787,19 @@ export default function Sales() {
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
                 <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
+
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
                   <Text strong style={{ fontSize: 14, color: textColor, display: 'block' }}>{s.value}</Text>
                 </Card>
               </Col>
             ))}
           </Row>
+
+          {/* Order Progress Steps */}
+          <Card style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }} styles={{ body: { padding: '16px 24px' } }}>
+            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>ORDER PROGRESS</Text>
+            <Steps current={orderCurrentStep} items={ORDER_STEPS} />
+          </Card>
 
           <Row gutter={20}>
             <Col xs={24} lg={16}>
@@ -2801,11 +2933,51 @@ export default function Sales() {
                   )}
                 </Descriptions>
               </Card>
-              <Card size="small" style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}>
-                <Text type="secondary" style={{ fontSize: 11 }}>LINKED TO</Text>
-                <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 11 }}>Quotation: </Text><Text strong style={{ color: '#1e3799' }}>{o.quotationId || '—'}</Text></div>
-                {o.negotiationId && <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>Negotiation: </Text><Text strong style={{ color: '#fa8c16' }}>{o.negotiationId}</Text></div>}
-                <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>Order Date: </Text><Text strong>{o.date || '—'}</Text></div>
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#1e3799', borderRadius: 2, display: 'inline-block' }} /><FileTextOutlined style={{ color: '#1e3799' }} /><span>Linked Documents</span></Space>}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {(o.leadCode || o.leadName) && (
+                    <div style={{ padding: '8px 12px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.04)', borderRadius: 8, border: '1px solid rgba(177,30,106,0.15)' }}>
+                      <Text type="secondary" style={{ fontSize: 10, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>LEAD</Text>
+                      <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{o.leadCode || '—'}</Text>
+                      {o.leadName && <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{o.leadName}</Text>}
+                    </div>
+                  )}
+                  {o.quotationCode && (
+                    <div style={{ padding: '8px 12px', background: isDark ? 'rgba(30,55,153,0.08)' : 'rgba(30,55,153,0.04)', borderRadius: 8, border: '1px solid rgba(30,55,153,0.15)' }}>
+                      <Text type="secondary" style={{ fontSize: 10, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QUOTATION</Text>
+                      <Text strong style={{ color: '#1e3799', fontSize: 13 }}>{o.quotationCode}</Text>
+                    </div>
+                  )}
+                  {o.negotiationCode && (
+                    <div style={{ padding: '8px 12px', background: isDark ? 'rgba(250,140,22,0.08)' : 'rgba(250,140,22,0.04)', borderRadius: 8, border: '1px solid rgba(250,140,22,0.2)' }}>
+                      <Text type="secondary" style={{ fontSize: 10, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>NEGOTIATION</Text>
+                      <Text strong style={{ color: '#fa8c16', fontSize: 13 }}>{o.negotiationCode}</Text>
+                    </div>
+                  )}
+                  <div style={{ padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fc', borderRadius: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 10, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>ORDER DATE</Text>
+                    <Text strong style={{ fontSize: 13 }}>{o.date || '—'}</Text>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Status Timeline */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><HistoryOutlined style={{ color: '#fa8c16' }} /><span>Status Timeline</span></Space>}>
+                {(o.statusHistory || []).length === 0 ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>No status history yet.</Text>
+                ) : (
+                  <Timeline
+                    mode="left"
+                    items={[...(o.statusHistory || [])].reverse().map((h, i) => ({
+                      color: STATUS_COLORS[h.status] || '#ccc',
+                      dot: i === 0 ? <div style={{ width: 12, height: 12, borderRadius: '50%', background: STATUS_COLORS[h.status] || '#ccc', border: '2px solid #fff', boxShadow: `0 0 0 3px ${STATUS_COLORS[h.status] || '#ccc'}55` }} /> : undefined,
+                      label: <Text style={{ fontSize: 12, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? (isDark ? '#fff' : '#222') : (isDark ? '#aaa' : '#666') }}>{fmtDateTimeShort(h.changedAt || h.at)}</Text>,
+                      children: <Tag color={STATUS_COLORS[h.status] || 'default'} style={{ borderRadius: 20, fontSize: 12, padding: '1px 10px', fontWeight: i === 0 ? 700 : 400 }}>{h.status}</Tag>,
+                    }))}
+                  />
+                )}
               </Card>
 
               {/* GST API Details Card */}
@@ -3743,19 +3915,70 @@ export default function Sales() {
                     )
                   )}
                 >
-                  {usePerCardEdit && editingSection !== 'personalization' ? (
-                    <Row gutter={[24, 12]}>
-                      <Col xs={24} sm={12}>
-                        <InfoRow label="Product Selection" value={
-                          record.productType
-                            ? (Array.isArray(record.productType)
-                              ? record.productType.map(pt => PERSONALIZATION_OPTIONS.find(o => o.value === pt)?.label || pt).join(', ')
-                              : PERSONALIZATION_OPTIONS.find(o => o.value === record.productType)?.label || record.productType)
-                            : '—'
-                        } />
-                      </Col>
-                    </Row>
-                  ) : (
+                  {usePerCardEdit && editingSection !== 'personalization' ? (() => {
+                    const kitName = record.selectedKit
+                      ? kits.find((k) => k._id === record.selectedKit)?.kitName || record.selectedKit
+                      : null;
+                    const isKitType = Array.isArray(record.productType)
+                      ? record.productType.includes('PERSONALIZED_KIT')
+                      : record.productType === 'PERSONALIZED_KIT';
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <Row gutter={[16, 12]}>
+                          <Col xs={24} sm={12}>
+                            <InfoRow label="Product Selection" value={
+                              record.productType
+                                ? (Array.isArray(record.productType)
+                                  ? record.productType.map(pt => PERSONALIZATION_OPTIONS.find(o => o.value === pt)?.label || pt).join(', ')
+                                  : PERSONALIZATION_OPTIONS.find(o => o.value === record.productType)?.label || record.productType)
+                                : '—'
+                            } />
+                          </Col>
+                          {kitName && (
+                            <Col xs={24} sm={12}>
+                              <InfoRow label="Kit Selected" value={kitName} />
+                            </Col>
+                          )}
+                          {(record.kitDisplayUnit || record.displayUnit) && (
+                            <Col xs={12} sm={6}>
+                              <InfoRow label="Display Unit" value={(record.kitDisplayUnit || record.displayUnit || '').replace(/_/g, ' ')} />
+                            </Col>
+                          )}
+                          {record.kitSize && (
+                            <Col xs={12} sm={6}>
+                              <InfoRow label="Kit Size" value={record.kitSize} />
+                            </Col>
+                          )}
+                        </Row>
+                        {isKitType && (record.kitProducts || []).length > 0 && (
+                          <div>
+                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
+                              KIT CONTENTS ({record.kitProducts.length} items)
+                            </Text>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {record.kitProducts.map((kp, i) => (
+                                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                                  <div>
+                                    <Text strong style={{ fontSize: 13 }}>{kp.productName || kp.kitType || '—'}</Text>
+                                    {kp.displayType && <Tag color="purple" style={{ marginLeft: 8, borderRadius: 12, fontSize: 10 }}>{kp.displayType}</Tag>}
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
+                                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {isKitType && (record.kitProducts || []).length === 0 && kitName && (
+                          <div style={{ padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px dashed rgba(114,46,209,0.2)' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Kit: <Text strong style={{ color: '#722ed1' }}>{kitName}</Text> — products listed below in Order Details</Text>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })() : (
                     <Row gutter={16}>
                       <Col xs={24} sm={12}>
                         <Form.Item label="Product Selection" name="productType" rules={[{ required: true, message: 'Select product type' }]}>
@@ -3836,19 +4059,27 @@ export default function Sales() {
                           </div>
                         )}
 
-                        {/* Per-product cards */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                          {(record.products || []).filter(Boolean).map((p, i) => (
-                            <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
-                              {/* Product header row */}
-                              <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                        {/* Per-product cards — kit items shown with kit badge */}
+                        {(() => {
+                          const allProds = (record.products || []).filter(Boolean);
+                          const kitProds = allProds.filter(p => p.isKit || p.kitType);
+                          const sepProds = allProds.filter(p => !p.isKit && !p.kitType);
+                          const kitNameLabel = record.selectedKit
+                            ? kits.find((k) => k._id === record.selectedKit)?.kitName || 'Personalized Kit'
+                            : (kitProds.length > 0 ? 'Personalized Kit' : null);
+                          const renderProductCard = (p, i, globalIndex) => (
+                            <div key={globalIndex} style={{ border: `1px solid ${isDark ? (p.isKit || p.kitType ? 'rgba(114,46,209,0.3)' : 'rgba(255,255,255,0.08)') : (p.isKit || p.kitType ? 'rgba(114,46,209,0.2)' : 'rgba(177,30,106,0.12)')}`, borderRadius: 12, overflow: 'hidden' }}>
+                              <div style={{ background: isDark ? (p.isKit || p.kitType ? 'rgba(114,46,209,0.12)' : 'rgba(177,30,106,0.1)') : (p.isKit || p.kitType ? 'rgba(114,46,209,0.06)' : 'rgba(177,30,106,0.04)'), padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                    <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>{i + 1}</span>
+                                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: p.isKit || p.kitType ? 'linear-gradient(135deg,#722ed1,#9254de)' : 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>{globalIndex + 1}</span>
                                   </div>
                                   <div>
-                                    <Text type="secondary" style={{ fontSize: 11 }}>PRODUCT</Text>
-                                    <Text strong style={{ display: 'block', fontSize: 15 }}>{p.name || '—'}</Text>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <Text type="secondary" style={{ fontSize: 11 }}>{p.isKit || p.kitType ? 'KIT ITEM' : 'PRODUCT'}</Text>
+                                      {(p.isKit || p.kitType) && <Tag color="purple" style={{ fontSize: 10, borderRadius: 4, margin: 0, padding: '0 5px' }}>KIT</Tag>}
+                                    </div>
+                                    <Text strong style={{ display: 'block', fontSize: 15 }}>{p.name || p.kitType || '—'}</Text>
                                   </div>
                                 </div>
                                 <div style={{ textAlign: 'right' }}>
@@ -3921,8 +4152,27 @@ export default function Sales() {
                                 </div>
                               )}
                             </div>
-                          ))}
-                        </div>
+                          );
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                              {kitNameLabel && kitProds.length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.18)' }}>
+                                  <GiftOutlined style={{ color: '#722ed1' }} />
+                                  <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Kit: {kitNameLabel}</Text>
+                                  {(record.kitDisplayUnit || record.displayUnit) && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>{(record.kitDisplayUnit || record.displayUnit || '').replace(/_/g, ' ')}</Tag>}
+                                  {record.kitSize && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{record.kitSize}</Tag>}
+                                </div>
+                              )}
+                              {kitProds.map((p, i) => renderProductCard(p, i, i))}
+                              {sepProds.length > 0 && kitProds.length > 0 && (
+                                <div style={{ padding: '6px 14px', background: isDark ? 'rgba(255,255,255,0.04)' : '#f5f5f5', borderRadius: 6 }}>
+                                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8 }}>SEPARATE PRODUCTS</Text>
+                                </div>
+                              )}
+                              {sepProds.map((p, i) => renderProductCard(p, i, kitProds.length + i))}
+                            </div>
+                          );
+                        })()}
 
                         {/* Total footer */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, padding: '14px 18px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
@@ -4370,6 +4620,81 @@ export default function Sales() {
                       />
                     ) : (
                       <Text type="secondary" style={{ display: 'block', textAlign: 'center', padding: 20 }}>No orders yet for this customer.</Text>
+                    )}
+                  </Card>
+                );
+              })()}
+
+              {/* ── Lead Pipeline Journey — detail only ──────────────── */}
+              {isDetail && isLeadDetail && (() => {
+                const linkedQuotations = quotationsData.filter(q => q.leadId && (q.leadId === record._id || q.leadId === record.key));
+                const linkedNegotiations = negotiationsData.filter(n => n.leadId && (n.leadId === record._id || n.leadId === record.key));
+                const linkedOrders = ordersData.filter(o => o.hotelName === record.hotelName);
+                const hasAny = linkedQuotations.length > 0 || linkedNegotiations.length > 0 || linkedOrders.length > 0;
+                return (
+                  <Card
+                    style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><ArrowRightOutlined style={{ color: '#722ed1' }} /><span>Lead Pipeline Journey</span></Space>}
+                  >
+                    {!hasAny ? (
+                      <Text type="secondary" style={{ fontSize: 12 }}>No quotations or orders created from this lead yet.</Text>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        {linkedQuotations.length > 0 && (
+                          <div>
+                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#1e3799', display: 'block', marginBottom: 8 }}>QUOTATIONS ({linkedQuotations.length})</Text>
+                            {linkedQuotations.map((q, i) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', marginBottom: 6, background: isDark ? 'rgba(30,55,153,0.08)' : 'rgba(30,55,153,0.04)', borderRadius: 10, border: '1px solid rgba(30,55,153,0.15)', cursor: 'pointer' }}
+                                onClick={() => openQuotationDetail(q)}>
+                                <div>
+                                  <Text strong style={{ color: '#1e3799', fontSize: 13, fontFamily: 'monospace' }}>{q.qid}</Text>
+                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{q.date} · {(q.products || []).map(p => p.name).filter(Boolean).join(', ') || '—'}</Text>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <Text strong style={{ color: '#1e3799', fontSize: 14, display: 'block' }}>₹{(q.totalAmount || 0).toLocaleString()}</Text>
+                                  <Tag color={STATUS_COLORS[q.status] || 'default'} style={{ borderRadius: 12, fontSize: 11, margin: 0 }}>{q.status}</Tag>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {linkedNegotiations.length > 0 && (
+                          <div>
+                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#fa8c16', display: 'block', marginBottom: 8 }}>NEGOTIATIONS ({linkedNegotiations.length})</Text>
+                            {linkedNegotiations.map((n, i) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', marginBottom: 6, background: isDark ? 'rgba(250,140,22,0.08)' : 'rgba(250,140,22,0.04)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.2)', cursor: 'pointer' }}
+                                onClick={() => { setSelectedRecord(n); setViewMode('negotiation-detail'); }}>
+                                <div>
+                                  <Text strong style={{ color: '#fa8c16', fontSize: 13, fontFamily: 'monospace' }}>{n.nid}</Text>
+                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{n.date} · {(n.products || []).map(p => p.name).filter(Boolean).join(', ') || '—'}</Text>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <Text strong style={{ color: '#fa8c16', fontSize: 14, display: 'block' }}>₹{(n.totalAmount || 0).toLocaleString()}</Text>
+                                  <Tag color={STATUS_COLORS[n.status] || 'orange'} style={{ borderRadius: 12, fontSize: 11, margin: 0 }}>{n.status}</Tag>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {linkedOrders.length > 0 && (
+                          <div>
+                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#52c41a', display: 'block', marginBottom: 8 }}>ORDERS ({linkedOrders.length})</Text>
+                            {linkedOrders.map((ord, i) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', marginBottom: 6, background: isDark ? 'rgba(82,196,26,0.08)' : 'rgba(82,196,26,0.04)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)', cursor: 'pointer' }}
+                                onClick={() => openOrderDetail(ord)}>
+                                <div>
+                                  <Text strong style={{ color: '#52c41a', fontSize: 13, fontFamily: 'monospace' }}>{ord.oid}</Text>
+                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{ord.date} · {(ord.products || []).map(p => p.name).filter(Boolean).join(', ') || '—'}</Text>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <Text strong style={{ color: '#52c41a', fontSize: 14, display: 'block' }}>₹{(ord.totalAmount || 0).toLocaleString()}</Text>
+                                  <Tag color={STATUS_COLORS[ord.status] || 'green'} style={{ borderRadius: 12, fontSize: 11, margin: 0 }}>{ord.status}</Tag>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </Card>
                 );

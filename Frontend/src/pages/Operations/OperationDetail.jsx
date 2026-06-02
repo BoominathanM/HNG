@@ -99,7 +99,8 @@ export default function OperationDetail() {
 
   const allOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
-    hotelLogo: o.clientName || '—', salesPerson: o.assignedTo?.fullName || '—',
+    hotelName: o.clientName || '—',
+    hotelLogo: o.clientName || '—', salesPerson: o.salesPerson || o.assignedTo?.fullName || '—',
     createdAt: o.createdAt, orderType: o.orderType || 'Sticker',
     clientApproval: o.clientApproval || 'Waiting',
     designStatus: o.designStatus || 'Not Started',
@@ -110,10 +111,21 @@ export default function OperationDetail() {
     printerVerified: o.printerVerified || false, inventoryStock: o.inventoryStock || 0,
     orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
     specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || '',
-    totalAmount: o.total || 0, advance: o.advancePaid || 0,
-    expectedDelivery: o.expectedDelivery, isUrgent: o.isUrgent || false,
+    paymentReminderDate: o.paymentReminderDate,
+    totalAmount: o.total || 0, advance: o.advancePaidAmount ?? o.advancePaid ?? 0,
+    expectedDelivery: o.expectedDeliveryDate
+      ? new Date(o.expectedDeliveryDate).toISOString().slice(0, 10)
+      : o.expectedDelivery,
+    isUrgent: o.isUrgent || false,
     items: o.items || [], readiness: o.readiness || {},
-    location: o.location || '', phone: o.clientPhone || '',
+    location: o.location || '', phone: o.clientPhone || o.phone || '',
+    contactPerson: o.contactPerson || '',
+    billingName: o.billingName || o.clientName || '',
+    gstNumber: o.gstNumber || '',
+    gstPercent: o.gstPercent,
+    deliveryBy: o.deliveryBy || '',
+    transportationBy: o.transportationBy || '',
+    forwardingCharge: o.forwardingCharge || false,
     paymentProofs: o.paymentProofs || [],
   })), [ordersData]);
   const checkStates = useMemo(() => getCheckStateMap(allOrders), [allOrders]);

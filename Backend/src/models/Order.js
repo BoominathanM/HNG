@@ -64,12 +64,22 @@ const orderSchema = new mongoose.Schema({
   orderCategory: { type: String, enum: ['ORDER', 'SAMPLE'], default: 'ORDER' },
   location: String,
   clientPhone: String,
+  contactPerson: String,
+  billingName: String,
+  gstNumber: String,
+  gstPercent: { type: Number, default: 18 },
+  salesPerson: String,
+  billType: { type: String, enum: ['GST', 'NON_GST'], default: 'GST' },
+  detailedAddress: String,
+  city: String,
+  state: String,
+  pincode: String,
   paymentProofs: [mongoose.Schema.Types.Mixed],
   splitDates: [mongoose.Schema.Types.Mixed],
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 orderSchema.index({ status: 1, deletedAt: 1 });
 orderSchema.index({ clientPartyId: 1 });
