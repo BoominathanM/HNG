@@ -86,7 +86,7 @@ export default function Billing() {
     note: inv.note || '',
     isComplementary: inv.isComplementary,
     complementaryNote: inv.complementaryNote || '',
-    items: (inv.items || []).map(i => ({
+    items: (inv.items || []).filter(Boolean).map(i => ({
       key: i._id || i.itemId,
       name: i.itemName,
       unit: i.unit,
@@ -110,7 +110,7 @@ export default function Billing() {
     type: q.type,
     status: q.status,
     note: q.note || '',
-    items: (q.items || []).map(i => ({
+    items: (q.items || []).filter(Boolean).map(i => ({
       key: i._id || i.itemId,
       name: i.itemName,
       unit: i.unit,
@@ -273,7 +273,7 @@ export default function Billing() {
     }, {})
   );
 
-  const subtotal = invoiceItems.reduce((s, i) => s + i.price * i.qty, 0);
+  const subtotal = invoiceItems.filter(Boolean).reduce((s, i) => s + (i.price || 0) * (i.qty || 0), 0);
   const gstAmt = invoiceType === 'GST' ? subtotal * (gstPercent / 100) : 0;
   const total = subtotal + gstAmt;
   const balanceDue = Math.max(0, total - (advanceAmt || 0));

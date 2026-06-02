@@ -48,10 +48,10 @@ function toWords(n) {
 
 export function generatePrintHTML(type, data) {
   const isQuotation = type === 'quotation';
-  const items = data.items || SAMPLE_ITEMS;
-  const totalQty = items.reduce((s, i) => s + i.qty, 0);
-  const totalTax = items.reduce((s, i) => s + i.taxAmt, 0);
-  const subtotalAmt = items.reduce((s, i) => s + i.amount, 0);
+  const items = (data.items || SAMPLE_ITEMS).filter(Boolean);
+  const totalQty = items.reduce((s, i) => s + (i.qty || 0), 0);
+  const totalTax = items.reduce((s, i) => s + (i.taxAmt || 0), 0);
+  const subtotalAmt = items.reduce((s, i) => s + (i.amount || 0), 0);
   const taxableAmount = data.taxableAmount || (subtotalAmt - totalTax);
   const forwardingCharge = data.forwardingCharge !== undefined ? data.forwardingCharge : 330;
   const cgst = data.cgst !== undefined ? data.cgst : Math.round(taxableAmount * 9) / 100;
@@ -243,10 +243,10 @@ export function generatePrintHTML(type, data) {
 
 export default function DocumentTemplate({ type = 'quotation', data = {} }) {
   const isQuotation = type === 'quotation';
-  const items = data.items || SAMPLE_ITEMS;
-  const totalQty = items.reduce((s, i) => s + i.qty, 0);
-  const totalTax = items.reduce((s, i) => s + i.taxAmt, 0);
-  const subtotalAmt = items.reduce((s, i) => s + i.amount, 0);
+  const items = (data.items || SAMPLE_ITEMS).filter(Boolean);
+  const totalQty = items.reduce((s, i) => s + (i.qty || 0), 0);
+  const totalTax = items.reduce((s, i) => s + (i.taxAmt || 0), 0);
+  const subtotalAmt = items.reduce((s, i) => s + (i.amount || 0), 0);
   const taxableAmount = data.taxableAmount || (subtotalAmt - totalTax);
   const forwardingCharge = data.forwardingCharge !== undefined ? data.forwardingCharge : 330;
   const cgst = data.cgst !== undefined ? data.cgst : Math.round(taxableAmount * 9) / 100;

@@ -250,11 +250,11 @@ function prepareFormValues(data) {
 }
 
 function calcTotal(products = []) {
-  return products.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
+  return products.filter(Boolean).reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
 }
 
 function generateWhatsAppText(data) {
-  const lines = (data.products || []).map(p => `${p.name} - ${p.qty}(${p.rate})`).join('\n');
+  const lines = (data.products || []).filter(Boolean).map(p => `${p.name} - ${p.qty}(${p.rate})`).join('\n');
   const hotelTypeLine = data.hotelType === 'OLD' ? 'OLD HOTEL' : 'NEW HOTEL';
   const billLine = data.billType === 'GST' ? 'GST BILL' : 'NON GST BILL';
   const fwdLine = data.forwardingCharge ? 'FORWARDING CHARGE IS THERE' : 'NO FORWARDING CHARGE';
@@ -3825,7 +3825,7 @@ export default function Sales() {
 
                         {/* Per-product cards */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                          {(record.products || []).map((p, i) => (
+                          {(record.products || []).filter(Boolean).map((p, i) => (
                             <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
                               {/* Product header row */}
                               <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
@@ -4040,7 +4040,7 @@ export default function Sales() {
                         <Text strong style={{ fontSize: 13, color: '#ff4d4f', display: 'block', marginBottom: 8 }}>
                           {sd.date ? (typeof sd.date === 'string' ? sd.date : sd.date.format?.('YYYY-MM-DD') || String(sd.date)) : '—'}
                         </Text>
-                        {(sd.products || (sd.product ? [{ product: sd.product, qty: sd.qty, notes: sd.note }] : [])).map((p, pi) => (
+                        {(sd.products || (sd.product ? [{ product: sd.product, qty: sd.qty, notes: sd.note }] : [])).filter(Boolean).map((p, pi) => (
                           <Row key={pi} gutter={[16, 4]} style={{ marginBottom: 4 }}>
                             <Col xs={24} sm={8}>
                               <Text type="secondary" style={{ fontSize: 11 }}>Product: </Text>
@@ -4336,7 +4336,7 @@ export default function Sales() {
                               <div>
                                 <Text strong style={{ color: '#B11E6A', fontFamily: 'monospace', fontSize: 13, display: 'block' }}>{r.oid}</Text>
                                 <Text type="secondary" style={{ fontSize: 11 }}>
-                                  {(r.products || []).map(p => p.name).join(', ') || '—'}
+                                  {(r.products || []).filter(Boolean).map(p => p.name).join(', ') || '—'}
                                 </Text>
                               </div>
                             )
