@@ -5,9 +5,10 @@ const expenseSchema = new mongoose.Schema({
   expenseDate: { type: Date, required: true },
   category: {
     type: String,
-    enum: ['Shipping / Transportation', 'Utility', 'Rent', 'Salary & Wages', 'Marketing', 'Other', 'Purchase'],
+    enum: ['Raw Material', 'Shipping / Transportation', 'Utilities (Rent/Elec)', 'Other', 'Purchase'],
     required: true,
   },
+  customCategory: { type: String, trim: true },
   vendorPayee: String,
   description: { type: String, required: [true, 'Description is required'] },
   amount: { type: Number, required: [true, 'Amount is required'], min: 0 },

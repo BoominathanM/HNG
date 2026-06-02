@@ -43,6 +43,7 @@ import {
   useUpdateComplaintStatusMutation,
   useGetMyPerformanceQuery,
   useGetStaffQuery,
+  useGetUsersQuery,
   useGetKitsQuery,
   useGetPartiesQuery,
   useGetPartyOrdersQuery,
@@ -313,9 +314,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const gst = Form.useWatch([fieldName, name, 'gst']);
 
   const form = Form.useFormInstance();
-  const initQty = form?.getFieldValue([fieldName, name, 'qty']);
-  const initRate = form?.getFieldValue([fieldName, name, 'rate']);
-  const [isLocalEdit, setIsLocalEdit] = React.useState(initQty === undefined && initRate === undefined);
+  const [isLocalEdit, setIsLocalEdit] = React.useState(true);
   const isItemDisabled = disabled || !isLocalEdit;
 
   return (
@@ -915,13 +914,14 @@ export default function Sales() {
   const hotelNameOptions = (hotelNamesRaw?.data || []).map((n) => ({ value: n, label: n }));
   const { data: perfRaw, isLoading: perfLoading } = useGetMyPerformanceQuery();
   const { data: staffRaw } = useGetStaffQuery();
+  const { data: usersRaw } = useGetUsersQuery();
   const { data: kitsRaw } = useGetKitsQuery();
 
   const performanceTargets = perfRaw?.data?.targets || [];
   const performanceRewards = perfRaw?.data?.rewards || {};
-  const salesPersonOptions = (staffRaw?.data || [])
-    .filter((s) => s.fullName)
-    .map((s) => ({ value: s.fullName, label: s.fullName }));
+  const salesPersonOptions = (usersRaw?.data || [])
+    .filter((u) => u.fullName)
+    .map((u) => ({ value: u.fullName, label: u.fullName }));
   const kits = kitsRaw?.data || [];
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
   const { data: itemsRaw } = useGetItemsQuery();
@@ -2003,7 +2003,7 @@ export default function Sales() {
     { title: 'Follow Up Name', dataIndex: 'followUpName', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
       title: 'Follow Up Date/Time', dataIndex: 'followUpDate', width: 165,
-      render: (v, r) => <Text style={{ fontSize: 13 }}>{v ? `${v} ${r.followUpTime || ''}` : '—'}</Text>,
+      render: (v, r) => <Text style={{ fontSize: 13 }}>{v ? `${dayjs(v).format('DD MMM YYYY')}${r.followUpTime ? ' ' + r.followUpTime : ''}` : '—'}</Text>,
     },
     {
       title: 'Status', dataIndex: 'status', width: 130,
@@ -2178,6 +2178,10 @@ export default function Sales() {
     {
       title: 'Amount', dataIndex: 'totalAmount', width: 120, responsive: ['sm'],
       render: (v) => <Text strong style={{ fontSize: 13 }}>₹{(v || 0).toLocaleString()}</Text>,
+    },
+    {
+      title: 'Advance', dataIndex: 'advance', width: 110, responsive: ['sm'],
+      render: (v) => <Text strong style={{ fontSize: 13, color: v > 0 ? '#52c41a' : textColor }}>₹{(v || 0).toLocaleString()}</Text>,
     },
     {
       title: 'Payment', key: 'payStatus', width: 155,
@@ -2714,18 +2718,25 @@ export default function Sales() {
       const base = selectedRecord || {};
       const full = singleOrderRaw?.data || {};
       // Merge list record with populated single-order fetch
+      const lead = full.leadId || {};
       const o = {
         ...base,
-        phone: base.phone || full.clientPhone || full.phone,
-        contactPerson: base.contactPerson || full.contactPerson,
-        billingName: base.billingName || full.billingName || base.hotelName,
-        gstNumber: base.gstNumber || full.gstNumber,
-        gstPercent: base.gstPercent ?? full.gstPercent,
-        salesPerson: base.salesPerson || full.salesPerson || full.assignedTo?.fullName,
-        detailedAddress: base.detailedAddress || full.detailedAddress,
-        city: base.city || full.city,
-        state: base.state || full.state,
-        pincode: base.pincode || full.pincode,
+        phone: base.phone || full.clientPhone || full.phone || lead.phone,
+        contactPerson: base.contactPerson || full.contactPerson || lead.contactPerson,
+        billingName: base.billingName || full.billingName || lead.billingName || base.hotelName,
+        gstNumber: base.gstNumber || full.gstNumber || lead.gstNumber,
+        gstPercent: base.gstPercent ?? full.gstPercent ?? lead.gstPercent,
+        billType: base.billType || full.billType || lead.billType,
+        salesPerson: base.salesPerson || full.salesPerson || full.assignedTo?.fullName || lead.salesPerson,
+        detailedAddress: base.detailedAddress || full.detailedAddress || lead.detailedAddress,
+        city: base.city || full.city || lead.city,
+        state: base.state || full.state || lead.state,
+        pincode: base.pincode || full.pincode || lead.pincode,
+        location: base.location || full.location || lead.location || lead.locationCity,
+        deliveryBy: base.deliveryBy || full.deliveryBy || lead.deliveryBy,
+        transportationBy: base.transportationBy || full.transportationBy || lead.transportationBy,
+        forwardingCharge: base.forwardingCharge ?? full.forwardingCharge ?? lead.forwardingCharge,
+        paymentTerms: base.paymentTerms || full.paymentTerms || lead.paymentTerms,
         // Readable linked codes from populated references
         leadCode: full.leadId?.leadCode || base.leadCode,
         leadName: full.leadId?.hotelName || base.leadName || base.hotelName,

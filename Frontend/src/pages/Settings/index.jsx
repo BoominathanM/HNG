@@ -261,6 +261,7 @@ export default function Settings() {
   };
 
   const [editingUser, setEditingUser] = useState(null);
+  const [userProfilePhotoUrl, setUserProfilePhotoUrl] = useState(null);
   const [userForm] = Form.useForm();
   const watchedDept = Form.useWatch('department', userForm);
   const watchedOldHotel = Form.useWatch('targetOldHotel', userForm) || 0;
@@ -353,6 +354,7 @@ export default function Settings() {
         rewardThreeQtr: vals.reward34,
         rewardFull: vals.rewardFull,
         permissions: vals.perms,
+        ...(userProfilePhotoUrl ? { avatarUrl: userProfilePhotoUrl } : {}),
       };
       try {
         if (editingUser) {
@@ -369,6 +371,7 @@ export default function Settings() {
       }
       userForm.resetFields();
       setEditingUser(null);
+      setUserProfilePhotoUrl(null);
       setAddUserOpen(false);
     });
   };
@@ -505,7 +508,7 @@ export default function Settings() {
 
                 <Modal
                   open={addUserOpen}
-                  onCancel={() => { setAddUserOpen(false); setEditingUser(null); userForm.resetFields(); }}
+                  onCancel={() => { setAddUserOpen(false); setEditingUser(null); userForm.resetFields(); setUserProfilePhotoUrl(null); }}
                   footer={null}
                   width={Math.min(760, window.innerWidth - 24)}
                   centered
@@ -666,8 +669,19 @@ export default function Settings() {
                         </Col>
                         <Col xs={24} sm={12}>
                           <Form.Item label="Profile Photo">
-                            <Upload showUploadList={false} customRequest={makeUpload('settings/profiles')}>
-                              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, width: '100%', height: 40 }}>Upload Image</Button>
+                            <Upload
+                              showUploadList={false}
+                              customRequest={makeUpload('settings/profiles')}
+                              onChange={(info) => {
+                                if (info.file.status === 'done' && info.file.url) {
+                                  setUserProfilePhotoUrl(info.file.url);
+                                  enqueueSnackbar('Photo uploaded', { variant: 'success' });
+                                }
+                              }}
+                            >
+                              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, width: '100%', height: 40 }}>
+                                {userProfilePhotoUrl ? 'Photo Uploaded ✓' : 'Upload Image'}
+                              </Button>
                             </Upload>
                           </Form.Item>
                         </Col>

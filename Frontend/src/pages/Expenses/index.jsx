@@ -25,6 +25,19 @@ const EXPENSE_CATEGORIES = [
   { value: 'OTHER', label: 'Other Expenses', color: '#722ed1', icon: <PlusOutlined /> },
 ];
 
+// Maps stored DB labels (old and new) → EXPENSE_CATEGORIES value
+const CATEGORY_VALUE_MAP = {
+  'Raw Material': 'RAW_MATERIAL',
+  'Shipping / Transportation': 'SHIPPING',
+  'Utility': 'UTILITY',
+  'Utilities (Rent/Elec)': 'UTILITY',
+  'Other': 'OTHER',
+  'Purchase': 'PURCHASE',
+  'Rent': 'OTHER',
+  'Salary & Wages': 'OTHER',
+  'Marketing': 'OTHER',
+};
+
 
 export default function Expenses() {
   const makeUpload = useCloudinaryUpload();
@@ -43,7 +56,8 @@ export default function Expenses() {
   const expenses = useMemo(() => (expData?.data || []).map((e) => ({
     key: e._id,
     date: e.expenseDate?.slice(0, 10),
-    category: e.category?.toUpperCase().replace(/ /g, '_').replace(/\//g, '_') || 'OTHER',
+    category: CATEGORY_VALUE_MAP[e.category] || 'OTHER',
+    customCategory: e.customCategory,
     desc: e.description,
     amount: e.amount,
     status: e.paymentStatus,
@@ -86,7 +100,8 @@ export default function Expenses() {
     try {
       const formData = new FormData();
       formData.append('expenseDate', values.date ? dayjs(values.date).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'));
-      formData.append('category', values.category === 'OTHER' ? (values.customCategory || 'Other') : (EXPENSE_CATEGORIES.find(c => c.value === values.category)?.label || values.category));
+      formData.append('category', values.category === 'OTHER' ? 'Other' : (EXPENSE_CATEGORIES.find(c => c.value === values.category)?.label || values.category));
+      if (values.category === 'OTHER' && values.customCategory) formData.append('customCategory', values.customCategory);
       formData.append('description', values.desc);
       formData.append('amount', values.amount);
       if (values.vendor) formData.append('vendorPayee', values.vendor);

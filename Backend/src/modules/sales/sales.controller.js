@@ -236,6 +236,10 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     city: lead.city,
     state: lead.state,
     pincode: lead.pincode,
+    deliveryBy: lead.deliveryBy,
+    transportationBy: lead.transportationBy,
+    forwardingCharge: lead.forwardingCharge,
+    paymentTerms: lead.paymentTerms,
     createdBy: req.user._id,
   });
   await Lead.findByIdAndUpdate(lead._id, { status: 'Negotiation' });
@@ -312,6 +316,10 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     city: resolveField(negObj.city, lead?.city),
     state: resolveField(negObj.state, lead?.state),
     pincode: resolveField(negObj.pincode, lead?.pincode),
+    deliveryBy: resolveField(negObj.deliveryBy, lead?.deliveryBy),
+    transportationBy: resolveField(negObj.transportationBy, lead?.transportationBy),
+    forwardingCharge: resolveField(negObj.forwardingCharge, lead?.forwardingCharge),
+    paymentTerms: resolveField(negObj.paymentTerms, lead?.paymentTerms),
     assignedTo: req.user._id,
     createdBy: req.user._id,
     statusHistory: [{ status: 'In Production', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
@@ -371,7 +379,7 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null })
     .populate('clientPartyId')
     .populate('assignedTo', 'fullName email')
-    .populate('leadId', 'leadCode hotelName phone contactPerson location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode')
+    .populate('leadId', 'leadCode hotelName phone contactPerson location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode deliveryBy transportationBy forwardingCharge paymentTerms')
     .populate('negotiationId', 'negCode')
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));
