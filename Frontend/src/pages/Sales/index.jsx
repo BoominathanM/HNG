@@ -310,6 +310,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const kitType = Form.useWatch([fieldName, name, 'kitType']);
   const qty = Form.useWatch([fieldName, name, 'qty']);
   const rate = Form.useWatch([fieldName, name, 'rate']);
+  const gst = Form.useWatch([fieldName, name, 'gst']);
 
   const form = Form.useFormInstance();
   const initQty = form?.getFieldValue([fieldName, name, 'qty']);
@@ -328,8 +329,9 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
         background: isDark ? '#1a1a2e' : '#fff',
       }}
     >
-      {/* Hidden field to register isKit so Form.useWatch can read it */}
+      {/* Hidden fields to register so Form can read them */}
       <Form.Item {...rest} name={[name, 'isKit']} hidden noStyle><Input /></Form.Item>
+      <Form.Item {...rest} name={[name, 'kitName']} hidden noStyle><Input /></Form.Item>
       {/* Card Header (Editable) */}
       <div style={{
         background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)',
@@ -413,8 +415,13 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           <Col flex="none" style={{ textAlign: 'right', minWidth: 100 }}>
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>SUBTOTAL</Text>
             <Text strong style={{ display: 'block', fontSize: 16, color: '#B11E6A', lineHeight: 1.2 }}>
-              ₹{((qty || 0) * (rate || 0)).toLocaleString()}
+              ₹{(Math.round((qty || 0) * (rate || 0) * (1 + (gst || 0) / 100))).toLocaleString()}
             </Text>
+            {(gst || 0) > 0 && (
+              <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>
+                incl. {gst}% GST
+              </Text>
+            )}
           </Col>
 
           {/* Action Buttons */}
@@ -470,7 +477,8 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           </div>
 
           {isKit && (() => {
-            const selectedKit = kits.find((k) => k.kitName === kitType);
+            const kitNameFromRow = form.getFieldValue([fieldName, name, 'kitName']);
+            const selectedKit = kits.find((k) => k.kitName === (kitNameFromRow || kitType));
             const kitProducts = selectedKit?.products || [];
             return (
               <div style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#f9f9f9', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.03)', marginTop: 8 }}>
@@ -940,6 +948,9 @@ export default function Sales() {
       rate: p.rate,
       unit: p.unit,
       kitName: kit.kitName,
+      packingMaterial: p.packingMaterial || '',
+      materialCategory: p.materialCategory || '',
+      brand: p.brand || '',
     }));
     const pt = leadForm.getFieldValue('productType') || [];
     const nextPt = Array.isArray(pt) ? Array.from(new Set([...pt, 'PERSONALIZED_KIT'])) : ['PERSONALIZED_KIT'];
@@ -2290,8 +2301,8 @@ export default function Sales() {
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <Text strong style={{ display: 'block', fontSize: 18, color: '#B11E6A', lineHeight: 1.2 }}>₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} pcs × ₹{p.rate}</Text>
+                <Text strong style={{ display: 'block', fontSize: 18, color: '#B11E6A', lineHeight: 1.2 }}>₹{(Math.round((p.qty || 0) * (p.rate || 0) * (1 + (Number(p.gst) || 0) / 100))).toLocaleString()}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} pcs × ₹{p.rate}{(Number(p.gst) || 0) > 0 ? ` + ${p.gst}% GST` : ''}</Text>
               </div>
             </div>
             {p.specs && typeof p.specs === 'object' && Object.values(p.specs).some(Boolean) && (

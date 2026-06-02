@@ -117,6 +117,7 @@ export default function Inventory() {
     category: i.category,
     unit: i.unit,
     value: i.purchasePrice,
+    sellingPrice: i.sellingPrice,
     defaultSize: i.defaultSize,
     current: i.currentStock,
     min: i.minStock,
@@ -124,6 +125,10 @@ export default function Inventory() {
     price: `₹${i.purchasePrice}/${i.unit}`,
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
     hsnCode: i.hsnCode,
+    discountPercent: i.discountPercent,
+    packingMaterial: i.packingMaterial,
+    materialCategory: i.materialCategory,
+    brand: i.brand,
   })), [invData]);
 
   const pendingAdjustments = useMemo(() => (approvalsData?.data || []).map((m) => ({
@@ -423,9 +428,9 @@ export default function Inventory() {
         sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         hsnCode: vals.hsn || '',
         discountPercent: Number(String(vals.discount ?? '').replace(/[^0-9.]/g, '')) || 0,
-        packingMaterial: vals.packingMaterial || '',
-        materialCategory: vals.materialCategory || '',
-        brand: vals.brand || '',
+        packingMaterial: Array.isArray(vals.packingMaterial) ? vals.packingMaterial.join(', ') : (vals.packingMaterial || ''),
+        materialCategory: Array.isArray(vals.materialCategory) ? vals.materialCategory.join(', ') : (vals.materialCategory || ''),
+        brand: Array.isArray(vals.brand) ? vals.brand.join(', ') : (vals.brand || ''),
       }).unwrap();
       addItemForm.resetFields();
       setAddItemModal(false);
@@ -1300,9 +1305,25 @@ export default function Inventory() {
                             <Select
                               showSearch
                               optionFilterProp="label"
-                              placeholder="Select product from inventory"
+                              placeholder="Select Product"
                               style={{ width: '100%' }}
                               options={inventoryList.map((i) => ({ value: i.name, label: i.name }))}
+                              onChange={(selectedName) => {
+                                const item = inventoryList.find((i) => i.name === selectedName);
+                                if (!item) return;
+                                kitForm.setFields([
+                                  { name: ['products', field.name, 'category'], value: item.category || '' },
+                                  { name: ['products', field.name, 'unit'], value: item.unit || '' },
+                                  { name: ['products', field.name, 'defaultSize'], value: item.defaultSize || '' },
+                                  { name: ['products', field.name, 'purchasePrice'], value: item.value || '' },
+                                  { name: ['products', field.name, 'sellingPrice'], value: item.sellingPrice || '' },
+                                  { name: ['products', field.name, 'hsnCode'], value: item.hsnCode || '' },
+                                  { name: ['products', field.name, 'discountPercent'], value: item.discountPercent || '' },
+                                  { name: ['products', field.name, 'packingMaterial'], value: item.packingMaterial || '' },
+                                  { name: ['products', field.name, 'materialCategory'], value: item.materialCategory || '' },
+                                  { name: ['products', field.name, 'brand'], value: item.brand || '' },
+                                ]);
+                              }}
                             />
                           </Form.Item>
                         </Col>
@@ -1716,17 +1737,17 @@ export default function Inventory() {
             <Col xs={24} sm={8}><Form.Item label="Discount on Sales Price" name="discount"><Input suffix="%" /></Form.Item></Col>
             <Col xs={24} sm={8}>
               <Form.Item label="Packing Material" name="packingMaterial">
-                <SelectWithAdd field="packingMaterial" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" />
+                <SelectWithAdd field="packingMaterial" mode="multiple" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={8}>
               <Form.Item label="Material Category" name="materialCategory">
-                <SelectWithAdd field="materialCategory" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" />
+                <SelectWithAdd field="materialCategory" mode="multiple" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={8}>
               <Form.Item label="Brand" name="brand">
-                <SelectWithAdd field="brand" defaultOptions={[]} placeholder="Select / Add brand" />
+                <SelectWithAdd field="brand" mode="multiple" defaultOptions={[]} placeholder="Select / Add brand" />
               </Form.Item>
             </Col>
           </Row>

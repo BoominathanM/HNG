@@ -35,7 +35,13 @@ exports.getLead = asyncHandler(async (req, res, next) => {
 
 exports.createLead = asyncHandler(async (req, res) => {
   const leadCode = await generateCode('LEAD');
-  const lead = await Lead.create({ ...req.body, leadCode, createdBy: req.user._id });
+  const initialStatus = req.body.status || 'Cold';
+  const lead = await Lead.create({
+    ...req.body,
+    leadCode,
+    createdBy: req.user._id,
+    statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Lead created' }],
+  });
   res.status(201).json({ success: true, data: lead });
 });
 
@@ -60,7 +66,18 @@ exports.deleteLead = asyncHandler(async (req, res, next) => {
 exports.updateLeadStatus = asyncHandler(async (req, res, next) => {
   const lead = await Lead.findOneAndUpdate(
     { _id: req.params.id, deletedAt: null },
-    { status: req.body.status },
+    {
+      $set: { status: req.body.status },
+      $push: {
+        statusHistory: {
+          status: req.body.status,
+          changedAt: new Date(),
+          by: req.user?._id,
+          byName: req.user?.fullName || req.user?.name || 'System',
+          note: req.body.note || '',
+        },
+      },
+    },
     { new: true }
   );
   if (!lead) return next(new AppError('Lead not found', 404));
@@ -297,9 +314,13 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     pincode: resolveField(negObj.pincode, lead?.pincode),
     assignedTo: req.user._id,
     createdBy: req.user._id,
+    statusHistory: [{ status: 'In Production', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });
   if (negotiation.leadId) {
-    await Lead.findByIdAndUpdate(negotiation.leadId, { status: 'Converted' });
+    await Lead.findByIdAndUpdate(negotiation.leadId, {
+      $set: { status: 'Converted' },
+      $push: { statusHistory: { status: 'Converted', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created from negotiation' } },
+    });
   }
   res.status(201).json({ success: true, data: order });
 });
@@ -318,12 +339,14 @@ exports.getOrdersByHotelName = asyncHandler(async (req, res) => {
 exports.createDirectOrder = asyncHandler(async (req, res) => {
   const orderCode = await generateCode('ORD');
   const clientPartyId = req.body.clientPartyId || await upsertPartyByName(req.body.clientName, req.user._id);
+  const initialStatus = req.body.status || 'In Production';
   const order = await Order.create({
     ...req.body,
     orderCode,
     clientPartyId,
     assignedTo: req.user._id,
     createdBy: req.user._id,
+    statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });
   res.status(201).json({ success: true, data: order });
 });
@@ -368,7 +391,18 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
 exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
   const order = await Order.findOneAndUpdate(
     { _id: req.params.id, deletedAt: null },
-    { status: req.body.status },
+    {
+      $set: { status: req.body.status },
+      $push: {
+        statusHistory: {
+          status: req.body.status,
+          changedAt: new Date(),
+          by: req.user?._id,
+          byName: req.user?.fullName || req.user?.name || 'System',
+          note: req.body.note || '',
+        },
+      },
+    },
     { new: true }
   );
   if (!order) return next(new AppError('Order not found', 404));
