@@ -172,18 +172,21 @@ export default function Inventory() {
 
   const openAddKit = (kit = null) => {
     setEditingKit(kit);
+    setKitModal(true);
+  };
+
+  const initKitForm = (kit) => {
     kitForm.resetFields();
     if (kit) {
       kitForm.setFieldsValue({
         kitName: kit.kitName,
         displayUnit: kit.displayUnit,
         size: kit.size,
-        products: kit.products?.length ? kit.products : [{ productName: '', qty: 1, rate: 0 }],
+        products: kit.products?.length ? kit.products : [{ productName: '', qty: 1, gst: 'None' }],
       });
     } else {
-      kitForm.setFieldsValue({ products: [{ productName: '', qty: 1, rate: 0 }] });
+      kitForm.setFieldsValue({ products: [{ productName: '', qty: 1, gst: 'None' }] });
     }
-    setKitModal(true);
   };
 
   const handleSaveKit = async () => {
@@ -217,7 +220,6 @@ export default function Inventory() {
         await createKitMutation(payload).unwrap();
         enqueueSnackbar('Kit added', { variant: 'success' });
       }
-      kitForm.resetFields();
       setKitModal(false);
       setEditingKit(null);
     } catch (err) {
@@ -1219,7 +1221,7 @@ export default function Inventory() {
                                   },
                                   { title: 'Product Name', dataIndex: 'productName', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
                                   { title: 'Qty', dataIndex: 'qty', width: 80, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                                  { title: 'Rate (₹)', dataIndex: 'rate', width: 100, render: v => v ? `₹${Number(v).toLocaleString()}` : '—' },
+                                  { title: 'Rate (₹)', key: 'rate', width: 100, render: (_, p) => { const v = p.purchasePrice ?? p.rate; return v != null && v !== 0 ? `₹${Number(v).toLocaleString()}` : '—'; } },
                                   { title: 'Unit', dataIndex: 'unit', width: 80, render: v => v || '—' },
                                 ]}
                                 style={{ borderRadius: 10, overflow: 'hidden' }}
@@ -1249,6 +1251,7 @@ export default function Inventory() {
         width={Math.min(780, window.innerWidth - 24)}
         okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        afterOpenChange={(open) => { if (open) initKitForm(editingKit); }}
       >
         <Form form={kitForm} layout="vertical">
           {/* Kit header fields */}

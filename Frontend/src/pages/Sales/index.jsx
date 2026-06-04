@@ -219,6 +219,19 @@ const fmtDateTimeShort = (v) =>
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────
+// Unwrap products stored as [{"0":{...}}] (index-keyed objects) back to [{...}]
+function normalizeProducts(products) {
+  if (!Array.isArray(products)) return products;
+  return products.flatMap((p) => {
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return [p];
+    const keys = Object.keys(p);
+    if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
+      return keys.sort((a, b) => Number(a) - Number(b)).map((k) => p[k]);
+    }
+    return [p];
+  });
+}
+
 function prepareFormValues(data) {
   if (!data) return data;
   const processed = { ...data };
@@ -253,6 +266,8 @@ function prepareFormValues(data) {
       date: sd.date && typeof sd.date === 'string' ? dayjs(sd.date) : sd.date
     }));
   }
+
+  if (processed.products) processed.products = normalizeProducts(processed.products);
 
   return processed;
 }
@@ -1352,6 +1367,7 @@ export default function Sales() {
     })).filter(f => f.url);
     return {
       ...values,
+      products: normalizeProducts(values.products || []),
       billType,
       detailedAddress,
       city,
@@ -3834,7 +3850,7 @@ export default function Sales() {
     const isDetail = viewMode === 'detail';
     const isAddLead = viewMode === 'add-lead';
     const isAddCustomer = viewMode === 'add-customer';
-    const record = selectedRecord || {};
+    const record = selectedRecord ? { ...selectedRecord, products: normalizeProducts(selectedRecord.products || []) } : {};
     const totalValue = calcTotal(record.products);
     // Show per-card edit buttons in both detail view AND when editing an existing record
     const usePerCardEdit = isDetail || !!editingLead;
@@ -4670,7 +4686,7 @@ export default function Sales() {
 
                         {/* Per-product cards — kit items shown with kit badge */}
                         {(() => {
-                          const allProds = (record.products || []).filter(Boolean);
+                          const allProds = normalizeProducts(record.products || []).filter(Boolean);
                           const kitProds = allProds.filter(p => p.isKit || p.kitType);
                           const sepProds = allProds.filter(p => !p.isKit && !p.kitType);
                           const kitNameLabel = record.selectedKit
