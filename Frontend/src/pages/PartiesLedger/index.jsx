@@ -61,10 +61,10 @@ export default function PartiesLedger() {
     creditLimit: p.creditLimit,
     openingBalance: p.openingBalance || 0,
     openingBalDir: p.openingBalDir,
-    totalPurchase: p.totalSales || 0,
+    totalPurchase: p.totalPurchases || p.totalSales || 0,
     totalSales: p.totalSales || 0,
-    paid: p.received || 0,
-    received: p.received || 0,
+    paid: p.paid || p.received || 0,
+    received: p.received || p.paid || 0,
     pending: p.pending || 0,
     balance: p.runningBalance || 0,
   });

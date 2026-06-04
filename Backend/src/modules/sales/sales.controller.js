@@ -115,7 +115,7 @@ exports.getReminders = asyncHandler(async (req, res) => {
     Lead.find({ deletedAt: null, followupDate: { $ne: null } })
       .select('hotelName followupDate followupTime status assignedTo leadCode')
       .populate('assignedTo', 'fullName').sort('followupDate').limit(100).lean(),
-    Order.find({ deletedAt: null }).select('orderCode clientName status balance paymentReminderDate total expectedDeliveryDate').sort('-createdAt').limit(200).lean(),
+    Order.find({ deletedAt: null }).select('orderCode clientName status balance total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection paymentReminderDate expectedDeliveryDate items products').sort('-createdAt').limit(200).lean(),
   ]);
 
   const reminders = [];
@@ -129,11 +129,20 @@ exports.getReminders = asyncHandler(async (req, res) => {
     });
   });
   orders.forEach((o) => {
-    if (['Payment Pending'].includes(o.status) || (o.balance && o.balance > 0)) {
+    // Compute total from items so a stale/double-counted stored total is ignored
+    const _items = (o.items?.length ? o.items : (o.products || []));
+    const _subtotal = _items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
+    const _gstFromItems = _items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+    const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(o.gstAmount) || 0);
+    const orderTotal = _subtotal > 0 ? Math.round(_subtotal + _gst) : (Number(o.total) || Number(o.amount) || 0);
+    const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+    const paidAmt = collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
+    const liveBalance = Math.max(0, orderTotal - paidAmt);
+    if (['Payment Pending'].includes(o.status) || liveBalance > 0) {
       reminders.push({
         id: `pay-${o._id}`, kind: 'Payment Due', refCode: o.orderCode,
         title: `Payment pending: ${o.clientName}`, status: o.status,
-        dueDate: o.paymentReminderDate || o.expectedDeliveryDate, amount: o.balance,
+        dueDate: o.paymentReminderDate || o.expectedDeliveryDate, amount: liveBalance,
         overdue: o.paymentReminderDate && new Date(o.paymentReminderDate) < now,
       });
     }

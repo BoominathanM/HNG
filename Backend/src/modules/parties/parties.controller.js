@@ -13,16 +13,83 @@ exports.getParties = asyncHandler(async (req, res) => {
     const re = new RegExp(req.query.search, 'i');
     filter.$or = [{ name: re }, { phone: re }];
   }
-  const parties = await Party.find(filter).sort('name');
+  const parties = await Party.find(filter).sort('name').lean();
 
-  // Attach totals
-  const withTotals = await Promise.all(parties.map(async (p) => {
-    const invoices = await Invoice.find({ partyId: p._id });
-    const totalSales = invoices.reduce((s, i) => s + i.total, 0);
-    const received = invoices.reduce((s, i) => s + (i.total - (i.balanceDue || 0)), 0);
-    const pending = invoices.reduce((s, i) => s + (i.balanceDue || 0), 0);
-    return { ...p.toObject(), totalSales, received, pending };
-  }));
+  // Load all orders once and group by partyId + clientName for O(n) lookup
+  const allOrders = await Order.find({ deletedAt: null })
+    .select('clientPartyId clientName total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection items products')
+    .lean();
+
+  const ordersByPartyId = {};
+  const ordersByName = {};
+  allOrders.forEach((o) => {
+    if (o.clientPartyId) {
+      const id = o.clientPartyId.toString();
+      if (!ordersByPartyId[id]) ordersByPartyId[id] = [];
+      ordersByPartyId[id].push(o);
+    }
+    const name = (o.clientName || '').toLowerCase().trim();
+    if (name) {
+      if (!ordersByName[name]) ordersByName[name] = [];
+      ordersByName[name].push(o);
+    }
+  });
+
+  const withTotals = parties.map((p) => {
+    const pId = p._id.toString();
+    const pName = (p.name || '').toLowerCase().trim();
+
+    // Merge orders matched by DB ref and by name (dedupe: skip name-match if already has partyId ref)
+    const byId = ordersByPartyId[pId] || [];
+    const byNameOnly = (ordersByName[pName] || []).filter((o) => !o.clientPartyId);
+    const partyOrders = [...byId, ...byNameOnly];
+
+    if (partyOrders.length > 0) {
+      // Customer party: derive amounts from Sales Orders
+      const totalSales = partyOrders.reduce((s, o) => {
+        const _items = o.items?.length ? o.items : (o.products || []);
+        const _sub = _items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
+        const _gstFromItems = _items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+        const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(o.gstAmount) || 0);
+        const t = _sub > 0 ? Math.round(_sub + _gst) : (Number(o.total) || Number(o.amount) || 0);
+        return s + t;
+      }, 0);
+      const received = partyOrders.reduce((s, o) => {
+        const collTotal = (o.paymentCollection || []).reduce((cs, e) => cs + Number(e.paidAmount || 0), 0);
+        const paid = collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
+        return s + paid;
+      }, 0);
+      const pending = Math.max(0, totalSales - received);
+      return { ...p, totalSales, received, pending };
+    }
+
+    // Supplier / no-order party: fall back to Invoice-based totals
+    return { ...p, totalSales: 0, received: 0, pending: 0 };
+  });
+
+  // For supplier-type parties still at 0, load invoice totals in bulk
+  const zeroPartyIds = withTotals
+    .filter((p) => p.totalSales === 0 && p.type === 'Supplier')
+    .map((p) => p._id);
+
+  if (zeroPartyIds.length > 0) {
+    const invoices = await Invoice.find({ partyId: { $in: zeroPartyIds } }).lean();
+    const invByParty = {};
+    invoices.forEach((inv) => {
+      const id = inv.partyId.toString();
+      if (!invByParty[id]) invByParty[id] = [];
+      invByParty[id].push(inv);
+    });
+    withTotals.forEach((p) => {
+      const id = p._id.toString();
+      if (invByParty[id]) {
+        const invs = invByParty[id];
+        p.totalSales = invs.reduce((s, i) => s + (i.total || 0), 0);
+        p.received   = invs.reduce((s, i) => s + ((i.total || 0) - (i.balanceDue || 0)), 0);
+        p.pending    = invs.reduce((s, i) => s + (i.balanceDue || 0), 0);
+      }
+    });
+  }
 
   res.status(200).json({ success: true, total: parties.length, data: withTotals });
 });

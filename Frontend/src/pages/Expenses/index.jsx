@@ -164,6 +164,20 @@ export default function Expenses() {
 
   const totalExpense = expenses.reduce((acc, curr) => acc + curr.amount, 0);
 
+  const highestCategory = useMemo(() => {
+    const totals = {};
+    expenses.forEach(e => {
+      const label = e.category === 'OTHER' ? (e.customCategory || 'Other') : (EXPENSE_CATEGORIES.find(c => c.value === e.category)?.label || e.category);
+      totals[label] = (totals[label] || 0) + e.amount;
+    });
+    const top = Object.entries(totals).sort((a, b) => b[1] - a[1])[0];
+    return top ? top[0] : null;
+  }, [expenses]);
+
+  const pendingAmount = expenses
+    .filter(e => e.status !== 'Paid')
+    .reduce((acc, curr) => acc + curr.amount, 0);
+
   return (
     <div className="page-container fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
@@ -192,19 +206,20 @@ export default function Expenses() {
           <Card style={{ borderRadius: 14, background: cardBg, border: 'none', boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
             <Statistic
               title={<Text type="secondary">Highest Category</Text>}
-              value="Raw Material"
+              value={highestCategory || '—'}
               valueStyle={{ color: '#1890ff', fontWeight: 700, fontSize: 18 }}
-              prefix={<ShoppingCartOutlined />}
+              prefix={highestCategory ? <ShoppingCartOutlined /> : null}
             />
           </Card>
         </Col>
         <Col xs={24} sm={8}>
           <Card style={{ borderRadius: 14, background: cardBg, border: 'none', boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
             <Statistic
-              title={<Text type="secondary">Budget Utilization</Text>}
-              value={72}
-              suffix="%"
-              valueStyle={{ color: '#52c41a', fontWeight: 700 }}
+              title={<Text type="secondary">Pending / Unpaid</Text>}
+              value={pendingAmount}
+              precision={2}
+              prefix="₹"
+              valueStyle={{ color: pendingAmount > 0 ? '#fa8c16' : '#52c41a', fontWeight: 700 }}
             />
           </Card>
         </Col>

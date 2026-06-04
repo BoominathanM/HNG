@@ -261,6 +261,18 @@ function calcTotal(products = []) {
   return products.filter(Boolean).reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
 }
 
+function calcGrandTotal(products = []) {
+  return products.filter(Boolean).reduce((s, p) => {
+    const base = (Number(p.qty) || 0) * (Number(p.rate) || 0);
+    return s + base + base * ((Number(p.gst) || 0) / 100);
+  }, 0);
+}
+
+function calcGstAmount(products = []) {
+  return products.filter(Boolean).reduce((s, p) =>
+    s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+}
+
 function generateWhatsAppText(data) {
   const lines = (data.products || []).filter(Boolean).map(p => `${p.name} - ${p.qty}(${p.rate})`).join('\n');
   const hotelTypeLine = data.hotelType === 'OLD' ? 'OLD HOTEL' : 'NEW HOTEL';
@@ -305,17 +317,38 @@ Miss. Priya will Contact you
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────
-function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], kits = [] }) {
+function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], inventoryItemsData = [], kits = [] }) {
   const { name, key, ...rest } = field;
   const isKit = Form.useWatch([fieldName, name, 'isKit']);
   const kitType = Form.useWatch([fieldName, name, 'kitType']);
   const qty = Form.useWatch([fieldName, name, 'qty']);
   const rate = Form.useWatch([fieldName, name, 'rate']);
   const gst = Form.useWatch([fieldName, name, 'gst']);
+  const selectedName = Form.useWatch([fieldName, name, 'name']);
 
   const form = Form.useFormInstance();
   const [isLocalEdit, setIsLocalEdit] = React.useState(true);
   const isItemDisabled = disabled || !isLocalEdit;
+
+  // For kit items, kitType is the registered Form.Item field; selectedName (name field) can get
+  // cleared when the conditional Form.Item switches from non-kit to kit mode on first render.
+  // Use kitType as primary lookup for kit items to avoid that stale-undefined issue.
+  const invItem = React.useMemo(
+    () => {
+      const lookupKey = isKit ? kitType : selectedName;
+      return lookupKey ? inventoryItemsData.find((i) => i.itemName === lookupKey) : undefined;
+    },
+    [isKit, kitType, selectedName, inventoryItemsData],
+  );
+
+  const handleProductSelect = (value) => {
+    const item = inventoryItemsData.find((i) => i.itemName === value);
+    if (!item) return;
+    if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
+    if (item.packingMaterial) form.setFieldValue([fieldName, name, 'packingMaterial'], item.packingMaterial);
+    if (item.materialCategory) form.setFieldValue([fieldName, name, 'materialCategory'], item.materialCategory);
+    if (item.brand) form.setFieldValue([fieldName, name, 'brand'], item.brand);
+  };
 
   return (
     <div
@@ -348,7 +381,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           <Col flex="none" style={{ width: 220 }}>
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
             {!isKit ? (
-              <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0 }}>
+              <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Product required' }]}>
                 <Select
                   showSearch
                   allowClear
@@ -358,23 +391,55 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   size="small"
                   style={{ width: '100%' }}
                   options={inventoryItems}
+                  onSelect={handleProductSelect}
                   notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No items in inventory</span>}
                 />
               </Form.Item>
             ) : (
-              <Form.Item {...rest} name={[name, 'kitType']} style={{ marginBottom: 0 }}>
-                <Select
-                  showSearch
-                  allowClear
-                  optionFilterProp="label"
-                  placeholder="Select Kit"
-                  disabled={isItemDisabled}
-                  size="small"
-                  style={{ width: '100%' }}
-                  options={kits.map((k) => ({ value: k.kitName, label: k.kitName }))}
-                  notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No kits defined</span>}
-                />
-              </Form.Item>
+              <>
+                {/* Keep 'name' registered in kit mode so it isn't cleared when the non-kit branch unmounts */}
+                <Form.Item {...rest} name={[name, 'name']} hidden noStyle><Input /></Form.Item>
+                <Form.Item {...rest} name={[name, 'kitType']} style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Kit required' }]}>
+                  <Select
+                    showSearch
+                    allowClear
+                    optionFilterProp="label"
+                    placeholder="Select Product"
+                    disabled={isItemDisabled}
+                    size="small"
+                    style={{ width: '100%' }}
+                    options={inventoryItems}
+                    onSelect={(val) => {
+                      form.setFieldValue([fieldName, name, 'name'], val);
+                      const item = inventoryItemsData.find((i) => i.itemName === val);
+                      if (!item) return;
+                      if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
+                      if (item.packingMaterial) form.setFieldValue([fieldName, name, 'packingMaterial'], item.packingMaterial);
+                      if (item.materialCategory) form.setFieldValue([fieldName, name, 'materialCategory'], item.materialCategory);
+                      if (item.brand) form.setFieldValue([fieldName, name, 'brand'], item.brand);
+                    }}
+                    onClear={() => {
+                      form.setFieldValue([fieldName, name, 'name'], undefined);
+                    }}
+                    notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No items in inventory</span>}
+                  />
+                </Form.Item>
+              </>
+            )}
+            {invItem && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 3 }}>
+                <Tag
+                  color={invItem.currentStock <= 0 ? 'red' : invItem.currentStock <= invItem.minStock ? 'orange' : 'green'}
+                  style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 5px' }}
+                >
+                  Stock: {invItem.currentStock} {invItem.unit}
+                </Tag>
+                {invItem.category && (
+                  <Tag style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 5px', background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.1)', color: isDark ? '#aaa' : '#666' }}>
+                    {invItem.category}
+                  </Tag>
+                )}
+              </div>
             )}
           </Col>
 
@@ -504,7 +569,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   );
 }
 
-function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false, inventoryItems = [], kits = [] }) {
+function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false, inventoryItems = [], inventoryItemsData = [], kits = [] }) {
   const isDark = useSelector((s) => s.theme.isDark);
   return (
     <Form.List name={fieldName}>
@@ -521,6 +586,7 @@ function ProductFormList({ fieldName = 'products', disabled = false, showSpecs =
               showSpecs={showSpecs}
               isDark={isDark}
               inventoryItems={inventoryItems}
+              inventoryItemsData={inventoryItemsData}
               kits={kits}
             />
           ))}
@@ -830,28 +896,46 @@ export default function Sales() {
       advance: order.advance || 0,
       paymentTerms: order.paymentTerms,
       paymentReminderDate: order.paymentReminderDate ? dayjs(order.paymentReminderDate) : null,
+      paymentCollection: order.paymentCollection || [],
     });
     setOrderEditModalOpen(true);
   };
 
   const saveOrderEdit = () => {
     orderEditForm.validateFields().then(async vals => {
+      const newAdvance = vals.advance ?? orderEditTarget.advance ?? 0;
+      const newCollection = (vals.paymentCollection || []).filter(e => e.paymentMethod);
+      const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const newPaidAmount = collTotal > 0 ? collTotal : newAdvance;
+      const orderTotal = orderEditTarget.total || orderEditTarget.totalAmount || 0;
+      const paymentStatus = orderTotal > 0 && newPaidAmount >= orderTotal
+        ? 'Paid'
+        : newPaidAmount > 0
+        ? 'Partially Paid'
+        : 'Unpaid';
       const updated = {
         ...orderEditTarget,
         expectedDelivery: vals.expectedDelivery ? vals.expectedDelivery.format('YYYY-MM-DD') : orderEditTarget.expectedDelivery,
-        advance: vals.advance ?? orderEditTarget.advance,
+        advance: newAdvance,
+        paidAmount: newPaidAmount,
+        balance: Math.max(0, orderTotal - newPaidAmount),
         paymentTerms: vals.paymentTerms || orderEditTarget.paymentTerms,
         paymentReminderDate: vals.paymentReminderDate ? vals.paymentReminderDate.format('YYYY-MM-DD') : orderEditTarget.paymentReminderDate,
+        paymentCollection: newCollection,
+        paymentStatus,
       };
       try {
-        // Map UI field names to the Order schema field names so edits actually persist
         const backendPatch = {
           id: orderEditTarget._id || orderEditTarget.key,
           expectedDeliveryDate: updated.expectedDelivery || undefined,
           advancePaidAmount: updated.advance,
           advancePaid: updated.advance,
+          paidAmount: updated.paidAmount,
+          balance: updated.balance,
           paymentTerms: updated.paymentTerms,
           paymentReminderDate: updated.paymentReminderDate || undefined,
+          paymentCollection: newCollection,
+          paymentStatus,
         };
         await updateSalesOrderMutation(backendPatch).unwrap();
         setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
@@ -874,6 +958,8 @@ export default function Sales() {
   const watchedSoftwareInterest = Form.useWatch('interestedInSoftware', leadForm);
   const watchedOrderProducts = Form.useWatch('products', orderForm);
   const watchedLeadProducts = Form.useWatch('products', leadForm);
+  const watchedLeadPaymentTerms = Form.useWatch('paymentTerms', leadForm);
+  const watchedLeadPaymentCollection = Form.useWatch('paymentCollection', leadForm);
 
   const [gstApiData, setGstApiData] = useState(null);
   const [gstApiLoading, setGstApiLoading] = useState(false);
@@ -925,8 +1011,9 @@ export default function Sales() {
   const kits = kitsRaw?.data || [];
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
   const { data: itemsRaw } = useGetItemsQuery();
+  const inventoryItemsRaw = itemsRaw?.data || [];
   const inventoryItems = React.useMemo(
-    () => (itemsRaw?.data || []).map((i) => ({ value: i.itemName, label: i.itemName })),
+    () => inventoryItemsRaw.map((i) => ({ value: i.itemName, label: i.itemName })),
     [itemsRaw],
   );
 
@@ -940,18 +1027,23 @@ export default function Sales() {
     // One row per kit product. Marked isKit so they render in the kit card
     // (which carries the shared Display Unit & Size header). The product field
     // shown in the kit card is `kitType`, so we put the product name there.
-    const kitRows = (kit.products || []).map((p) => ({
-      isKit: true,
-      kitType: p.productName,
-      name: p.productName,
-      qty: p.qty,
-      rate: p.rate,
-      unit: p.unit,
-      kitName: kit.kitName,
-      packingMaterial: p.packingMaterial || '',
-      materialCategory: p.materialCategory || '',
-      brand: p.brand || '',
-    }));
+    // Fall back to inventory item specs when the kit definition has them empty.
+    const kitRows = (kit.products || []).map((p) => {
+      const invItem = inventoryItemsRaw.find((i) => i.itemName === p.productName);
+      return {
+        isKit: true,
+        kitType: p.productName,
+        name: p.productName,
+        qty: p.qty,
+        rate: p.rate || invItem?.sellingPrice || 0,
+        unit: p.unit || invItem?.unit,
+        kitName: kit.kitName,
+        packingMaterial: p.packingMaterial || invItem?.packingMaterial || '',
+        materialCategory: p.materialCategory || invItem?.materialCategory || '',
+        brand: p.brand || invItem?.brand || '',
+        gst: p.gst || invItem?.gst || 0,
+      };
+    });
     const pt = leadForm.getFieldValue('productType') || [];
     const nextPt = Array.isArray(pt) ? Array.from(new Set([...pt, 'PERSONALIZED_KIT'])) : ['PERSONALIZED_KIT'];
     leadForm.setFieldsValue({
@@ -1004,29 +1096,47 @@ export default function Sales() {
   // Helper to normalize backend `items` → frontend `products` (name/qty/rate shape)
   const itemsToProducts = (items = []) =>
     items.map((i) => ({
-      name: i.itemName,
+      name: i.name || i.itemName || '',
       qty: i.qty,
-      rate: i.price,
+      rate: i.price || i.rate || 0,
       unit: i.unit,
       lineTotal: i.lineTotal,
       logoType: i.logoType,
       size: i.size,
-      packaging: i.packaging,
-      material: i.material,
-      gst: i.gst,
+      gst: i.gst || 0,
+      boxes: i.boxes || 0,
+      packaging: i.packaging || i.packingMaterial || '',
+      packingMaterial: i.packingMaterial || i.packaging || '',
+      material: i.material || i.materialCategory || '',
+      materialCategory: i.materialCategory || i.material || '',
+      logo: i.logo,
+      sticker: i.sticker,
+      brand: i.brand,
+      otherSpecs: i.otherSpecs,
+      isKit: i.isKit || false,
+      kitName: i.kitName || '',
+      kitType: i.kitType || '',
     }));
 
   useEffect(() => {
-    if (leadsRaw?.data) setLeadsData((leadsRaw.data).map((l) => ({ ...l, key: l._id, leadId: l.leadCode, hotelName: l.hotelName, status: l.status, salesPerson: l.salesPerson, createdAt: l.createdAt })));
+    if (leadsRaw?.data) setLeadsData((leadsRaw.data).map((l) => {
+      const hasProof = (l.paymentProofs || []).length > 0;
+      const paymentStatus = !hasProof ? 'Unpaid' : l.paymentTerms === 'BEFORE_100' ? 'Paid' : 'Partially Paid';
+      return { ...l, key: l._id, leadId: l.leadCode, hotelName: l.hotelName, status: l.status, salesPerson: l.salesPerson, createdAt: l.createdAt, paymentStatus };
+    }));
   }, [leadsRaw]);
   useEffect(() => {
     if (quotationsRaw?.data) setQuotationsData((quotationsRaw.data).map((q) => {
       const collected = (q.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-      const paidTotal = collected || Number(q.paidAmount || 0) || Number(q.advancePaid || 0);
+      const backendPaid = Number(q.paidAmount) || Number(q.totalPaid) || 0;
+      const paidTotal = collected > 0 ? collected : (backendPaid || Number(q.advancePaid || 0));
       const total = Number(q.total || 0);
-      const paymentStatus = total > 0
+      const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
         : (q.status || 'Unpaid');
+      const paymentStatus = (computedStatus !== 'Unpaid') ? computedStatus
+        : (q.paymentStatus === 'Paid' || q.paymentStatus === 'Partially Paid') ? q.paymentStatus
+        : 'Unpaid';
       return {
         ...q,
         key: q._id,
@@ -1048,11 +1158,15 @@ export default function Sales() {
   useEffect(() => {
     if (negotiationsRaw?.data) setNegotiationsData((negotiationsRaw.data).map((n) => {
       const collected = (n.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-      const paidTotal = collected || Number(n.paidAmount || 0) || Number(n.advancePaid || 0);
+      const backendPaid = Number(n.paidAmount) || Number(n.totalPaid) || 0;
+      const paidTotal = collected > 0 ? collected : (backendPaid || Number(n.advancePaid || 0));
       const total = Number(n.total || 0);
-      const paymentStatus = total > 0
+      const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
         : (n.status || 'Unpaid');
+      const paymentStatus = (computedStatus !== 'Unpaid') ? computedStatus
+        : (n.paymentStatus === 'Paid' || n.paymentStatus === 'Partially Paid') ? n.paymentStatus
+        : 'Unpaid';
       return {
         ...n,
         key: n._id,
@@ -1073,13 +1187,29 @@ export default function Sales() {
   }, [negotiationsRaw]);
   useEffect(() => {
     if (ordersRaw?.data) setOrdersData((ordersRaw.data).map((o) => {
-      const advance = o.advancePaidAmount ?? o.advancePaid ?? 0;
+      const normalizedProducts = o.products?.length ? o.products : itemsToProducts(o.items);
+      const advance = o.advancePaidAmount ?? o.advancePaid ?? (typeof o.advance === 'number' ? o.advance : 0);
       const collectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-      const paidTotal = collectionTotal || Number(o.paidAmount || 0) || Number(advance);
-      const total = Number(o.total || 0);
-      const paymentStatus = total > 0
+      // paidAmount from backend is the authoritative total collected; use it when collection entries aren't in list response
+      const backendPaid = Number(o.paidAmount) || Number(o.totalPaid) || Number(o.amountCollected) || 0;
+      const paidTotal = collectionTotal > 0 ? collectionTotal : (backendPaid || advance);
+      // Compute subtotal from products (qty*rate, always reliable).
+      // For GST: prefer per-product % if set; fall back to stored gstAmount (handles converted/legacy orders).
+      const subtotal = Math.round(calcTotal(normalizedProducts));
+      const gstFromProducts = Math.round(calcGstAmount(normalizedProducts));
+      const storedGst = Number(o.gstAmount) || 0;
+      const effectiveGst = gstFromProducts > 0 ? gstFromProducts : storedGst;
+      const total = subtotal + effectiveGst;
+      // Compute from what we have; if list API omits paymentCollection, fall back to backend status
+      const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
         : (advance > 0 ? 'Partially Paid' : 'Unpaid');
+      // Trust backend paymentStatus when our computed value is Unpaid but backend says otherwise
+      const paymentStatus = (computedStatus !== 'Unpaid')
+        ? computedStatus
+        : (o.paymentStatus === 'Paid' || o.paymentStatus === 'Partially Paid')
+          ? o.paymentStatus
+          : 'Unpaid';
       return {
         ...o,
         key: o._id,
@@ -1099,17 +1229,51 @@ export default function Sales() {
         state: o.state,
         pincode: o.pincode,
         totalAmount: total,
+        gstAmount: effectiveGst,
         paidAmount: paidTotal,
         balance: total - paidTotal,
         date: o.createdAt?.slice(0, 10),
         expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : o.expectedDelivery,
         advance,
         billType: o.billType || (o.type === 'GST' ? 'GST' : o.type === 'Non-GST' ? 'NON_GST' : o.type),
-        products: o.products?.length ? o.products : itemsToProducts(o.items),
-        itemCount: (o.products?.length || o.items?.length || 0),
+        products: normalizedProducts,
+        itemCount: (normalizedProducts.length || 0),
       };
     }));
   }, [ordersRaw]);
+
+  // When a single order is fetched (order-detail view), sync its accurate payment data back
+  // into the list state so the table shows the correct status without a full page reload.
+  useEffect(() => {
+    const full = singleOrderRaw?.data;
+    if (!full?._id) return;
+    const prods = full.products?.length ? full.products : itemsToProducts(full.items || []);
+    const collTotal = (full.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+    const adv = Number(full.advancePaidAmount ?? full.advancePaid ?? 0);
+    const paidTotal = collTotal > 0 ? collTotal : (Number(full.paidAmount) || adv);
+    if (paidTotal <= 0) return;
+    const subtotalFull = Math.round(calcTotal(prods));
+    const gstFromProdsFull = Math.round(calcGstAmount(prods));
+    const storedGstFull = Number(full.gstAmount) || 0;
+    const effectiveGstFull = gstFromProdsFull > 0 ? gstFromProdsFull : storedGstFull;
+    const total = subtotalFull + effectiveGstFull;
+    const newStatus = total > 0 ? (paidTotal >= total ? 'Paid' : 'Partially Paid') : 'Unpaid';
+    const orderId = full._id;
+    const quotCode = full.quotationId?.quotCode || full.quotationCode;
+    setOrdersData(prev => prev.map(o =>
+      (o._id === orderId || o.key === orderId)
+        ? { ...o, paidAmount: paidTotal, paymentStatus: newStatus, balance: Math.max(0, total - paidTotal) }
+        : o
+    ));
+    if (quotCode) {
+      setQuotationsData(prev => prev.map(q =>
+        q.qid === quotCode
+          ? { ...q, paidAmount: paidTotal, status: newStatus, balance: Math.max(0, (q.totalAmount || 0) - paidTotal) }
+          : q
+      ));
+    }
+  }, [singleOrderRaw?.data?._id]);
+
   useEffect(() => {
     if (complaintsRaw?.data) setComplaintsData((complaintsRaw.data).map((c) => ({ ...c, key: c._id, orderId: c.orderId?.orderCode || c.orderId, hotelName: c.clientName, description: c.description, raisedAt: c.createdAt, salesPerson: c.salesPerson, status: c.status })));
   }, [complaintsRaw]);
@@ -1214,6 +1378,26 @@ export default function Sales() {
       displayUnit: values.kitDisplayUnit || values.displayUnit,
       hotelLogoUrl: hotelLogoUrl || undefined,
       paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
+      paymentCollection: (values.paymentCollection || []).filter(e => e.paymentMethod),
+      paymentStatus: (() => {
+        const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
+        const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        if (collectionTotal > 0) {
+          const recordTotal = Math.round(calcGrandTotal(values.products || formStore.products || []));
+          return recordTotal > 0 && collectionTotal >= recordTotal ? 'Paid' : 'Partially Paid';
+        }
+        const proofs = paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []);
+        if (!proofs.length) return 'Unpaid';
+        return values.paymentTerms === 'BEFORE_100' ? 'Paid' : 'Partially Paid';
+      })(),
+      advancePaid: (() => {
+        const collectionTotal = (values.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        return collectionTotal || undefined;
+      })(),
+      paidAmount: (() => {
+        const collectionTotal = (values.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        return collectionTotal || undefined;
+      })(),
       priority: Number(values.priority) || 0,
       isPriority: Number(values.priority) > 0,
       priorityNote: values.mentionPriority,
@@ -1358,15 +1542,17 @@ export default function Sales() {
       if (editingLead) {
         const prevStatus = editingLead.status;
         const statusChanged = values.status && values.status !== prevStatus;
+        const builtPayload = buildLeadPayload(values);
         const updated = {
           ...editingLead,
           ...values,
+          paymentStatus: builtPayload.paymentStatus,
           statusHistory: statusChanged
             ? [...(editingLead.statusHistory || []), { status: values.status, changedAt: now }]
             : (editingLead.statusHistory || []),
         };
         try {
-          await updateLeadMutation({ id: editingLead._id || editingLead.key, ...buildLeadPayload(values) }).unwrap();
+          await updateLeadMutation({ id: editingLead._id || editingLead.key, ...builtPayload }).unwrap();
           if (statusChanged) {
             await updateLeadStatusMutation({ id: editingLead._id || editingLead.key, status: values.status }).unwrap();
           }
@@ -1411,7 +1597,8 @@ export default function Sales() {
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
       leadJourney: ['followUpStep'],
       personalization: ['productType', 'displayUnit'],
-      delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'paymentProofs'],
+      delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'paymentProofs', 'paymentCollection'],
+      products: ['products', 'selectedKit', 'kitDisplayUnit', 'kitSize', 'productType'],
     };
     const rawValues = leadForm.getFieldsValue(fieldsBySection[section]);
     const values = { ...rawValues };
@@ -1420,6 +1607,21 @@ export default function Sales() {
     });
     if (values.splitDates) {
       values.splitDates = values.splitDates.map(sd => ({ ...sd, date: toStr(sd.date) }));
+    }
+    if (section === 'delivery') {
+      const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
+      const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const recordTotal = Math.round(calcGrandTotal(selectedRecord.products || []));
+      if (collectionTotal > 0) {
+        values.advancePaid = collectionTotal;
+        values.paidAmount = collectionTotal;
+        values.paymentStatus = recordTotal > 0 && collectionTotal >= recordTotal ? 'Paid' : 'Partially Paid';
+      } else {
+        const proofs = (values.paymentProofs || []).filter(f => f.url || f.response?.url);
+        values.paymentStatus = proofs.length
+          ? (values.paymentTerms === 'BEFORE_100' ? 'Paid' : 'Partially Paid')
+          : 'Unpaid';
+      }
     }
     const updated = { ...selectedRecord, ...values };
     if (section === 'leadStatus' && values.status && values.status !== selectedRecord.status) {
@@ -1669,17 +1871,28 @@ export default function Sales() {
 
   // Build an order item, carrying the operations/packaging fields the Operations module reads.
   const mapOrderItem = (p) => ({
-    itemName: p.name,
+    itemName: p.name || p.kitType || '',
+    name: p.name || p.kitType || '',
     unit: p.unit,
     price: Number(p.rate) || 0,
+    rate: Number(p.rate) || 0,
     qty: Number(p.qty) || 0,
+    gst: Number(p.gst) || 0,
     lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
     logoType: inferLogoType(p),
     size: p.size,
-    packaging: p.packingMaterial,
-    material: p.materialCategory,
-    rate: Number(p.rate) || 0,
     boxes: Number(p.boxes) || 0,
+    packaging: p.packingMaterial || p.packaging || '',
+    packingMaterial: p.packingMaterial || p.packaging || '',
+    material: p.materialCategory || p.material || '',
+    materialCategory: p.materialCategory || p.material || '',
+    logo: p.logo,
+    sticker: p.sticker,
+    brand: p.brand,
+    otherSpecs: p.otherSpecs,
+    isKit: p.isKit || false,
+    kitName: p.kitName || '',
+    kitType: p.kitType || '',
   });
 
   // Old Hotel: auto-fetch existing hotel details (by name + branch) and prefill the lead form.
@@ -1717,20 +1930,33 @@ export default function Sales() {
   };
 
   const buildOrderPayloadFromQuotation = (q, status) => {
-    const subtotal = q.totalAmount || calcTotal(q.products);
-    const gstAmount = q.gstAmount || 0;
+    // Always compute from products so we never double-count GST when q.amount stores
+    // the grand total instead of the subtotal.
+    const subtotal = calcTotal(q.products) || Number(q.amount) || 0;
+    const gstFromProducts = (q.products || []).reduce(
+      (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+    const gstAmount = gstFromProducts > 0
+      ? gstFromProducts
+      : (Number(q.gstAmount) || Math.max(0, Number(q.totalAmount || q.total) - subtotal) || 0);
+    const grandTotal = subtotal + gstAmount;
     return {
       clientName: q.hotelName || q.billingName || q.clientName || 'Client',
       amount: subtotal,
       gstAmount,
-      total: subtotal + gstAmount,
+      total: grandTotal,
       advancePaid: 0,
-      balance: subtotal + gstAmount,
+      balance: grandTotal,
       type: q.billType === 'GST' ? 'GST' : 'Non-GST',
       billType: q.billType,
       paymentTerms: q.paymentTerms,
       status,
       items: (q.products || []).map(mapOrderItem),
+      products: q.products || [],
+      // Kit / product type info
+      productType: q.productType,
+      selectedKit: q.selectedKit,
+      kitDisplayUnit: q.kitDisplayUnit || q.displayUnit,
+      kitSize: q.kitSize,
       // Carry all contact + billing + delivery fields through
       hotelName: q.hotelName || q.clientName,
       billingName: q.billingName,
@@ -1806,13 +2032,24 @@ export default function Sales() {
     } catch (_) {
       return; // form validation error
     }
+    const validProds = (values.products || []).filter(p => (p.name || p.kitType) && Number(p.qty) > 0);
+    if (!validProds.length) {
+      enqueueSnackbar('Please add at least one product with a name and quantity before confirming the order', { variant: 'error' });
+      return;
+    }
     const subtotal = calcTotal(values.products);
     const gstAmount = (values.products || []).reduce(
       (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
     const total = subtotal + gstAmount;
-    const advancePaid = Number(values.advance) || 0;
+    const newCollection = (values.paymentCollection || []).filter(e => e.paymentMethod);
+    const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+    const advancePaid = collTotal > 0 ? collTotal : (Number(values.advance) || 0);
+    const paymentStatus = total > 0 && advancePaid >= total
+      ? 'Paid'
+      : advancePaid > 0
+      ? 'Partially Paid'
+      : 'Unpaid';
     const hasPartial = Array.isArray(values.splitDates) && values.splitDates.length > 0;
-    // Persist payment-proof metadata (file names) so the proof list round-trips.
     const proofMeta = (values.paymentProofs || []).map((f) => ({ name: f.name || f.fileName, uid: f.uid }));
     const payload = {
       clientName: values.hotelName || values.billingName || orderFromQuotation?.hotelName || 'Client',
@@ -1820,12 +2057,20 @@ export default function Sales() {
       gstAmount,
       total,
       advancePaid,
-      balance: total - advancePaid,
+      balance: Math.max(0, total - advancePaid),
       type: values.billType === 'GST' ? 'GST' : 'Non-GST',
       paymentTerms: values.paymentTerms,
+      paymentReminderDate: values.paymentReminderDate ? (values.paymentReminderDate.format ? values.paymentReminderDate.format('YYYY-MM-DD') : values.paymentReminderDate) : undefined,
+      paymentCollection: newCollection,
+      paymentStatus,
+      paidAmount: advancePaid,
       status: 'In Production',
       items: (values.products || []).map(mapOrderItem),
-      // Emergency partial delivery → flags the order so Operations/Dispatch pick it up.
+      products: values.products || [],
+      productType: values.productType,
+      selectedKit: values.selectedKit,
+      kitDisplayUnit: values.kitDisplayUnit || values.displayUnit,
+      kitSize: values.kitSize,
       deliveryType: hasPartial ? 'Partial' : 'Full',
       isEmergency: hasPartial,
       isUrgent: hasPartial,
@@ -2073,15 +2318,21 @@ export default function Sales() {
     {
       title: 'Payment Status', key: 'payStatus', width: 150,
       render: (_, r) => {
-        const color = r.status === 'Paid' ? 'success' : r.status === 'Partially Paid' ? 'warning' : 'error';
+        const linkedOrder = ordersData.find(o => o.negotiationCode === r.nid || o.hotelName === r.hotelName);
+        const effectiveStatus = (r.status && r.status !== 'Unpaid') ? r.status
+          : (linkedOrder?.paymentStatus && linkedOrder.paymentStatus !== 'Unpaid') ? linkedOrder.paymentStatus
+          : 'Unpaid';
+        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedOrder?.paidAmount || 0);
+        const effectiveTotal = r.totalAmount || linkedOrder?.totalAmount || 0;
+        const color = effectiveStatus === 'Paid' ? 'success' : effectiveStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
-            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{r.status || 'Unpaid'}</Tag>
-            {r.paidAmount > 0 && (
-              <Text type="secondary" style={{ fontSize: 11 }}>₹{r.paidAmount.toLocaleString()} / ₹{(r.totalAmount || 0).toLocaleString()}</Text>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{effectiveStatus}</Tag>
+            {effectivePaid > 0 && (
+              <Text type="secondary" style={{ fontSize: 11 }}>₹{effectivePaid.toLocaleString()} / ₹{effectiveTotal.toLocaleString()}</Text>
             )}
-            {r.balance > 0 && r.paidAmount > 0 && (
-              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{r.balance.toLocaleString()} due</Text>
+            {effectivePaid > 0 && effectivePaid < effectiveTotal && (
+              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{(effectiveTotal - effectivePaid).toLocaleString()} due</Text>
             )}
           </Space>
         );
@@ -2124,17 +2375,23 @@ export default function Sales() {
     {
       title: 'Payment Status', key: 'payStatus', width: 150,
       render: (_, r) => {
-        const color = r.status === 'Paid' ? 'success' : r.status === 'Partially Paid' ? 'warning' : 'error';
+        const linkedOrder = ordersData.find(o => o.quotationCode === r.qid || o.hotelName === r.hotelName);
+        const effectiveStatus = (r.status && r.status !== 'Unpaid') ? r.status
+          : (linkedOrder?.paymentStatus && linkedOrder.paymentStatus !== 'Unpaid') ? linkedOrder.paymentStatus
+          : 'Unpaid';
+        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedOrder?.paidAmount || 0);
+        const effectiveTotal = r.totalAmount || linkedOrder?.totalAmount || 0;
+        const color = effectiveStatus === 'Paid' ? 'success' : effectiveStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
-            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{r.status || 'Unpaid'}</Tag>
-            {r.paidAmount > 0 && (
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{effectiveStatus}</Tag>
+            {effectivePaid > 0 && (
               <Text type="secondary" style={{ fontSize: 11 }}>
-                ₹{r.paidAmount.toLocaleString()} / ₹{(r.totalAmount || 0).toLocaleString()}
+                ₹{effectivePaid.toLocaleString()} / ₹{effectiveTotal.toLocaleString()}
               </Text>
             )}
-            {r.balance > 0 && r.paidAmount > 0 && (
-              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{r.balance.toLocaleString()} due</Text>
+            {effectivePaid > 0 && effectivePaid < effectiveTotal && (
+              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{(effectiveTotal - effectivePaid).toLocaleString()} due</Text>
             )}
           </Space>
         );
@@ -2180,8 +2437,15 @@ export default function Sales() {
       render: (v) => <Text strong style={{ fontSize: 13 }}>₹{(v || 0).toLocaleString()}</Text>,
     },
     {
-      title: 'Advance', dataIndex: 'advance', width: 110, responsive: ['sm'],
-      render: (v) => <Text strong style={{ fontSize: 13, color: v > 0 ? '#52c41a' : textColor }}>₹{(v || 0).toLocaleString()}</Text>,
+      title: 'Collected', key: 'collected', width: 110, responsive: ['sm'],
+      render: (_, r) => (
+        <div>
+          <Text strong style={{ fontSize: 13, color: r.paidAmount > 0 ? '#52c41a' : textColor }}>₹{(r.paidAmount || 0).toLocaleString()}</Text>
+          {r.advance > 0 && r.paidAmount !== r.advance && (
+            <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>Adv: ₹{r.advance.toLocaleString()}</Text>
+          )}
+        </div>
+      ),
     },
     {
       title: 'Payment', key: 'payStatus', width: 155,
@@ -2292,53 +2556,131 @@ export default function Sales() {
     // ── Shared helpers for detail views ────────────────────────────
     const DetailProductCards = ({ products = [], totalAmount }) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {products.map((p, i) => (
-          <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
+        {products.map((p, i) => {
+          // Normalize: fields may be top-level OR nested under p.specs (legacy)
+          const logo            = p.logo            || p.specs?.logo;
+          const sticker         = p.sticker         || p.specs?.sticker;
+          const packingMaterial = p.packingMaterial || p.packaging || p.specs?.packingMaterial;
+          const materialCategory= p.materialCategory|| p.material  || p.specs?.materialCategory;
+          const brand           = p.brand           || p.specs?.brand;
+          const otherSpecs      = p.otherSpecs      || p.specs?.otherSpecs;
+          const productName     = p.name || p.itemName || p.kitType || '—';
+          const isKitItem       = p.isKit || !!p.kitType;
+          const kitLabel        = p.kitName || p.kitType || '';
+          const unitLabel       = p.unit || '';
+          const sizeLabel       = p.size || '';
+          const gstVal          = Number(p.gst) || 0;
+          const lineTotal       = Math.round((p.qty || 0) * (p.rate || 0) * (1 + gstVal / 100));
+          const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel;
+          return (
+            <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
+              {/* ── Header row ── */}
+              <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>{isKitItem ? 'KIT PRODUCT' : 'PRODUCT'}</Text>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text strong style={{ fontSize: 14 }}>{productName}</Text>
+                      {isKitItem && <Tag color="magenta" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>KIT</Tag>}
+                    </div>
+                    {kitLabel && <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Kit: {kitLabel}</Text>}
+                  </div>
                 </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 10 }}>PRODUCT</Text>
-                  <Text strong style={{ display: 'block', fontSize: 14 }}>{p.name || '—'}</Text>
+                <Space size={4} wrap>
+                  {unitLabel && <Tag color="blue" style={{ borderRadius: 12, fontSize: 11 }}>{unitLabel}</Tag>}
+                  {sizeLabel && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{sizeLabel}</Tag>}
+                </Space>
+                <div style={{ textAlign: 'right' }}>
+                  <Text strong style={{ display: 'block', fontSize: 18, color: '#B11E6A', lineHeight: 1.2 }}>₹{lineTotal.toLocaleString()}</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} {unitLabel || 'pcs'} × ₹{p.rate}{gstVal > 0 ? ` + ${gstVal}% GST` : ''}</Text>
                 </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <Text strong style={{ display: 'block', fontSize: 18, color: '#B11E6A', lineHeight: 1.2 }}>₹{(Math.round((p.qty || 0) * (p.rate || 0) * (1 + (Number(p.gst) || 0) / 100))).toLocaleString()}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} pcs × ₹{p.rate}{(Number(p.gst) || 0) > 0 ? ` + ${p.gst}% GST` : ''}</Text>
+              {/* ── Specs section ── */}
+              {hasSpecs && (
+                <div style={{ padding: '12px 16px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
+                  <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 10 }}>SPECIFICATIONS</Text>
+                  <Row gutter={[12, 10]}>
+                    {logo && (
+                      <Col xs={12} sm={8}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Logo</Text>
+                        <Tag color={logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{logo === 'YES' ? '✓ Logo' : '✗ No Logo'}</Tag>
+                      </Col>
+                    )}
+                    {sticker && (
+                      <Col xs={12} sm={8}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Sticker / Printing</Text>
+                        <Tag color={sticker === 'YES' ? 'blue' : sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>
+                          {sticker === 'YES' ? '✓ Yes' : sticker === 'PRINTING' ? 'Printing' : sticker}
+                        </Tag>
+                      </Col>
+                    )}
+                    {packingMaterial && (
+                      <Col xs={12} sm={8}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Packing Material</Text>
+                        <Text strong style={{ fontSize: 12 }}>{packingMaterial}</Text>
+                      </Col>
+                    )}
+                    {materialCategory && (
+                      <Col xs={12} sm={8}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Material Category</Text>
+                        <Tag color={materialCategory === 'Eco Friendly' ? 'green' : materialCategory === 'Wooden' ? 'orange' : 'blue'} style={{ borderRadius: 20, fontSize: 11 }}>{materialCategory}</Tag>
+                      </Col>
+                    )}
+                    {brand && (
+                      <Col xs={12} sm={8}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Brand</Text>
+                        <Text strong style={{ fontSize: 12 }}>{brand}</Text>
+                      </Col>
+                    )}
+                    {unitLabel && (
+                      <Col xs={12} sm={8}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Unit</Text>
+                        <Text strong style={{ fontSize: 12 }}>{unitLabel}</Text>
+                      </Col>
+                    )}
+                    {sizeLabel && (
+                      <Col xs={12} sm={8}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Size</Text>
+                        <Text strong style={{ fontSize: 12 }}>{sizeLabel}</Text>
+                      </Col>
+                    )}
+                    {otherSpecs && (
+                      <Col xs={24} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.03)' }}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Other Specifications</Text>
+                        <div style={{ padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fa', borderRadius: 8, fontSize: 12, color: isDark ? '#ccc' : '#444' }}>
+                          {otherSpecs}
+                        </div>
+                      </Col>
+                    )}
+                  </Row>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {(() => {
+          const subtot = Math.round(calcTotal(products));
+          const gstFromProds = Math.round(products.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0));
+          // When per-product gst% is 0 but totalAmount is known, infer GST from the stored total
+          const inferredGst = Math.max(0, Math.round(totalAmount || 0) - subtot);
+          const gstAmt = gstFromProds > 0 ? gstFromProds : inferredGst;
+          const grandTot = subtot + gstAmt;
+          return (
+            <div style={{ padding: '12px 16px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>{products.length} product{products.length !== 1 ? 's' : ''}</Text>
+                <div style={{ textAlign: 'right' }}>
+                  <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>WITHOUT GST: ₹{subtot.toLocaleString()}{gstAmt > 0 ? `  |  GST: ₹${gstAmt.toLocaleString()}` : ''}</Text>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL (WITH GST)</Text>
+                  <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>₹{grandTot.toLocaleString()}</Text>
+                </div>
               </div>
             </div>
-            {p.specs && typeof p.specs === 'object' && Object.values(p.specs).some(Boolean) && (
-              <div style={{ padding: '12px 16px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
-                <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 10 }}>SPECIFICATIONS</Text>
-                <Row gutter={[12, 10]}>
-                  {p.specs.logo && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Logo</Text><Tag color={p.specs.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.logo === 'YES' ? '✓ Logo' : '✗ No Logo'}</Tag></Col>}
-                  {p.specs.sticker && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Sticker / Printing</Text><Tag color={p.specs.sticker === 'YES' ? 'blue' : p.specs.sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.sticker === 'YES' ? '✓ Yes' : p.specs.sticker === 'PRINTING' ? 'Printing' : '✗ No'}</Tag></Col>}
-                  {p.specs.packingMaterial && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Packing Material</Text><Text strong style={{ fontSize: 12 }}>{p.specs.packingMaterial}</Text></Col>}
-                  {p.specs.materialCategory && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Material Category</Text><Tag color={p.specs.materialCategory === 'Eco Friendly' ? 'green' : p.specs.materialCategory === 'Wooden' ? 'orange' : 'blue'} style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.materialCategory}</Tag></Col>}
-                  {p.specs.brand && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Brand</Text><Text strong style={{ fontSize: 12 }}>{p.specs.brand}</Text></Col>}
-                  {p.specs.productType && <Col xs={12} sm={8}><Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Product</Text><Tag color="orange" style={{ borderRadius: 20, fontSize: 11 }}>{p.specs.productType}</Tag></Col>}
-                  {p.specs.otherSpecs && (
-                    <Col xs={24} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.03)' }}>
-                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Other Specifications</Text>
-                      <div style={{ padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fa', borderRadius: 8, fontSize: 12, color: isDark ? '#ccc' : '#444' }}>
-                        {p.specs.otherSpecs}
-                      </div>
-                    </Col>
-                  )}
-                </Row>
-              </div>
-            )}
-          </div>
-        ))}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>{products.length} product{products.length !== 1 ? 's' : ''}</Text>
-          <div style={{ textAlign: 'right' }}>
-            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL</Text>
-            <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>₹{(totalAmount || calcTotal(products)).toLocaleString()}</Text>
-          </div>
-        </div>
+          );
+        })()}
       </div>
     );
 
@@ -2743,6 +3085,13 @@ export default function Sales() {
         quotationCode: full.quotationId?.quotCode || base.quotationCode,
         negotiationCode: full.negotiationId?.negCode || base.negotiationCode,
         statusHistory: full.statusHistory || base.statusHistory || [],
+        // Always carry paymentCollection from the richest source available
+        paymentCollection: (full.paymentCollection?.length ? full.paymentCollection : null)
+          || (base.paymentCollection?.length ? base.paymentCollection : null)
+          || [],
+        paymentProofs: (full.paymentProofs?.length ? full.paymentProofs : null)
+          || (base.paymentProofs?.length ? base.paymentProofs : null)
+          || [],
       };
       const ORDER_STEPS = [
         { title: 'Confirmed', description: 'Order placed' },
@@ -2753,8 +3102,19 @@ export default function Sales() {
       ];
       const orderStepMap = { 'In Production': 1, 'Quality Check': 2, 'Dispatch Ready': 3, 'Delivered': 4 };
       const orderCurrentStep = orderStepMap[o.status] ?? 0;
-      const oTotal = calcTotal(o.products);
-      const balance = oTotal - (o.advance || 0);
+      const oSubtotal = Math.round(calcTotal(o.products));
+      const oGstFromProducts = Math.round(calcGstAmount(o.products));
+      // Prefer per-product GST if set; fall back to backend-stored gstAmount (for converted/legacy orders)
+      const oBackendGst = Number(full.gstAmount ?? base.gstAmount ?? o.gstAmount) || 0;
+      const oGstAmount = oGstFromProducts > 0 ? oGstFromProducts : oBackendGst;
+      const oTotal = oSubtotal + oGstAmount;
+      // o.paymentCollection is now the best-available source (merged above)
+      const detailCollectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const detailAdvance = Number(full.advancePaidAmount ?? full.advancePaid ?? base.advance ?? 0);
+      const totalCollected = detailCollectionTotal > 0
+        ? detailCollectionTotal
+        : (Number(full.paidAmount) || detailAdvance || Number(base.paidAmount) || 0);
+      const toCollect = Math.max(0, oTotal - totalCollected);
       return (
         <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
@@ -2801,20 +3161,40 @@ export default function Sales() {
 
           {/* Stats */}
           <Row gutter={12} style={{ marginBottom: 20 }}>
-            {[
-              { label: 'Order Value', value: `₹${oTotal.toLocaleString()}`, icon: <CreditCardOutlined /> },
-              { label: 'Advance Paid', value: `₹${(o.advance || 0).toLocaleString()}`, icon: <CheckOutlined /> },
-              { label: 'Balance Due', value: `₹${balance.toLocaleString()}`, icon: <CalendarOutlined /> },
-              { label: 'Expected Delivery', value: o.expectedDelivery || '—', icon: <CarOutlined /> },
-            ].map((s, i) => (
-              <Col xs={12} sm={6} key={i}>
-                <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}>{s.icon}</span><Text type="secondary" style={{ fontSize: 11 }}>{s.label}</Text></div>
-                  <Text strong style={{ fontSize: 14, color: textColor, display: 'block' }}>{s.value}</Text>
-                </Card>
-              </Col>
-            ))}
+            <Col xs={12} sm={6}>
+              <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CreditCardOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>Order Value</Text></div>
+                <Text strong style={{ fontSize: 14, color: textColor, display: 'block' }}>₹{oTotal.toLocaleString()}</Text>
+                {oGstAmount > 0 && (
+                  <div style={{ marginTop: 3 }}>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Without GST: ₹{oSubtotal.toLocaleString()}</Text>
+                    <br />
+                    <Text type="secondary" style={{ fontSize: 10 }}>GST: ₹{oGstAmount.toLocaleString()}</Text>
+                  </div>
+                )}
+              </Card>
+            </Col>
+            <Col xs={12} sm={6}>
+              <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CheckOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>Collected</Text></div>
+                <Text strong style={{ fontSize: 14, color: '#52c41a', display: 'block' }}>₹{totalCollected.toLocaleString()}</Text>
+                {o.advance > 0 && o.paidAmount !== o.advance && (
+                  <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 2 }}>Advance: ₹{(o.advance || 0).toLocaleString()}</Text>
+                )}
+              </Card>
+            </Col>
+            <Col xs={12} sm={6}>
+              <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CalendarOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>To Collect</Text></div>
+                <Text strong style={{ fontSize: 14, color: toCollect > 0 ? '#fa8c16' : '#52c41a', display: 'block' }}>₹{toCollect.toLocaleString()}</Text>
+              </Card>
+            </Col>
+            <Col xs={12} sm={6}>
+              <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CarOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>Expected Delivery</Text></div>
+                <Text strong style={{ fontSize: 14, color: textColor, display: 'block' }}>{o.expectedDelivery || '—'}</Text>
+              </Card>
+            </Col>
           </Row>
 
           {/* Order Progress Steps */}
@@ -2872,22 +3252,32 @@ export default function Sales() {
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><CreditCardOutlined style={{ color: '#52c41a' }} /><span>Payment Summary</span></Space>}>
                 <Row gutter={12}>
-                  <Col xs={24} sm={8}>
+                  <Col xs={24} sm={6}>
+                    <div style={{ padding: '14px 16px', background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(24,144,255,0.06)', borderRadius: 10, border: '1px solid rgba(24,144,255,0.2)', textAlign: 'center' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>WITHOUT GST</Text>
+                      <Text strong style={{ fontSize: 18, color: '#1890ff' }}>₹{oSubtotal.toLocaleString()}</Text>
+                    </div>
+                  </Col>
+                  <Col xs={24} sm={6}>
                     <div style={{ padding: '14px 16px', background: 'rgba(82,196,26,0.06)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)', textAlign: 'center' }}>
-                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>ORDER TOTAL</Text>
-                      <Text strong style={{ fontSize: 20, color: '#52c41a' }}>₹{oTotal.toLocaleString()}</Text>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>WITH GST (TOTAL)</Text>
+                      <Text strong style={{ fontSize: 18, color: '#52c41a' }}>₹{oTotal.toLocaleString()}</Text>
+                      {oGstAmount > 0 && <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>GST: ₹{oGstAmount.toLocaleString()}</Text>}
                     </div>
                   </Col>
-                  <Col xs={24} sm={8}>
-                    <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.2)', textAlign: 'center' }}>
-                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>ADVANCE PAID</Text>
-                      <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>₹{(o.advance || 0).toLocaleString()}</Text>
+                  <Col xs={24} sm={6}>
+                    <div style={{ padding: '14px 16px', background: 'rgba(82,196,26,0.06)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)', textAlign: 'center' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>COLLECTED</Text>
+                      <Text strong style={{ fontSize: 18, color: '#52c41a' }}>₹{totalCollected.toLocaleString()}</Text>
+                      {o.advance > 0 && o.paidAmount !== o.advance && (
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 2 }}>Advance: ₹{(o.advance || 0).toLocaleString()}</Text>
+                      )}
                     </div>
                   </Col>
-                  <Col xs={24} sm={8}>
-                    <div style={{ padding: '14px 16px', background: balance > 0 ? 'rgba(250,140,22,0.06)' : 'rgba(82,196,26,0.06)', borderRadius: 10, border: `1px solid ${balance > 0 ? 'rgba(250,140,22,0.2)' : 'rgba(82,196,26,0.2)'}`, textAlign: 'center' }}>
-                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE DUE</Text>
-                      <Text strong style={{ fontSize: 20, color: balance > 0 ? '#fa8c16' : '#52c41a' }}>₹{balance.toLocaleString()}</Text>
+                  <Col xs={24} sm={6}>
+                    <div style={{ padding: '14px 16px', background: toCollect > 0 ? 'rgba(250,140,22,0.06)' : 'rgba(82,196,26,0.06)', borderRadius: 10, border: `1px solid ${toCollect > 0 ? 'rgba(250,140,22,0.2)' : 'rgba(82,196,26,0.2)'}`, textAlign: 'center' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TO COLLECT</Text>
+                      <Text strong style={{ fontSize: 18, color: toCollect > 0 ? '#fa8c16' : '#52c41a' }}>₹{toCollect.toLocaleString()}</Text>
                     </div>
                   </Col>
                 </Row>
@@ -2961,8 +3351,8 @@ export default function Sales() {
                   {(o.leadCode || o.leadName) && (
                     <div style={{ padding: '8px 12px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.04)', borderRadius: 8, border: '1px solid rgba(177,30,106,0.15)' }}>
                       <Text type="secondary" style={{ fontSize: 10, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>LEAD</Text>
-                      <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{o.leadCode || '—'}</Text>
-                      {o.leadName && <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{o.leadName}</Text>}
+                      <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{o.leadCode || o.leadName || '—'}</Text>
+                      {o.leadCode && o.leadName && <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{o.leadName}</Text>}
                     </div>
                   )}
                   {o.quotationCode && (
@@ -2981,6 +3371,45 @@ export default function Sales() {
                     <Text type="secondary" style={{ fontSize: 10, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>ORDER DATE</Text>
                     <Text strong style={{ fontSize: 13 }}>{o.date || '—'}</Text>
                   </div>
+                  {/* Uploaded files / payment proofs */}
+                  {(() => {
+                    const allFiles = [
+                      ...(full.paymentProofs || base.paymentProofs || []).map(f => ({ ...f, category: 'Payment Proof' })),
+                      ...(full.documents || base.documents || []).map(f => ({ ...f, category: 'Document' })),
+                      ...(full.lrFiles || base.lrFiles || []).map(f => ({ ...f, category: 'LR / Dispatch' })),
+                    ].filter(f => f.url || f.name);
+                    if (!allFiles.length) return null;
+                    return (
+                      <div style={{ padding: '10px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fc', borderRadius: 8, border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#e8e8e8'}` }}>
+                        <Text type="secondary" style={{ fontSize: 10, letterSpacing: 0.5, display: 'block', marginBottom: 8, fontWeight: 700 }}>
+                          UPLOADED FILES ({allFiles.length})
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {allFiles.map((file, idx) => (
+                            <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px', background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', borderRadius: 6, border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0'}` }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                                <FileTextOutlined style={{ color: '#1e3799', fontSize: 13, flexShrink: 0 }} />
+                                <div style={{ minWidth: 0 }}>
+                                  <Text strong style={{ fontSize: 12, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {file.name || file.fileName || `File ${idx + 1}`}
+                                  </Text>
+                                  <Text type="secondary" style={{ fontSize: 10 }}>{file.category}</Text>
+                                  {file.uploadedAt && (
+                                    <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{fmtDateTimeShort(file.uploadedAt)}</Text>
+                                  )}
+                                </div>
+                              </div>
+                              {file.url && (
+                                <a href={file.url} target="_blank" rel="noopener noreferrer" style={{ color: '#1890ff', fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
+                                  View ↗
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </Card>
 
@@ -3115,7 +3544,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Specifications</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} kits={kits} />
+                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} />
                 </Card>
               </Col>
 
@@ -3159,7 +3588,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Products & Revised Rates</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} kits={kits} />
+                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} />
                 </Card>
 
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -3217,7 +3646,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Quantities</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" inventoryItems={inventoryItems} kits={kits} />
+                  <ProductFormList fieldName="products" inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} />
                 </Card>
 
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -3266,11 +3695,125 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><span>Payment & Delivery</span></Space>}>
                   <Form.Item label="Payment Terms" name="paymentTerms">
-                    <Select>{PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}</Select>
+                    <Select onChange={(val) => {
+                      const prods = watchedOrderProducts || [];
+                      const subtot = calcTotal(prods);
+                      const gstAmt = prods.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
+                      const total = subtot + gstAmt;
+                      let adv = 0;
+                      if (val === 'BEFORE_100') adv = total;
+                      else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') adv = Math.round(total * 0.5);
+                      orderForm.setFieldValue('advance', adv);
+                    }}>{PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}</Select>
                   </Form.Item>
-                  <Form.Item label="Advance Paid (₹)" name="advance" rules={[{ required: true }]}>
-                    <InputNumber style={{ width: '100%' }} prefix="₹" min={0} />
+                  <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms || prev.products !== cur.products}>
+                    {({ getFieldValue }) => {
+                      const pt = getFieldValue('paymentTerms');
+                      const prods = watchedOrderProducts || [];
+                      const subtot = calcTotal(prods);
+                      const gstAmt = prods.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
+                      const total = subtot + gstAmt;
+                      let adviceText = '';
+                      if (pt === 'BEFORE_100') adviceText = `100% — expected: ₹${total.toLocaleString()}`;
+                      else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${Math.round(total * 0.5).toLocaleString()}`;
+                      else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${Math.round(total * 0.5).toLocaleString()}`;
+                      else if (pt === 'CREDIT_10_30') adviceText = 'Credit terms — advance: ₹0';
+                      return adviceText ? (
+                        <div style={{ marginTop: -10, marginBottom: 12, padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 6, border: '1px solid rgba(82,196,26,0.2)' }}>
+                          <Text type="secondary" style={{ fontSize: 12, color: '#52c41a' }}>{adviceText}</Text>
+                        </div>
+                      ) : null;
+                    }}
                   </Form.Item>
+                  <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+                    {({ getFieldValue }) => {
+                      const pt = getFieldValue('paymentTerms');
+                      if (pt === '50_ADVANCE_50_AFTER') return (
+                        <Form.Item label="Payment Reminder Date (50% balance)" name="paymentReminderDate" rules={[{ required: true, message: 'Select reminder date' }]}>
+                          <DatePicker style={{ width: '100%' }} />
+                        </Form.Item>
+                      );
+                      if (pt === 'CREDIT_10_30') return (
+                        <Form.Item label="Credit Due Date" name="paymentReminderDate" rules={[{ required: true, message: 'Select credit due date' }]}>
+                          <DatePicker style={{ width: '100%' }} />
+                        </Form.Item>
+                      );
+                      return null;
+                    }}
+                  </Form.Item>
+
+                  <Divider style={{ margin: '10px 0 8px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+                    <Space><DollarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600, fontSize: 12 }}>Payment Collection</span></Space>
+                  </Divider>
+                  <Form.List name="paymentCollection">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name, ...rest }) => (
+                          <div key={key} style={{ background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
+                            <Row gutter={[8, 0]} align="middle">
+                              <Col xs={24} sm={10}>
+                                <Form.Item {...rest} name={[name, 'paymentMethod']} label="Method" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Select method' }]}>
+                                  <Select placeholder="Select method" size="small">
+                                    {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                                  </Select>
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={10}>
+                                <Form.Item {...rest} name={[name, 'paidAmount']} label="Amount (₹)" style={{ marginBottom: 0 }}>
+                                  <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="e.g. 5000" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={4} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 20 }}>
+                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                              </Col>
+                              <Col xs={24}>
+                                <Form.Item {...rest} name={[name, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
+                                  <Input size="small" placeholder="UPI ref / cheque no. etc." />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                          </div>
+                        ))}
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 10 }}>
+                          + Add Payment Entry
+                        </Button>
+                      </>
+                    )}
+                  </Form.List>
+
+                  {/* Auto-computed payment status */}
+                  <Form.Item noStyle shouldUpdate>
+                    {({ getFieldValue }) => {
+                      const rawCollection = getFieldValue('paymentCollection');
+                      const collection = Array.isArray(rawCollection) ? rawCollection : [];
+                      const collTotal = collection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+                      const prods = Array.isArray(watchedOrderProducts) ? watchedOrderProducts : [];
+                      const subtot = calcTotal(prods);
+                      const gstAmt = prods.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
+                      const orderTotal = subtot + gstAmt;
+                      const status = orderTotal > 0 && collTotal >= orderTotal
+                        ? 'Paid'
+                        : collTotal > 0
+                        ? 'Partially Paid'
+                        : 'Unpaid';
+                      const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
+                      const bg = status === 'Paid' ? 'rgba(82,196,26,0.08)' : status === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
+                      return (
+                        <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
+                          <Space size={12}>
+                            {collTotal > 0 && orderTotal > 0 && (
+                              <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
+                                ₹{collTotal.toLocaleString()} / ₹{orderTotal.toLocaleString()}
+                              </Text>
+                            )}
+                            <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
+                          </Space>
+                        </div>
+                      );
+                    }}
+                  </Form.Item>
+
                   <Row gutter={8}>
                     <Col span={12}><Form.Item label="Order Date" name="date"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
                     <Col span={12}>
@@ -4061,7 +4604,51 @@ export default function Sales() {
                           )}
                         </Space>
                       }
+                      extra={
+                        editingSection === 'products' ? (
+                          <Space size="small">
+                            <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('products')} style={{ background: '#1890ff', border: 'none', borderRadius: 6 }}>Save</Button>
+                            <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                          </Space>
+                        ) : (
+                          <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('products')} style={{ borderRadius: 6 }}>Edit</Button>
+                        )
+                      }
                     >
+                      {editingSection === 'products' ? (
+                        /* ── Inline product edit ── */
+                        <Form.List name="products">
+                          {(fields, { add, remove }) => (
+                            <>
+                              <ProductHeaders />
+                              {fields.map((field, index) => (
+                                <ProductItem
+                                  key={field.key}
+                                  field={field}
+                                  index={index}
+                                  remove={remove}
+                                  disabled={false}
+                                  fieldName="products"
+                                  showSpecs={true}
+                                  isDark={isDark}
+                                  inventoryItems={inventoryItems}
+                                  inventoryItemsData={inventoryItemsRaw}
+                                  kits={kits}
+                                />
+                              ))}
+                              <Button
+                                type="dashed"
+                                onClick={() => add({ qty: undefined, rate: undefined, isKit: false })}
+                                icon={<PlusOutlined />}
+                                block
+                                style={{ borderRadius: 10, height: 40, marginTop: 8 }}
+                              >
+                                Add Product
+                              </Button>
+                            </>
+                          )}
+                        </Form.List>
+                      ) : (
                       <>
                         {/* Personalization badge */}
                         {record.productType && (
@@ -4106,10 +4693,10 @@ export default function Sales() {
                                 </div>
                                 <div style={{ textAlign: 'right' }}>
                                   <Text strong style={{ display: 'block', fontSize: 20, color: '#B11E6A', lineHeight: 1.2 }}>
-                                    ₹{((p.qty || 0) * (p.rate || 0)).toLocaleString()}
+                                    ₹{Math.round((p.qty || 0) * (p.rate || 0) * (1 + (Number(p.gst) || 0) / 100)).toLocaleString()}
                                   </Text>
                                   <Text type="secondary" style={{ fontSize: 12 }}>
-                                    {p.qty || 0} pcs × ₹{p.rate || 0}
+                                    {p.qty || 0} pcs × ₹{p.rate || 0}{(Number(p.gst) || 0) > 0 ? ` +${p.gst}% GST` : ''}
                                   </Text>
                                 </div>
                               </div>
@@ -4197,16 +4784,26 @@ export default function Sales() {
                         })()}
 
                         {/* Total footer */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, padding: '14px 18px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
-                          <div>
-                            <Text type="secondary" style={{ fontSize: 12 }}>{(record.products || []).length} product{(record.products || []).length !== 1 ? 's' : ''}</Text>
-                          </div>
-                          <div style={{ textAlign: 'right' }}>
-                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL ORDER VALUE</Text>
-                            <Text strong style={{ fontSize: 22, color: '#B11E6A' }}>₹{totalValue.toLocaleString()}</Text>
-                          </div>
-                        </div>
+                        {(() => {
+                          const prods = record.products || [];
+                          const leadSubtotal = calcTotal(prods);
+                          const leadGstAmt = prods.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
+                          const leadGrandTotal = leadSubtotal + leadGstAmt;
+                          return (
+                            <div style={{ marginTop: 14, padding: '14px 18px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Text type="secondary" style={{ fontSize: 12 }}>{prods.length} product{prods.length !== 1 ? 's' : ''}</Text>
+                                <div style={{ textAlign: 'right' }}>
+                                  <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>WITHOUT GST: ₹{leadSubtotal.toLocaleString()}{leadGstAmt > 0 ? `  |  GST: ₹${Math.round(leadGstAmt).toLocaleString()}` : ''}</Text>
+                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL ORDER VALUE (WITH GST)</Text>
+                                  <Text strong style={{ fontSize: 22, color: '#B11E6A' }}>₹{Math.round(leadGrandTotal).toLocaleString()}</Text>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </>
+                      )}
                     </Card>
                   );
                 }
@@ -4264,6 +4861,7 @@ export default function Sales() {
                                   showSpecs={isAddLead || isAddCustomer}
                                   isDark={isDark}
                                   inventoryItems={inventoryItems}
+                                  inventoryItemsData={inventoryItemsRaw}
                                   kits={kits}
                                 />
                               ))}
@@ -4297,6 +4895,7 @@ export default function Sales() {
                                   showSpecs={isAddLead || isAddCustomer}
                                   isDark={isDark}
                                   inventoryItems={inventoryItems}
+                                  inventoryItemsData={inventoryItemsRaw}
                                   kits={kits}
                                 />
                               ))}
@@ -4391,6 +4990,18 @@ export default function Sales() {
                         <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.12)', height: '100%' }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>PAYMENT TERMS</Text>
                           <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[record.paymentTerms] || record.paymentTerms || '—'}</Text>
+                          {(() => {
+                            const ps = record.paymentStatus || 'Unpaid';
+                            const psColor = ps === 'Paid' ? '#52c41a' : ps === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
+                            const psBg = ps === 'Paid' ? 'rgba(82,196,26,0.08)' : ps === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
+                            const psBorder = ps === 'Paid' ? 'rgba(82,196,26,0.2)' : ps === 'Partially Paid' ? 'rgba(250,140,22,0.2)' : 'rgba(255,77,79,0.2)';
+                            return (
+                              <div style={{ marginTop: 8, padding: '6px 10px', background: psBg, borderRadius: 8, border: `1px solid ${psBorder}`, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <Text type="secondary" style={{ fontSize: 11 }}>PAYMENT STATUS:</Text>
+                                <Text strong style={{ color: psColor, fontSize: 12 }}>{ps}</Text>
+                              </div>
+                            );
+                          })()}
                           {record.paymentTerms === '50_ADVANCE_50_AFTER' && record.paymentReminderDate && (
                             <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
                               <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE PAYMENT DUE</Text>
@@ -4535,10 +5146,17 @@ export default function Sales() {
                     )}
                   </Form.List>
 
+                  <DeliveryPaymentFields showUpload />
+
                   {watchedLeadType !== 'SAMPLE' && <>
                   <Divider style={{ margin: '16px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
                     <Space><DollarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Collection</span></Space>
                   </Divider>
+                  {watchedLeadPaymentTerms === 'CREDIT_10_30' && (
+                    <div style={{ padding: '8px 12px', background: 'rgba(24,144,255,0.06)', borderRadius: 8, border: '1px solid rgba(24,144,255,0.2)', marginBottom: 10 }}>
+                      <Text style={{ fontSize: 12, color: '#1890ff' }}>Credit terms selected — no advance required. You can still record any upfront payment below.</Text>
+                    </div>
+                  )}
                   <Form.List name="paymentCollection">
                     {(fields, { add, remove }) => (
                       <>
@@ -4574,9 +5192,35 @@ export default function Sales() {
                       </>
                     )}
                   </Form.List>
-                  </>}
 
-                  <DeliveryPaymentFields showUpload />
+                  {/* Auto-computed payment status from collection entries vs product total */}
+                  {(() => {
+                    const safeCollection = Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : [];
+                    const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
+                    const collTotal = safeCollection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+                    const recordTotal = Math.round(calcGrandTotal(safeProducts));
+                    const status = recordTotal > 0 && collTotal >= recordTotal
+                      ? 'Paid'
+                      : collTotal > 0
+                      ? 'Partially Paid'
+                      : 'Unpaid';
+                    const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
+                    const bg = status === 'Paid' ? 'rgba(82,196,26,0.08)' : status === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
+                    return (
+                      <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
+                        <Space size={12}>
+                          {collTotal > 0 && recordTotal > 0 && (
+                            <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
+                              ₹{collTotal.toLocaleString()} / ₹{recordTotal.toLocaleString()}
+                            </Text>
+                          )}
+                          <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
+                        </Space>
+                      </div>
+                    );
+                  })()}
+                  </>}
                   </>
                   )}
                 </Card>
@@ -4587,7 +5231,7 @@ export default function Sales() {
                 const hotelOrders = ordersData.filter(o => o.hotelName === record.hotelName);
                 const latestOrder = hotelOrders.length > 0 ? hotelOrders[hotelOrders.length - 1] : null;
                 const totalOrders = hotelOrders.length;
-                const totalPaid = hotelOrders.reduce((s, o) => s + (o.advance || 0), 0);
+                const totalPaid = hotelOrders.reduce((s, o) => s + (o.paidAmount || o.advance || 0), 0);
                 const totalAmount = hotelOrders.reduce((s, o) => s + (o.totalAmount || 0), 0);
                 return (
                   <Card
@@ -4628,8 +5272,8 @@ export default function Sales() {
                           },
                           { title: 'Date', dataIndex: 'date', render: v => v || '—' },
                           { title: 'Total', dataIndex: 'totalAmount', render: v => <Text strong>₹{(v || 0).toLocaleString()}</Text> },
-                          { title: 'Advance Paid', dataIndex: 'advance', render: v => <Text style={{ color: '#52c41a' }}>₹{(v || 0).toLocaleString()}</Text> },
-                          { title: 'Balance', key: 'balance', render: (_, r) => <Text style={{ color: '#fa8c16' }}>₹{((r.totalAmount || 0) - (r.advance || 0)).toLocaleString()}</Text> },
+                          { title: 'Collected', key: 'collected', render: (_, r) => <Text style={{ color: '#52c41a' }}>₹{(r.paidAmount || r.advance || 0).toLocaleString()}</Text> },
+                          { title: 'To Collect', key: 'balance', render: (_, r) => <Text style={{ color: '#fa8c16' }}>₹{((r.totalAmount || 0) - (r.paidAmount || r.advance || 0)).toLocaleString()}</Text> },
                           { title: 'Status', dataIndex: 'status', render: v => <Tag color={STATUS_COLORS[v] || 'blue'} style={{ borderRadius: 12 }}>{v}</Tag> },
                           {
                             title: 'Action', key: 'actions', render: (_, r) => (
@@ -4647,80 +5291,6 @@ export default function Sales() {
                 );
               })()}
 
-              {/* ── Lead Pipeline Journey — detail only ──────────────── */}
-              {isDetail && isLeadDetail && (() => {
-                const linkedQuotations = quotationsData.filter(q => q.leadId && (q.leadId === record._id || q.leadId === record.key));
-                const linkedNegotiations = negotiationsData.filter(n => n.leadId && (n.leadId === record._id || n.leadId === record.key));
-                const linkedOrders = ordersData.filter(o => o.hotelName === record.hotelName);
-                const hasAny = linkedQuotations.length > 0 || linkedNegotiations.length > 0 || linkedOrders.length > 0;
-                return (
-                  <Card
-                    style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                    title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><ArrowRightOutlined style={{ color: '#722ed1' }} /><span>Lead Pipeline Journey</span></Space>}
-                  >
-                    {!hasAny ? (
-                      <Text type="secondary" style={{ fontSize: 12 }}>No quotations or orders created from this lead yet.</Text>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                        {linkedQuotations.length > 0 && (
-                          <div>
-                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#1e3799', display: 'block', marginBottom: 8 }}>QUOTATIONS ({linkedQuotations.length})</Text>
-                            {linkedQuotations.map((q, i) => (
-                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', marginBottom: 6, background: isDark ? 'rgba(30,55,153,0.08)' : 'rgba(30,55,153,0.04)', borderRadius: 10, border: '1px solid rgba(30,55,153,0.15)', cursor: 'pointer' }}
-                                onClick={() => openQuotationDetail(q)}>
-                                <div>
-                                  <Text strong style={{ color: '#1e3799', fontSize: 13, fontFamily: 'monospace' }}>{q.qid}</Text>
-                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{q.date} · {(q.products || []).map(p => p.name).filter(Boolean).join(', ') || '—'}</Text>
-                                </div>
-                                <div style={{ textAlign: 'right' }}>
-                                  <Text strong style={{ color: '#1e3799', fontSize: 14, display: 'block' }}>₹{(q.totalAmount || 0).toLocaleString()}</Text>
-                                  <Tag color={STATUS_COLORS[q.status] || 'default'} style={{ borderRadius: 12, fontSize: 11, margin: 0 }}>{q.status}</Tag>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {linkedNegotiations.length > 0 && (
-                          <div>
-                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#fa8c16', display: 'block', marginBottom: 8 }}>NEGOTIATIONS ({linkedNegotiations.length})</Text>
-                            {linkedNegotiations.map((n, i) => (
-                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', marginBottom: 6, background: isDark ? 'rgba(250,140,22,0.08)' : 'rgba(250,140,22,0.04)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.2)', cursor: 'pointer' }}
-                                onClick={() => { setSelectedRecord(n); setViewMode('negotiation-detail'); }}>
-                                <div>
-                                  <Text strong style={{ color: '#fa8c16', fontSize: 13, fontFamily: 'monospace' }}>{n.nid}</Text>
-                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{n.date} · {(n.products || []).map(p => p.name).filter(Boolean).join(', ') || '—'}</Text>
-                                </div>
-                                <div style={{ textAlign: 'right' }}>
-                                  <Text strong style={{ color: '#fa8c16', fontSize: 14, display: 'block' }}>₹{(n.totalAmount || 0).toLocaleString()}</Text>
-                                  <Tag color={STATUS_COLORS[n.status] || 'orange'} style={{ borderRadius: 12, fontSize: 11, margin: 0 }}>{n.status}</Tag>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {linkedOrders.length > 0 && (
-                          <div>
-                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#52c41a', display: 'block', marginBottom: 8 }}>ORDERS ({linkedOrders.length})</Text>
-                            {linkedOrders.map((ord, i) => (
-                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', marginBottom: 6, background: isDark ? 'rgba(82,196,26,0.08)' : 'rgba(82,196,26,0.04)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)', cursor: 'pointer' }}
-                                onClick={() => openOrderDetail(ord)}>
-                                <div>
-                                  <Text strong style={{ color: '#52c41a', fontSize: 13, fontFamily: 'monospace' }}>{ord.oid}</Text>
-                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{ord.date} · {(ord.products || []).map(p => p.name).filter(Boolean).join(', ') || '—'}</Text>
-                                </div>
-                                <div style={{ textAlign: 'right' }}>
-                                  <Text strong style={{ color: '#52c41a', fontSize: 14, display: 'block' }}>₹{(ord.totalAmount || 0).toLocaleString()}</Text>
-                                  <Tag color={STATUS_COLORS[ord.status] || 'green'} style={{ borderRadius: 12, fontSize: 11, margin: 0 }}>{ord.status}</Tag>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </Card>
-                );
-              })()}
 
               {/* ── Complaints tab — detail only ─────────────────────── */}
               {isDetail && (() => {
@@ -5354,13 +5924,33 @@ export default function Sales() {
           <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item label="Advance Paid (₹)" name="advance">
-            <InputNumber style={{ width: '100%' }} min={0} step={100} prefix="₹" />
-          </Form.Item>
           <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
-            <Select>
+            <Select onChange={(val) => {
+              const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+              let suggestedAdvance = 0;
+              if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
+              else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') suggestedAdvance = Math.round(orderTotal * 0.5);
+              else if (val === 'CREDIT_10_30') suggestedAdvance = 0;
+              orderEditForm.setFieldValue('advance', suggestedAdvance);
+            }}>
               {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
             </Select>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+            {({ getFieldValue }) => {
+              const pt = getFieldValue('paymentTerms');
+              const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+              let adviceText = '';
+              if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
+              else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
+              else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
+              else if (pt === 'CREDIT_10_30') adviceText = 'Credit terms — advance: ₹0';
+              return adviceText ? (
+                <div style={{ marginTop: -10, marginBottom: 12, padding: '6px 10px', background: 'rgba(177,30,106,0.06)', borderRadius: 6, border: '1px solid rgba(177,30,106,0.15)' }}>
+                  <Text type="secondary" style={{ fontSize: 12, color: '#B11E6A' }}>{adviceText}</Text>
+                </div>
+              ) : null;
+            }}
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
             {({ getFieldValue }) => {
@@ -5380,6 +5970,75 @@ export default function Sales() {
                 );
               }
               return null;
+            }}
+          </Form.Item>
+
+          <Divider style={{ margin: '12px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+            <Space><DollarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Collection</span></Space>
+          </Divider>
+          <Form.List name="paymentCollection">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map(({ key, name, ...rest }) => (
+                  <div key={key} style={{ background: 'rgba(177,30,106,0.03)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
+                    <Row gutter={[8, 0]} align="middle">
+                      <Col xs={24} sm={8}>
+                        <Form.Item {...rest} name={[name, 'paymentMethod']} label="Method" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Select method' }]}>
+                          <Select placeholder="Select method" size="small">
+                            {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                          </Select>
+                        </Form.Item>
+                      </Col>
+                      <Col xs={24} sm={8}>
+                        <Form.Item {...rest} name={[name, 'paidAmount']} label="Amount (₹)" style={{ marginBottom: 0 }}>
+                          <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="e.g. 5000" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={24} sm={6}>
+                        <Form.Item {...rest} name={[name, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
+                          <Input size="small" placeholder="Ref / notes" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 20 }}>
+                        <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                      </Col>
+                    </Row>
+                  </div>
+                ))}
+                <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
+                  + Add Payment Entry
+                </Button>
+              </>
+            )}
+          </Form.List>
+
+          {/* Auto-computed payment status based on collection entries vs order total */}
+          <Form.Item noStyle shouldUpdate>
+            {({ getFieldValue }) => {
+              const rawColl = getFieldValue('paymentCollection');
+              const collection = Array.isArray(rawColl) ? rawColl : [];
+              const collTotal = collection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+              const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+              const status = orderTotal > 0 && collTotal >= orderTotal
+                ? 'Paid'
+                : collTotal > 0
+                ? 'Partially Paid'
+                : 'Unpaid';
+              const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
+              const bg = status === 'Paid' ? 'rgba(82,196,26,0.08)' : status === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
+              return (
+                <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
+                  <Space size={12}>
+                    {collTotal > 0 && (
+                      <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
+                        Collected: ₹{collTotal.toLocaleString()} / ₹{orderTotal.toLocaleString()}
+                      </Text>
+                    )}
+                    <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
+                  </Space>
+                </div>
+              );
             }}
           </Form.Item>
         </Form>
@@ -5419,7 +6078,11 @@ function ExpandedPartyOrders({ hotelName }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {orders.map((order, i) => {
           const items = order.items?.length ? order.items : (order.products || []);
-          const amount = order.total || order.amount || 0;
+          // Compute total from per-item gst% to avoid trusting a potentially double-counted stored total
+          const _subtotal = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
+          const _gstFromItems = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+          const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(order.gstAmount) || 0);
+          const amount = _subtotal > 0 ? Math.round(_subtotal + _gst) : (Number(order.total) || Number(order.amount) || 0);
           return (
             <div
               key={order._id || i}
