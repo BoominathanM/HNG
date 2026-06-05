@@ -184,6 +184,16 @@ exports.createQuotation = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: q });
 });
 
+exports.updateQuotation = asyncHandler(async (req, res, next) => {
+  const quotation = await Quotation.findByIdAndUpdate(
+    req.params.id,
+    { $set: req.body },
+    { new: true, runValidators: false }
+  );
+  if (!quotation) return next(new AppError('Quotation not found', 404));
+  res.status(200).json({ success: true, data: quotation });
+});
+
 exports.convertToNegotiation = asyncHandler(async (req, res, next) => {
   const quotation = await Quotation.findById(req.params.id);
   if (!quotation) return next(new AppError('Quotation not found', 404));
@@ -308,10 +318,14 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     amount: negotiation.amount,
     gstAmount: negotiation.gstAmount,
     total: negotiation.total,
-    advancePaid: negotiation.advancePaid,
-    balance: negotiation.balance,
+    advancePaid: resolveField(negObj.advancePaid, 0),
+    balance: resolveField(negObj.balance, 0),
+    paidAmount: resolveField(negObj.paidAmount, negObj.advancePaid, 0),
+    paymentCollection: negObj.paymentCollection || [],
+    paymentStatus: negObj.paymentStatus || 'Unpaid',
     type: negotiation.type,
     items: negotiation.items,
+    products: negObj.products || [],
     // Contact & billing details copied from negotiation extras or lead
     location: resolveField(negObj.location, lead?.location, lead?.locationCity),
     clientPhone: resolveField(negObj.phone, negObj.clientPhone, lead?.phone),

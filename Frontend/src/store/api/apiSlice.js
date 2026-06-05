@@ -429,6 +429,10 @@ export const apiSlice = createApi({
       query: (data) => ({ url: '/sales/quotations', method: 'post', data }),
       invalidatesTags: ['Quotations', 'Leads'],
     }),
+    updateSalesQuotation: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/sales/quotations/${id}`, method: 'put', data }),
+      invalidatesTags: ['Quotations'],
+    }),
     convertToNegotiation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/quotations/${id}/convert-negotiation`, method: 'post', data }),
       invalidatesTags: ['Quotations', 'Negotiations', 'Leads'],
@@ -948,6 +952,7 @@ export const {
   useAssignLeadMutation,
   useGetSalesQuotationsQuery,
   useCreateSalesQuotationMutation,
+  useUpdateSalesQuotationMutation,
   useConvertToNegotiationMutation,
   useConvertLeadToNegotiationMutation,
   useGetNegotiationsQuery,

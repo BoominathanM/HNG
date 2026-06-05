@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal, Form, Row, Col, Typography,
   Drawer, Steps, Divider, Badge, InputNumber, Tooltip, Checkbox, Slider, Upload, Progress,
-  DatePicker, Descriptions, Timeline, AutoComplete,
+  DatePicker, Descriptions, Timeline, AutoComplete, Switch,
   Spin,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
@@ -33,6 +33,7 @@ import {
   useDeleteLeadMutation,
   useAssignLeadMutation,
   useCreateSalesQuotationMutation,
+  useUpdateSalesQuotationMutation,
   useConvertToNegotiationMutation,
   useConvertLeadToNegotiationMutation,
   useConvertToOrderMutation,
@@ -960,6 +961,10 @@ export default function Sales() {
       } catch (err) {
         enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update order', { variant: 'error' });
       }
+    }).catch(validationErr => {
+      if (validationErr?.errorFields?.length) {
+        enqueueSnackbar(`Please fill required fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
+      }
     });
   };
 
@@ -973,6 +978,8 @@ export default function Sales() {
   const watchedSoftwareInterest = Form.useWatch('interestedInSoftware', leadForm);
   const watchedOrderProducts = Form.useWatch('products', orderForm);
   const watchedLeadProducts = Form.useWatch('products', leadForm);
+  const watchedNegotiationProducts = Form.useWatch('products', negotiationForm);
+  const watchedNegRoundValue = Form.useWatch('useRoundedTotal', negotiationForm);
   const watchedLeadPaymentTerms = Form.useWatch('paymentTerms', leadForm);
   const watchedLeadPaymentCollection = Form.useWatch('paymentCollection', leadForm);
 
@@ -1076,6 +1083,7 @@ export default function Sales() {
   const [deleteLeadMutation] = useDeleteLeadMutation();
   const [assignLeadMutation] = useAssignLeadMutation();
   const [createSalesQuotationMutation] = useCreateSalesQuotationMutation();
+  const [updateSalesQuotationMutation] = useUpdateSalesQuotationMutation();
   const [convertToNegotiationMutation] = useConvertToNegotiationMutation();
   const [convertLeadToNegotiationMutation] = useConvertLeadToNegotiationMutation();
   const [updateNegotiationMutation] = useUpdateNegotiationMutation();
@@ -1327,7 +1335,7 @@ export default function Sales() {
     hotelType: 'OLD', billType: 'GST', forwardingCharge: false,
     deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'BEFORE_100',
     logoNeeded: false,
-    products: [{ name: '', qty: undefined, rate: undefined }],
+    products: [],
     specifications: [],
     priority: 0,
     productType: undefined,
@@ -1781,19 +1789,35 @@ export default function Sales() {
       const total = calcTotal(values.products);
       const now = new Date().toISOString().split('T')[0];
       if (editingQuotation) {
+        const newRevision = { version: `v${(editingQuotation.revisionHistory?.length || 0) + 1}`, date: now, by: 'Sales Team', note: 'Products / terms updated' };
         const updated = {
           ...editingQuotation,
           ...values,
           totalAmount: total,
-          revisionHistory: [
-            ...(editingQuotation.revisionHistory || []),
-            { version: `v${(editingQuotation.revisionHistory?.length || 0) + 1}`, date: now, by: 'Sales Team', note: 'Products / terms updated' },
-          ],
+          revisionHistory: [...(editingQuotation.revisionHistory || []), newRevision],
         };
-        setQuotationsData(prev => prev.map(q => q.key === editingQuotation.key ? updated : q));
-        setSelectedRecord(updated);
-        enqueueSnackbar('Quotation updated', { variant: 'success' });
-        setEditingQuotation(null);
+        try {
+          await updateSalesQuotationMutation({
+            id: editingQuotation._id || editingQuotation.key,
+            ...values,
+            totalAmount: total,
+            items: (values.products || []).map((p) => ({
+              itemName: p.name,
+              unit: p.unit,
+              price: Number(p.rate) || 0,
+              qty: Number(p.qty) || 0,
+              lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
+            })),
+            revisionHistory: updated.revisionHistory,
+          }).unwrap();
+          setQuotationsData(prev => prev.map(q => q.key === editingQuotation.key ? updated : q));
+          setSelectedRecord(updated);
+          enqueueSnackbar('Quotation updated', { variant: 'success' });
+          setEditingQuotation(null);
+        } catch (err) {
+          enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update quotation', { variant: 'error' });
+          return;
+        }
       } else {
         const subtotal = calcTotal(values.products);
         const gstAmount = (values.products || []).reduce(
@@ -1864,7 +1888,11 @@ export default function Sales() {
       }
       setViewMode('table');
       setActiveTab('quotations');
-    } catch (_) { }
+    } catch (validationErr) {
+      if (validationErr?.errorFields?.length) {
+        enqueueSnackbar(`Please fill required fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
+      }
+    }
   };
 
   const sendViaWhatsApp = (data) => {
@@ -2045,8 +2073,11 @@ export default function Sales() {
     let values;
     try {
       values = await orderForm.validateFields();
-    } catch (_) {
-      return; // form validation error
+    } catch (validationErr) {
+      if (validationErr?.errorFields?.length) {
+        enqueueSnackbar(`Please fill required fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
+      }
+      return;
     }
     const validProds = (values.products || []).filter(p => (p.name || p.kitType) && Number(p.qty) > 0);
     if (!validProds.length) {
@@ -2144,6 +2175,10 @@ export default function Sales() {
       } catch (err) {
         enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise complaint', { variant: 'error' });
       }
+    }).catch(validationErr => {
+      if (validationErr?.errorFields?.length) {
+        enqueueSnackbar(`Please fill required fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
+      }
     });
   };
 
@@ -2193,7 +2228,11 @@ export default function Sales() {
   const saveNegotiation = async () => {
     try {
       const values = await negotiationForm.validateFields();
-      const total = calcTotal(values.products);
+      const subtotal = calcTotal(values.products);
+      const gstAmt = calcGstAmount(values.products);
+      const exactTotal = subtotal + gstAmt;
+      const roundedTotal = Math.round(exactTotal / 100) * 100;
+      const total = values.useRoundedTotal ? roundedTotal : exactTotal;
       const nextStep = Math.min((editingNegotiation.flowStep || 0) + 1, 3);
       const nextStatus = ['Initial', 'Counter Offer', 'Final Terms', 'Approved'][nextStep] || 'Final Terms';
       const updatedRounds = [
@@ -2207,15 +2246,25 @@ export default function Sales() {
           note: values.negotiationNote || 'Terms updated',
         },
       ];
+      const toDateStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
+      // Strip form-only fields that must not reach the backend payload
+      const { useRoundedTotal: _round, negotiationNote: _note, ...patchValues } = values;
       const patch = {
-        ...values,
+        ...patchValues,
         total,
-        amount: total,
+        amount: subtotal,
+        gstAmount: gstAmt,
         totalAmount: total,
         flowStep: nextStep,
         status: nextStatus,
         rounds: updatedRounds,
         items: (values.products || []).map(mapOrderItem),
+        // dayjs objects from form DatePickers must be converted to strings before
+        // going into local state — React can't render Date/dayjs objects directly
+        paymentReminderDate: toDateStr(values.paymentReminderDate),
+        creditDueDate: toDateStr(values.creditDueDate),
+        orderDeliveryDate: toDateStr(values.orderDeliveryDate),
+        followUpDate: toDateStr(values.followUpDate),
       };
       const updated = { ...editingNegotiation, ...patch };
       try {
@@ -2229,7 +2278,11 @@ export default function Sales() {
       enqueueSnackbar('Negotiation updated', { variant: 'success' });
       setViewMode('negotiation-detail');
       setEditingNegotiation(null);
-    } catch (_) { }
+    } catch (validationErr) {
+      if (validationErr?.errorFields?.length) {
+        enqueueSnackbar(`Please fill required fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
+      }
+    }
   };
 
   const convertNegotiationToOrder = async (n) => {
@@ -2454,27 +2507,37 @@ export default function Sales() {
     },
     {
       title: 'Collected', key: 'collected', width: 110, responsive: ['sm'],
-      render: (_, r) => (
-        <div>
-          <Text strong style={{ fontSize: 13, color: r.paidAmount > 0 ? '#52c41a' : textColor }}>₹{(r.paidAmount || 0).toLocaleString()}</Text>
-          {r.advance > 0 && r.paidAmount !== r.advance && (
-            <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>Adv: ₹{r.advance.toLocaleString()}</Text>
-          )}
-        </div>
-      ),
+      render: (_, r) => {
+        const linkedNeg = negotiationsData.find(n => String(n.key) === String(r.negotiationId));
+        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || 0);
+        return (
+          <div>
+            <Text strong style={{ fontSize: 13, color: effectivePaid > 0 ? '#52c41a' : textColor }}>₹{effectivePaid.toLocaleString()}</Text>
+            {r.advance > 0 && effectivePaid !== r.advance && (
+              <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>Adv: ₹{r.advance.toLocaleString()}</Text>
+            )}
+          </div>
+        );
+      },
     },
     {
       title: 'Payment', key: 'payStatus', width: 155,
       render: (_, r) => {
-        const color = r.paymentStatus === 'Paid' ? 'success' : r.paymentStatus === 'Partially Paid' ? 'warning' : 'error';
+        const linkedNeg = negotiationsData.find(n => String(n.key) === String(r.negotiationId));
+        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || 0);
+        const effectiveTotal = r.totalAmount || 0;
+        const effectiveStatus = effectiveTotal > 0 && effectivePaid >= effectiveTotal ? 'Paid'
+          : effectivePaid > 0 ? 'Partially Paid'
+          : (r.paymentStatus && r.paymentStatus !== 'Unpaid' ? r.paymentStatus : 'Unpaid');
+        const color = effectiveStatus === 'Paid' ? 'success' : effectiveStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
-            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{r.paymentStatus || 'Unpaid'}</Tag>
-            {r.paidAmount > 0 && (
-              <Text type="secondary" style={{ fontSize: 11 }}>₹{r.paidAmount.toLocaleString()} / ₹{(r.totalAmount || 0).toLocaleString()}</Text>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{effectiveStatus}</Tag>
+            {effectivePaid > 0 && (
+              <Text type="secondary" style={{ fontSize: 11 }}>₹{effectivePaid.toLocaleString()} / ₹{effectiveTotal.toLocaleString()}</Text>
             )}
-            {r.balance > 0 && r.paidAmount > 0 && (
-              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{r.balance.toLocaleString()} due</Text>
+            {effectivePaid > 0 && effectivePaid < effectiveTotal && (
+              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{(effectiveTotal - effectivePaid).toLocaleString()} due</Text>
             )}
           </Space>
         );
@@ -2717,7 +2780,7 @@ export default function Sales() {
             {rec.paymentTerms === '50_ADVANCE_50_AFTER' && rec.paymentReminderDate && (
               <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
                 <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE DUE DATE</Text>
-                <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{rec.paymentReminderDate}</Text>
+                <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{rec.paymentReminderDate ? (rec.paymentReminderDate.format ? rec.paymentReminderDate.format('DD MMM YYYY') : dayjs(rec.paymentReminderDate).format('DD MMM YYYY')) : '—'}</Text>
               </div>
             )}
           </div>
@@ -2764,7 +2827,7 @@ export default function Sales() {
                 <Tag color={STATUS_COLORS[q.status]} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{q.status}</Tag>
                 <Space>
                   <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{q.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
-                  <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{q.date}</Tag>
+                  <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{q.date ? (q.date.format ? q.date.format('YYYY-MM-DD') : String(q.date).slice(0, 10)) : '—'}</Tag>
                 </Space>
               </div>
             </div>
@@ -2980,7 +3043,7 @@ export default function Sales() {
                         ),
                         label: (
                           <div style={{ textAlign: 'right', paddingRight: 8 }}>
-                            <Text style={{ fontSize: 14, fontWeight: 600, color: isDark ? '#ccc' : '#444', display: 'block' }}>{r.date}</Text>
+                            <Text style={{ fontSize: 14, fontWeight: 600, color: isDark ? '#ccc' : '#444', display: 'block' }}>{r.date ? (r.date.format ? r.date.format('YYYY-MM-DD') : String(r.date).slice(0, 10)) : '—'}</Text>
                             <Text type="secondary" style={{ fontSize: 12 }}>{r.by}</Text>
                           </div>
                         ),
@@ -3127,9 +3190,12 @@ export default function Sales() {
       // o.paymentCollection is now the best-available source (merged above)
       const detailCollectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const detailAdvance = Number(full.advancePaidAmount ?? full.advancePaid ?? base.advance ?? 0);
+      // Fall back to the linked negotiation's paid amount if the order has no payment data yet
+      const linkedNegForDetail = negotiationsData.find(n => String(n.key) === String(base.negotiationId || full.negotiationId?._id || full.negotiationId));
+      const negFallbackPaid = linkedNegForDetail?.paidAmount || 0;
       const totalCollected = detailCollectionTotal > 0
         ? detailCollectionTotal
-        : (Number(full.paidAmount) || detailAdvance || Number(base.paidAmount) || 0);
+        : (Number(full.paidAmount) || detailAdvance || Number(base.paidAmount) || negFallbackPaid || 0);
       const toCollect = Math.max(0, oTotal - totalCollected);
       return (
         <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
@@ -3606,6 +3672,65 @@ export default function Sales() {
                   <ProductHeaders />
                   <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} />
                 </Card>
+
+                {/* Live total summary + Round Value switch */}
+                {(() => {
+                  const prods = watchedNegotiationProducts || [];
+                  const sub = calcTotal(prods);
+                  const gst = calcGstAmount(prods);
+                  const exact = sub + gst;
+                  const rounded = Math.round(exact / 100) * 100;
+                  const displayTotal = watchedNegRoundValue ? rounded : exact;
+                  return (
+                    <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                      title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><span>Order Total</span></Space>}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <Text type="secondary" style={{ fontSize: 13 }}>Subtotal</Text>
+                          <Text style={{ fontSize: 13 }}>₹{sub.toLocaleString()}</Text>
+                        </div>
+                        {gst > 0 && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Text type="secondary" style={{ fontSize: 13 }}>GST</Text>
+                            <Text style={{ fontSize: 13 }}>₹{gst.toLocaleString()}</Text>
+                          </div>
+                        )}
+                        <Divider style={{ margin: '6px 0' }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text strong style={{ fontSize: 15 }}>Grand Total</Text>
+                          <Text strong style={{ fontSize: 16, color: '#52c41a' }}>₹{displayTotal.toLocaleString()}</Text>
+                        </div>
+                        {watchedNegRoundValue && exact !== rounded && (
+                          <Text type="secondary" style={{ fontSize: 11 }}>Exact: ₹{exact.toLocaleString()} → Rounded: ₹{rounded.toLocaleString()}</Text>
+                        )}
+                        <Divider style={{ margin: '6px 0' }} />
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Text style={{ fontSize: 13 }}>Round Total</Text>
+                          <Form.Item name="useRoundedTotal" valuePropName="checked" style={{ marginBottom: 0 }}>
+                            <Switch
+                              checkedChildren="Yes"
+                              unCheckedChildren="No"
+                              onChange={(checked) => {
+                                if (checked && exact !== rounded) {
+                                  Modal.confirm({
+                                    title: 'Round Total?',
+                                    content: `Round ₹${exact.toLocaleString()} to ₹${rounded.toLocaleString()}?`,
+                                    okText: 'Yes, Round',
+                                    cancelText: 'No, Keep Exact',
+                                    onOk() {},
+                                    onCancel() {
+                                      negotiationForm.setFieldsValue({ useRoundedTotal: false });
+                                    },
+                                  });
+                                }
+                              }}
+                            />
+                          </Form.Item>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })()}
 
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Negotiation Note</span></Space>}>
@@ -4153,12 +4278,12 @@ export default function Sales() {
                     </Col>
 
                     <Col xs={24} sm={8}>
-                      <Form.Item label="No. of Rooms" name="rowsInHotel" rules={[{ required: true }]}>
+                      <Form.Item label="No. of Rooms" name="rowsInHotel">
                         <InputNumber placeholder="50" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="General Occupancy (%)" name="generalOccupancy" rules={[{ required: true }]}>
+                      <Form.Item label="General Occupancy (%)" name="generalOccupancy">
                         <InputNumber placeholder="e.g. 75" style={{ width: '100%' }} min={0} max={100} addonAfter="%" />
                       </Form.Item>
                     </Col>
@@ -4185,7 +4310,7 @@ export default function Sales() {
                     </Col>
 
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Alternative Role" name="alternativeRole" rules={[{ required: true, message: 'Alternative contact role is required' }]}>
+                      <Form.Item label="Alternative Role" name="alternativeRole">
                         <SelectWithAdd field="alternativeRole" defaultOptions={ALTERNATIVE_PERSON_OPTIONS} placeholder="Select / Add Role" />
                       </Form.Item>
                     </Col>
@@ -4195,7 +4320,7 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Alternative Number" name="alternativePhone" rules={[{ required: true, message: 'Alternative phone is required' }]}>
+                      <Form.Item label="Alternative Number" name="alternativePhone">
                         <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
@@ -4256,8 +4381,8 @@ export default function Sales() {
                       <Divider style={{ margin: '16px 0 12px', fontSize: 12, color: '#722ed1' }}>Software Interest</Divider>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Interested in Software" name="interestedInSoftware" rules={[{ required: true, message: 'Please select' }]}>
-                        <Select placeholder="Select Yes / No">
+                      <Form.Item label="Interested in Software" name="interestedInSoftware">
+                        <Select placeholder="Select Yes / No" allowClear>
                           <Option value="YES">Yes</Option>
                           <Option value="NO">No</Option>
                         </Select>
@@ -4316,12 +4441,12 @@ export default function Sales() {
                       </Row>
                     ) : (
                       <Row gutter={12}>
-                        <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true }]}><Input.TextArea rows={2} placeholder="Full address" /></Form.Item></Col>
+                        <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Full address" /></Form.Item></Col>
                         <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
                         <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
                         <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
                         {watchedLeadType !== 'SAMPLE' && (
-                          <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType" rules={[{ required: true, message: 'Select bill type' }]}><Select placeholder="Select Bill Type"><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
+                          <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType"><Select placeholder="Select Bill Type" allowClear><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
                         )}
                         {watchedLeadType !== 'SAMPLE' && watchedBillType === 'GST' && (
                           <>
@@ -4503,6 +4628,27 @@ export default function Sales() {
                     const isKitType = Array.isArray(record.productType)
                       ? record.productType.includes('PERSONALIZED_KIT')
                       : record.productType === 'PERSONALIZED_KIT';
+                    // Derive kit products: prefer dedicated kitProducts field, fall back to isKit products in
+                    // the products array (set by applyKitToForm), then fall back to the kit definition itself.
+                    const kitProductsToShow = (() => {
+                      if ((record.kitProducts || []).length > 0) return record.kitProducts;
+                      const fromProds = (record.products || []).filter(p => p.isKit || p.kitType);
+                      if (fromProds.length > 0) return fromProds.map(p => ({
+                        productName: p.name || p.kitType || p.itemName || '',
+                        displayType: p.displayType || '',
+                        qty: p.qty,
+                        rate: p.rate || 0,
+                        gstPercent: p.gst || p.gstPercent || 0,
+                      }));
+                      const kitDef = record.selectedKit ? kits.find(k => k._id === record.selectedKit) : null;
+                      return (kitDef?.products || []).map(p => ({
+                        productName: p.productName || '',
+                        displayType: '',
+                        qty: p.qty,
+                        rate: p.rate || 0,
+                        gstPercent: 0,
+                      }));
+                    })();
                     return (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <Row gutter={[16, 12]}>
@@ -4531,13 +4677,13 @@ export default function Sales() {
                             </Col>
                           )}
                         </Row>
-                        {isKitType && (record.kitProducts || []).length > 0 && (
+                        {isKitType && kitProductsToShow.length > 0 && (
                           <div>
                             <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
-                              KIT CONTENTS ({record.kitProducts.length} items)
+                              KIT CONTENTS ({kitProductsToShow.length} items)
                             </Text>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              {record.kitProducts.map((kp, i) => (
+                              {kitProductsToShow.map((kp, i) => (
                                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
                                   <div>
                                     <Text strong style={{ fontSize: 13 }}>{kp.productName || kp.kitType || '—'}</Text>
@@ -4552,7 +4698,7 @@ export default function Sales() {
                             </div>
                           </div>
                         )}
-                        {isKitType && (record.kitProducts || []).length === 0 && kitName && (
+                        {isKitType && kitProductsToShow.length === 0 && kitName && (
                           <div style={{ padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px dashed rgba(114,46,209,0.2)' }}>
                             <Text type="secondary" style={{ fontSize: 12 }}>Kit: <Text strong style={{ color: '#722ed1' }}>{kitName}</Text> — products listed below in Order Details</Text>
                           </div>
@@ -4562,7 +4708,7 @@ export default function Sales() {
                   })() : (
                     <Row gutter={16}>
                       <Col xs={24} sm={12}>
-                        <Form.Item label="Product Selection" name="productType" rules={[{ required: true, message: 'Select product type' }]}>
+                        <Form.Item label="Product Selection" name="productType">
                           <SelectWithAdd
                             mode="multiple"
                             defaultOptions={PERSONALIZATION_OPTIONS}
@@ -4825,106 +4971,120 @@ export default function Sales() {
                 }
 
                 // EDIT MODE
+                // kitDisplayUnit and kitSize must live OUTSIDE any Form.List so they
+                // register at the top level of the form. Ant Design prefixes every
+                // Form.Item name with the enclosing Form.List path, so placing them
+                // inside Form.List name="products" would register them as
+                // products.kitDisplayUnit / products.kitSize instead of top-level.
                 return (
-                  <Form.List name="products">
-                    {(fields, { add, remove }) => {
-                      const kitFields = fields.filter(f => {
-                        const isKit = leadForm.getFieldValue(['products', f.name, 'isKit']);
-                        const kitType = leadForm.getFieldValue(['products', f.name, 'kitType']);
-                        return isKit || kitType;
-                      });
-                      const separateFields = fields.filter(f => {
-                        const isKit = leadForm.getFieldValue(['products', f.name, 'isKit']);
-                        const kitType = leadForm.getFieldValue(['products', f.name, 'kitType']);
-                        return !(isKit || kitType);
-                      });
+                  <>
+                    {showKitCard && (
+                      <Card
+                        style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                        title={
+                          <Space>
+                            <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
+                            <ShoppingCartOutlined style={{ color: '#1890ff' }} />
+                            <span>{hasKit ? 'Personalized Kit — Order Details' : 'Order Details — Products'}</span>
+                          </Space>
+                        }
+                      >
+                        {/* Kit-level Display Unit & Size — outside Form.List so they bind to top-level form fields */}
+                        <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
+                          <Col xs={12} sm={8}>
+                            <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
+                              <SelectWithAdd field="displayUnit" defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Select / Add unit" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={12} sm={8}>
+                            <Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}>
+                              <Input placeholder="e.g. 2.5cm x 2.5cm" />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                        <Form.List name="products">
+                          {(fields, { add, remove }) => {
+                            const kitFields = fields.filter(f => {
+                              const isKit = leadForm.getFieldValue(['products', f.name, 'isKit']);
+                              const kitType = leadForm.getFieldValue(['products', f.name, 'kitType']);
+                              return isKit || kitType;
+                            });
+                            return (
+                              <>
+                                <ProductHeaders />
+                                {kitFields.map((field, index) => (
+                                  <ProductItem
+                                    key={field.key}
+                                    field={field}
+                                    index={index}
+                                    remove={remove}
+                                    disabled={false}
+                                    fieldName="products"
+                                    showSpecs={isAddLead || isAddCustomer}
+                                    isDark={isDark}
+                                    inventoryItems={inventoryItems}
+                                    inventoryItemsData={inventoryItemsRaw}
+                                    kits={kits}
+                                  />
+                                ))}
+                                <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: true })} icon={<PlusOutlined />} block
+                                  style={{ borderRadius: 10, height: 45, borderDashOffset: 4, marginTop: 8 }}>
+                                  Add Kit Product
+                                </Button>
+                              </>
+                            );
+                          }}
+                        </Form.List>
+                      </Card>
+                    )}
 
-                      return (
-                        <>
-                          {showKitCard && (
-                            <Card
-                              style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                              title={
-                                <Space>
-                                  <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
-                                  <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                                  <span>{hasKit ? 'Personalized Kit — Order Details' : 'Order Details — Products'}</span>
-                                </Space>
-                              }
-                            >
-                              {/* Kit-level Display Unit & Size — one header row for the whole kit */}
-                              <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
-                                <Col xs={12} sm={8}>
-                                  <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
-                                    <SelectWithAdd field="displayUnit" defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Select / Add unit" />
-                                  </Form.Item>
-                                </Col>
-                                <Col xs={12} sm={8}>
-                                  <Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}>
-                                    <Input placeholder="e.g. 2.5cm x 2.5cm" />
-                                  </Form.Item>
-                                </Col>
-                              </Row>
-                              <ProductHeaders />
-                              {kitFields.map((field, index) => (
-                                <ProductItem
-                                  key={field.key}
-                                  field={field}
-                                  index={index}
-                                  remove={remove}
-                                  disabled={false}
-                                  fieldName="products"
-                                  showSpecs={isAddLead || isAddCustomer}
-                                  isDark={isDark}
-                                  inventoryItems={inventoryItems}
-                                  inventoryItemsData={inventoryItemsRaw}
-                                  kits={kits}
-                                />
-                              ))}
-                              <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: true })} icon={<PlusOutlined />} block
-                                style={{ borderRadius: 10, height: 45, borderDashOffset: 4, marginTop: 8 }}>
-                                Add Kit Product
-                              </Button>
-                            </Card>
-                          )}
-
-                          {showSeparateCard && (
-                            <Card
-                              style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                              title={
-                                <Space>
-                                  <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
-                                  <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                                  <span>{hasSeparate ? 'Separate Product — Order Details' : 'Order Details — Products'}</span>
-                                </Space>
-                              }
-                            >
-                              <ProductHeaders />
-                              {separateFields.map((field, index) => (
-                                <ProductItem
-                                  key={field.key}
-                                  field={field}
-                                  index={index + kitFields.length}
-                                  remove={remove}
-                                  disabled={false}
-                                  fieldName="products"
-                                  showSpecs={isAddLead || isAddCustomer}
-                                  isDark={isDark}
-                                  inventoryItems={inventoryItems}
-                                  inventoryItemsData={inventoryItemsRaw}
-                                  kits={kits}
-                                />
-                              ))}
-                              <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: false })} icon={<PlusOutlined />} block
-                                style={{ borderRadius: 10, height: 45, borderDashOffset: 4, marginTop: 8 }}>
-                                Add Separate Product
-                              </Button>
-                            </Card>
-                          )}
-                        </>
-                      );
-                    }}
-                  </Form.List>
+                    {showSeparateCard && (
+                      <Card
+                        style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                        title={
+                          <Space>
+                            <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
+                            <ShoppingCartOutlined style={{ color: '#1890ff' }} />
+                            <span>{hasSeparate ? 'Separate Product — Order Details' : 'Order Details — Products'}</span>
+                          </Space>
+                        }
+                      >
+                        <Form.List name="products">
+                          {(fields, { add, remove }) => {
+                            const separateFields = fields.filter(f => {
+                              const isKit = leadForm.getFieldValue(['products', f.name, 'isKit']);
+                              const kitType = leadForm.getFieldValue(['products', f.name, 'kitType']);
+                              return !(isKit || kitType);
+                            });
+                            return (
+                              <>
+                                <ProductHeaders />
+                                {separateFields.map((field, index) => (
+                                  <ProductItem
+                                    key={field.key}
+                                    field={field}
+                                    index={index}
+                                    remove={remove}
+                                    disabled={false}
+                                    fieldName="products"
+                                    showSpecs={isAddLead || isAddCustomer}
+                                    isDark={isDark}
+                                    inventoryItems={inventoryItems}
+                                    inventoryItemsData={inventoryItemsRaw}
+                                    kits={kits}
+                                  />
+                                ))}
+                                <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: false })} icon={<PlusOutlined />} block
+                                  style={{ borderRadius: 10, height: 45, borderDashOffset: 4, marginTop: 8 }}>
+                                  Add Separate Product
+                                </Button>
+                              </>
+                            );
+                          }}
+                        </Form.List>
+                      </Card>
+                    )}
+                  </>
                 );
               })()}
 

@@ -24,6 +24,7 @@ router.post('/leads/:id/convert-negotiation', ctrl.convertLeadToNegotiation);
 // Quotations
 router.get('/quotations', ctrl.getQuotations);
 router.post('/quotations', ctrl.createQuotation);
+router.put('/quotations/:id', ctrl.updateQuotation);
 router.post('/quotations/:id/convert-negotiation', ctrl.convertToNegotiation);
 
 // Negotiations
