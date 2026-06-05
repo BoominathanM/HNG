@@ -611,9 +611,11 @@ export default function Inventory() {
     {
       title: 'Stock Level', key: 'level',
       render: (_, r) => (
-        <div style={{ minWidth: 120 }}>
-          <Progress percent={Math.min(100, Math.round((r.current / r.max) * 100))} size="small" strokeColor={r.status === 'OK' ? '#B11E6A' : r.status === 'Low' ? '#C94F8A' : '#8a1652'} showInfo={false} />
-          <Text style={{ fontSize: 11, color: '#999' }}>{(r.current ?? 0).toLocaleString()} / {(r.max ?? 0).toLocaleString()} {r.unit}</Text>
+        <div style={{ minWidth: 80 }}>
+          <Text strong style={{ fontSize: 14, color: r.status === 'Out' ? '#8a1652' : r.status === 'Low' ? '#C94F8A' : '#B11E6A' }}>
+            {(r.current ?? 0).toLocaleString()}
+          </Text>
+          <Text style={{ fontSize: 11, color: '#999', marginLeft: 4 }}>{r.unit}</Text>
         </div>
       ),
     },
@@ -1446,28 +1448,17 @@ export default function Inventory() {
       >
         {detailItem && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* Stock progress */}
+            {/* Stock summary */}
             <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
-              <Text style={{ fontSize: 12, color: '#aaa', display: 'block', marginBottom: 6 }}>Stock Level</Text>
-              <Progress
-                percent={Math.min(100, Math.round((detailItem.current / detailItem.max) * 100))}
-                strokeColor={detailItem.status === 'OK' ? '#B11E6A' : detailItem.status === 'Low' ? '#C94F8A' : '#8a1652'}
-                size="default"
-              />
-              <Row gutter={16} style={{ marginTop: 12 }}>
-                <Col span={8} style={{ textAlign: 'center' }}>
-                  <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Current</Text>
-                  <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>{detailItem.current}</Text>
+              <Row gutter={16}>
+                <Col span={12} style={{ textAlign: 'center' }}>
+                  <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Current Stock</Text>
+                  <Text strong style={{ fontSize: 26, color: '#B11E6A' }}>{detailItem.current}</Text>
                   <Text style={{ fontSize: 11, color: '#aaa', display: 'block' }}>{detailItem.unit}</Text>
                 </Col>
-                <Col span={8} style={{ textAlign: 'center' }}>
+                <Col span={12} style={{ textAlign: 'center' }}>
                   <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Min Required</Text>
-                  <Text strong style={{ fontSize: 20, color: '#C94F8A' }}>{detailItem.min}</Text>
-                  <Text style={{ fontSize: 11, color: '#aaa', display: 'block' }}>{detailItem.unit}</Text>
-                </Col>
-                <Col span={8} style={{ textAlign: 'center' }}>
-                  <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>Max</Text>
-                  <Text strong style={{ fontSize: 20, color: textColor }}>{detailItem.max}</Text>
+                  <Text strong style={{ fontSize: 26, color: '#C94F8A' }}>{detailItem.min}</Text>
                   <Text style={{ fontSize: 11, color: '#aaa', display: 'block' }}>{detailItem.unit}</Text>
                 </Col>
               </Row>

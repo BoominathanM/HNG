@@ -357,13 +357,33 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     [isKit, kitType, selectedName, inventoryItemsData],
   );
 
+  // An inventory item stores its allowed packing materials / material categories / brands
+  // as comma-separated strings (e.g. "Paper Box, Plastic Box"). Split them into option lists
+  // so the spec dropdowns can be restricted to just this product's values.
+  const toOptionList = (raw) =>
+    String(raw || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((v) => ({ value: v, label: v }));
+  const packingOptions = React.useMemo(() => toOptionList(invItem?.packingMaterial), [invItem]);
+  const materialOptions = React.useMemo(() => toOptionList(invItem?.materialCategory), [invItem]);
+  const brandOptions = React.useMemo(() => toOptionList(invItem?.brand), [invItem]);
+
+  // Pre-fill a spec field only when the inventory item defines a single value; when it offers
+  // several, leave it blank so the user picks one from the (now restricted) dropdown.
+  const applySpec = (key, raw) => {
+    const opts = toOptionList(raw);
+    form.setFieldValue([fieldName, name, key], opts.length === 1 ? opts[0].value : undefined);
+  };
+
   const handleProductSelect = (value) => {
     const item = inventoryItemsData.find((i) => i.itemName === value);
     if (!item) return;
     if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
-    if (item.packingMaterial) form.setFieldValue([fieldName, name, 'packingMaterial'], item.packingMaterial);
-    if (item.materialCategory) form.setFieldValue([fieldName, name, 'materialCategory'], item.materialCategory);
-    if (item.brand) form.setFieldValue([fieldName, name, 'brand'], item.brand);
+    applySpec('packingMaterial', item.packingMaterial);
+    applySpec('materialCategory', item.materialCategory);
+    applySpec('brand', item.brand);
   };
 
   return (
@@ -430,9 +450,9 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       const item = inventoryItemsData.find((i) => i.itemName === val);
                       if (!item) return;
                       if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
-                      if (item.packingMaterial) form.setFieldValue([fieldName, name, 'packingMaterial'], item.packingMaterial);
-                      if (item.materialCategory) form.setFieldValue([fieldName, name, 'materialCategory'], item.materialCategory);
-                      if (item.brand) form.setFieldValue([fieldName, name, 'brand'], item.brand);
+                      applySpec('packingMaterial', item.packingMaterial);
+                      applySpec('materialCategory', item.materialCategory);
+                      applySpec('brand', item.brand);
                     }}
                     onClear={() => {
                       form.setFieldValue([fieldName, name, 'name'], undefined);
@@ -536,17 +556,37 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} style={{ marginBottom: 0 }}>
-                <SelectWithAdd field="packingMaterial" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" disabled={isItemDisabled} size="small" />
+                {/* When the selected inventory item defines its own packing materials, show only
+                    those (drop the global `field` fetch); otherwise fall back to global options. */}
+                <SelectWithAdd
+                  field={packingOptions.length ? undefined : 'packingMaterial'}
+                  defaultOptions={packingOptions.length ? packingOptions : PACKING_MATERIAL_OPTIONS}
+                  placeholder="Select / Add"
+                  disabled={isItemDisabled}
+                  size="small"
+                />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} style={{ marginBottom: 0 }}>
-                <SelectWithAdd field="materialCategory" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" disabled={isItemDisabled} size="small" />
+                <SelectWithAdd
+                  field={materialOptions.length ? undefined : 'materialCategory'}
+                  defaultOptions={materialOptions.length ? materialOptions : MATERIAL_CATEGORY_OPTIONS}
+                  placeholder="Eco / Plastic / Wooden"
+                  disabled={isItemDisabled}
+                  size="small"
+                />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} style={{ marginBottom: 0 }}>
-                <SelectWithAdd field="brand" defaultOptions={[]} placeholder="Select / Add brand" disabled={isItemDisabled} size="small" />
+                <SelectWithAdd
+                  field={brandOptions.length ? undefined : 'brand'}
+                  defaultOptions={brandOptions.length ? brandOptions : []}
+                  placeholder="Select / Add brand"
+                  disabled={isItemDisabled}
+                  size="small"
+                />
               </Form.Item>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -1983,13 +2023,30 @@ export default function Sales() {
       ? gstFromProducts
       : (Number(q.gstAmount) || Math.max(0, Number(q.totalAmount || q.total) - subtotal) || 0);
     const grandTotal = subtotal + gstAmount;
+    // Carry the quotation's collected payment into the order so the Collected/Payment
+    // columns reflect what was already paid (previously this was dropped, showing ₹0/Unpaid).
+    const carriedCollection = (q.paymentCollection || []).filter(e => e && e.paymentMethod);
+    const collectedFromEntries = carriedCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+    const carriedPaid = collectedFromEntries > 0
+      ? collectedFromEntries
+      : (Number(q.paidAmount) || Number(q.advancePaid) || 0);
+    const carriedStatus = grandTotal > 0 && carriedPaid >= grandTotal
+      ? 'Paid'
+      : carriedPaid > 0 ? 'Partially Paid' : 'Unpaid';
     return {
       clientName: q.hotelName || q.billingName || q.clientName || 'Client',
       amount: subtotal,
       gstAmount,
       total: grandTotal,
-      advancePaid: 0,
-      balance: grandTotal,
+      advancePaid: carriedPaid,
+      advancePaidAmount: carriedPaid,
+      paidAmount: carriedPaid,
+      paymentCollection: carriedCollection,
+      paymentStatus: carriedStatus,
+      balance: Math.max(0, grandTotal - carriedPaid),
+      // Preserve the source links so the order stays connected to its quotation/lead
+      quotationId: q.key || q._id,
+      leadId: q.leadId,
       type: q.billType === 'GST' ? 'GST' : 'Non-GST',
       billType: q.billType,
       paymentTerms: q.paymentTerms,
@@ -2020,6 +2077,8 @@ export default function Sales() {
       forwardingCharge: q.forwardingCharge,
       deliveryBy: q.deliveryBy,
       transportationBy: q.transportationBy,
+      // Carry the tentative delivery date through so the order detail can show it
+      expectedDeliveryDate: q.orderDeliveryDate || q.expectedDeliveryDate || undefined,
     };
   };
 
@@ -2496,6 +2555,18 @@ export default function Sales() {
     },
   ];
 
+  // Resolve the quotation a given order was created from (handles populated object or raw id),
+  // so quotation-originated orders can fall back to the quotation's collected/payment details.
+  const findLinkedQuotation = (r) => {
+    if (!r) return null;
+    const qid = (r.quotationId && typeof r.quotationId === 'object') ? r.quotationId._id : r.quotationId;
+    const qCode = (r.quotationId && typeof r.quotationId === 'object' ? r.quotationId.quotCode : null) || r.quotationCode;
+    if (!qid && !qCode) return null;
+    return quotationsData.find(q =>
+      (qid && String(q.key) === String(qid)) || (qCode && q.qid === qCode)
+    ) || null;
+  };
+
   const orderColumns = [
     { title: 'Order ID', dataIndex: 'oid', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
     { title: 'Hotel', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
@@ -2509,7 +2580,8 @@ export default function Sales() {
       title: 'Collected', key: 'collected', width: 110, responsive: ['sm'],
       render: (_, r) => {
         const linkedNeg = negotiationsData.find(n => String(n.key) === String(r.negotiationId));
-        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || 0);
+        const linkedQuot = findLinkedQuotation(r);
+        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || linkedQuot?.paidAmount || 0);
         return (
           <div>
             <Text strong style={{ fontSize: 13, color: effectivePaid > 0 ? '#52c41a' : textColor }}>₹{effectivePaid.toLocaleString()}</Text>
@@ -2524,7 +2596,8 @@ export default function Sales() {
       title: 'Payment', key: 'payStatus', width: 155,
       render: (_, r) => {
         const linkedNeg = negotiationsData.find(n => String(n.key) === String(r.negotiationId));
-        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || 0);
+        const linkedQuot = findLinkedQuotation(r);
+        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || linkedQuot?.paidAmount || 0);
         const effectiveTotal = r.totalAmount || 0;
         const effectiveStatus = effectiveTotal > 0 && effectivePaid >= effectiveTotal ? 'Paid'
           : effectivePaid > 0 ? 'Partially Paid'
@@ -3158,6 +3231,12 @@ export default function Sales() {
         transportationBy: base.transportationBy || full.transportationBy || lead.transportationBy,
         forwardingCharge: base.forwardingCharge ?? full.forwardingCharge ?? lead.forwardingCharge,
         paymentTerms: base.paymentTerms || full.paymentTerms || lead.paymentTerms,
+        // Expected delivery: prefer the order's own date, else fall back to the tentative
+        // delivery date carried from the originating quotation/lead.
+        expectedDelivery: base.expectedDelivery
+          || (full.expectedDeliveryDate ? String(full.expectedDeliveryDate).slice(0, 10) : null)
+          || (full.orderDeliveryDate ? String(full.orderDeliveryDate).slice(0, 10) : null)
+          || (lead.orderDeliveryDate ? String(lead.orderDeliveryDate).slice(0, 10) : null),
         // Readable linked codes from populated references
         leadCode: full.leadId?.leadCode || base.leadCode,
         leadName: full.leadId?.hotelName || base.leadName || base.hotelName,
@@ -3190,13 +3269,23 @@ export default function Sales() {
       // o.paymentCollection is now the best-available source (merged above)
       const detailCollectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const detailAdvance = Number(full.advancePaidAmount ?? full.advancePaid ?? base.advance ?? 0);
-      // Fall back to the linked negotiation's paid amount if the order has no payment data yet
+      // Fall back to the linked negotiation's (or quotation's) paid amount if the order has no payment data yet
       const linkedNegForDetail = negotiationsData.find(n => String(n.key) === String(base.negotiationId || full.negotiationId?._id || full.negotiationId));
       const negFallbackPaid = linkedNegForDetail?.paidAmount || 0;
+      const linkedQuotForDetail = findLinkedQuotation({
+        quotationId: full.quotationId || base.quotationId,
+        quotationCode: o.quotationCode || full.quotationId?.quotCode || base.quotationCode,
+      });
+      const quotFallbackPaid = linkedQuotForDetail?.paidAmount || 0;
       const totalCollected = detailCollectionTotal > 0
         ? detailCollectionTotal
-        : (Number(full.paidAmount) || detailAdvance || Number(base.paidAmount) || negFallbackPaid || 0);
+        : (Number(full.paidAmount) || detailAdvance || Number(base.paidAmount) || negFallbackPaid || quotFallbackPaid || 0);
       const toCollect = Math.max(0, oTotal - totalCollected);
+      // Final tentative-delivery fallbacks once the linked records are resolved
+      const detailExpectedDelivery = o.expectedDelivery
+        || (linkedNegForDetail?.orderDeliveryDate ? String(linkedNegForDetail.orderDeliveryDate).slice(0, 10) : null)
+        || (linkedQuotForDetail?.orderDeliveryDate ? String(linkedQuotForDetail.orderDeliveryDate).slice(0, 10) : null)
+        || null;
       return (
         <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
@@ -3235,7 +3324,7 @@ export default function Sales() {
                 <Tag color={STATUS_COLORS[o.status] || 'blue'} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{o.status}</Tag>
                 <Space>
                   <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{o.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
-                  {o.expectedDelivery && <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>Delivery: {o.expectedDelivery}</Tag>}
+                  {detailExpectedDelivery && <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>Delivery: {detailExpectedDelivery}</Tag>}
                 </Space>
               </div>
             </div>
@@ -3274,7 +3363,7 @@ export default function Sales() {
             <Col xs={12} sm={6}>
               <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CarOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>Expected Delivery</Text></div>
-                <Text strong style={{ fontSize: 14, color: textColor, display: 'block' }}>{o.expectedDelivery || '—'}</Text>
+                <Text strong style={{ fontSize: 14, color: textColor, display: 'block' }}>{detailExpectedDelivery || '—'}</Text>
               </Card>
             </Col>
           </Row>
@@ -3453,13 +3542,25 @@ export default function Sales() {
                     <Text type="secondary" style={{ fontSize: 10, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>ORDER DATE</Text>
                     <Text strong style={{ fontSize: 13 }}>{o.date || '—'}</Text>
                   </div>
-                  {/* Uploaded files / payment proofs */}
+                  {/* Uploaded files / payment proofs — pulled from the order itself and from the
+                      linked lead, since files are often attached at the lead stage. */}
                   {(() => {
-                    const allFiles = [
-                      ...(full.paymentProofs || base.paymentProofs || []).map(f => ({ ...f, category: 'Payment Proof' })),
-                      ...(full.documents || base.documents || []).map(f => ({ ...f, category: 'Document' })),
-                      ...(full.lrFiles || base.lrFiles || []).map(f => ({ ...f, category: 'LR / Dispatch' })),
-                    ].filter(f => f.url || f.name);
+                    const allFiles = [];
+                    const pushFiles = (arr, category) => {
+                      (arr || []).forEach((f) => {
+                        if (!f) return;
+                        const url = f.url || f.response?.url || f.secure_url || f.thumbUrl;
+                        const fileName = f.name || f.fileName || f.originFileObj?.name;
+                        if (url || fileName) allFiles.push({ ...f, url, name: fileName, category });
+                      });
+                    };
+                    const leadObj = (full.leadId && typeof full.leadId === 'object') ? full.leadId : {};
+                    pushFiles(full.paymentProofs || base.paymentProofs, 'Payment Proof');
+                    pushFiles(full.documents || base.documents, 'Document');
+                    pushFiles(full.lrFiles || base.lrFiles, 'LR / Dispatch');
+                    pushFiles(leadObj.paymentProofs, 'Payment Proof (Lead)');
+                    const logoUrl = full.hotelLogoUrl || base.hotelLogoUrl || leadObj.hotelLogoUrl;
+                    if (logoUrl) allFiles.push({ url: logoUrl, name: 'Hotel Logo', category: 'Logo' });
                     if (!allFiles.length) return null;
                     return (
                       <div style={{ padding: '10px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fc', borderRadius: 8, border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#e8e8e8'}` }}>

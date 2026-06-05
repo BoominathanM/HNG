@@ -362,6 +362,8 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     transportationBy: resolveField(negObj.transportationBy, lead?.transportationBy),
     forwardingCharge: resolveField(negObj.forwardingCharge, lead?.forwardingCharge),
     paymentTerms: resolveField(negObj.paymentTerms, lead?.paymentTerms),
+    // Tentative delivery date flows from negotiation/quotation extras or the originating lead
+    expectedDeliveryDate: resolveField(negObj.expectedDeliveryDate, negObj.orderDeliveryDate, lead?.orderDeliveryDate),
     assignedTo: req.user._id,
     createdBy: req.user._id,
     statusHistory: [{ status: 'In Production', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
@@ -421,7 +423,7 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null })
     .populate('clientPartyId')
     .populate('assignedTo', 'fullName email')
-    .populate('leadId', 'leadCode hotelName phone contactPerson location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode deliveryBy transportationBy forwardingCharge paymentTerms')
+    .populate('leadId', 'leadCode hotelName phone contactPerson location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode deliveryBy transportationBy forwardingCharge paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl')
     .populate('negotiationId', 'negCode')
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));
