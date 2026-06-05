@@ -346,6 +346,20 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const [isLocalEdit, setIsLocalEdit] = React.useState(true);
   const isItemDisabled = disabled || !isLocalEdit;
 
+  // When this row is a kit item, restrict the product dropdown to only the products
+  // belonging to the selected kit. Derive the kit by row-level kitName first,
+  // then fall back to the form-level selectedKit (_id).
+  const kitInventoryItems = React.useMemo(() => {
+    if (!isKit) return inventoryItems;
+    const kitNameFromRow = form.getFieldValue([fieldName, name, 'kitName']);
+    const formSelectedKitId = form.getFieldValue('selectedKit');
+    const activeKit = kits.find((k) => k.kitName === kitNameFromRow)
+      || kits.find((k) => k._id === formSelectedKitId);
+    if (!activeKit) return inventoryItems;
+    const kitProductNames = new Set((activeKit.products || []).map((p) => p.productName));
+    return inventoryItems.filter((item) => kitProductNames.has(item.label ?? item.value));
+  }, [isKit, kitType, inventoryItems, kits, form, fieldName, name]);
+
   // For kit items, kitType is the registered Form.Item field; selectedName (name field) can get
   // cleared when the conditional Form.Item switches from non-kit to kit mode on first render.
   // Use kitType as primary lookup for kit items to avoid that stale-undefined issue.
@@ -444,7 +458,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     disabled={isItemDisabled}
                     size="small"
                     style={{ width: '100%' }}
-                    options={inventoryItems}
+                    options={kitInventoryItems}
                     onSelect={(val) => {
                       form.setFieldValue([fieldName, name, 'name'], val);
                       const item = inventoryItemsData.find((i) => i.itemName === val);
@@ -457,7 +471,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     onClear={() => {
                       form.setFieldValue([fieldName, name, 'name'], undefined);
                     }}
-                    notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No items in inventory</span>}
+                    notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No products in this kit</span>}
                   />
                 </Form.Item>
               </>
@@ -2917,7 +2931,7 @@ export default function Sales() {
             {[
               { label: 'Total Value', value: `₹${(q.totalAmount || calcTotal(q.products)).toLocaleString()}`, color: '#B11E6A', icon: <CreditCardOutlined /> },
               { label: 'Products', value: `${q.products?.length || 0} items`, color: '#1890ff', icon: <ShoppingCartOutlined /> },
-              { label: 'Payment Terms', value: PAYMENT_LABELS[q.paymentTerms]?.split(' ').slice(0, 2).join(' ') || '—', color: '#fa8c16', icon: <CalendarOutlined /> },
+              { label: 'Payment Terms', value: PAYMENT_LABELS[q.paymentTerms] || q.paymentTerms || '—', color: '#fa8c16', icon: <CalendarOutlined /> },
               { label: 'Quote Date', value: q.date || '—', color: '#52c41a', icon: <HistoryOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
@@ -4899,15 +4913,30 @@ export default function Sales() {
                                   kits={kits}
                                 />
                               ))}
-                              <Button
-                                type="dashed"
-                                onClick={() => add({ qty: undefined, rate: undefined, isKit: false })}
-                                icon={<PlusOutlined />}
-                                block
-                                style={{ borderRadius: 10, height: 40, marginTop: 8 }}
-                              >
-                                Add Product
-                              </Button>
+                              <Space style={{ width: '100%', marginTop: 8 }} direction="vertical">
+                                {hasKit && (
+                                  <Button
+                                    type="dashed"
+                                    onClick={() => add({ qty: undefined, rate: undefined, isKit: true })}
+                                    icon={<PlusOutlined />}
+                                    block
+                                    style={{ borderRadius: 10, height: 40, borderColor: '#722ed155', color: '#722ed1' }}
+                                  >
+                                    Add Kit Product
+                                  </Button>
+                                )}
+                                {(hasSeparate || (!hasKit && !hasSeparate)) && (
+                                  <Button
+                                    type="dashed"
+                                    onClick={() => add({ qty: undefined, rate: undefined, isKit: false })}
+                                    icon={<PlusOutlined />}
+                                    block
+                                    style={{ borderRadius: 10, height: 40 }}
+                                  >
+                                    Add Product
+                                  </Button>
+                                )}
+                              </Space>
                             </>
                           )}
                         </Form.List>
