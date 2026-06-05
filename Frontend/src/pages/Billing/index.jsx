@@ -65,60 +65,100 @@ export default function Billing() {
   const [createBillingPartyMutation] = useCreateBillingPartyMutation();
   const [updateInvoiceGstMutation] = useUpdateInvoiceGstMutation();
 
-  const invoiceList = useMemo(() => (invoicesData?.data || []).map((inv) => ({
-    key: inv._id,
-    inv: inv.invoiceNumber,
-    client: inv.partyId?.name || '—',
-    partyPhone: inv.partyId?.phone || '',
-    partyGst: inv.partyId?.gstNumber || '',
-    order: inv.orderId?.orderCode || '—',
-    date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
-    dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
-    amount: inv.subtotal,
-    gst: inv.gstAmount,
-    gstPercent: inv.gstPercent,
-    total: inv.total,
-    advance: inv.advanceAmount,
-    balance: inv.balanceDue,
-    previousBalance: inv.previousBalance || 0,
-    type: inv.invoiceType,
-    status: inv.status,
-    note: inv.note || '',
-    isComplementary: inv.isComplementary,
-    complementaryNote: inv.complementaryNote || '',
-    items: (inv.items || []).filter(Boolean).map(i => ({
-      key: i._id || i.itemId,
-      name: i.itemName,
-      unit: i.unit,
-      price: i.price,
-      qty: i.qty,
-      lineTotal: i.lineTotal ?? (i.price * i.qty),
-    })),
-  })), [invoicesData]);
+  const invoiceList = useMemo(() => (invoicesData?.data || []).map((inv) => {
+    const halfGst = Math.round((inv.gstAmount || 0) / 2);
+    return {
+      key: inv._id,
+      inv: inv.invoiceNumber,
+      client: inv.partyId?.name || '—',
+      partyPhone: inv.partyId?.phone || '',
+      partyGst: inv.partyId?.gstNumber || '',
+      order: inv.orderId?.orderCode || '—',
+      date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
+      dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
+      amount: inv.subtotal,
+      gst: inv.gstAmount,
+      gstPercent: inv.gstPercent,
+      total: inv.total,
+      advance: inv.advanceAmount,
+      balance: inv.balanceDue,
+      previousBalance: inv.previousBalance || 0,
+      type: inv.invoiceType,
+      status: inv.status,
+      note: inv.note || '',
+      isComplementary: inv.isComplementary,
+      complementaryNote: inv.complementaryNote || '',
+      // DocumentTemplate summary fields
+      taxableAmount: inv.subtotal || 0,
+      cgst: halfGst,
+      sgst: halfGst,
+      forwardingCharge: 0,
+      // DocumentTemplate customer block
+      customer: {
+        name: inv.partyId?.name || '—',
+        mobile: inv.partyId?.phone || '',
+        gstin: inv.partyId?.gstNumber || '',
+        address: inv.partyId?.address || '',
+        city: inv.partyId?.city || '',
+        pan: inv.partyId?.pan || '',
+        placeOfSupply: inv.partyId?.state || 'Tamil Nadu',
+      },
+      items: (inv.items || []).filter(Boolean).map(i => ({
+        key: i._id || i.itemId,
+        name: i.itemName,
+        unit: i.unit,
+        rate: i.price || 0,
+        qty: i.qty || 0,
+        taxRate: i.taxRate || 0,
+        taxAmt: i.taxAmt || 0,
+        amount: i.lineTotal ?? ((i.price || 0) * (i.qty || 0)),
+      })),
+    };
+  }), [invoicesData]);
 
-  const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => ({
-    key: q._id,
-    quot: q.quotCode,
-    client: q.clientName || '—',
-    order: q.orderId?.orderCode || '—',
-    date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
-    amount: q.amount,
-    gst: q.gstAmount,
-    total: q.total,
-    advance: q.advancePaid,
-    balance: q.balance,
-    type: q.type,
-    status: q.status,
-    note: q.note || '',
-    items: (q.items || []).filter(Boolean).map(i => ({
-      key: i._id || i.itemId,
-      name: i.itemName,
-      unit: i.unit,
-      price: i.price,
-      qty: i.qty,
-      lineTotal: i.lineTotal ?? (i.price * i.qty),
-    })),
-  })), [quotationsData]);
+  const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => {
+    const halfGst = Math.round((q.gstAmount || 0) / 2);
+    return {
+      key: q._id,
+      quot: q.quotCode,
+      client: q.clientName || '—',
+      order: q.orderId?.orderCode || '—',
+      date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
+      amount: q.amount,
+      gst: q.gstAmount,
+      total: q.total,
+      advance: q.advancePaid,
+      balance: q.balance,
+      type: q.type,
+      status: q.status,
+      note: q.note || '',
+      // DocumentTemplate summary fields
+      taxableAmount: q.amount || 0,
+      cgst: halfGst,
+      sgst: halfGst,
+      forwardingCharge: 0,
+      // DocumentTemplate customer block
+      customer: {
+        name: q.clientName || '—',
+        mobile: '',
+        gstin: '',
+        address: '',
+        city: '',
+        pan: '',
+        placeOfSupply: 'Tamil Nadu',
+      },
+      items: (q.items || []).filter(Boolean).map(i => ({
+        key: i._id || i.itemId,
+        name: i.itemName,
+        unit: i.unit,
+        rate: i.price || 0,
+        qty: i.qty || 0,
+        taxRate: i.taxRate || 0,
+        taxAmt: i.taxAmt || 0,
+        amount: i.lineTotal ?? ((i.price || 0) * (i.qty || 0)),
+      })),
+    };
+  }), [quotationsData]);
 
   const partiesList = useMemo(() => (partiesData?.data || []).map((p) => ({
     key: p._id,

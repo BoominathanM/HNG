@@ -78,9 +78,9 @@ export function generatePrintHTML(type, data) {
     <tr style="background:${i % 2 === 0 ? '#fff' : LIGHT_GREEN}">
       <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${item.name}</td>
       <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:center;">${item.qty} ${item.unit}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${item.rate.toLocaleString()}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${item.taxAmt.toLocaleString()}<br/><span style="color:#666;font-size:10px;">(${item.taxRate}%)</span></td>
-      <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};font-size:11px;text-align:right;">${item.amount.toLocaleString()}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${(item.rate || 0).toLocaleString()}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${(item.taxAmt || 0).toLocaleString()}<br/><span style="color:#666;font-size:10px;">(${item.taxRate || 0}%)</span></td>
+      <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};font-size:11px;text-align:right;">${(item.amount || 0).toLocaleString()}</td>
     </tr>
   `).join('');
 
@@ -366,12 +366,12 @@ export default function DocumentTemplate({ type = 'quotation', data = {} }) {
             <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : LIGHT_GREEN }}>
               <td style={td}>{item.name}</td>
               <td style={{ ...td, textAlign: 'center' }}>{item.qty} {item.unit}</td>
-              <td style={{ ...td, textAlign: 'right' }}>{item.rate.toLocaleString()}</td>
+              <td style={{ ...td, textAlign: 'right' }}>{(item.rate || 0).toLocaleString()}</td>
               <td style={{ ...td, textAlign: 'right' }}>
-                {item.taxAmt.toLocaleString()}
-                <div style={{ color: '#666', fontSize: 10 }}>({item.taxRate}%)</div>
+                {(item.taxAmt || 0).toLocaleString()}
+                <div style={{ color: '#666', fontSize: 10 }}>({item.taxRate || 0}%)</div>
               </td>
-              <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{item.amount.toLocaleString()}</td>
+              <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{(item.amount || 0).toLocaleString()}</td>
             </tr>
           ))}
           <tr style={{ background: LIGHT_GREEN }}>

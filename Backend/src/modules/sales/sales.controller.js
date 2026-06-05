@@ -273,6 +273,25 @@ exports.updateNegotiation = asyncHandler(async (req, res, next) => {
     { new: true, runValidators: false }
   );
   if (!negotiation) return next(new AppError('Negotiation not found', 404));
+
+  // Keep the linked Quotation in sync so negotiated pricing flows to Billing
+  // (Billing's "Order in Process" tab reads from Quotation records).
+  if (negotiation.quotationId) {
+    const quotSync = {};
+    if (req.body.amount !== undefined) quotSync.amount = req.body.amount;
+    if (req.body.gstAmount !== undefined) quotSync.gstAmount = req.body.gstAmount;
+    if (req.body.total !== undefined) {
+      quotSync.total = req.body.total;
+      const advance = req.body.advancePaid !== undefined ? req.body.advancePaid : negotiation.advancePaid || 0;
+      quotSync.balance = req.body.total - advance;
+    }
+    if (req.body.advancePaid !== undefined) quotSync.advancePaid = req.body.advancePaid;
+    if (req.body.items !== undefined) quotSync.items = req.body.items;
+    if (Object.keys(quotSync).length) {
+      await Quotation.findByIdAndUpdate(negotiation.quotationId, { $set: quotSync }, { runValidators: false });
+    }
+  }
+
   res.status(200).json({ success: true, data: negotiation });
 });
 
