@@ -14,13 +14,22 @@ const authSlice = createSlice({
   initialState: { ...loadAuth(), error: null },
   reducers: {
     setUser(state, action) {
-      state.user = action.payload.user;
+      const user = action.payload.user ? { ...action.payload.user } : null;
+      // Normalize permissions: Mongoose Map instances serialize to {} in JSON.
+      // Convert to plain object here so localStorage stores the actual keys.
+      if (user?.permissions instanceof Map) {
+        user.permissions = Object.fromEntries(user.permissions);
+      }
+      if (user?.tabAccess instanceof Map) {
+        user.tabAccess = Object.fromEntries(user.tabAccess);
+      }
+      state.user = user;
       state.token = action.payload.token;
       state.refreshToken = action.payload.refreshToken;
       state.isAuthenticated = true;
       state.error = null;
       localStorage.setItem('hng_auth', JSON.stringify({
-        user: action.payload.user,
+        user,
         token: action.payload.token,
         refreshToken: action.payload.refreshToken,
         isAuthenticated: true,

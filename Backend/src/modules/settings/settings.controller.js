@@ -56,7 +56,12 @@ exports.uploadLogo = asyncHandler(async (req, res, next) => {
 // ─── User Management ────────────────────────────────────────────────────────
 exports.getUsers = asyncHandler(async (req, res) => {
   const users = await User.find({ deletedAt: null }).sort('-createdAt');
-  res.status(200).json({ success: true, total: users.length, data: users });
+  const data = users.map((u) => {
+    const obj = u.toObject({ flattenMaps: true });
+    delete obj.password;
+    return obj;
+  });
+  res.status(200).json({ success: true, total: data.length, data });
 });
 
 exports.createUser = asyncHandler(async (req, res, next) => {
@@ -72,7 +77,7 @@ exports.createUser = asyncHandler(async (req, res, next) => {
     ...targets,
     createdBy: req.user._id,
   });
-  const out = user.toObject();
+  const out = user.toObject({ flattenMaps: true });
   delete out.password;
   res.status(201).json({ success: true, data: out });
 });
@@ -85,7 +90,7 @@ exports.updateUser = asyncHandler(async (req, res, next) => {
   Object.assign(user, rest);
   if (password) user.password = password;
   await user.save();
-  const out = user.toObject();
+  const out = user.toObject({ flattenMaps: true });
   delete out.password;
   res.status(200).json({ success: true, data: out });
 });

@@ -69,69 +69,175 @@ export const getFlowStep = (order) => {
   return 0;
 };
 
-// Returns true when an item (or its parent order's display unit) signals Frosted Ziplock.
-// Checks logoType, item.packaging, and the order-level kitDisplayUnit/displayUnit so that
-// both new orders (logoType set correctly) and legacy orders (only displayUnit stored) are caught.
-const isFrostedZiplock = (item, order) => {
-  // An explicit sticker-printing flag on the item overrides kit-level packaging inference.
-  if (item.sticker === 'YES') return false;
+// Returns true when the item's physical packaging is frosted/ziplock/pouch —
+// regardless of whether the item also needs sticker printing.
+const hasFrostedPackaging = (item, order) => {
   if (item.logoType === 'Frosted Ziplock') return true;
   const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
-  if (pm.includes('ziplock') || pm.includes('frosted')) return true;
+  if (pm.includes('ziplock') || pm.includes('frosted') || pm.includes('pouch')) return true;
   const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
-  return du.includes('ziplock') || du.includes('frosted');
+  return du.includes('ziplock') || du.includes('frosted') || du.includes('pouch');
 };
 
-export const buildProductionQueues = (orders = []) => ({
-  sticker: orders.flatMap((order) =>
-    (order.items || []).map((item, idx) => ({ item, idx }))
-      .filter(({ item }) => (item.logoType === 'Sticker' || item.sticker === 'YES') && !isFrostedZiplock(item, order))
-      .map(({ item, idx }) => ({
-        key: `${order.id}-${idx}-sticker`,
-        orderId: order.id,
-        hotelLogo: order.hotelLogo || order.clientName,
-        product: item.product || item.itemName,
-        qty: item.qty,
-        size: item.size || getDefaultSize(item.product || item.itemName),
-        status: order.designStatus,
-        sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.7),
-        verified: order.stockStatus === 'Received',
-        note: (order.notifications || [])[0] || '',
-      }))
-  ),
-  box: orders.flatMap((order) =>
-    (order.items || []).map((item, idx) => ({ item, idx }))
-      .filter(({ item }) => item.logoType === 'Box' && !isFrostedZiplock(item, order))
-      .map(({ item, idx }) => ({
-        key: `${order.id}-${idx}-box`,
-        orderId: order.id,
-        hotelLogo: order.hotelLogo || order.clientName,
-        product: item.product || item.itemName,
-        qty: item.qty,
-        size: item.size,
-        status: order.designStatus,
-        sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.65),
-        verified: false,
-        note: 'Box manufacturing follows same approval flow as sticker printing',
-      }))
-  ),
-  frosted: orders.flatMap((order) =>
-    (order.items || []).map((item, idx) => ({ item, idx }))
-      .filter(({ item }) => isFrostedZiplock(item, order))
-      .map(({ item, idx }) => ({
-        key: `${order.id}-${idx}-frosted`,
-        orderId: order.id,
-        hotelLogo: order.hotelLogo || order.clientName,
-        product: item.product || item.itemName,
-        qty: item.qty,
-        size: item.size,
-        status: order.designStatus,
-        sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.5),
-        verified: order.stockStatus === 'Received',
-        note: 'Dispatch and received updates should be verified by operations',
-      }))
-  ),
-});
+// Returns true when routing the item to the sticker queue — sticker printing takes priority
+// over packaging type inference (a box item with sticker=YES goes to sticker queue first).
+const isFrostedZiplock = (item, order) => {
+  if (item.sticker === 'YES') return false;
+  return hasFrostedPackaging(item, order);
+};
+
+// Determine an item's ultimate packaging destination (after sticker step completes).
+const getItemPackagingType = (item, order) => {
+  if (hasFrostedPackaging(item, order)) return 'frosted';
+  if (item.logoType === 'Box') return 'box';
+  const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+  const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
+  if (du.includes('box') || pm.includes('box')) return 'box';
+  return 'sticker';
+};
+
+// Labels shown in the queue table for the packaging destination column.
+export const PACKAGING_TYPE_LABELS = {
+  sticker: 'Sticker Only',
+  box: 'Box',
+  frosted: 'Frosted Ziplock',
+};
+
+// Statuses that indicate the item has moved ON from sticker to box/frosted manufacturing.
+// The move happens AFTER the sticker is printed (Print button → status 'In Process'),
+// not at Approved. Items with these statuses and a box/frosted destination are removed
+// from the sticker queue and, in lockstep, added to the box/frosted queue.
+const STICKER_MOVED_ON_STATUSES = new Set(['In Process', 'Printing', 'Dispatch', 'Received', 'Done']);
+
+export const buildProductionQueues = (orders = [], stickerRequests = [], queueSteps = {}) => {
+  // Find the StickerRequest document for a given order + product combination.
+  // Case-insensitive product match to guard against minor name inconsistencies.
+  const findSR = (orderId, product) => {
+    const pLower = (product || '').toLowerCase();
+    return stickerRequests.find(
+      (s) =>
+        (s.orderId?.orderCode === orderId || s.orderId === orderId) &&
+        (s.product || '').toLowerCase() === pLower,
+    );
+  };
+
+  // Returns the local queue step for a sticker-queue item (orderId + item index).
+  const localStickerStep = (orderId, itemIdx) =>
+    queueSteps[`${orderId}-${itemIdx}-sticker`] ?? 0;
+
+  // True once the item's sticker has been PRINTED — only then does it move on to the
+  // box/frosted manufacturing queue (mirrors the sticker-queue removal threshold so the
+  // item is never shown in two tabs at once).
+  const isStickerPrinted = (orderId, product, itemIdx) => {
+    const sr = findSR(orderId, product);
+    if (sr && STICKER_MOVED_ON_STATUSES.has(sr.status)) return true;
+    // Fallback: local state shows printing started (handles items where Print was
+    // clicked this session but the RTK refetch hasn't completed yet).
+    if (itemIdx !== undefined && localStickerStep(orderId, itemIdx) >= 3) return true;
+    return false;
+  };
+
+  return {
+    // Sticker queue: all items that need sticker printing (logoType=Sticker or sticker=YES),
+    // excluding pure frosted/ziplock items that don't need sticker printing.
+    // Also excludes items that have already moved on to box/frosted manufacturing.
+    sticker: orders.flatMap((order) =>
+      (order.items || []).map((item, idx) => ({ item, idx }))
+        .filter(({ item, idx }) => {
+          if (!((item.logoType === 'Sticker' || item.sticker === 'YES') && !isFrostedZiplock(item, order))) return false;
+          // Once the item's sticker is printed and it has a box/frosted destination,
+          // remove it from the sticker queue — it now lives in the box/frosted tab.
+          const packagingType = getItemPackagingType(item, order);
+          if (packagingType !== 'sticker') {
+            const product = item.product || item.itemName;
+            const sr = findSR(order.id, product);
+            if (sr && STICKER_MOVED_ON_STATUSES.has(sr.status)) return false;
+            // Also hide when local state says printing has started (pre-refetch window)
+            if (localStickerStep(order.id, idx) >= 3) return false;
+          }
+          return true;
+        })
+        .map(({ item, idx }) => {
+          const packagingType = getItemPackagingType(item, order);
+          return {
+            key: `${order.id}-${idx}-sticker`,
+            orderId: order.id,
+            hotelLogo: order.hotelLogo || order.clientName,
+            product: item.product || item.itemName,
+            qty: item.qty,
+            size: item.size || getDefaultSize(item.product || item.itemName),
+            status: order.designStatus,
+            sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.7),
+            verified: order.stockStatus === 'Received',
+            note: (order.notifications || [])[0] || '',
+            stickerPrinting: 'Yes',
+            packagingType, // where this item moves after sticker approval
+          };
+        }),
+    ),
+
+    // Box queue: items with box packaging.
+    // If sticker printing is also needed (sticker=YES), the item only appears here
+    // AFTER its sticker has been printed — preventing premature box-queue entry and
+    // keeping it out of the sticker tab and box tab simultaneously.
+    box: orders.flatMap((order) => {
+      const result = [];
+      (order.items || []).forEach((item, idx) => {
+        const packType = getItemPackagingType(item, order);
+        if (packType !== 'box') return;
+        const product = item.product || item.itemName;
+        const needsSticker = item.logoType === 'Sticker' || item.sticker === 'YES';
+        if (needsSticker && !isStickerPrinted(order.id, product, idx)) return;
+        result.push({
+          key: `${order.id}-${idx}-box`,
+          orderId: order.id,
+          hotelLogo: order.hotelLogo || order.clientName,
+          product,
+          qty: item.qty,
+          size: item.size,
+          status: order.designStatus,
+          sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.65),
+          verified: false,
+          note: needsSticker
+            ? 'Sticker approved — now in box manufacturing queue'
+            : 'Box manufacturing',
+          stickerPrinting: needsSticker ? 'Yes' : 'No',
+          packagingType: 'box',
+        });
+      });
+      return result;
+    }),
+
+    // Frosted Ziplock queue: items with frosted/ziplock/pouch packaging.
+    // Same sticker-first rule applies — only appears here after the sticker is printed.
+    frosted: orders.flatMap((order) => {
+      const result = [];
+      (order.items || []).forEach((item, idx) => {
+        if (!hasFrostedPackaging(item, order)) return;
+        const product = item.product || item.itemName;
+        const needsSticker = item.logoType === 'Sticker' || item.sticker === 'YES';
+        if (needsSticker && !isStickerPrinted(order.id, product, idx)) return;
+        result.push({
+          key: `${order.id}-${idx}-frosted`,
+          orderId: order.id,
+          hotelLogo: order.hotelLogo || order.clientName,
+          product,
+          qty: item.qty,
+          size: item.size,
+          status: order.designStatus,
+          sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.5),
+          verified: order.stockStatus === 'Received',
+          note: needsSticker
+            ? 'Sticker approved — now in frosted ziplock queue'
+            : 'Dispatch and received updates should be verified by operations',
+          stickerPrinting: needsSticker ? 'Yes' : 'No',
+          packagingType: 'frosted',
+        });
+      });
+      return result;
+    }),
+  };
+};
 
 export const getCheckStateMap = (orders = []) =>
   Object.fromEntries(orders.map((order) => [order.id || order._id, { ...(order.readiness || {}) }]));

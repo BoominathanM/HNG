@@ -31,7 +31,7 @@ const { Option } = Select;
 
 const MODULES = [
   'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
-  'Staff Management', 'Inventory', 'Purchase', 'Billing', 'Parties & Ledger',
+  'Staff Management', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing', 'Parties & Ledger',
   'Financial', 'Expenses', 'Reports', 'Notifications', 'Integration', 'Settings',
 ];
 
@@ -44,6 +44,7 @@ const MODULE_PERM_TYPES = {
   'Staff Management': ['read', 'add', 'edit', 'delete'],
   Inventory: ['read', 'add', 'edit', 'delete'],
   Purchase: ['read', 'add', 'edit', 'delete'],
+  'Vendors & Suppliers': ['read', 'add', 'edit', 'delete'],
   Billing: ['read', 'add', 'edit', 'delete'],
   'Parties & Ledger': ['read', 'add', 'edit', 'delete'],
   Financial: ['read', 'add', 'edit', 'delete'],
@@ -53,6 +54,26 @@ const MODULE_PERM_TYPES = {
   Integration: ['read', 'add', 'edit', 'delete'],
   Settings: ['read', 'add', 'edit', 'delete'],
 };
+
+const MODULE_TABS = {
+  'Sales Team': ['Leads', 'Quotations', 'Orders', 'Negotiations', 'Follow-ups'],
+  Operations: ['Orders', 'Queue', 'Design', 'Tasks'],
+  'Task Management': ['All Tasks', 'In Progress', 'Done'],
+  'Dispatch Team': ['Active', 'History'],
+  'Staff Management': ['Staff', 'Attendance'],
+  Inventory: ['Products', 'Kits'],
+  Purchase: ['Purchase Orders', 'History'],
+  'Vendors & Suppliers': ['Vendors', 'Printing Suppliers'],
+  Billing: ['Invoices', 'Order in Process'],
+  'Parties & Ledger': ['Parties', 'Ledger'],
+  Financial: ['P&L', 'Balance Sheet'],
+  Expenses: ['All Expenses', 'Categories'],
+  Reports: ['Sales', 'Operations', 'Financial'],
+  Integration: ['WhatsApp', 'AI Integration'],
+  Settings: ['General', 'Users', 'Notifications', 'GST & Tax', 'Invoice', 'Deleted Records'],
+};
+
+const VENDOR_ROLES = ['Sticker', 'Box', 'Ziplock'];
 
 const ALL_PERMS = { read: true, add: true, edit: true, delete: true };
 const NO_PERMS  = { read: false, add: false, edit: false, delete: false };
@@ -146,6 +167,7 @@ export default function Settings() {
           ? Object.fromEntries(u.permissions)
           : u.permissions)
       : {},
+    tabAccess: u.tabAccess || {},
     targets: {
       oldHotel: u.targetOldHotel,
       newHotel: u.targetNewHotel,
@@ -330,6 +352,7 @@ export default function Settings() {
       reward34: user.targets?.rewards?.q3,
       rewardFull: user.targets?.rewards?.full,
       perms: user.perms,
+      tabAccess: user.tabAccess || {},
     });
     setAddUserOpen(true);
   };
@@ -354,6 +377,7 @@ export default function Settings() {
         rewardThreeQtr: vals.reward34,
         rewardFull: vals.rewardFull,
         permissions: vals.perms,
+        tabAccess: vals.tabAccess || {},
         ...(userProfilePhotoUrl ? { avatarUrl: userProfilePhotoUrl } : {}),
       };
       try {
@@ -567,8 +591,8 @@ export default function Settings() {
                         </Col>
                         <Col xs={24} sm={8}>
                           <Form.Item label="Role" name="role" rules={[{ required: true, message: 'Required' }]}>
-                            <Select 
-                              placeholder="Select role" 
+                            <Select
+                              placeholder="Select role"
                               style={{ width: '100%', height: 40 }}
                               dropdownRender={(menu) => (
                                 <div style={{ padding: '4px 0' }}>
@@ -590,7 +614,10 @@ export default function Settings() {
                                 </div>
                               )}
                             >
-                              {roles.map(r => <Option key={r.key} value={r.role}>{r.role}</Option>)}
+                              {(watchedDept === 'Vendors'
+                                ? roles.filter(r => VENDOR_ROLES.includes(r.role))
+                                : roles.filter(r => !VENDOR_ROLES.includes(r.role))
+                              ).map(r => <Option key={r.key} value={r.role}>{r.role}</Option>)}
                             </Select>
                           </Form.Item>
                         </Col>
@@ -688,35 +715,51 @@ export default function Settings() {
                       </Row>
 
                       <div style={{ marginBottom: 16 }}>
-                        <Text strong style={{ display: 'block', marginBottom: 8 }}>Page Access Permissions</Text>
+                        <Text strong style={{ display: 'block', marginBottom: 8 }}>Page &amp; Tab Access Permissions</Text>
                         <Collapse
                           ghost
                           expandIconPosition="end"
                           style={{ background: subBg, borderRadius: 8, border: `1px solid ${borderColor}` }}
                           items={MODULES.map(mod => ({
                             key: mod,
-                            label: <Text strong>{mod}</Text>,
+                            label: <Text strong style={{ fontSize: 13 }}>{mod}</Text>,
                             children: (
-                              <div style={{ display: 'flex', gap: 32 }}>
-                                {MODULE_PERM_TYPES[mod].includes('read') && (
-                                  <Form.Item name={['perms', mod, 'read']} valuePropName="checked" style={{ margin: 0 }}>
-                                    <Checkbox>Read</Checkbox>
-                                  </Form.Item>
-                                )}
-                                {MODULE_PERM_TYPES[mod].includes('add') && (
-                                  <Form.Item name={['perms', mod, 'add']} valuePropName="checked" style={{ margin: 0 }}>
-                                    <Checkbox>Add</Checkbox>
-                                  </Form.Item>
-                                )}
-                                {MODULE_PERM_TYPES[mod].includes('edit') && (
-                                  <Form.Item name={['perms', mod, 'edit']} valuePropName="checked" style={{ margin: 0 }}>
-                                    <Checkbox>Edit</Checkbox>
-                                  </Form.Item>
-                                )}
-                                {MODULE_PERM_TYPES[mod].includes('delete') && (
-                                  <Form.Item name={['perms', mod, 'delete']} valuePropName="checked" style={{ margin: 0 }}>
-                                    <Checkbox>Delete</Checkbox>
-                                  </Form.Item>
+                              <div>
+                                {/* Page-level CRUD permissions */}
+                                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                                  {MODULE_PERM_TYPES[mod].includes('read') && (
+                                    <Form.Item name={['perms', mod, 'read']} valuePropName="checked" style={{ margin: 0 }}>
+                                      <Checkbox>Read</Checkbox>
+                                    </Form.Item>
+                                  )}
+                                  {MODULE_PERM_TYPES[mod].includes('add') && (
+                                    <Form.Item name={['perms', mod, 'add']} valuePropName="checked" style={{ margin: 0 }}>
+                                      <Checkbox>Add</Checkbox>
+                                    </Form.Item>
+                                  )}
+                                  {MODULE_PERM_TYPES[mod].includes('edit') && (
+                                    <Form.Item name={['perms', mod, 'edit']} valuePropName="checked" style={{ margin: 0 }}>
+                                      <Checkbox>Edit</Checkbox>
+                                    </Form.Item>
+                                  )}
+                                  {MODULE_PERM_TYPES[mod].includes('delete') && (
+                                    <Form.Item name={['perms', mod, 'delete']} valuePropName="checked" style={{ margin: 0 }}>
+                                      <Checkbox>Delete</Checkbox>
+                                    </Form.Item>
+                                  )}
+                                </div>
+                                {/* Tab-level access */}
+                                {MODULE_TABS[mod]?.length > 0 && (
+                                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
+                                    <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Tab Access:</Text>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                      {MODULE_TABS[mod].map(tab => (
+                                        <Form.Item key={tab} name={['tabAccess', mod, tab]} valuePropName="checked" style={{ margin: 0 }}>
+                                          <Checkbox style={{ fontSize: 12 }}>{tab}</Checkbox>
+                                        </Form.Item>
+                                      ))}
+                                    </div>
+                                  </div>
                                 )}
                               </div>
                             ),

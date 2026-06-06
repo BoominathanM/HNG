@@ -31,6 +31,7 @@ const companySettingsSchema = new mongoose.Schema({
     wa: { type: Boolean, default: false },
     email: { type: Boolean, default: false },
   },
+  automationVendors: { type: mongoose.Schema.Types.Mixed, default: {} },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

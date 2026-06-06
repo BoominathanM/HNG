@@ -3,40 +3,32 @@ const mongoose = require('mongoose');
 const connectDB = require('../config/db');
 
 // Import every model so its schema is registered before we clear collections.
-const User = require('../models/User');
-const CompanySettings = require('../models/CompanySettings');
-const InventoryItem = require('../models/InventoryItem');
-const Vendor = require('../models/Vendor');
-const Party = require('../models/Party');
-const Order = require('../models/Order');
-const Invoice = require('../models/Invoice');
-const Lead = require('../models/Lead');
-const Quotation = require('../models/Quotation');
-const Negotiation = require('../models/Negotiation');
-const Task = require('../models/Task');
-const Expense = require('../models/Expense');
-const Notification = require('../models/Notification');
-const StockMovement = require('../models/StockMovement');
-const PurchaseRequest = require('../models/PurchaseRequest');
-const PurchaseOrder = require('../models/PurchaseOrder');
-const LocalPurchase = require('../models/LocalPurchase');
-const DispatchRecord = require('../models/DispatchRecord');
-const Staff = require('../models/Staff');
-const Complaint = require('../models/Complaint');
-const Payment = require('../models/Payment');
-const LedgerEntry = require('../models/LedgerEntry');
-const StickerRequest = require('../models/StickerRequest');
+const User               = require('../models/User');
+const CompanySettings    = require('../models/CompanySettings');
+const InventoryItem      = require('../models/InventoryItem');
+const Vendor             = require('../models/Vendor');
+const Party              = require('../models/Party');
+const Order              = require('../models/Order');
+const Invoice            = require('../models/Invoice');
+const Lead               = require('../models/Lead');
+const Quotation          = require('../models/Quotation');
+const Negotiation        = require('../models/Negotiation');
+const Task               = require('../models/Task');
+const Expense            = require('../models/Expense');
+const Notification       = require('../models/Notification');
+const StockMovement      = require('../models/StockMovement');
+const PurchaseRequest    = require('../models/PurchaseRequest');
+const PurchaseOrder      = require('../models/PurchaseOrder');
+const LocalPurchase      = require('../models/LocalPurchase');
+const DispatchRecord     = require('../models/DispatchRecord');
+const Staff              = require('../models/Staff');
+const Complaint          = require('../models/Complaint');
+const Payment            = require('../models/Payment');
+const LedgerEntry        = require('../models/LedgerEntry');
+const StickerRequest     = require('../models/StickerRequest');
 const ReimbursementClaim = require('../models/ReimbursementClaim');
 
-const MODULES = [
-  'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
-  'Staff Management', 'Inventory', 'Purchase', 'Billing', 'Parties & Ledger',
-  'Financial', 'Expenses', 'Reports', 'Notifications', 'Integration', 'Settings',
-];
-
-// Admin gets full read/add/edit/delete on every module.
-const adminPerms = {};
-MODULES.forEach((m) => { adminPerms[m] = { read: true, add: true, edit: true, delete: true }; });
+const { ADMIN_DATA } = require('./autoSeed');
 
 const seed = async () => {
   await connectDB();
@@ -77,18 +69,8 @@ const seed = async () => {
 
   console.log('✅ All collections cleared');
 
-  // The ONLY record we seed is the admin user.
-  // (Company settings auto-create on first GET /settings/company.)
-  await User.create({
-    fullName: 'HNG Admin',
-    email: 'admin@gmail.com',
-    mobile: '9000000000',
-    password: 'Hng@123',
-    role: 'Admin',
-    department: 'Management',
-    status: 'Active',
-    permissions: adminPerms,
-  });
+  // Seed the admin user with full page + tab access (sourced from autoSeed so it stays in sync).
+  await User.create(ADMIN_DATA);
 
   console.log('✅ Seed complete — database contains only the admin user.');
   console.log('   Admin Login → email: admin@gmail.com | password: Hng@123');

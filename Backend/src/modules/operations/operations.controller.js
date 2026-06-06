@@ -139,7 +139,11 @@ exports.getStickerRequests = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.type) filter.stickerType = req.query.type;
   if (req.query.status) filter.status = req.query.status;
-  const stickers = await StickerRequest.find(filter).populate('orderId', 'orderCode clientName').sort('-createdAt');
+  const stickers = await StickerRequest.find(filter)
+    .populate('orderId', 'orderCode clientName')
+    .populate('salesApprovedBy', 'fullName')
+    .populate('opsHeadApprovedBy', 'fullName')
+    .sort('-createdAt');
   res.status(200).json({ success: true, data: stickers });
 });
 
@@ -183,11 +187,25 @@ exports.approveStickerRequest = asyncHandler(async (req, res, next) => {
   const sticker = await StickerRequest.findById(req.params.id);
   if (!sticker) return next(new AppError('Sticker request not found', 404));
   const role = req.body.role; // 'sales' | 'opsHead'
-  if (role === 'sales') sticker.salesApproved = true;
-  else if (role === 'opsHead') sticker.opsHeadApproved = true;
-  else { sticker.salesApproved = true; sticker.opsHeadApproved = true; } // both (e.g. admin)
+  const now = new Date();
+  const userId = req.user?._id;
+  if (role === 'sales') {
+    sticker.salesApproved = true;
+    sticker.salesApprovedAt = now;
+    sticker.salesApprovedBy = userId;
+  } else if (role === 'opsHead') {
+    sticker.opsHeadApproved = true;
+    sticker.opsHeadApprovedAt = now;
+    sticker.opsHeadApprovedBy = userId;
+  } else {
+    // admin: approve both simultaneously
+    sticker.salesApproved = true; sticker.salesApprovedAt = now; sticker.salesApprovedBy = userId;
+    sticker.opsHeadApproved = true; sticker.opsHeadApprovedAt = now; sticker.opsHeadApprovedBy = userId;
+  }
   if (sticker.salesApproved && sticker.opsHeadApproved) sticker.status = 'Approved';
   else sticker.status = 'Waiting for Approval';
   await sticker.save({ validateBeforeSave: false });
+  await sticker.populate('salesApprovedBy', 'fullName');
+  await sticker.populate('opsHeadApprovedBy', 'fullName');
   res.status(200).json({ success: true, data: sticker });
 });

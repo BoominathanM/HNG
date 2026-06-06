@@ -16,32 +16,33 @@ import { useLogoutMutation } from '../../store/api/apiSlice';
 const { Sider } = Layout;
 const { Text } = Typography;
 
-const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
-  { key: '/sales', icon: <TeamOutlined />, label: 'Sales Team' },
-  { key: '/operations', icon: <ApartmentOutlined />, label: 'Operations' },
-  { key: '/tasks', icon: <CheckSquareOutlined />, label: 'Task Management', badge: 5 },
-  { key: '/dispatch', icon: <CarOutlined />, label: 'Dispatch Team' },
-  { key: '/staff', icon: <UserOutlined />, label: 'Staff Management' },
-  { key: '/inventory', icon: <InboxOutlined />, label: 'Inventory' },
-  { key: '/purchase', icon: <ShoppingOutlined />, label: 'Purchase' },
-  { key: '/vendors-suppliers', icon: <ContactsOutlined />, label: 'Vendors & Suppliers' },
-  { key: '/billing', icon: <DollarOutlined />, label: 'Billing' },
-  { key: '/parties-ledger', icon: <BookOutlined />, label: 'Parties & Ledger' },
-  { key: '/financial', icon: <BankOutlined />, label: 'Financial' },
-  { key: '/expenses', icon: <DollarOutlined />, label: 'Expenses' },
-  { key: '/reports', icon: <BarChartOutlined />, label: 'Reports' },
-  { key: '/notifications', icon: <BellOutlined />, label: 'Notifications', badge: 3 },
+const ALL_MENU_ITEMS = [
+  { key: '/', icon: <DashboardOutlined />, label: 'Dashboard', module: 'Dashboard' },
+  { key: '/sales', icon: <TeamOutlined />, label: 'Sales Team', module: 'Sales Team' },
+  { key: '/operations', icon: <ApartmentOutlined />, label: 'Operations', module: 'Operations' },
+  { key: '/tasks', icon: <CheckSquareOutlined />, label: 'Task Management', badge: 5, module: 'Task Management' },
+  { key: '/dispatch', icon: <CarOutlined />, label: 'Dispatch Team', module: 'Dispatch Team' },
+  { key: '/staff', icon: <UserOutlined />, label: 'Staff Management', module: 'Staff Management' },
+  { key: '/inventory', icon: <InboxOutlined />, label: 'Inventory', module: 'Inventory' },
+  { key: '/purchase', icon: <ShoppingOutlined />, label: 'Purchase', module: 'Purchase' },
+  { key: '/vendors-suppliers', icon: <ContactsOutlined />, label: 'Vendors & Suppliers', module: 'Vendors & Suppliers' },
+  { key: '/billing', icon: <DollarOutlined />, label: 'Billing', module: 'Billing' },
+  { key: '/parties-ledger', icon: <BookOutlined />, label: 'Parties & Ledger', module: 'Parties & Ledger' },
+  { key: '/financial', icon: <BankOutlined />, label: 'Financial', module: 'Financial' },
+  { key: '/expenses', icon: <DollarOutlined />, label: 'Expenses', module: 'Expenses' },
+  { key: '/reports', icon: <BarChartOutlined />, label: 'Reports', module: 'Reports' },
+  { key: '/notifications', icon: <BellOutlined />, label: 'Notifications', badge: 3, module: 'Notifications' },
   {
     key: '/integration',
     icon: <ApiOutlined />,
     label: 'Integration',
+    module: 'Integration',
     children: [
-      { key: '/integration/whatsapp', icon: <MessageOutlined />, label: 'WhatsApp' },
-      { key: '/integration/ai', icon: <RobotOutlined />, label: 'AI Integration' },
+      { key: '/integration/whatsapp', icon: <MessageOutlined />, label: 'WhatsApp', module: 'Integration' },
+      { key: '/integration/ai', icon: <RobotOutlined />, label: 'AI Integration', module: 'Integration' },
     ],
   },
-  { key: '/settings', icon: <SettingOutlined />, label: 'Settings' },
+  { key: '/settings', icon: <SettingOutlined />, label: 'Settings', module: 'Settings' },
 ];
 
 export default function Sidebar({ mobileOpen, onMobileClose }) {
@@ -50,7 +51,30 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
   const dispatch = useDispatch();
   const collapsed = useSelector((s) => s.theme.sidebarCollapsed);
   const isDark = useSelector((s) => s.theme.isDark);
+  const authUser = useSelector((s) => s.auth.user);
   const [logout] = useLogoutMutation();
+
+  // Build the visible menu based on page-level read permissions.
+  // Super Admin (or no permissions set) sees everything.
+  const canView = (module) => {
+    if (!authUser) return false;
+    if (authUser.role === 'Super Admin') return true;
+    const perm = authUser.permissions?.[module];
+    if (perm === undefined || perm === null) return true;
+    return perm.read === true;
+  };
+
+  const menuItems = ALL_MENU_ITEMS.reduce((acc, item) => {
+    if (!canView(item.module)) return acc;
+    if (item.children) {
+      const visibleChildren = item.children.filter(c => canView(c.module));
+      if (visibleChildren.length === 0) return acc;
+      acc.push({ ...item, children: visibleChildren });
+    } else {
+      acc.push(item);
+    }
+    return acc;
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -62,14 +86,14 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
   };
 
   const [expandedKeys, setExpandedKeys] = useState(() => {
-    const activeParent = menuItems.find(
+    const activeParent = ALL_MENU_ITEMS.find(
       (item) => item.children?.some((c) => location.pathname === c.key)
     );
     return new Set(activeParent ? [activeParent.key] : ['/inventory']);
   });
 
   useEffect(() => {
-    const activeParent = menuItems.find((item) =>
+    const activeParent = ALL_MENU_ITEMS.find((item) =>
       item.children?.some((c) => location.pathname === c.key)
     );
     if (activeParent) {

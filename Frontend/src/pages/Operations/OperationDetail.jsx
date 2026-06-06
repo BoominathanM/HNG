@@ -47,6 +47,7 @@ import {
   useGetHotelDesignsQuery,
   useSaveHotelDesignMutation,
   useGetItemsQuery,
+  useGetVendorsQuery,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -64,24 +65,8 @@ import {
 const { Text, Title } = Typography;
 const { Option } = Select;
 
-const PRINTING_VENDORS = {
-  sticker_printing: [
-    { value: 'The Lily', label: 'The Lily' },
-    { value: 'PrintZone', label: 'PrintZone' },
-    { value: 'StickerWorld', label: 'StickerWorld' },
-    { value: 'LabelCraft', label: 'LabelCraft' },
-  ],
-  box: [
-    { value: 'BoxWorld', label: 'BoxWorld' },
-    { value: 'PackMaster', label: 'PackMaster' },
-    { value: 'CartonKing', label: 'CartonKing' },
-  ],
-  frosted_ziplock: [
-    { value: 'PlastiPack', label: 'PlastiPack' },
-    { value: 'ZiplockPro', label: 'ZiplockPro' },
-    { value: 'ClearSeal', label: 'ClearSeal' },
-  ],
-};
+// Printing vendors are loaded dynamically from Vendors & Suppliers (vendorType='printing').
+// supplierType 'Sticker' → sticker_printing, 'Box' → box, 'Ziplock' → frosted_ziplock.
 
 export default function OperationDetail() {
   const { id } = useParams();
@@ -93,6 +78,23 @@ export default function OperationDetail() {
   const [assignModalForm] = Form.useForm();
   const { data: ordersData } = useGetOperationOrdersQuery();
   const { data: invData } = useGetItemsQuery();
+  const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
+
+  // Build { sticker_printing: [...], box: [...], frosted_ziplock: [...] } from live vendor data.
+  const PRINTING_VENDORS = useMemo(() => {
+    const vendors = printingVendorData?.data || [];
+    return {
+      sticker_printing: vendors
+        .filter((v) => v.supplierType === 'Sticker')
+        .map((v) => ({ value: v._id, label: v.name })),
+      box: vendors
+        .filter((v) => v.supplierType === 'Box')
+        .map((v) => ({ value: v._id, label: v.name })),
+      frosted_ziplock: vendors
+        .filter((v) => v.supplierType === 'Ziplock')
+        .map((v) => ({ value: v._id, label: v.name })),
+    };
+  }, [printingVendorData]);
   const invMap = useMemo(() => {
     const m = {};
     (invData?.data || []).forEach((i) => { m[i.itemName] = i; });

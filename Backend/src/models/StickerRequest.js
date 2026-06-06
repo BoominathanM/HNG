@@ -20,7 +20,11 @@ const stickerRequestSchema = new mongoose.Schema({
   },
   // dual approval (sales person + operations head)
   salesApproved: { type: Boolean, default: false },
+  salesApprovedAt: Date,
+  salesApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   opsHeadApproved: { type: Boolean, default: false },
+  opsHeadApprovedAt: Date,
+  opsHeadApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   isUrgent: { type: Boolean, default: false },
   dispatchedToOps: { type: Boolean, default: false },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

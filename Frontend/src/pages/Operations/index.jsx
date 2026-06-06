@@ -60,6 +60,9 @@ import {
   useAssignTaskMutation,
   useSetOrderEmergencyMutation,
   useApproveStickerRequestMutation,
+  useGetVendorsQuery,
+  useGetUsersQuery,
+  useGetCompanySettingsQuery,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -70,6 +73,7 @@ import {
   getCheckStateMap,
   getFlowStep,
   getProgressFromChecks,
+  PACKAGING_TYPE_LABELS,
   statusPill,
 } from './data';
 
@@ -127,6 +131,40 @@ export default function Operations() {
 
   const stickerRequests = stickerData?.data || [];
 
+  // Printing vendors from Vendors & Suppliers module (vendorType = 'printing')
+  const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
+
+  // Vendor users from Settings (department = Vendors, role = Sticker/Box/Ziplock)
+  const { data: usersData } = useGetUsersQuery();
+  const vendorUsers = useMemo(() => (usersData?.data || []).filter(
+    u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock'].includes(u.role)
+  ), [usersData]);
+
+  // Company settings: automation vendor per type
+  const { data: companyData } = useGetCompanySettingsQuery();
+  const automationVendors = useMemo(() => {
+    const raw = companyData?.data?.automationVendors;
+    if (!raw) return {};
+    return raw instanceof Map ? Object.fromEntries(raw) : raw;
+  }, [companyData]);
+
+  const printingVendorsByType = useMemo(() => {
+    const suppliers = printingVendorData?.data || [];
+    const makeOpts = (supplierType, userRole) => [
+      ...suppliers.filter(v => v.supplierType === supplierType).map(v => ({
+        value: v._id, label: v.name, optionType: 'supplier',
+      })),
+      ...vendorUsers.filter(u => u.role === userRole).map(u => ({
+        value: u._id, label: `${u.fullName} (${u.role})`, optionType: 'user',
+      })),
+    ];
+    return {
+      sticker: makeOpts('Sticker', 'Sticker'),
+      box: makeOpts('Box', 'Box'),
+      frosted: makeOpts('Ziplock', 'Ziplock'),
+    };
+  }, [printingVendorData, vendorUsers]);
+
   const apiOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
     hotelLogo: o.clientName || '—', salesPerson: o.salesPerson || o.assignedTo?.fullName || '—',
@@ -151,8 +189,14 @@ export default function Operations() {
     displayUnit: o.displayUnit || o.kitDisplayUnit || '',
   })), [ordersData]);
 
+  const [queueSteps, setQueueSteps] = useState({});
+  const [dispatchTimes, setDispatchTimes] = useState({}); // orderId → { date, time }
+
   const checkStates = useMemo(() => getCheckStateMap(apiOrders), [apiOrders]);
-  const productionQueues = useMemo(() => buildProductionQueues(apiOrders), [apiOrders]);
+  const productionQueues = useMemo(
+    () => buildProductionQueues(apiOrders, stickerRequests, queueSteps),
+    [apiOrders, stickerRequests, queueSteps],
+  );
   const [requestOpen, setRequestOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
@@ -170,8 +214,6 @@ export default function Operations() {
   const [receiveForm] = Form.useForm();
   const [teamSendOpen, setTeamSendOpen] = useState(false);
   const [teamSendType, setTeamSendType] = useState('Sticker');
-
-  const [queueSteps, setQueueSteps] = useState({});
 
   // Map StickerRequest.status → queue step number
   const stickerStatusToStep = (status) => {
@@ -326,34 +368,44 @@ export default function Operations() {
     {
       title: 'Printing Status',
       key: 'printingStatus',
-      render: (_, record) => (
-        <Select
-          value={printingStatuses[record.id]}
-          size="small"
-          style={{ width: 148 }}
-          placeholder="Select"
-          onClick={(e) => e.stopPropagation()}
-          onChange={async (val) => {
-            setPrintingStatuses((prev) => ({ ...prev, [record.id]: val }));
-            try {
-              await updateOrderStatus({ id: record.key, printingStatus: val }).unwrap();
-              enqueueSnackbar(`${record.id} status → ${val}`, { variant: 'success' });
-              // Doc: when printing status is Closed, redirect to the task assignment page.
-              if (val === 'Closed') {
-                enqueueSnackbar('Printing closed — opening task assignment', { variant: 'info' });
-                navigate(`/operations/${record.id}?assign=1`);
-              }
-            } catch (err) {
-              enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update printing status', { variant: 'error' });
-            }
-          }}
-          options={[
-            { value: 'Yet to Receive', label: <Tag color="orange" style={{ margin: 0 }}>Yet to Receive</Tag> },
-            { value: 'Received', label: <Tag color="blue" style={{ margin: 0 }}>Received</Tag> },
-            { value: 'Closed', label: <Tag color="success" style={{ margin: 0 }}>Closed</Tag> },
-          ]}
-        />
-      ),
+      render: (_, record) => {
+        const validStatuses = ['Yet to Receive', 'Received', 'Closed'];
+        const displayVal = printingStatuses[record.id] ?? (validStatuses.includes(record.printingStatus) ? record.printingStatus : undefined);
+        const dt = dispatchTimes[record.id];
+        return (
+          <Space direction="vertical" size={2} onClick={(e) => e.stopPropagation()}>
+            <Select
+              value={displayVal}
+              size="small"
+              style={{ width: 148 }}
+              placeholder="Select"
+              onChange={async (val) => {
+                setPrintingStatuses((prev) => ({ ...prev, [record.id]: val }));
+                try {
+                  await updateOrderStatus({ id: record.key, printingStatus: val }).unwrap();
+                  enqueueSnackbar(`${record.id} status → ${val}`, { variant: 'success' });
+                  if (val === 'Closed') {
+                    enqueueSnackbar('Printing closed — opening task assignment', { variant: 'info' });
+                    navigate(`/operations/${record.id}?assign=1`);
+                  }
+                } catch (err) {
+                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update printing status', { variant: 'error' });
+                }
+              }}
+              options={[
+                { value: 'Yet to Receive', label: <Tag color="orange" style={{ margin: 0 }}>Yet to Receive</Tag> },
+                { value: 'Received', label: <Tag color="blue" style={{ margin: 0 }}>Received</Tag> },
+                { value: 'Closed', label: <Tag color="success" style={{ margin: 0 }}>Closed</Tag> },
+              ]}
+            />
+            {dt && (
+              <Text style={{ fontSize: 10, color: '#888' }}>
+                Dispatched: {dt.date} {dt.time}
+              </Text>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: 'Actions',
@@ -383,348 +435,336 @@ export default function Operations() {
   ];
 
 
-  const designColumns = [
-    {
-      title: 'Order',
-      dataIndex: 'orderId',
-      render: (value) => <Text strong style={{ color: '#B11E6A' }}>{value}</Text>,
-    },
-    { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
-    { title: 'Type', dataIndex: 'type' },
-    { title: 'Shared Through', dataIndex: 'channel' },
-    { title: 'Designer', dataIndex: 'designer' },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      render: (value) => <Tag color={designColor[value] || 'default'}>{value}</Tag>,
-    },
-    { title: 'Correction / Note', dataIndex: 'correction' },
-    {
-      title: 'Actions',
-      key: 'designActions',
-      render: (_, record) => (
-        <Space wrap size={4}>
-          <Button
-            size="small"
-            icon={<MessageOutlined />}
-            style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-            onClick={async () => {
-              try {
-                await sendToStickerTeam({ id: record._id || record.key, type: record.type }).unwrap();
-                enqueueSnackbar(`Design for ${record.orderId} sent via WhatsApp to customer and ${apiOrders.find((o) => o.id === record.orderId)?.salesPerson || 'sales person'}`, { variant: 'success' });
-              } catch (err) {
-                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send design', { variant: 'error' });
-              }
-            }}
-          >
-            Send
-          </Button>
-          <Tooltip title={record.salesApproved ? 'Sales approved ✓' : 'Sales person approval'}>
-            <Button
-              size="small"
-              icon={<CheckCircleOutlined />}
-              style={record.salesApproved ? { background: '#52c41a', borderColor: '#52c41a', color: '#fff' } : { borderColor: '#52c41a', color: '#52c41a' }}
-              onClick={async () => {
-                try {
-                  const res = await approveStickerRequest({ id: record._id || record.key, role: 'sales' }).unwrap();
-                  enqueueSnackbar(res?.data?.status === 'Approved' ? `${record.orderId} fully approved — printing can start` : 'Sales approved — awaiting Ops Head', { variant: 'success' });
-                } catch (err) {
-                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-                }
-              }}
-            >
-              Sales OK
-            </Button>
-          </Tooltip>
-          <Tooltip title={record.opsHeadApproved ? 'Ops Head approved ✓' : 'Operations head approval'}>
-            <Button
-              size="small"
-              icon={<CheckCircleOutlined />}
-              style={record.opsHeadApproved ? { background: '#52c41a', borderColor: '#52c41a', color: '#fff' } : { borderColor: '#1677ff', color: '#1677ff' }}
-              onClick={async () => {
-                try {
-                  const res = await approveStickerRequest({ id: record._id || record.key, role: 'opsHead' }).unwrap();
-                  enqueueSnackbar(res?.data?.status === 'Approved' ? `${record.orderId} fully approved — printing can start` : 'Ops Head approved — awaiting Sales', { variant: 'success' });
-                } catch (err) {
-                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-                }
-              }}
-            >
-              Ops OK
-            </Button>
-          </Tooltip>
-          <Button
-            size="small"
-            icon={<PrinterOutlined />}
-            onClick={async () => {
-              try {
-                await updateStickerStatus({ id: record._id || record.key, status: 'In Process' }).unwrap();
-                enqueueSnackbar(`Printing order raised for ${record.orderId}`, { variant: 'info' });
-              } catch (err) {
-                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise printing order', { variant: 'error' });
-              }
-            }}
-          >
-            Print
-          </Button>
-          <Button
-            size="small"
-            icon={<ToolOutlined />}
-            onClick={() => {
-              setSelectedQueueItem(record);
-              setCorrections(record.correction ? [record.correction] : []);
-              setCorrectionOpen(true);
-            }}
-          >
-            Correction
-          </Button>
-        </Space>
-      ),
-    },
-  ];
-
-  const renderDesignTable = (type) => (
-    <Card
-      title={<Text strong style={{ color: textColor }}>{type} Designing Queue</Text>}
-      style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-      styles={{ body: { padding: 0 } }}
-    >
-      <div className="table-responsive" style={{ padding: 4 }}>
-        <Table 
-          dataSource={stickerRequests.filter(item => item.type === type)} 
-          columns={designColumns} 
-          pagination={false} 
-          size="small" 
-        />
-      </div>
-    </Card>
-  );
-
-  const queueColumns = (label) => [
-    {
-      title: 'Order',
-      dataIndex: 'orderId',
-      render: (value) => (
-        <Space size={4}>
-          {apiOrders.find((o) => o.id === value)?.isUrgent && (
-            <Tooltip title="Urgent / Emergency Deliveries (Partial)">
-              <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
-            </Tooltip>
-          )}
-          <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
-        </Space>
-      ),
-    },
-    { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
-    { title: 'Product', dataIndex: 'product' },
-    {
-      title: label === 'Box' ? 'Size / PVK' : 'Size',
-      dataIndex: 'size',
-      render: (value) => <Tag color="geekblue">{value}</Tag>,
-    },
-    { title: 'Qty', dataIndex: 'qty', render: (value) => value.toLocaleString() },
-    {
-      title: 'Actions',
-      key: 'actions',
-      width: 280,
-      render: (_, record) => {
-        const step = getQueueStep(record);
-        return (
-          <Space wrap size={4}>
-            {step === 0 && (
-              <>
-                <Tag color="blue">Designing</Tag>
-                <Upload
-                  beforeUpload={() => false}
-                  fileList={uploadedFiles[record.key] || []}
-                  onChange={({ fileList }) => handleUpload(record.key, fileList)}
-                  maxCount={1}
-                  accept="image/*,.pdf"
-                  showUploadList={false}
-                >
-                  <Button
-                    size="small"
-                    icon={<UploadOutlined />}
-                    style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}
-                  >
-                    {(uploadedFiles[record.key]?.length || findStickerReq(record)?.designFileUrl) ? 'Re-upload' : 'Upload Design'}
-                  </Button>
-                </Upload>
-                {(uploadedFiles[record.key]?.length > 0 || findStickerReq(record)?.designFileUrl) && (
-                  <Space size={4}>
-                    <Tag color="green" style={{ fontSize: 11 }}>✓ Uploaded</Tag>
-                    {findStickerReq(record)?.designFileUrl && (
-                      <a href={findStickerReq(record).designFileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#B11E6A' }}>View</a>
-                    )}
-                  </Space>
-                )}
-                <Button
-                  size="small"
-                  type="primary"
-                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                  disabled={!uploadedFiles[record.key]?.length}
-                  title={!uploadedFiles[record.key]?.length ? 'Upload design first' : ''}
-                  onClick={async () => {
-                    const ord = apiOrders.find((o) => o.id === record.orderId);
-                    try {
-                      // Production queue items use composite string keys, not StickerRequest ObjectIds.
-                      // Resolve (or create) the real StickerRequest document first.
-                      const queueType = record.key?.endsWith('-box') ? 'Box'
-                        : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
-                        : 'Sticker';
-                      const existing = findStickerReq(record);
-                      let stickerId;
-                      if (existing) {
-                        stickerId = existing._id;
-                      } else {
-                        const created = await createStickerRequest({
-                          orderId: ord?.key,
-                          hotelLogo: record.hotelLogo,
-                          product: record.product,
-                          stickerType: queueType,
-                          quantity: record.qty,
-                          stickerSize: record.size,
-                        }).unwrap();
-                        stickerId = created.data._id;
-                      }
-                      await uploadStickerDesign({
-                        id: stickerId,
-                        files: uploadedFiles[record.key] || [],
-                      }).unwrap();
-                      advanceStep(record.key, 1);
-                      enqueueSnackbar(`Design sent for approval — ${ord?.salesPerson || 'Sales'} & Operations team notified for ${record.orderId}`, { variant: 'info' });
-                    } catch (err) {
-                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send design for approval', { variant: 'error' });
-                    }
-                  }}
-                >
-                  Send for Approval
-                </Button>
-              </>
+  const queueColumns = (label) => {
+    const isStickerTab = label === 'Sticker';
+    return [
+      {
+        title: 'Order',
+        dataIndex: 'orderId',
+        render: (value) => (
+          <Space size={4}>
+            {apiOrders.find((o) => o.id === value)?.isUrgent && (
+              <Tooltip title="Urgent / Emergency Deliveries (Partial)">
+                <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
+              </Tooltip>
             )}
-            {step === 1 && (
-              <>
-                <Tag color="gold">Waiting for Approval</Tag>
-                {(uploadedFiles[record.key]?.length > 0 || findStickerReq(record)?.designFileUrl) ? (
-                  <Space size={4}>
-                    <Tag color="green" style={{ fontSize: 11 }}>✓ Design Uploaded</Tag>
-                    {findStickerReq(record)?.designFileUrl && (
-                      <a href={findStickerReq(record).designFileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#B11E6A' }}>View</a>
-                    )}
-                  </Space>
-                ) : (
+            <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
+          </Space>
+        ),
+      },
+      { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
+      { title: 'Product', dataIndex: 'product' },
+      {
+        title: label === 'Box' ? 'Size / PVK' : 'Size',
+        dataIndex: 'size',
+        render: (value) => value ? <Tag color="geekblue">{value}</Tag> : '—',
+      },
+      { title: 'Qty', dataIndex: 'qty', render: (value) => (value || 0).toLocaleString() },
+      {
+        title: 'Sticker Printing',
+        dataIndex: 'stickerPrinting',
+        render: (val) => (
+          <Tag color={val === 'Yes' ? 'blue' : 'default'}>{val || '—'}</Tag>
+        ),
+      },
+      ...(isStickerTab ? [{
+        title: 'After Approval',
+        dataIndex: 'packagingType',
+        render: (val) => {
+          const label = PACKAGING_TYPE_LABELS[val] || val || '—';
+          const color = val === 'box' ? 'green' : val === 'frosted' ? 'orange' : 'purple';
+          return <Tag color={color}>{label}</Tag>;
+        },
+      }] : []),
+      {
+        title: 'Actions',
+        key: 'actions',
+        width: 320,
+        render: (_, record) => {
+          const step = getQueueStep(record);
+          const sr = findStickerReq(record);
+          return (
+            <Space wrap size={4}>
+              {step === 0 && (
+                <>
+                  <Tag color="blue">Designing</Tag>
                   <Upload
                     beforeUpload={() => false}
-                    fileList={[]}
+                    fileList={uploadedFiles[record.key] || []}
                     onChange={({ fileList }) => handleUpload(record.key, fileList)}
                     maxCount={1}
                     accept="image/*,.pdf"
                     showUploadList={false}
                   >
-                    <Button size="small" icon={<UploadOutlined />} danger>Upload Design *</Button>
+                    <Button
+                      size="small"
+                      icon={<UploadOutlined />}
+                      style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}
+                    >
+                      {(uploadedFiles[record.key]?.length || sr?.designFileUrl) ? 'Re-upload' : 'Upload Design'}
+                    </Button>
                   </Upload>
-                )}
-                <Button
-                  size="small"
-                  icon={<MessageOutlined />}
-                  style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-                  onClick={async () => {
-                    const ord = apiOrders.find((o) => o.id === record.orderId);
-                    try {
-                      await sendToStickerTeam({ id: record._id || record.key, orderId: record.orderId, type: teamSendType }).unwrap();
-                      enqueueSnackbar(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`, { variant: 'success' });
-                    } catch (err) {
-                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send WhatsApp notification', { variant: 'error' });
-                    }
-                  }}
-                >
-                  WhatsApp
-                </Button>
-                <Button
-                  size="small"
-                  icon={<CheckCircleOutlined />}
-                  style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
-                  disabled={!uploadedFiles[record.key]?.length && !findStickerReq(record)?.designFileUrl}
-                  title={(!uploadedFiles[record.key]?.length && !findStickerReq(record)?.designFileUrl) ? 'Upload design file first' : ''}
-                  onClick={async () => {
-                    const sr = findStickerReq(record);
-                    if (!uploadedFiles[record.key]?.length && !sr?.designFileUrl) {
-                      enqueueSnackbar('Please upload the design file before approving', { variant: 'error' });
-                      return;
-                    }
-                    try {
-                      if (sr) await updateStickerStatus({ id: sr._id, status: 'Approved' }).unwrap();
-                      advanceStep(record.key, 2);
-                      enqueueSnackbar(`Design for ${record.orderId} approved and stored`, { variant: 'success' });
-                    } catch (err) {
-                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve design', { variant: 'error' });
-                    }
-                  }}
-                >
-                  Approve
-                </Button>
-              </>
-            )}
-            {step === 2 && (
-              <>
-                <Tag color="green">Approved</Tag>
-                <Button
-                  size="small"
-                  icon={<PrinterOutlined />}
-                  style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff' }}
-                  onClick={async () => {
-                    const sr = findStickerReq(record);
-                    try {
-                      if (sr) await updateStickerStatus({ id: sr._id, status: 'In Process' }).unwrap();
-                      advanceStep(record.key, 3);
-                    } catch (err) {
-                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to start printing', { variant: 'error' });
-                    }
-                  }}
-                >
-                  Print
-                </Button>
-              </>
-            )}
-            {step === 3 && (
-              <>
-                <Tag color="magenta">Printing</Tag>
-                <Button
-                  size="small"
-                  icon={<TruckOutlined />}
-                  style={{ background: '#722ed1', borderColor: '#722ed1', color: '#fff' }}
-                  onClick={() => {
-                    setSelectedQueueItem(record);
-                    dispatchForm.setFieldsValue({
-                      orderId: record.orderId,
-                      dispatchDate: new Date().toLocaleDateString('en-IN'),
-                      dispatchTime: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-                    });
-                    setDispatchOpen(true);
-                  }}
-                >
-                  Dispatch to Operation
-                </Button>
-              </>
-            )}
-            {step === 4 && (
-              <Tag color="purple" icon={<TruckOutlined />}>Dispatched to Operation</Tag>
-            )}
-            {step === 5 && (
-              <Tag color="blue" icon={<InboxOutlined />}>Received</Tag>
-            )}
-            {step === 6 && (
-              <Tag color="success" icon={<CheckCircleOutlined />}>Closed</Tag>
-            )}
-          </Space>
-        );
+                  {(uploadedFiles[record.key]?.length > 0 || sr?.designFileUrl) && (
+                    <Space size={4}>
+                      <Tag color="green" style={{ fontSize: 11 }}>✓ Uploaded</Tag>
+                      {sr?.designFileUrl && (
+                        <a href={sr.designFileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#B11E6A' }}>View</a>
+                      )}
+                    </Space>
+                  )}
+                  <Button
+                    size="small"
+                    type="primary"
+                    style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                    disabled={!uploadedFiles[record.key]?.length}
+                    title={!uploadedFiles[record.key]?.length ? 'Upload design first' : ''}
+                    onClick={async () => {
+                      const ord = apiOrders.find((o) => o.id === record.orderId);
+                      try {
+                        const queueType = record.key?.endsWith('-box') ? 'Box'
+                          : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
+                          : 'Sticker';
+                        const existing = findStickerReq(record);
+                        let stickerId;
+                        if (existing) {
+                          stickerId = existing._id;
+                        } else {
+                          const created = await createStickerRequest({
+                            orderId: ord?.key,
+                            hotelLogo: record.hotelLogo,
+                            product: record.product,
+                            stickerType: queueType,
+                            quantity: record.qty,
+                            stickerSize: record.size,
+                          }).unwrap();
+                          stickerId = created.data._id;
+                        }
+                        await uploadStickerDesign({ id: stickerId, files: uploadedFiles[record.key] || [] }).unwrap();
+                        advanceStep(record.key, 1);
+                        enqueueSnackbar(`Design sent for approval — ${ord?.salesPerson || 'Sales'} & Operations team notified for ${record.orderId}`, { variant: 'info' });
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send design for approval', { variant: 'error' });
+                      }
+                    }}
+                  >
+                    Send for Approval
+                  </Button>
+                </>
+              )}
+              {step === 1 && (
+                <>
+                  <Tag color="gold">Waiting for Approval</Tag>
+                  {(uploadedFiles[record.key]?.length > 0 || sr?.designFileUrl) ? (
+                    <Space size={4}>
+                      <Tag color="green" style={{ fontSize: 11 }}>✓ Design Uploaded</Tag>
+                      {sr?.designFileUrl && (
+                        <a href={sr.designFileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#B11E6A' }}>View</a>
+                      )}
+                    </Space>
+                  ) : (
+                    <Upload
+                      beforeUpload={() => false}
+                      fileList={[]}
+                      onChange={({ fileList }) => handleUpload(record.key, fileList)}
+                      maxCount={1}
+                      accept="image/*,.pdf"
+                      showUploadList={false}
+                    >
+                      <Button size="small" icon={<UploadOutlined />} danger>Upload Design *</Button>
+                    </Upload>
+                  )}
+                  {/* Sales approval */}
+                  {sr?.salesApproved ? (
+                    <Tooltip title={`Sales approved by ${sr.salesApprovedBy?.fullName || 'Sales'} on ${sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
+                      <Tag color="green" icon={<CheckCircleOutlined />} style={{ cursor: 'default' }}>
+                        Sales ✓ {sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleDateString('en-IN') : ''}
+                      </Tag>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip title="Sales person approval">
+                      <Button
+                        size="small"
+                        icon={<CheckCircleOutlined />}
+                        style={{ borderColor: '#52c41a', color: '#52c41a' }}
+                        onClick={async () => {
+                          try {
+                            const res = await approveStickerRequest({ id: sr?._id || record.key, role: 'sales' }).unwrap();
+                            enqueueSnackbar(
+                              res?.data?.status === 'Approved'
+                                ? `${record.orderId} fully approved — printing can start`
+                                : 'Sales approved — awaiting Ops Head',
+                              { variant: 'success' },
+                            );
+                            if (res?.data?.status === 'Approved') {
+                              // Stay on the Sticker tab — the item moves to Box/Frosted
+                              // only after Print (step 2 → 3), per the production flow.
+                              advanceStep(record.key, 2);
+                            }
+                          } catch (err) {
+                            enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                          }
+                        }}
+                      >
+                        Sales OK
+                      </Button>
+                    </Tooltip>
+                  )}
+                  {/* Ops Head approval */}
+                  {sr?.opsHeadApproved ? (
+                    <Tooltip title={`Ops approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
+                      <Tag color="blue" icon={<CheckCircleOutlined />} style={{ cursor: 'default' }}>
+                        Ops ✓ {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+                      </Tag>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip title="Operations head approval">
+                      <Button
+                        size="small"
+                        icon={<CheckCircleOutlined />}
+                        style={{ borderColor: '#1677ff', color: '#1677ff' }}
+                        onClick={async () => {
+                          try {
+                            const res = await approveStickerRequest({ id: sr?._id || record.key, role: 'opsHead' }).unwrap();
+                            enqueueSnackbar(
+                              res?.data?.status === 'Approved'
+                                ? `${record.orderId} fully approved — printing can start`
+                                : 'Ops Head approved — awaiting Sales',
+                              { variant: 'success' },
+                            );
+                            if (res?.data?.status === 'Approved') {
+                              // Stay on the Sticker tab — the item moves to Box/Frosted
+                              // only after Print (step 2 → 3), per the production flow.
+                              advanceStep(record.key, 2);
+                            }
+                          } catch (err) {
+                            enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                          }
+                        }}
+                      >
+                        Ops OK
+                      </Button>
+                    </Tooltip>
+                  )}
+                  <Button
+                    size="small"
+                    icon={<MessageOutlined />}
+                    style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
+                    onClick={async () => {
+                      const ord = apiOrders.find((o) => o.id === record.orderId);
+                      try {
+                        await sendToStickerTeam({ id: sr?._id || record.key, orderId: record.orderId, type: teamSendType }).unwrap();
+                        enqueueSnackbar(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`, { variant: 'success' });
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send WhatsApp notification', { variant: 'error' });
+                      }
+                    }}
+                  >
+                    WhatsApp
+                  </Button>
+                </>
+              )}
+              {step === 2 && (
+                <>
+                  <Tag color="green">Approved</Tag>
+                  {/* Show who approved and when */}
+                  {sr && (
+                    <Space direction="vertical" size={2}>
+                      {sr.salesApproved && (
+                        <Text style={{ fontSize: 10, color: '#52c41a' }}>
+                          Sales: {sr.salesApprovedBy?.fullName || '—'} · {sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleDateString('en-IN') : '—'}
+                        </Text>
+                      )}
+                      {sr.opsHeadApproved && (
+                        <Text style={{ fontSize: 10, color: '#1677ff' }}>
+                          Ops: {sr.opsHeadApprovedBy?.fullName || '—'} · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : '—'}
+                        </Text>
+                      )}
+                    </Space>
+                  )}
+                  <Button
+                    size="small"
+                    icon={<PrinterOutlined />}
+                    style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff' }}
+                    onClick={async () => {
+                      const ord = apiOrders.find((o) => o.id === record.orderId);
+                      try {
+                        let srId = sr?._id;
+                        if (!srId) {
+                          // SR never created (design step was skipped) — create it now so the
+                          // box/frosted queue can find it after the RTK refetch.
+                          const created = await createStickerRequest({
+                            orderId: ord?.key,
+                            hotelLogo: record.hotelLogo,
+                            product: record.product,
+                            stickerType: 'Sticker',
+                            quantity: record.qty,
+                            stickerSize: record.size,
+                          }).unwrap();
+                          srId = created.data._id;
+                        }
+                        await updateStickerStatus({ id: srId, status: 'In Process' }).unwrap();
+                        advanceStep(record.key, 3);
+                        const dest = record.packagingType;
+                        if (dest === 'box') {
+                          setActiveTab('box');
+                          enqueueSnackbar('Printing started — item moved to Box tab', { variant: 'info' });
+                        } else if (dest === 'frosted') {
+                          setActiveTab('frosted');
+                          enqueueSnackbar('Printing started — item moved to Frosted Ziplock tab', { variant: 'info' });
+                        }
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to start printing', { variant: 'error' });
+                      }
+                    }}
+                  >
+                    Print
+                  </Button>
+                </>
+              )}
+              {step === 3 && (
+                <>
+                  <Tag color="magenta">Printing</Tag>
+                  <Button
+                    size="small"
+                    icon={<TruckOutlined />}
+                    style={{ background: '#722ed1', borderColor: '#722ed1', color: '#fff' }}
+                    onClick={() => {
+                      setSelectedQueueItem(record);
+                      dispatchForm.setFieldsValue({
+                        orderId: record.orderId,
+                        dispatchDate: new Date().toLocaleDateString('en-IN'),
+                        dispatchTime: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                      });
+                      setDispatchOpen(true);
+                    }}
+                  >
+                    Dispatch to Operation
+                  </Button>
+                </>
+              )}
+              {step === 4 && (
+                <Tag color="purple" icon={<TruckOutlined />}>Dispatched to Operation</Tag>
+              )}
+              {step === 5 && (
+                <Tag color="blue" icon={<InboxOutlined />}>Received</Tag>
+              )}
+              {step === 6 && (
+                <Tag color="success" icon={<CheckCircleOutlined />}>Closed</Tag>
+              )}
+            </Space>
+          );
+        },
       },
-    },
-  ];
+    ];
+  };
 
   const openRequestModal = (type) => {
     setRequestType(type);
     requestForm.resetFields();
+    // Auto-fill the automation vendor for this type
+    const autoKey = type === 'Frosted Ziplock' ? 'Ziplock' : type;
+    const autoId = automationVendors[autoKey];
+    if (autoId) requestForm.setFieldsValue({ vendorId: autoId });
     setRequestOpen(true);
   };
 
@@ -1055,6 +1095,38 @@ export default function Operations() {
               <p style={{ fontSize: 12, color: '#999', marginBottom: 0 }}>Supports: JPG, PNG, PDF, AI, SVG</p>
             </Upload.Dragger>
           </Form.Item>
+          {/* Vendor / Team Member selection per type */}
+          <Form.Item
+            label={
+              <span>
+                Assign to Vendor / Team Member
+                {automationVendors[requestType === 'Frosted Ziplock' ? 'Ziplock' : requestType] && (
+                  <Tag style={{ marginLeft: 8, borderRadius: 8, background: '#B11E6A', color: '#fff', border: 'none', fontSize: 10 }}>Auto-filled</Tag>
+                )}
+              </span>
+            }
+            name="vendorId"
+          >
+            <Select
+              placeholder={`Select ${requestType} vendor or team member`}
+              allowClear
+              options={(printingVendorsByType[
+                requestType === 'Sticker' ? 'sticker'
+                : requestType === 'Box' ? 'box'
+                : 'frosted'
+              ] || []).map(opt => ({
+                value: opt.value,
+                label: (
+                  <span>
+                    {opt.label}
+                    {opt.optionType === 'user' && (
+                      <Tag style={{ marginLeft: 6, borderRadius: 6, fontSize: 10 }} color="blue">Team</Tag>
+                    )}
+                  </span>
+                ),
+              }))}
+            />
+          </Form.Item>
           <Form.Item label="Special Instructions" name="instruction">
             <Input.TextArea rows={4} placeholder="Any special instructions for design team..." />
           </Form.Item>
@@ -1195,7 +1267,9 @@ export default function Operations() {
               const ord = apiOrders.find((o) => o.id === selectedQueueItem?.orderId);
               try {
                 if (ord) {
-                  await updateOrderStatus({ id: ord.key, operationStage: 'Dispatch', stockStatus: 'Dispatched' }).unwrap();
+                  await updateOrderStatus({ id: ord.key, operationStage: 'Dispatch', stockStatus: 'Dispatched', printingStatus: 'Yet to Receive' }).unwrap();
+                  setPrintingStatuses((prev) => ({ ...prev, [ord.id]: 'Yet to Receive' }));
+                  setDispatchTimes((prev) => ({ ...prev, [ord.id]: { date: vals.dispatchDate, time: vals.dispatchTime } }));
                 }
                 setSelectedQueueItem((prev) => ({ ...prev, dispatchDate: vals.dispatchDate, dispatchTime: vals.dispatchTime }));
                 if (selectedQueueItem) advanceStep(selectedQueueItem.key, 4);

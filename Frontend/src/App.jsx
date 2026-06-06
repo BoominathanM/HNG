@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ConfigProvider, theme as antTheme } from 'antd';
+import { ConfigProvider, theme as antTheme, Typography } from 'antd';
 import enUS from 'antd/locale/en_US';
 import { Provider, useSelector } from 'react-redux';
 import { SnackbarProvider } from 'notistack';
@@ -32,10 +32,35 @@ import VendorsSuppliers from './pages/VendorsSuppliers';
 import WhatsAppIntegration from './pages/Integration/WhatsAppIntegration';
 import AIIntegration from './pages/Integration/AIIntegration';
 
+const { Text } = Typography;
+
 function PrivateRoute() {
   const isAuthenticated = useSelector((s) => s.auth.isAuthenticated);
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <AppLayout />;
+}
+
+function PermissionRoute({ module, children }) {
+  const user = useSelector((s) => s.auth.user);
+  if (!user) return <Navigate to="/login" replace />;
+  // Super Admin and Admin roles bypass all permission checks
+  if (!module || user.role === 'Super Admin' || user.role === 'Admin') return children;
+  // Normalize permissions in case they're a Mongoose Map instance
+  const rawPerms = user.permissions;
+  const perms = rawPerms instanceof Map
+    ? Object.fromEntries(rawPerms)
+    : (rawPerms && typeof rawPerms === 'object' ? rawPerms : {});
+  const perm = perms[module];
+  if (perm?.read !== true) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
+        <span style={{ fontSize: 48 }}>🔒</span>
+        <Text strong style={{ fontSize: 20 }}>Access Restricted</Text>
+        <Text type="secondary">You don't have permission to access this page. Contact your administrator.</Text>
+      </div>
+    );
+  }
+  return children;
 }
 
 function ThemedApp() {
@@ -54,26 +79,26 @@ function ThemedApp() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<PrivateRoute />}>
-              <Route index element={<Dashboard />} />
-              <Route path="/sales" element={<Sales />} />
-              <Route path="/operations" element={<Operations />} />
-              <Route path="/operations/:id" element={<OperationDetail />} />
-              <Route path="/tasks" element={<Tasks />} />
-              <Route path="/dispatch" element={<Dispatch />} />
-              <Route path="/dispatch/:id" element={<DispatchDetail />} />
-              <Route path="/staff" element={<Staff />} />
-              <Route path="/inventory" element={<Inventory />} />
-              <Route path="/purchase" element={<Purchase />} />
-              <Route path="/billing" element={<Billing />} />
-              <Route path="/parties-ledger" element={<PartiesLedger />} />
-              <Route path="/vendors-suppliers" element={<VendorsSuppliers />} />
-              <Route path="/financial" element={<Financial />} />
-              <Route path="/expenses" element={<Expenses />} />
-              <Route path="/reports" element={<Reports />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/notifications" element={<Notifications />} />
-              <Route path="/integration/whatsapp" element={<WhatsAppIntegration />} />
-              <Route path="/integration/ai" element={<AIIntegration />} />
+              <Route index element={<PermissionRoute module="Dashboard"><Dashboard /></PermissionRoute>} />
+              <Route path="/sales" element={<PermissionRoute module="Sales Team"><Sales /></PermissionRoute>} />
+              <Route path="/operations" element={<PermissionRoute module="Operations"><Operations /></PermissionRoute>} />
+              <Route path="/operations/:id" element={<PermissionRoute module="Operations"><OperationDetail /></PermissionRoute>} />
+              <Route path="/tasks" element={<PermissionRoute module="Task Management"><Tasks /></PermissionRoute>} />
+              <Route path="/dispatch" element={<PermissionRoute module="Dispatch Team"><Dispatch /></PermissionRoute>} />
+              <Route path="/dispatch/:id" element={<PermissionRoute module="Dispatch Team"><DispatchDetail /></PermissionRoute>} />
+              <Route path="/staff" element={<PermissionRoute module="Staff Management"><Staff /></PermissionRoute>} />
+              <Route path="/inventory" element={<PermissionRoute module="Inventory"><Inventory /></PermissionRoute>} />
+              <Route path="/purchase" element={<PermissionRoute module="Purchase"><Purchase /></PermissionRoute>} />
+              <Route path="/billing" element={<PermissionRoute module="Billing"><Billing /></PermissionRoute>} />
+              <Route path="/parties-ledger" element={<PermissionRoute module="Parties & Ledger"><PartiesLedger /></PermissionRoute>} />
+              <Route path="/vendors-suppliers" element={<PermissionRoute module="Vendors & Suppliers"><VendorsSuppliers /></PermissionRoute>} />
+              <Route path="/financial" element={<PermissionRoute module="Financial"><Financial /></PermissionRoute>} />
+              <Route path="/expenses" element={<PermissionRoute module="Expenses"><Expenses /></PermissionRoute>} />
+              <Route path="/reports" element={<PermissionRoute module="Reports"><Reports /></PermissionRoute>} />
+              <Route path="/settings" element={<PermissionRoute module="Settings"><Settings /></PermissionRoute>} />
+              <Route path="/notifications" element={<PermissionRoute module="Notifications"><Notifications /></PermissionRoute>} />
+              <Route path="/integration/whatsapp" element={<PermissionRoute module="Integration"><WhatsAppIntegration /></PermissionRoute>} />
+              <Route path="/integration/ai" element={<PermissionRoute module="Integration"><AIIntegration /></PermissionRoute>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

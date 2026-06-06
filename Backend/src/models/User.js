@@ -1,16 +1,9 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
-const permissionSchema = new mongoose.Schema({
-  read: { type: Boolean, default: false },
-  add: { type: Boolean, default: false },
-  edit: { type: Boolean, default: false },
-  delete: { type: Boolean, default: false },
-}, { _id: false });
-
 const MODULES = [
   'Dashboard','Sales Team','Operations','Task Management','Dispatch Team',
-  'Staff Management','Inventory','Purchase','Billing','Parties & Ledger',
+  'Staff Management','Inventory','Purchase','Vendors & Suppliers','Billing','Parties & Ledger',
   'Financial','Expenses','Reports','Notifications','Integration','Settings',
 ];
 
@@ -25,13 +18,14 @@ const userSchema = new mongoose.Schema({
   avatarUrl: String,
   permissions: {
     type: Map,
-    of: permissionSchema,
+    of: mongoose.Schema.Types.Mixed,
     default: () => {
       const p = {};
       MODULES.forEach((m) => { p[m] = { read: false, add: false, edit: false, delete: false }; });
       return p;
     },
   },
+  tabAccess: { type: mongoose.Schema.Types.Mixed, default: {} },
   // Sales Targets
   targetOldHotel: { type: Number, default: 0 },
   targetNewHotel: { type: Number, default: 0 },

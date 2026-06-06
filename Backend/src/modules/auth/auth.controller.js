@@ -16,7 +16,9 @@ const sendTokens = async (user, statusCode, res) => {
   user.refreshToken = refreshToken;
   await user.save({ validateBeforeSave: false });
 
-  const userObj = user.toObject();
+  // flattenMaps: true converts Mongoose Map fields (permissions, tabAccess) to plain JS objects
+  // so they serialize correctly in JSON (without it, Maps become "{}")
+  const userObj = user.toObject({ flattenMaps: true });
   delete userObj.password;
   delete userObj.refreshToken;
 
@@ -67,7 +69,10 @@ exports.logout = asyncHandler(async (req, res) => {
 
 exports.getMe = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
-  res.status(200).json({ success: true, data: { user } });
+  const userObj = user.toObject({ flattenMaps: true });
+  delete userObj.password;
+  delete userObj.refreshToken;
+  res.status(200).json({ success: true, data: { user: userObj } });
 });
 
 exports.changePassword = asyncHandler(async (req, res, next) => {

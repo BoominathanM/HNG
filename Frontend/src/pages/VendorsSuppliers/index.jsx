@@ -25,6 +25,9 @@ import {
   useUpdateVendorStatusMutation,
   useGenerateAiSummaryMutation,
   useCreateExpenseMutation,
+  useGetUsersQuery,
+  useGetCompanySettingsQuery,
+  useUpdateCompanySettingsMutation,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -123,6 +126,31 @@ export default function VendorsSuppliers() {
   const [vendorBillScanLoading, setVendorBillScanLoading] = useState(false);
   const [vendorBillForm] = Form.useForm();
   const [purchaseExpenses, setPurchaseExpenses] = useState([]);
+
+  /* ── Vendor users (from Settings > Users with dept = Vendors) ── */
+  const { data: usersData } = useGetUsersQuery();
+  const vendorUsers = useMemo(() => {
+    const all = usersData?.data || [];
+    return all.filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock'].includes(u.role));
+  }, [usersData]);
+
+  /* ── Company settings (for automation vendors) ── */
+  const { data: companyData } = useGetCompanySettingsQuery();
+  const [updateCompanyMutation] = useUpdateCompanySettingsMutation();
+  const automationVendors = useMemo(() => {
+    const raw = companyData?.data?.automationVendors;
+    if (!raw) return {};
+    return raw instanceof Map ? Object.fromEntries(raw) : raw;
+  }, [companyData]);
+
+  const setAutomationVendor = async (type, userId) => {
+    try {
+      await updateCompanyMutation({ automationVendors: { ...automationVendors, [type]: userId } }).unwrap();
+      enqueueSnackbar(`${type} automation vendor set`, { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Failed to save automation vendor', { variant: 'error' });
+    }
+  };
 
   /* ── Printing Suppliers state (loaded from API above) ── */
   const [printingSearch, setPrintingSearch] = useState('');
@@ -488,6 +516,56 @@ export default function VendorsSuppliers() {
                           </Button>
                         </Space>
                       </div>
+
+                      {/* ── Vendor Team Members (users with department = Vendors) ── */}
+                      {vendorUsers.length > 0 && (
+                        <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, background: isDark ? '#1a0f14' : '#fff8fb', border: '1px solid #B11E6A22' }}>
+                          <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 10, fontSize: 13 }}>
+                            Vendor Team Members
+                          </Text>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 12 }}>
+                            Select one automation vendor per type — tasks will be auto-assigned to them for Sticker / Box / Ziplock orders.
+                          </Text>
+                          {['Sticker', 'Box', 'Ziplock'].map(type => {
+                            const typeUsers = vendorUsers.filter(u => u.role === type);
+                            if (!typeUsers.length) return null;
+                            return (
+                              <div key={type} style={{ marginBottom: 10 }}>
+                                <Tag color={type === 'Sticker' ? 'blue' : type === 'Box' ? 'green' : 'orange'} style={{ marginBottom: 8, fontWeight: 600, borderRadius: 8 }}>{type}</Tag>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                  {typeUsers.map(u => {
+                                    const isAuto = automationVendors[type] === u._id;
+                                    return (
+                                      <div
+                                        key={u._id}
+                                        style={{
+                                          display: 'flex', alignItems: 'center', gap: 8,
+                                          padding: '6px 12px', borderRadius: 8,
+                                          border: isAuto ? '1.5px solid #B11E6A' : `1.5px solid ${borderColor}`,
+                                          background: isAuto ? '#B11E6A08' : cardBg,
+                                          cursor: 'pointer',
+                                        }}
+                                        onClick={() => setAutomationVendor(type, u._id)}
+                                      >
+                                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: isAuto ? '#B11E6A' : '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: isAuto ? '#fff' : '#555', flexShrink: 0 }}>
+                                          {(u.fullName || 'U')[0].toUpperCase()}
+                                        </div>
+                                        <div>
+                                          <Text strong style={{ fontSize: 13, color: isAuto ? '#B11E6A' : textColor, display: 'block', lineHeight: 1.2 }}>{u.fullName}</Text>
+                                          <Text style={{ fontSize: 11, color: '#aaa' }}>{u.email}</Text>
+                                        </div>
+                                        {isAuto && (
+                                          <Tag style={{ marginLeft: 4, borderRadius: 8, background: '#B11E6A', color: '#fff', border: 'none', fontSize: 10 }}>Auto</Tag>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
 
                       <Table
                         size="small"

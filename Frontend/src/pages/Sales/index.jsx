@@ -10,8 +10,8 @@ import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
   FileTextOutlined, PhoneOutlined, MailOutlined, UserOutlined,
-  WhatsAppOutlined, MinusCircleOutlined, CheckOutlined,
-  DownloadOutlined, UploadOutlined, ArrowRightOutlined,
+  WhatsAppOutlined, MinusCircleOutlined, CheckOutlined, CheckCircleOutlined,
+  DownloadOutlined, UploadOutlined, ArrowRightOutlined, PrinterOutlined,
   BankOutlined, EnvironmentOutlined, TeamOutlined, CalendarOutlined,
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
@@ -55,6 +55,8 @@ import {
   useGetComplaintHistoryQuery,
   useGetItemsQuery,
   useUploadFilesMutation,
+  useGetStickerRequestsQuery,
+  useApproveStickerRequestMutation,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -1148,6 +1150,8 @@ export default function Sales() {
   const [createComplaintMutation] = useCreateComplaintMutation();
   const [updateComplaintStatusMutation] = useUpdateComplaintStatusMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
+  const { data: stickerData } = useGetStickerRequestsQuery();
+  const [approveStickerRequest] = useApproveStickerRequestMutation();
 
   // Reusable Cloudinary upload handler for AntD Upload components.
   const makeCloudinaryRequest = (folder) => async ({ file, onSuccess, onError, onProgress }) => {
@@ -3424,6 +3428,123 @@ export default function Sales() {
             <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 14 }}>ORDER PROGRESS</Text>
             <Steps current={orderCurrentStep} items={ORDER_STEPS} />
           </Card>
+
+          {/* Sticker Design Approval — shows when sticker requests exist for this order */}
+          {(() => {
+            const orderStickerReqs = (stickerData?.data || []).filter(
+              (sr) => sr.orderId?.orderCode === o.oid || String(sr.orderId?._id || sr.orderId) === String(o.key),
+            );
+            if (orderStickerReqs.length === 0) return null;
+            return (
+              <Card
+                style={{ borderRadius: 14, marginBottom: 20, border: '2px solid #B11E6A33', boxShadow: '0 4px 20px rgba(177,30,106,0.10)', background: cardBg }}
+                styles={{ body: { padding: '16px 20px' } }}
+                title={
+                  <Space>
+                    <div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} />
+                    <PrinterOutlined style={{ color: '#B11E6A' }} />
+                    <span style={{ fontWeight: 700 }}>Sticker Design Approval</span>
+                    <Tag color="warning" style={{ borderRadius: 12 }}>{orderStickerReqs.length} design{orderStickerReqs.length > 1 ? 's' : ''}</Tag>
+                  </Space>
+                }
+              >
+                <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                  {orderStickerReqs.map((sr) => (
+                    <div
+                      key={sr._id}
+                      style={{
+                        padding: '12px 16px',
+                        borderRadius: 10,
+                        border: `1px solid ${sr.status === 'Approved' ? 'rgba(82,196,26,0.3)' : 'rgba(177,30,106,0.2)'}`,
+                        background: isDark
+                          ? 'rgba(255,255,255,0.03)'
+                          : sr.status === 'Approved'
+                          ? 'rgba(82,196,26,0.03)'
+                          : 'rgba(177,30,106,0.03)',
+                      }}
+                    >
+                      <Row align="middle" gutter={[12, 8]}>
+                        <Col flex="auto">
+                          <Space wrap size={6}>
+                            <Text strong style={{ color: textColor, fontSize: 13 }}>{sr.product || '—'}</Text>
+                            <Tag color={sr.stickerType === 'Box' ? 'green' : sr.stickerType === 'Frosted Ziplock' ? 'orange' : 'blue'} style={{ borderRadius: 10, fontSize: 11 }}>
+                              {sr.stickerType}
+                            </Tag>
+                            <Tag color={
+                              sr.status === 'Approved' ? 'success' :
+                              sr.status === 'Waiting for Approval' ? 'warning' :
+                              sr.status === 'In Process' || sr.status === 'Printing' ? 'processing' : 'default'
+                            } style={{ borderRadius: 10, fontSize: 11 }}>
+                              {sr.status}
+                            </Tag>
+                          </Space>
+                        </Col>
+                        <Col>
+                          <Space wrap size={6}>
+                            {/* Design file view */}
+                            {sr.designFileUrl ? (
+                              <Button
+                                size="small"
+                                icon={<EyeOutlined />}
+                                onClick={() => window.open(sr.designFileUrl, '_blank')}
+                              >
+                                View Design
+                              </Button>
+                            ) : (
+                              <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>
+                            )}
+
+                            {/* Sales approval button or approved tag */}
+                            {sr.salesApproved ? (
+                              <Tooltip title={`Approved by ${sr.salesApprovedBy?.fullName || 'Sales'} on ${sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
+                                <Tag color="success" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
+                                  Sales OK · {sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleDateString('en-IN') : ''}
+                                </Tag>
+                              </Tooltip>
+                            ) : (
+                              <Button
+                                size="small"
+                                icon={<CheckCircleOutlined />}
+                                style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff', borderRadius: 6 }}
+                                disabled={!sr.designFileUrl}
+                                title={!sr.designFileUrl ? 'Waiting for design upload from Operations team' : 'Approve this design — Sales sign-off'}
+                                onClick={async () => {
+                                  try {
+                                    const res = await approveStickerRequest({ id: sr._id, role: 'sales' }).unwrap();
+                                    enqueueSnackbar(
+                                      res?.data?.status === 'Approved'
+                                        ? 'Design fully approved — printing can start!'
+                                        : 'Sales approval recorded — awaiting Ops Head approval',
+                                      { variant: 'success' },
+                                    );
+                                  } catch (err) {
+                                    enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve design', { variant: 'error' });
+                                  }
+                                }}
+                              >
+                                Sales OK
+                              </Button>
+                            )}
+
+                            {/* Ops approval — read-only in Sales view */}
+                            {sr.opsHeadApproved ? (
+                              <Tooltip title={`Ops approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
+                                <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
+                                  Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+                                </Tag>
+                              </Tooltip>
+                            ) : (
+                              <Tag color="warning" style={{ borderRadius: 10, fontSize: 11 }}>Awaiting Ops</Tag>
+                            )}
+                          </Space>
+                        </Col>
+                      </Row>
+                    </div>
+                  ))}
+                </Space>
+              </Card>
+            );
+          })()}
 
           <Row gutter={20}>
             <Col xs={24} lg={16}>
