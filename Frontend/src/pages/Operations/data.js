@@ -85,7 +85,7 @@ const isFrostedZiplock = (item, order) => {
 export const buildProductionQueues = (orders = []) => ({
   sticker: orders.flatMap((order) =>
     (order.items || []).map((item, idx) => ({ item, idx }))
-      .filter(({ item }) => item.logoType === 'Sticker' && !isFrostedZiplock(item, order))
+      .filter(({ item }) => (item.logoType === 'Sticker' || item.sticker === 'YES') && !isFrostedZiplock(item, order))
       .map(({ item, idx }) => ({
         key: `${order.id}-${idx}-sticker`,
         orderId: order.id,

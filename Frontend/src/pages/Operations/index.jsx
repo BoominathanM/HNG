@@ -129,7 +129,7 @@ export default function Operations() {
 
   const apiOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
-    hotelLogo: o.clientName || '—', salesPerson: o.assignedTo?.fullName || '—',
+    hotelLogo: o.clientName || '—', salesPerson: o.salesPerson || o.assignedTo?.fullName || '—',
     createdAt: o.createdAt, orderType: o.orderType || 'Sticker',
     orderCategory: o.orderCategory || 'ORDER',
     clientApproval: o.clientApproval || 'Waiting',
@@ -137,12 +137,12 @@ export default function Operations() {
     printingStatus: o.printingStatus || 'Not Started',
     stockStatus: o.stockStatus || 'Not Received',
     operationStage: o.operationStage || '', taskStatus: o.taskStatus || 'Pending',
-    assignedEmployee: o.assignedTo?.fullName || '', printerSentTotal: o.printerSentTotal || 0,
+    assignedEmployee: o.salesPerson || o.assignedTo?.fullName || '', printerSentTotal: o.printerSentTotal || 0,
     printerVerified: o.printerVerified || false, inventoryStock: o.inventoryStock || 0,
     orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
     specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || '',
     totalAmount: o.total || 0, advance: o.advancePaid || 0,
-    expectedDelivery: o.expectedDelivery, isUrgent: o.isUrgent || false,
+    expectedDelivery: o.expectedDeliveryDate || o.leadId?.orderDeliveryDate || null, isUrgent: o.isUrgent || false,
     items: o.items || [], readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || '',
     paymentProofs: o.paymentProofs || [],
@@ -173,7 +173,34 @@ export default function Operations() {
 
   const [queueSteps, setQueueSteps] = useState({});
 
-  const getQueueStep = (item) => queueSteps[item.key] ?? 0;
+  // Map StickerRequest.status → queue step number
+  const stickerStatusToStep = (status) => {
+    if (status === 'Waiting for Approval' || status === 'Design Confirmation') return 1;
+    if (status === 'Approved') return 2;
+    if (status === 'In Process' || status === 'Printing') return 3;
+    if (status === 'Dispatch') return 4;
+    if (status === 'Received') return 5;
+    if (status === 'Done') return 6;
+    return 0;
+  };
+  // Find the StickerRequest document for a production-queue item (match by order + product + queue type)
+  const findStickerReq = (item) => {
+    const stickerType = item.key?.endsWith('-box') ? 'Box'
+      : item.key?.endsWith('-frosted') ? 'Frosted Ziplock'
+      : 'Sticker';
+    return stickerRequests.find(
+      (s) => s.orderId?.orderCode === item.orderId && s.stickerType === stickerType && s.product === item.product,
+    ) || stickerRequests.find(
+      (s) => s.orderId?.orderCode === item.orderId && s.stickerType === stickerType,
+    );
+  };
+  // Local overrides take priority (immediate post-action feedback);
+  // falls back to DB-backed status so approved/printed steps survive page refresh.
+  const getQueueStep = (item) => {
+    if (queueSteps[item.key] !== undefined) return queueSteps[item.key];
+    const sr = findStickerReq(item);
+    return sr ? stickerStatusToStep(sr.status) : 0;
+  };
   const advanceStep = (itemKey, nextStep) => setQueueSteps((prev) => ({ ...prev, [itemKey]: nextStep }));
 
   const [printingStatuses, setPrintingStatuses] = useState({});
@@ -209,7 +236,7 @@ export default function Operations() {
       isUrgent: apiOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
     }));
     return items.sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
-  }, [teamSendType]);
+  }, [teamSendType, apiOrders, productionQueues]);
 
   const stats = [
     {
@@ -277,8 +304,8 @@ export default function Operations() {
     },
     {
       title: 'Order Delivery Date',
-      dataIndex: 'createdAt',
-      render: (value) => new Date(value).toLocaleDateString('en-IN', { dateStyle: 'medium' }),
+      dataIndex: 'expectedDelivery',
+      render: (value) => value ? new Date(value).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '—',
       responsive: ['md'],
     },
     { title: 'Assigned To', dataIndex: 'assignedEmployee', responsive: ['lg'] },
@@ -520,11 +547,16 @@ export default function Operations() {
                     icon={<UploadOutlined />}
                     style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}
                   >
-                    {uploadedFiles[record.key]?.length ? 'Re-upload' : 'Upload Design'}
+                    {(uploadedFiles[record.key]?.length || findStickerReq(record)?.designFileUrl) ? 'Re-upload' : 'Upload Design'}
                   </Button>
                 </Upload>
-                {uploadedFiles[record.key]?.length > 0 && (
-                  <Tag color="green" style={{ fontSize: 11 }}>✓ Uploaded</Tag>
+                {(uploadedFiles[record.key]?.length > 0 || findStickerReq(record)?.designFileUrl) && (
+                  <Space size={4}>
+                    <Tag color="green" style={{ fontSize: 11 }}>✓ Uploaded</Tag>
+                    {findStickerReq(record)?.designFileUrl && (
+                      <a href={findStickerReq(record).designFileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#B11E6A' }}>View</a>
+                    )}
+                  </Space>
                 )}
                 <Button
                   size="small"
@@ -535,13 +567,32 @@ export default function Operations() {
                   onClick={async () => {
                     const ord = apiOrders.find((o) => o.id === record.orderId);
                     try {
+                      // Production queue items use composite string keys, not StickerRequest ObjectIds.
+                      // Resolve (or create) the real StickerRequest document first.
+                      const queueType = record.key?.endsWith('-box') ? 'Box'
+                        : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
+                        : 'Sticker';
+                      const existing = findStickerReq(record);
+                      let stickerId;
+                      if (existing) {
+                        stickerId = existing._id;
+                      } else {
+                        const created = await createStickerRequest({
+                          orderId: ord?.key,
+                          hotelLogo: record.hotelLogo,
+                          product: record.product,
+                          stickerType: queueType,
+                          quantity: record.qty,
+                          stickerSize: record.size,
+                        }).unwrap();
+                        stickerId = created.data._id;
+                      }
                       await uploadStickerDesign({
-                        id: record._id || record.key,
-                        orderId: record.orderId,
+                        id: stickerId,
                         files: uploadedFiles[record.key] || [],
                       }).unwrap();
                       advanceStep(record.key, 1);
-                      enqueueSnackbar(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team for ${record.orderId}`, { variant: 'info' });
+                      enqueueSnackbar(`Design sent for approval — ${ord?.salesPerson || 'Sales'} & Operations team notified for ${record.orderId}`, { variant: 'info' });
                     } catch (err) {
                       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send design for approval', { variant: 'error' });
                     }
@@ -554,8 +605,13 @@ export default function Operations() {
             {step === 1 && (
               <>
                 <Tag color="gold">Waiting for Approval</Tag>
-                {uploadedFiles[record.key]?.length > 0 ? (
-                  <Tag color="green" style={{ fontSize: 11 }}>✓ Design Uploaded</Tag>
+                {(uploadedFiles[record.key]?.length > 0 || findStickerReq(record)?.designFileUrl) ? (
+                  <Space size={4}>
+                    <Tag color="green" style={{ fontSize: 11 }}>✓ Design Uploaded</Tag>
+                    {findStickerReq(record)?.designFileUrl && (
+                      <a href={findStickerReq(record).designFileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#B11E6A' }}>View</a>
+                    )}
+                  </Space>
                 ) : (
                   <Upload
                     beforeUpload={() => false}
@@ -588,14 +644,21 @@ export default function Operations() {
                   size="small"
                   icon={<CheckCircleOutlined />}
                   style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
-                  disabled={!uploadedFiles[record.key]?.length}
-                  title={!uploadedFiles[record.key]?.length ? 'Upload design file first' : ''}
-                  onClick={() => {
-                    if (!uploadedFiles[record.key]?.length) {
+                  disabled={!uploadedFiles[record.key]?.length && !findStickerReq(record)?.designFileUrl}
+                  title={(!uploadedFiles[record.key]?.length && !findStickerReq(record)?.designFileUrl) ? 'Upload design file first' : ''}
+                  onClick={async () => {
+                    const sr = findStickerReq(record);
+                    if (!uploadedFiles[record.key]?.length && !sr?.designFileUrl) {
                       enqueueSnackbar('Please upload the design file before approving', { variant: 'error' });
                       return;
                     }
-                    advanceStep(record.key, 2);
+                    try {
+                      if (sr) await updateStickerStatus({ id: sr._id, status: 'Approved' }).unwrap();
+                      advanceStep(record.key, 2);
+                      enqueueSnackbar(`Design for ${record.orderId} approved and stored`, { variant: 'success' });
+                    } catch (err) {
+                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve design', { variant: 'error' });
+                    }
                   }}
                 >
                   Approve
@@ -609,7 +672,15 @@ export default function Operations() {
                   size="small"
                   icon={<PrinterOutlined />}
                   style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff' }}
-                  onClick={() => advanceStep(record.key, 3)}
+                  onClick={async () => {
+                    const sr = findStickerReq(record);
+                    try {
+                      if (sr) await updateStickerStatus({ id: sr._id, status: 'In Process' }).unwrap();
+                      advanceStep(record.key, 3);
+                    } catch (err) {
+                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to start printing', { variant: 'error' });
+                    }
+                  }}
                 >
                   Print
                 </Button>
