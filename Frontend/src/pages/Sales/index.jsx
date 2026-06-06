@@ -19,6 +19,7 @@ import {
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
+import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetLeadsQuery,
@@ -963,6 +964,38 @@ export default function Sales() {
   const [orderEditTarget, setOrderEditTarget] = useState(null);
   const [orderEditForm] = Form.useForm();
 
+  const handleDownloadQuotation = (order) => {
+    const linkedQuot = quotationsData.find(
+      q => q.qid === order.quotationCode || String(q._id) === String(order.quotationId)
+    );
+    const src = linkedQuot || order;
+    const products = src.products || [];
+    const items = products.filter(Boolean).map(p => {
+      const qty = Number(p.qty) || 0;
+      const rate = Number(p.rate) || 0;
+      const taxRate = Number(p.gstPercent ?? p.gst ?? 0);
+      const taxAmt = Math.round(qty * rate * taxRate / 100);
+      return { name: p.name || '', qty, unit: p.unit || 'PCS', rate, taxRate, taxAmt, amount: qty * rate + taxAmt };
+    });
+    const data = {
+      items,
+      quot: src.qid || src.quotCode || order.quotationCode || order.oid,
+      date: src.date ? dayjs(src.date).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY'),
+      customer: {
+        name: src.billingName || src.hotelName || src.clientName || '',
+        address: src.detailedAddress || '',
+        city: [src.city, src.state, src.pincode].filter(Boolean).join(', '),
+        mobile: src.phone || '',
+        gstin: src.gstNumber || '',
+        pan: '',
+        placeOfSupply: src.state || '',
+      },
+    };
+    const html = generatePrintHTML('quotation', data);
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (win) { win.document.write(html); win.document.close(); }
+  };
+
   const openOrderEditModal = (order) => {
     setOrderEditTarget(order);
     orderEditForm.setFieldsValue({
@@ -1013,6 +1046,7 @@ export default function Sales() {
         };
         await updateSalesOrderMutation(backendPatch).unwrap();
         setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
+        if (selectedRecord?.key === orderEditTarget.key) setSelectedRecord(updated);
         enqueueSnackbar('Order updated successfully', { variant: 'success' });
         setOrderEditModalOpen(false);
         setOrderEditTarget(null);
@@ -2669,7 +2703,7 @@ export default function Sales() {
             <Button size="small" icon={<EyeOutlined />} onClick={() => openOrderDetail(r)} />
           </Tooltip>
           <Tooltip title="Download Quotation">
-            <Button size="small" icon={<DownloadOutlined />} />
+            <Button size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); handleDownloadQuotation(r); }} />
           </Tooltip>
           <Tooltip title="Edit Delivery & Payment">
             <Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={(e) => { e.stopPropagation(); openOrderEditModal(r); }} />
@@ -3307,6 +3341,8 @@ export default function Sales() {
         kitDisplayUnit: base.kitDisplayUnit || base.displayUnit || full.kitDisplayUnit || full.displayUnit || '',
         kitSize: base.kitSize || full.kitSize || '',
         selectedKit: base.selectedKit || full.selectedKit || '',
+        // splitDates lives on the Order document; list rows may omit it, so always prefer full
+        splitDates: (full.splitDates?.length ? full.splitDates : null) || (base.splitDates?.length ? base.splitDates : null) || [],
       };
       const ORDER_STEPS = [
         { title: 'Confirmed', description: 'Order placed' },
@@ -3349,7 +3385,7 @@ export default function Sales() {
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('orders'); }} style={{ borderRadius: 8 }}>Back to Orders</Button>
             <Space wrap>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(o)}>WhatsApp</Button>
-              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }}>Download Quotation</Button>
+              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} onClick={() => handleDownloadQuotation(o)}>Download Quotation</Button>
               <Button icon={<EditOutlined />} style={{ borderRadius: 8, color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={() => openOrderEditModal(o)}>Edit Delivery & Payment</Button>
               <Button
                 icon={<WarningOutlined />}
@@ -3586,7 +3622,7 @@ export default function Sales() {
                           <Col xs={24} sm={8}>
                             <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PARTIAL DATE</Text>
                             <Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>
-                              {sd.date ? (typeof sd.date === 'string' ? sd.date : sd.date.format?.('YYYY-MM-DD') || String(sd.date)) : '—'}
+                              {sd.date ? dayjs(sd.date).format('DD MMM YYYY') : '—'}
                             </Text>
                           </Col>
                           <Col xs={24} sm={8}>
@@ -5405,7 +5441,7 @@ export default function Sales() {
                     {(record.splitDates || []).map((sd, i) => (
                       <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
                         <Text strong style={{ fontSize: 13, color: '#ff4d4f', display: 'block', marginBottom: 8 }}>
-                          {sd.date ? (typeof sd.date === 'string' ? sd.date : sd.date.format?.('YYYY-MM-DD') || String(sd.date)) : '—'}
+                          {sd.date ? dayjs(sd.date).format('DD MMM YYYY') : '—'}
                         </Text>
                         {(sd.products || (sd.product ? [{ product: sd.product, qty: sd.qty, notes: sd.note }] : [])).filter(Boolean).map((p, pi) => (
                           <Row key={pi} gutter={[16, 4]} style={{ marginBottom: 4 }}>
@@ -6345,17 +6381,22 @@ export default function Sales() {
         <Form form={complaintForm} layout="vertical" style={{ marginTop: 16 }}>
           <Row gutter={16}>
             <Col xs={24}>
-              <Form.Item label="Order ID" name="orderId" rules={[{ required: true, message: 'Please select an Order ID' }]}>
-                {complaintOrder ? (
-                  <Input disabled value={complaintOrder.oid} />
-                ) : (
+              {complaintOrder ? (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Order ID</div>
+                  <div style={{ padding: '6px 12px', background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 6, fontSize: 13, fontWeight: 600, color: '#ff4d4f' }}>
+                    {complaintOrder.oid}
+                  </div>
+                </div>
+              ) : (
+                <Form.Item label="Order ID" name="orderId" rules={[{ required: true, message: 'Please select an Order ID' }]}>
                   <Select placeholder="Select Order ID" showSearch optionFilterProp="children">
                     {ordersData.map(o => (
                       <Option key={o.oid} value={o.oid}>{o.oid} — {o.hotelName}</Option>
                     ))}
                   </Select>
-                )}
-              </Form.Item>
+                </Form.Item>
+              )}
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Raised Date" name="raisedDate">
@@ -6502,10 +6543,16 @@ export default function Sales() {
               const rawColl = getFieldValue('paymentCollection');
               const collection = Array.isArray(rawColl) ? rawColl : [];
               const collTotal = collection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+              // When no collection entries exist yet, fall back to the order's known paid amount
+              // (advance or paidAmount from the list record) so the status reflects reality.
+              const fallbackPaid = !collection.length
+                ? Number(orderEditTarget?.paidAmount || orderEditTarget?.advance || 0)
+                : 0;
+              const effectivePaid = collTotal + fallbackPaid;
               const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
-              const status = orderTotal > 0 && collTotal >= orderTotal
+              const status = orderTotal > 0 && effectivePaid >= orderTotal
                 ? 'Paid'
-                : collTotal > 0
+                : effectivePaid > 0
                 ? 'Partially Paid'
                 : 'Unpaid';
               const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
@@ -6514,9 +6561,9 @@ export default function Sales() {
                 <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
                   <Space size={12}>
-                    {collTotal > 0 && (
+                    {effectivePaid > 0 && (
                       <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
-                        Collected: ₹{collTotal.toLocaleString()} / ₹{orderTotal.toLocaleString()}
+                        Collected: ₹{effectivePaid.toLocaleString()} / ₹{orderTotal.toLocaleString()}
                       </Text>
                     )}
                     <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
