@@ -183,6 +183,7 @@ export default function Operations() {
     specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || '',
     totalAmount: o.total || 0, advance: o.advancePaid || 0,
     expectedDelivery: o.expectedDeliveryDate || o.leadId?.orderDeliveryDate || null, isUrgent: o.isUrgent || false,
+    splitDates: o.splitDates || [],
     items: o.items || [], readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || '',
     paymentProofs: o.paymentProofs || [],
@@ -320,13 +321,16 @@ export default function Operations() {
       title: 'Order ID',
       dataIndex: 'id',
       render: (value, record) => (
-        <Space size={4}>
-          {record.isUrgent && (
-            <Tooltip title="Urgent / Emergency Deliveries (Partial)">
+        <Space size={2} direction="vertical">
+          <Space size={4}>
+            {record.isUrgent && (
               <AlertFilled style={{ color: '#ff4d4f', fontSize: 14 }} />
-            </Tooltip>
+            )}
+            <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
+          </Space>
+          {record.isUrgent && (
+            <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Emergency Order</Tag>
           )}
-          <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
         </Space>
       ),
     },
@@ -443,19 +447,35 @@ export default function Operations() {
       {
         title: 'Order',
         dataIndex: 'orderId',
-        render: (value) => (
-          <Space size={4}>
-            {apiOrders.find((o) => o.id === value)?.isUrgent && (
-              <Tooltip title="Urgent / Emergency Deliveries (Partial)">
+        render: (value, record) => (
+          <Space size={2} direction="vertical">
+            <Space size={4}>
+              {record.isUrgent && (
                 <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
-              </Tooltip>
+              )}
+              <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
+            </Space>
+            {record.isUrgent && (
+              <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Emergency Order</Tag>
             )}
-            <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
           </Space>
         ),
       },
       { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
-      { title: 'Product', dataIndex: 'product' },
+      {
+        title: 'Product',
+        dataIndex: 'product',
+        render: (value, record) => (
+          <Space size={4}>
+            {record.isEmergencyProduct && (
+              <Tooltip title="Emergency / Partial delivery product">
+                <AlertFilled style={{ color: '#ff4d4f', fontSize: 11 }} />
+              </Tooltip>
+            )}
+            <Text style={record.isEmergencyProduct ? { color: '#ff4d4f', fontWeight: 600 } : {}}>{value}</Text>
+          </Space>
+        ),
+      },
       {
         title: label === 'Box' ? 'Size / PVK' : 'Size',
         dataIndex: 'size',
@@ -790,7 +810,11 @@ export default function Operations() {
   };
 
   const renderQueueCard = (type, rows, label) => {
-    const allActive = rows.filter((r) => getQueueStep(r) < 6);
+    // Sort: urgent orders first (stable — so emergency products, already sorted within each
+    // order by buildProductionQueues, stay at the top of their order group)
+    const allActive = rows
+      .filter((r) => getQueueStep(r) < 6)
+      .sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
     const closedRows = rows.filter((r) => getQueueStep(r) === 6);
     const activeRows = allActive.filter((r) => {
       const q = queueSearch.toLowerCase();

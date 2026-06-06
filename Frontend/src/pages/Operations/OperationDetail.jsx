@@ -48,6 +48,7 @@ import {
   useSaveHotelDesignMutation,
   useGetItemsQuery,
   useGetVendorsQuery,
+  useSendToStickerTeamMutation,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -105,6 +106,7 @@ export default function OperationDetail() {
   const [assignTasksPerProduct] = useAssignTasksPerProductMutation();
   const [splitPartialDelivery] = useSplitPartialDeliveryMutation();
   const [saveHotelDesign] = useSaveHotelDesignMutation();
+  const [sendToStickerTeam] = useSendToStickerTeamMutation();
 
   const allOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
@@ -129,6 +131,7 @@ export default function OperationDetail() {
         ? new Date(o.leadId.orderDeliveryDate).toISOString().slice(0, 10)
         : null),
     isUrgent: o.isUrgent || false,
+    splitDates: o.splitDates || [],
     items: (o.items || []).map((it, idx) => ({ ...it, key: it._id ? String(it._id) : String(idx) })),
     readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || o.phone || '',
@@ -246,12 +249,24 @@ export default function OperationDetail() {
       box: productionQueues.box,
       frosted_ziplock: productionQueues.frosted,
     };
-    const items = (queueMap[printingModalType] || []).map((item) => ({
-      ...item,
-      isUrgent: allOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
-    }));
-    return items.sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
-  }, [printingModalType]);
+    const currentOrder = allOrders.find((o) => o.id === id);
+    const splitDates = currentOrder?.splitDates || [];
+    // Build set of emergency product names from splitDates (both formats)
+    const emergencyProducts = new Set();
+    splitDates.forEach((sd) => {
+      (sd.products || []).forEach((ep) => { if (ep.product) emergencyProducts.add(ep.product); });
+      if (sd.product) emergencyProducts.add(sd.product);
+    });
+    // Include ALL products from this order (not just emergency) so sticker/box/ziplock teams see full order
+    const items = (queueMap[printingModalType] || [])
+      .filter((item) => item.orderId === id)
+      .map((item) => ({
+        ...item,
+        isUrgent: currentOrder?.isUrgent || false,
+        isEmergencyProduct: emergencyProducts.has(item.product),
+      }));
+    return items.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
+  }, [printingModalType, id, allOrders, productionQueues]);
 
   const order = allOrders.find((item) => item.id === id);
   const assignedEmployee = order ? { key: order.key, name: order.assignedEmployee } : null;
@@ -262,6 +277,39 @@ export default function OperationDetail() {
     { skip: !order?.hotelLogo }
   );
   const hotelDesigns = hotelDesignsRaw?.data || [];
+
+  // Build map: productName → earliest emergency delivery date (from splitDates, both formats)
+  const emergencyProductMap = useMemo(() => {
+    const map = {};
+    (order?.splitDates || []).forEach((sd) => {
+      const sdDate = sd.date || null;
+      (sd.products || []).forEach((ep) => {
+        if (ep.product && (!map[ep.product] || (sdDate && sdDate < map[ep.product]))) {
+          map[ep.product] = sdDate;
+        }
+      });
+      if (sd.product && (!map[sd.product] || (sdDate && sdDate < map[sd.product]))) {
+        map[sd.product] = sdDate;
+      }
+    });
+    return map;
+  }, [order?.splitDates]);
+
+  // Sort items: emergency products first (by emergency date), then regular products
+  const sortedOrderItems = useMemo(() => {
+    const items = order?.items || [];
+    if (!order?.splitDates?.length) return items;
+    return [...items].sort((a, b) => {
+      const aName = a.product || a.itemName;
+      const bName = b.product || b.itemName;
+      const aDate = emergencyProductMap[aName];
+      const bDate = emergencyProductMap[bName];
+      if (aDate && !bDate) return -1;
+      if (!aDate && bDate) return 1;
+      if (aDate && bDate) return new Date(aDate) - new Date(bDate);
+      return 0;
+    });
+  }, [order?.items, order?.splitDates, emergencyProductMap]);
 
   // Per-product task fan-out: one task per order line item in a single click.
   const handleAssignAllProducts = async () => {
@@ -337,9 +385,23 @@ export default function OperationDetail() {
     {
       title: 'Product',
       key: 'product',
-      render: (_, record) => (
-        <Text strong>{record.itemName || record.name || record.product || '—'}</Text>
-      ),
+      render: (_, record) => {
+        const name = record.itemName || record.name || record.product;
+        const emergencyDate = emergencyProductMap[name];
+        return (
+          <Space direction="vertical" size={2}>
+            <Text strong>{name || '—'}</Text>
+            {emergencyDate && (
+              <Space size={4}>
+                <Tag color="error" icon={<AlertFilled />} style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Emergency</Tag>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {new Date(emergencyDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                </Text>
+              </Space>
+            )}
+          </Space>
+        );
+      },
     },
     { title: 'Print Type', dataIndex: 'logoType', render: (value) => value ? <Tag color="purple">{value}</Tag> : '—' },
     {
@@ -828,7 +890,7 @@ export default function OperationDetail() {
                   styles={{ body: { padding: 0 } }}
                 >
                   <div className="table-responsive" style={{ padding: 4 }}>
-                    <Table dataSource={order.items} rowKey={(r, idx) => r.key || r._id || String(idx)} columns={productColumns} pagination={false} size="small" scroll={{ x: 'max-content' }} />
+                    <Table dataSource={sortedOrderItems} rowKey={(r, idx) => r.key || r._id || String(idx)} columns={productColumns} pagination={false} size="small" scroll={{ x: 'max-content' }} />
                   </div>
                 </Card>
 
@@ -867,15 +929,23 @@ export default function OperationDetail() {
             key="send"
             type="primary"
             style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-            onClick={() => {
+            onClick={async () => {
               const teamLabel =
                 printingModalType === 'sticker_printing'
                   ? 'Sticker Team'
                   : printingModalType === 'box'
                   ? 'Box Team'
                   : 'Ziplock Team';
-              enqueueSnackbar(`Confirmed: ${printingTeamItems.length} item(s) sent to ${teamLabel}`, { variant: 'success' });
-              setPrintingModalOpen(false);
+              try {
+                await sendToStickerTeam({
+                  type: printingModalType,
+                  items: printingTeamItems.map((i) => i.key),
+                }).unwrap();
+                enqueueSnackbar(`${printingTeamItems.length} item(s) sent to ${teamLabel}`, { variant: 'success' });
+                setPrintingModalOpen(false);
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || err?.data || `Failed to send to ${teamLabel}`, { variant: 'error' });
+              }
             }}
           >
             Confirm Send
@@ -883,15 +953,20 @@ export default function OperationDetail() {
         ]}
       >
         <Space direction="vertical" style={{ width: '100%' }} size={16}>
-          {printingTeamItems.filter((i) => i.isUrgent).length > 0 && (
+          {printingTeamItems.length === 0 && (
+            <Text type="secondary" style={{ display: 'block', textAlign: 'center', padding: '16px 0' }}>
+              No products queued for this order yet
+            </Text>
+          )}
+          {printingTeamItems.filter((i) => i.isEmergencyProduct).length > 0 && (
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '6px 12px', borderRadius: 8, background: '#fff2f0', border: '1px solid #ffccc7' }}>
                 <AlertFilled style={{ color: '#ff4d4f' }} />
-                <Text strong style={{ color: '#ff4d4f' }}>Urgent / Emergency Deliveries (Partial)</Text>
-                <Tag color="error">{printingTeamItems.filter((i) => i.isUrgent).length}</Tag>
+                <Text strong style={{ color: '#ff4d4f' }}>Emergency Products</Text>
+                <Tag color="error">{printingTeamItems.filter((i) => i.isEmergencyProduct).length}</Tag>
               </div>
               <Table
-                dataSource={printingTeamItems.filter((i) => i.isUrgent)}
+                dataSource={printingTeamItems.filter((i) => i.isEmergencyProduct)}
                 rowKey="key"
                 size="small"
                 pagination={false}
@@ -900,19 +975,19 @@ export default function OperationDetail() {
                   { title: 'Hotel', dataIndex: 'hotelLogo' },
                   { title: 'Product', dataIndex: 'product' },
                   { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
-                  { title: 'Status', key: 'urgentStatus', render: () => <Tag icon={<AlertFilled />} color="error">Emergency</Tag> },
+                  { title: 'Priority', key: 'urgentStatus', render: () => <Tag icon={<AlertFilled />} color="error">Emergency</Tag> },
                 ]}
               />
             </div>
           )}
-          {printingTeamItems.filter((i) => !i.isUrgent).length > 0 && (
+          {printingTeamItems.filter((i) => !i.isEmergencyProduct).length > 0 && (
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <Text strong>Pending Orders</Text>
-                <Tag>{printingTeamItems.filter((i) => !i.isUrgent).length}</Tag>
+                <Text strong>Regular Products</Text>
+                <Tag>{printingTeamItems.filter((i) => !i.isEmergencyProduct).length}</Tag>
               </div>
               <Table
-                dataSource={printingTeamItems.filter((i) => !i.isUrgent)}
+                dataSource={printingTeamItems.filter((i) => !i.isEmergencyProduct)}
                 rowKey="key"
                 size="small"
                 pagination={false}
@@ -921,7 +996,7 @@ export default function OperationDetail() {
                   { title: 'Hotel', dataIndex: 'hotelLogo' },
                   { title: 'Product', dataIndex: 'product' },
                   { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
-                  { title: 'Status', key: 'pendingStatus', render: () => <Tag color="default">Pending</Tag> },
+                  { title: 'Priority', key: 'pendingStatus', render: () => <Tag color="default">Regular</Tag> },
                 ]}
               />
             </div>

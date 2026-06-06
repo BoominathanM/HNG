@@ -211,19 +211,20 @@ export default function Tasks() {
       render: (v, r) => {
         const isUrgent = r.isEmergency || r.priority === 'Urgent';
         return (
-          <Space size={4} align="center">
+          <Space size={2} direction="vertical">
+            <Space size={4} align="center">
+              {isUrgent && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
+              <Button
+                type="link"
+                style={{ color: isUrgent ? '#ff4d4f' : '#B11E6A', padding: 0, fontWeight: 700 }}
+                onClick={() => { setSelectedTask(r); setTaskDetailOpen(true); }}
+              >
+                {v}
+              </Button>
+            </Space>
             {isUrgent && (
-              <Tooltip title="Emergency / Urgent Task">
-                <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />
-              </Tooltip>
+              <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Emergency Order</Tag>
             )}
-            <Button
-              type="link"
-              style={{ color: isUrgent ? '#ff4d4f' : '#B11E6A', padding: 0, fontWeight: 700 }}
-              onClick={() => { setSelectedTask(r); setTaskDetailOpen(true); }}
-            >
-              {v}
-            </Button>
           </Space>
         );
       },

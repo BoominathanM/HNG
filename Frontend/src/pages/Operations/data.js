@@ -109,6 +109,17 @@ export const PACKAGING_TYPE_LABELS = {
 // from the sticker queue and, in lockstep, added to the box/frosted queue.
 const STICKER_MOVED_ON_STATUSES = new Set(['In Process', 'Printing', 'Dispatch', 'Received', 'Done']);
 
+// Returns a Set of product names that have an emergency delivery date in splitDates.
+// Handles both formats: new {products:[{product}]} and legacy {product} at sd level.
+const getEmergencyProductSet = (order) => {
+  const set = new Set();
+  (order.splitDates || []).forEach((sd) => {
+    (sd.products || []).forEach((ep) => { if (ep.product) set.add(ep.product); });
+    if (sd.product) set.add(sd.product);
+  });
+  return set;
+};
+
 export const buildProductionQueues = (orders = [], stickerRequests = [], queueSteps = {}) => {
   // Find the StickerRequest document for a given order + product combination.
   // Case-insensitive product match to guard against minor name inconsistencies.
@@ -141,8 +152,10 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     // Sticker queue: all items that need sticker printing (logoType=Sticker or sticker=YES),
     // excluding pure frosted/ziplock items that don't need sticker printing.
     // Also excludes items that have already moved on to box/frosted manufacturing.
-    sticker: orders.flatMap((order) =>
-      (order.items || []).map((item, idx) => ({ item, idx }))
+    // Within each order: emergency products (from splitDates) appear first.
+    sticker: orders.flatMap((order) => {
+      const emergencySet = getEmergencyProductSet(order);
+      const items = (order.items || []).map((item, idx) => ({ item, idx }))
         .filter(({ item, idx }) => {
           if (!((item.logoType === 'Sticker' || item.sticker === 'YES') && !isFrostedZiplock(item, order))) return false;
           // Once the item's sticker is printed and it has a box/frosted destination,
@@ -159,28 +172,35 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         })
         .map(({ item, idx }) => {
           const packagingType = getItemPackagingType(item, order);
+          const productName = item.product || item.itemName;
           return {
             key: `${order.id}-${idx}-sticker`,
             orderId: order.id,
             hotelLogo: order.hotelLogo || order.clientName,
-            product: item.product || item.itemName,
+            product: productName,
             qty: item.qty,
-            size: item.size || getDefaultSize(item.product || item.itemName),
+            size: item.size || getDefaultSize(productName),
             status: order.designStatus,
             sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.7),
             verified: order.stockStatus === 'Received',
             note: (order.notifications || [])[0] || '',
             stickerPrinting: 'Yes',
             packagingType, // where this item moves after sticker approval
+            isUrgent: order.isUrgent || false,
+            isEmergencyProduct: emergencySet.has(productName),
           };
-        }),
-    ),
+        });
+      // Emergency products first within this order
+      return items.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
+    }),
 
     // Box queue: items with box packaging.
     // If sticker printing is also needed (sticker=YES), the item only appears here
     // AFTER its sticker has been printed — preventing premature box-queue entry and
     // keeping it out of the sticker tab and box tab simultaneously.
+    // Within each order: emergency products (from splitDates) appear first.
     box: orders.flatMap((order) => {
+      const emergencySet = getEmergencyProductSet(order);
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const packType = getItemPackagingType(item, order);
@@ -203,14 +223,19 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             : 'Box manufacturing',
           stickerPrinting: needsSticker ? 'Yes' : 'No',
           packagingType: 'box',
+          isUrgent: order.isUrgent || false,
+          isEmergencyProduct: emergencySet.has(product),
         });
       });
-      return result;
+      // Emergency products first within this order
+      return result.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
     }),
 
     // Frosted Ziplock queue: items with frosted/ziplock/pouch packaging.
     // Same sticker-first rule applies — only appears here after the sticker is printed.
+    // Within each order: emergency products (from splitDates) appear first.
     frosted: orders.flatMap((order) => {
+      const emergencySet = getEmergencyProductSet(order);
       const result = [];
       (order.items || []).forEach((item, idx) => {
         if (!hasFrostedPackaging(item, order)) return;
@@ -232,9 +257,12 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             : 'Dispatch and received updates should be verified by operations',
           stickerPrinting: needsSticker ? 'Yes' : 'No',
           packagingType: 'frosted',
+          isUrgent: order.isUrgent || false,
+          isEmergencyProduct: emergencySet.has(product),
         });
       });
-      return result;
+      // Emergency products first within this order
+      return result.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
     }),
   };
 };
