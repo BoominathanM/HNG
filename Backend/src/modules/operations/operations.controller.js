@@ -9,7 +9,11 @@ const generateCode = require('../../utils/codeGenerator');
 exports.getOrders = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.status) filter.status = req.query.status;
-  const orders = await Order.find(filter).populate('assignedTo', 'fullName').sort('-createdAt');
+  const orders = await Order.find(filter)
+    .populate('assignedTo', 'fullName')
+    .populate('items.itemId', 'sellingPrice hsnCode discountPercent packingMaterial materialCategory brand currentStock defaultSize')
+    .populate('leadId', 'paymentProofs orderDeliveryDate')
+    .sort('-createdAt');
   res.status(200).json({ success: true, data: orders });
 });
 

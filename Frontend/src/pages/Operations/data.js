@@ -69,48 +69,67 @@ export const getFlowStep = (order) => {
   return 0;
 };
 
+// Returns true when an item (or its parent order's display unit) signals Frosted Ziplock.
+// Checks logoType, item.packaging, and the order-level kitDisplayUnit/displayUnit so that
+// both new orders (logoType set correctly) and legacy orders (only displayUnit stored) are caught.
+const isFrostedZiplock = (item, order) => {
+  // An explicit sticker-printing flag on the item overrides kit-level packaging inference.
+  if (item.sticker === 'YES') return false;
+  if (item.logoType === 'Frosted Ziplock') return true;
+  const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
+  if (pm.includes('ziplock') || pm.includes('frosted')) return true;
+  const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+  return du.includes('ziplock') || du.includes('frosted');
+};
+
 export const buildProductionQueues = (orders = []) => ({
   sticker: orders.flatMap((order) =>
-    (order.items || []).map((item, idx) => ({ item, idx })).filter(({ item }) => item.logoType === 'Sticker').map(({ item, idx }) => ({
-      key: `${order.id}-${idx}-sticker`,
-      orderId: order.id,
-      hotelLogo: order.hotelLogo || order.clientName,
-      product: item.product || item.itemName,
-      qty: item.qty,
-      size: item.size || getDefaultSize(item.product || item.itemName),
-      status: order.designStatus,
-      sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.7),
-      verified: order.stockStatus === 'Received',
-      note: (order.notifications || [])[0] || '',
-    }))
+    (order.items || []).map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.logoType === 'Sticker' && !isFrostedZiplock(item, order))
+      .map(({ item, idx }) => ({
+        key: `${order.id}-${idx}-sticker`,
+        orderId: order.id,
+        hotelLogo: order.hotelLogo || order.clientName,
+        product: item.product || item.itemName,
+        qty: item.qty,
+        size: item.size || getDefaultSize(item.product || item.itemName),
+        status: order.designStatus,
+        sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.7),
+        verified: order.stockStatus === 'Received',
+        note: (order.notifications || [])[0] || '',
+      }))
   ),
   box: orders.flatMap((order) =>
-    (order.items || []).map((item, idx) => ({ item, idx })).filter(({ item }) => item.logoType === 'Box').map(({ item, idx }) => ({
-      key: `${order.id}-${idx}-box`,
-      orderId: order.id,
-      hotelLogo: order.hotelLogo || order.clientName,
-      product: item.product || item.itemName,
-      qty: item.qty,
-      size: item.size,
-      status: order.designStatus,
-      sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.65),
-      verified: false,
-      note: 'Box manufacturing follows same approval flow as sticker printing',
-    }))
+    (order.items || []).map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.logoType === 'Box' && !isFrostedZiplock(item, order))
+      .map(({ item, idx }) => ({
+        key: `${order.id}-${idx}-box`,
+        orderId: order.id,
+        hotelLogo: order.hotelLogo || order.clientName,
+        product: item.product || item.itemName,
+        qty: item.qty,
+        size: item.size,
+        status: order.designStatus,
+        sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.65),
+        verified: false,
+        note: 'Box manufacturing follows same approval flow as sticker printing',
+      }))
   ),
   frosted: orders.flatMap((order) =>
-    (order.items || []).map((item, idx) => ({ item, idx })).filter(({ item }) => item.logoType === 'Frosted Ziplock').map(({ item, idx }) => ({
-      key: `${order.id}-${idx}-frosted`,
-      orderId: order.id,
-      hotelLogo: order.hotelLogo || order.clientName,
-      product: item.product || item.itemName,
-      qty: item.qty,
-      size: item.size,
-      status: order.designStatus,
-      sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.5),
-      verified: order.stockStatus === 'Received',
-      note: 'Dispatch and received updates should be verified by operations',
-    }))
+    (order.items || []).map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => isFrostedZiplock(item, order))
+      .map(({ item, idx }) => ({
+        key: `${order.id}-${idx}-frosted`,
+        orderId: order.id,
+        hotelLogo: order.hotelLogo || order.clientName,
+        product: item.product || item.itemName,
+        qty: item.qty,
+        size: item.size,
+        status: order.designStatus,
+        sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.5),
+        verified: order.stockStatus === 'Received',
+        note: 'Dispatch and received updates should be verified by operations',
+      }))
   ),
 });
 

@@ -1794,7 +1794,7 @@ export default function Sales() {
         gstAmount: lead.gstAmount || 0,
         totalAmount: calcTotal(lead.products),
         total: calcTotal(lead.products),
-        items: (lead.products || []).map(mapOrderItem),
+        items: (lead.products || []).map(p => mapOrderItem(p, lead.kitDisplayUnit || lead.displayUnit || '')),
         products: lead.products || [],
         // Contact + billing fields
         hotelName: lead.hotelName,
@@ -1959,8 +1959,13 @@ export default function Sales() {
 
   // Infer which packaging queue (Sticker / Box / Frosted Ziplock) a product belongs to.
   // Operations builds its Sticker/Box/Frosted queues by filtering order items on logoType.
-  const inferLogoType = (p) => {
-    const hay = `${p?.printing || ''} ${p?.sticker || ''} ${p?.packingMaterial || ''} ${p?.materialCategory || ''} ${p?.logoType || ''}`.toLowerCase();
+  // kitDisplayUnit: order-level display unit (e.g. "ZIPLOCK POUCH") used for kit items that
+  // don't carry their own packingMaterial — so they get routed to the correct ops queue.
+  const inferLogoType = (p, kitDisplayUnit = '') => {
+    // Explicit sticker-printing selection wins over any packaging-type inference,
+    // including the kit-level display unit (e.g. ZIPLOCK_POUCH).
+    if (p?.sticker === 'YES') return 'Sticker';
+    const hay = `${p?.printing || ''} ${p?.packingMaterial || ''} ${p?.materialCategory || ''} ${p?.logoType || ''} ${kitDisplayUnit}`.toLowerCase();
     if (hay.includes('frosted') || hay.includes('ziplock')) return 'Frosted Ziplock';
     if (hay.includes('box')) return 'Box';
     if (hay.includes('sticker')) return 'Sticker';
@@ -1968,30 +1973,39 @@ export default function Sales() {
   };
 
   // Build an order item, carrying the operations/packaging fields the Operations module reads.
-  const mapOrderItem = (p) => ({
-    itemName: p.name || p.kitType || '',
-    name: p.name || p.kitType || '',
-    unit: p.unit,
-    price: Number(p.rate) || 0,
-    rate: Number(p.rate) || 0,
-    qty: Number(p.qty) || 0,
-    gst: Number(p.gst) || 0,
-    lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
-    logoType: inferLogoType(p),
-    size: p.size,
-    boxes: Number(p.boxes) || 0,
-    packaging: p.packingMaterial || p.packaging || '',
-    packingMaterial: p.packingMaterial || p.packaging || '',
-    material: p.materialCategory || p.material || '',
-    materialCategory: p.materialCategory || p.material || '',
-    logo: p.logo,
-    sticker: p.sticker,
-    brand: p.brand,
-    otherSpecs: p.otherSpecs,
-    isKit: p.isKit || false,
-    kitName: p.kitName || '',
-    kitType: p.kitType || '',
-  });
+  // kitDisplayUnit: the order-level kit display unit (e.g. "ZIPLOCK POUCH"); applied to kit
+  // items that don't have their own packingMaterial so Operations routes them correctly.
+  const mapOrderItem = (p, kitDisplayUnit = '') => {
+    const isKitItem = p.isKit || !!p.kitType;
+    const packing = p.packingMaterial || p.packaging || (isKitItem ? kitDisplayUnit : '') || '';
+    return {
+      itemName: p.name || p.kitType || '',
+      name: p.name || p.kitType || '',
+      itemId: p.itemId || undefined,
+      unit: p.unit,
+      price: Number(p.rate) || 0,
+      rate: Number(p.rate) || 0,
+      qty: Number(p.qty) || 0,
+      gst: Number(p.gst) || 0,
+      lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
+      logoType: inferLogoType(p, isKitItem ? kitDisplayUnit : ''),
+      size: p.size || p.defaultSize,
+      boxes: Number(p.boxes) || 0,
+      packaging: packing,
+      packingMaterial: packing,
+      material: p.materialCategory || p.material || '',
+      materialCategory: p.materialCategory || p.material || '',
+      hsnCode: p.hsnCode || '',
+      discountPercent: p.discountPercent,
+      logo: p.logo,
+      sticker: p.sticker,
+      brand: p.brand,
+      otherSpecs: p.otherSpecs,
+      isKit: p.isKit || false,
+      kitName: p.kitName || '',
+      kitType: p.kitType || '',
+    };
+  };
 
   // Old Hotel: auto-fetch existing hotel details (by name + branch) and prefill the lead form.
   const handleOldHotelLookup = async () => {
@@ -2065,7 +2079,7 @@ export default function Sales() {
       billType: q.billType,
       paymentTerms: q.paymentTerms,
       status,
-      items: (q.products || []).map(mapOrderItem),
+      items: (q.products || []).map(p => mapOrderItem(p, q.kitDisplayUnit || q.displayUnit || '')),
       products: q.products || [],
       // Kit / product type info
       productType: q.productType,
@@ -2170,7 +2184,12 @@ export default function Sales() {
       ? 'Partially Paid'
       : 'Unpaid';
     const hasPartial = Array.isArray(values.splitDates) && values.splitDates.length > 0;
-    const proofMeta = (values.paymentProofs || []).map((f) => ({ name: f.name || f.fileName, uid: f.uid }));
+    const proofMeta = (values.paymentProofs || []).map((f) => ({
+      name: f.name || f.originFileObj?.name || 'file',
+      url: f.url || f.response?.url || null,
+      uid: f.uid,
+      size: f.size || f.originFileObj?.size,
+    }));
     const payload = {
       clientName: values.hotelName || values.billingName || orderFromQuotation?.hotelName || 'Client',
       amount: subtotal,
@@ -2185,7 +2204,7 @@ export default function Sales() {
       paymentStatus,
       paidAmount: advancePaid,
       status: 'In Production',
-      items: (values.products || []).map(mapOrderItem),
+      items: (values.products || []).map(p => mapOrderItem(p, values.kitDisplayUnit || values.displayUnit || '')),
       products: values.products || [],
       productType: values.productType,
       selectedKit: values.selectedKit,
@@ -2720,8 +2739,21 @@ export default function Sales() {
   if (viewMode !== 'table') {
 
     // ── Shared helpers for detail views ────────────────────────────
-    const DetailProductCards = ({ products = [], totalAmount }) => (
+    const DetailProductCards = ({ products = [], totalAmount, kitDisplayUnit, kitSize, kitName }) => {
+      const kitProds = products.filter(p => p && (p.isKit || p.kitType));
+      const effectiveKitName = kitName || (kitProds.length > 0 ? (kitProds[0].kitName || kitProds[0].kitType || null) : null);
+      const effectiveDisplayUnit = (kitDisplayUnit || '').replace(/_/g, ' ');
+      return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {/* Kit header row — shown when there are kit products with a name or display unit */}
+        {(effectiveKitName || effectiveDisplayUnit) && kitProds.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.18)' }}>
+            <GiftOutlined style={{ color: '#722ed1' }} />
+            {effectiveKitName && <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Kit: {effectiveKitName}</Text>}
+            {effectiveDisplayUnit && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>{effectiveDisplayUnit}</Tag>}
+            {kitSize && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{kitSize}</Tag>}
+          </div>
+        )}
         {products.map((p, i) => {
           // Normalize: fields may be top-level OR nested under p.specs (legacy)
           const logo            = p.logo            || p.specs?.logo;
@@ -2848,7 +2880,8 @@ export default function Sales() {
           );
         })()}
       </div>
-    );
+      );
+    };
 
     const DetailDeliveryPayment = ({ rec }) => (
       <Row gutter={12}>
@@ -3264,6 +3297,10 @@ export default function Sales() {
         paymentProofs: (full.paymentProofs?.length ? full.paymentProofs : null)
           || (base.paymentProofs?.length ? base.paymentProofs : null)
           || [],
+        // Kit display fields — explicitly merge from full in case list record omitted them
+        kitDisplayUnit: base.kitDisplayUnit || base.displayUnit || full.kitDisplayUnit || full.displayUnit || '',
+        kitSize: base.kitSize || full.kitSize || '',
+        selectedKit: base.selectedKit || full.selectedKit || '',
       };
       const ORDER_STEPS = [
         { title: 'Confirmed', description: 'Order placed' },
@@ -3393,7 +3430,24 @@ export default function Sales() {
               {/* Products */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Order Products & Specifications</span></Space>}>
-                <DetailProductCards products={o.products} totalAmount={o.totalAmount} />
+                {(() => {
+                  // Derive display unit from order-level fields; fall back to the packaging
+                  // of the first kit product so existing orders without kitDisplayUnit still show it.
+                  const kitPs = (o.products || []).filter(p => p && (p.isKit || p.kitType));
+                  const derivedKitDU = o.kitDisplayUnit || o.displayUnit ||
+                    (kitPs.length > 0 ? (kitPs[0].packingMaterial || kitPs[0].packaging || '') : '');
+                  const derivedKitName = (o.selectedKit ? kits.find(k => k._id === o.selectedKit)?.kitName : null) ||
+                    (kitPs.length > 0 ? (kitPs[0].kitName || kitPs[0].kitType || '') : '');
+                  return (
+                    <DetailProductCards
+                      products={o.products}
+                      totalAmount={o.totalAmount}
+                      kitDisplayUnit={derivedKitDU}
+                      kitSize={o.kitSize}
+                      kitName={derivedKitName}
+                    />
+                  );
+                })()}
               </Card>
 
               {/* Urgent / Emergency Deliveries (Partial) */}

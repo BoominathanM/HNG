@@ -46,6 +46,7 @@ import {
   useSplitPartialDeliveryMutation,
   useGetHotelDesignsQuery,
   useSaveHotelDesignMutation,
+  useGetItemsQuery,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -91,6 +92,12 @@ export default function OperationDetail() {
   const [taskForm] = Form.useForm();
   const [assignModalForm] = Form.useForm();
   const { data: ordersData } = useGetOperationOrdersQuery();
+  const { data: invData } = useGetItemsQuery();
+  const invMap = useMemo(() => {
+    const m = {};
+    (invData?.data || []).forEach((i) => { m[i.itemName] = i; });
+    return m;
+  }, [invData]);
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
   const [assignTask] = useAssignTaskMutation();
   const [assignTasksPerProduct] = useAssignTasksPerProductMutation();
@@ -115,18 +122,37 @@ export default function OperationDetail() {
     totalAmount: o.total || 0, advance: o.advancePaidAmount ?? o.advancePaid ?? 0,
     expectedDelivery: o.expectedDeliveryDate
       ? new Date(o.expectedDeliveryDate).toISOString().slice(0, 10)
-      : o.expectedDelivery,
+      : o.expectedDelivery
+      || (o.leadId?.orderDeliveryDate
+        ? new Date(o.leadId.orderDeliveryDate).toISOString().slice(0, 10)
+        : null),
     isUrgent: o.isUrgent || false,
-    items: o.items || [], readiness: o.readiness || {},
+    items: (o.items || []).map((it, idx) => ({ ...it, key: it._id ? String(it._id) : String(idx) })),
+    readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || o.phone || '',
     contactPerson: o.contactPerson || '',
     billingName: o.billingName || o.clientName || '',
     gstNumber: o.gstNumber || '',
     gstPercent: o.gstPercent,
+    salesPerson: o.salesPerson || o.assignedTo?.fullName || '',
+    orderCategory: o.orderCategory || 'ORDER',
+    billType: o.billType || o.type || 'GST',
     deliveryBy: o.deliveryBy || '',
     transportationBy: o.transportationBy || '',
     forwardingCharge: o.forwardingCharge || false,
-    paymentProofs: o.paymentProofs || [],
+    paymentProofs: (() => {
+      const seen = new Set();
+      return [
+        ...(o.paymentProofs || []),
+        ...(o.leadId?.paymentProofs || []),
+      ].filter((p) => {
+        if (!p || (!p.url && !p.name)) return false;
+        const key = p.url || p.name;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    })(),
   })), [ordersData]);
   const checkStates = useMemo(() => getCheckStateMap(allOrders), [allOrders]);
   const productionQueues = useMemo(() => buildProductionQueues(allOrders), [allOrders]);
@@ -150,7 +176,7 @@ export default function OperationDetail() {
       taskName: record.processTask || '',
       taskType: '',
       orderId: currentOrder.id,
-      product: record.product,
+      product: record.itemName || record.name || record.product || '',
       printing: printingValues[record.key] || undefined,
       assignee: loggedInUser?.name || currentOrder.assignedEmployee,
     });
@@ -278,7 +304,7 @@ export default function OperationDetail() {
       const firstItem = (order.items || [])[0];
       if (firstItem) {
         openAssignModal(
-          { product: firstItem.itemName || firstItem.product, qty: firstItem.qty, key: 0, processTask: '' },
+          { itemName: firstItem.itemName || firstItem.name || firstItem.product, qty: firstItem.qty, key: 0, processTask: '' },
           order
         );
       }
@@ -306,17 +332,25 @@ export default function OperationDetail() {
   const progressPercent = getProgressFromChecks(checks);
 
   const productColumns = [
-    { title: 'Product', dataIndex: 'product' },
-    { title: 'Print Type', dataIndex: 'logoType', render: (value) => <Tag color="purple">{value}</Tag> },
+    {
+      title: 'Product',
+      key: 'product',
+      render: (_, record) => (
+        <Text strong>{record.itemName || record.name || record.product || '—'}</Text>
+      ),
+    },
+    { title: 'Print Type', dataIndex: 'logoType', render: (value) => value ? <Tag color="purple">{value}</Tag> : '—' },
     {
       title: 'Inventory Stock',
-      dataIndex: 'inventoryStock',
+      key: 'inventoryStock',
       align: 'right',
-      render: (stock, record) => {
-        const enough = (stock ?? 0) >= record.qty;
+      render: (_, record) => {
+        const name = record.itemName || record.name;
+        const liveStock = record.itemId?.currentStock ?? invMap[name]?.currentStock ?? record.inventoryStock ?? 0;
+        const enough = liveStock >= (record.qty || 0);
         return (
           <Text strong style={{ color: enough ? '#389e0d' : '#cf1322' }}>
-            {(stock ?? 0).toLocaleString()}
+            {liveStock.toLocaleString()}
           </Text>
         );
       },
@@ -326,22 +360,100 @@ export default function OperationDetail() {
       dataIndex: 'qty',
       align: 'right',
       render: (value, record) => {
-        const enough = (record.inventoryStock ?? 0) >= value;
+        const name = record.itemName || record.name;
+        const liveStock = record.itemId?.currentStock ?? invMap[name]?.currentStock ?? record.inventoryStock ?? 0;
+        const enough = liveStock >= (value || 0);
         return (
           <Space direction="vertical" size={0} style={{ textAlign: 'right' }}>
-            <Text strong>{value.toLocaleString()}</Text>
+            <Text strong>{(value || 0).toLocaleString()}</Text>
             {!enough && (
               <Tag color="error" style={{ fontSize: 10, margin: 0 }}>
-                Short {(value - (record.inventoryStock ?? 0)).toLocaleString()}
+                Short {Math.max(0, (value || 0) - liveStock).toLocaleString()}
               </Tag>
             )}
           </Space>
         );
       },
     },
-    { title: 'Default Size', dataIndex: 'size', render: (value) => <Tag color="geekblue">{value}</Tag> },
-    { title: 'Packaging', dataIndex: 'packaging' },
-    { title: 'Material', dataIndex: 'material' },
+    {
+      title: 'Selling Price',
+      key: 'sellingPrice',
+      align: 'right',
+      render: (_, record) => {
+        const name = record.itemName || record.name;
+        const sp = record.price || record.rate || record.itemId?.sellingPrice || invMap[name]?.sellingPrice;
+        return sp ? <Text>₹{Number(sp).toLocaleString()}</Text> : '—';
+      },
+    },
+    {
+      title: 'Value',
+      key: 'value',
+      align: 'right',
+      render: (_, record) => {
+        const val = record.lineTotal || (record.qty || 0) * (record.price || record.rate || 0);
+        return val ? <Text strong style={{ color: '#B11E6A' }}>₹{Number(val).toLocaleString()}</Text> : '—';
+      },
+    },
+    {
+      title: 'GST %',
+      key: 'gst',
+      align: 'center',
+      render: (_, record) => {
+        const gst = record.gst ?? order?.gstPercent;
+        return gst != null ? <Tag color="blue">{gst}%</Tag> : '—';
+      },
+    },
+    {
+      title: 'HSN Code',
+      key: 'hsnCode',
+      render: (_, record) => {
+        const name = record.itemName || record.name;
+        return record.hsnCode || record.itemId?.hsnCode || invMap[name]?.hsnCode || '—';
+      },
+    },
+    {
+      title: 'Discount',
+      key: 'discount',
+      align: 'center',
+      render: (_, record) => {
+        const name = record.itemName || record.name;
+        const disc = record.discountPercent ?? record.itemId?.discountPercent ?? invMap[name]?.discountPercent;
+        return disc != null && disc > 0 ? <Tag color="orange">{disc}%</Tag> : '—';
+      },
+    },
+    {
+      title: 'Default Size',
+      key: 'defaultSize',
+      render: (_, record) => {
+        const name = record.itemName || record.name;
+        const sz = record.size || record.itemId?.defaultSize || invMap[name]?.defaultSize;
+        return sz ? <Tag color="geekblue">{sz}</Tag> : '—';
+      },
+    },
+    {
+      title: 'Packing Material',
+      key: 'packingMaterial',
+      render: (_, record) => {
+        const name = record.itemName || record.name;
+        return record.packingMaterial || record.packaging || record.itemId?.packingMaterial || invMap[name]?.packingMaterial || '—';
+      },
+    },
+    {
+      title: 'Material Category',
+      key: 'materialCategory',
+      render: (_, record) => {
+        const name = record.itemName || record.name;
+        return record.materialCategory || record.material || record.itemId?.materialCategory || invMap[name]?.materialCategory || '—';
+      },
+    },
+    {
+      title: 'Brand',
+      key: 'brand',
+      render: (_, record) => {
+        const name = record.itemName || record.name;
+        return record.brand || record.itemId?.brand || invMap[name]?.brand || '—';
+      },
+    },
     {
       title: 'Printing',
       key: 'printing',
@@ -643,12 +755,41 @@ export default function OperationDetail() {
                 )}
               </div>
 
-              {/* Operation Readiness */}
+              {/* Order Info */}
               <div>
                 <Text style={{ fontSize: 11, color: '#999', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                  Operation Readiness
+                  Order Info
                 </Text>
-                <Progress percent={progressPercent} strokeColor="#B11E6A" status={readyToAssign ? 'success' : 'active'} />
+                <Row gutter={[16, 10]}>
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Billing Name</Text>
+                    <Text strong style={{ color: textColor }}>{order.billingName || '—'}</Text>
+                  </Col>
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>GST Number</Text>
+                    <Text strong style={{ color: textColor }}>{order.gstNumber || '—'}</Text>
+                  </Col>
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>GST %</Text>
+                    <Text strong style={{ color: textColor }}>{order.gstPercent != null ? `${order.gstPercent}%` : '—'}</Text>
+                  </Col>
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Bill Type</Text>
+                    <Tag color={order.billType === 'GST' || order.billType === 'GST' ? 'blue' : 'default'} style={{ marginTop: 2 }}>
+                      {order.billType === 'NON_GST' ? 'Non-GST' : order.billType || 'GST'}
+                    </Tag>
+                  </Col>
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Category</Text>
+                    <Tag color={order.orderCategory === 'SAMPLE' ? 'orange' : 'green'} style={{ marginTop: 2 }}>
+                      {order.orderCategory || 'ORDER'}
+                    </Tag>
+                  </Col>
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Sales Person</Text>
+                    <Text strong style={{ color: textColor }}>{order.salesPerson || '—'}</Text>
+                  </Col>
+                </Row>
               </div>
 
             </Space>
@@ -685,7 +826,7 @@ export default function OperationDetail() {
                   styles={{ body: { padding: 0 } }}
                 >
                   <div className="table-responsive" style={{ padding: 4 }}>
-                    <Table dataSource={order.items} columns={productColumns} pagination={false} size="small" />
+                    <Table dataSource={order.items} rowKey={(r, idx) => r.key || r._id || String(idx)} columns={productColumns} pagination={false} size="small" scroll={{ x: 'max-content' }} />
                   </div>
                 </Card>
 

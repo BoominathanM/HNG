@@ -1468,11 +1468,16 @@ export default function Inventory() {
             <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
               <Text strong style={{ color: textColor, display: 'block', marginBottom: 10 }}>Item Details</Text>
               <Descriptions column={2} size="small" labelStyle={{ color: '#aaa', fontSize: 12 }} contentStyle={{ fontWeight: 600, fontSize: 13 }}>
-                <Descriptions.Item label="Category">{detailItem.category}</Descriptions.Item>
-                <Descriptions.Item label="Unit">{detailItem.unit}</Descriptions.Item>
-                <Descriptions.Item label="Price">{detailItem.price}</Descriptions.Item>
+                <Descriptions.Item label="Category">{detailItem.category || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Unit">{detailItem.unit || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Purchase Price">{detailItem.price || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Selling Price">{detailItem.sellingPrice != null ? `₹${Number(detailItem.sellingPrice).toLocaleString()}` : '—'}</Descriptions.Item>
                 <Descriptions.Item label="Default Size">{detailItem.defaultSize || '—'}</Descriptions.Item>
-                <Descriptions.Item label="Last Purchase">{detailItem.purchasedDate || '—'}</Descriptions.Item>
+                <Descriptions.Item label="HSN Code">{detailItem.hsnCode || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Discount">{detailItem.discountPercent != null && detailItem.discountPercent > 0 ? `${detailItem.discountPercent}%` : '—'}</Descriptions.Item>
+                <Descriptions.Item label="Brand">{detailItem.brand || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Packing Material">{detailItem.packingMaterial || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Material Category">{detailItem.materialCategory || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Status">
                   <Tag style={{ borderRadius: 20, fontWeight: 500, background: detailItem.status === 'OK' ? '#B11E6A22' : detailItem.status === 'Low' ? '#C94F8A22' : '#8a165222', color: detailItem.status === 'OK' ? '#B11E6A' : detailItem.status === 'Low' ? '#C94F8A' : '#8a1652', border: 'none' }}>
                     {detailItem.status === 'Out' ? 'Out of Stock' : detailItem.status}

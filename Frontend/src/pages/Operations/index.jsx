@@ -146,6 +146,9 @@ export default function Operations() {
     items: o.items || [], readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || '',
     paymentProofs: o.paymentProofs || [],
+    // Kit display fields — needed by buildProductionQueues to detect Frosted Ziplock orders
+    kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || '',
+    displayUnit: o.displayUnit || o.kitDisplayUnit || '',
   })), [ordersData]);
 
   const checkStates = useMemo(() => getCheckStateMap(apiOrders), [apiOrders]);
@@ -188,12 +191,12 @@ export default function Operations() {
   const filteredOrders = useMemo(() => {
     const result = apiOrders.filter((order) => {
       const query = searchText.trim().toLowerCase();
-      const matchSearch = !query || order.id.toLowerCase().includes(query) || order.hotelLogo.toLowerCase().includes(query) || order.specsSummary.toLowerCase().includes(query) || order.items.some((item) => item.product.toLowerCase().includes(query));
+      const matchSearch = !query || order.id.toLowerCase().includes(query) || order.hotelLogo.toLowerCase().includes(query) || order.specsSummary.toLowerCase().includes(query) || order.items.some((item) => (item.itemName || item.product || '').toLowerCase().includes(query));
       const matchStatus = !orderStatusFilter || (orderStatusFilter === 'urgent' ? order.isUrgent : !order.isUrgent);
       return matchSearch && matchStatus;
     });
     return [...result].sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
-  }, [searchText, orderStatusFilter]);
+  }, [searchText, orderStatusFilter, apiOrders]);
 
   const teamSendItems = useMemo(() => {
     const queueMap = {
