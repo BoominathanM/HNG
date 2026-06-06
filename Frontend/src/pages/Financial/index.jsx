@@ -15,6 +15,7 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetPendingRequestsQuery,
   useApproveFinancialRequestMutation,
@@ -35,6 +36,7 @@ const { Option } = Select;
 
 export default function Financial() {
   const makeUpload = useCloudinaryUpload();
+  const { filterTabs } = useTabAccess('Financial');
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -301,7 +303,7 @@ export default function Financial() {
       >
         <Tabs
           defaultActiveKey="purchase_requests"
-          items={[
+          items={filterTabs([
             {
               key: 'purchase_requests',
               label: <Space><AuditOutlined /> Quotation Requests</Space>,
@@ -814,7 +816,7 @@ export default function Financial() {
                 </div>
               )
             }
-          ]}
+          ])}
         />
       </Card>
 

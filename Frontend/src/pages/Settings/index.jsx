@@ -13,6 +13,8 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import useTabAccess from '../../hooks/useTabAccess';
+import { MODULE_TAB_DEFS } from '../../constants/moduleTabs';
 import {
   useGetUsersQuery,
   useCreateUserMutation,
@@ -55,23 +57,10 @@ const MODULE_PERM_TYPES = {
   Settings: ['read', 'add', 'edit', 'delete'],
 };
 
-const MODULE_TABS = {
-  'Sales Team': ['Leads', 'Quotations', 'Orders', 'Negotiations', 'Follow-ups'],
-  Operations: ['Orders', 'Queue', 'Design', 'Tasks'],
-  'Task Management': ['All Tasks', 'In Progress', 'Done'],
-  'Dispatch Team': ['Active', 'History'],
-  'Staff Management': ['Staff', 'Attendance'],
-  Inventory: ['Products', 'Kits'],
-  Purchase: ['Purchase Orders', 'History'],
-  'Vendors & Suppliers': ['Vendors', 'Printing Suppliers'],
-  Billing: ['Invoices', 'Order in Process'],
-  'Parties & Ledger': ['Parties', 'Ledger'],
-  Financial: ['P&L', 'Balance Sheet'],
-  Expenses: ['All Expenses', 'Categories'],
-  Reports: ['Sales', 'Operations', 'Financial'],
-  Integration: ['WhatsApp', 'AI Integration'],
-  Settings: ['General', 'Users', 'Notifications', 'GST & Tax', 'Invoice', 'Deleted Records'],
-};
+// Per-module sub-tabs for the "Tab Access" checkboxes. Sourced from the shared
+// definition so the keys stored here match what each page's <Tabs> actually
+// renders (and what useTabAccess() enforces).
+const MODULE_TABS = MODULE_TAB_DEFS;
 
 const VENDOR_ROLES = ['Sticker', 'Box', 'Ziplock'];
 
@@ -132,6 +121,7 @@ const initRoles = [
 
 export default function Settings() {
   const makeUpload = useCloudinaryUpload();
+  const { filterTabs } = useTabAccess('Settings');
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg     = isDark ? '#1E1E2E' : '#ffffff';
   const textColor  = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -157,6 +147,7 @@ export default function Settings() {
     key: u._id,
     name: u.fullName,
     email: u.email,
+    mobile: u.mobile,
     role: u.role,
     department: u.department,
     status: u.status,
@@ -339,26 +330,50 @@ export default function Settings() {
   };
 
   const editUser = (user) => {
+    setUserProfilePhotoUrl(null);
     setEditingUser(user);
-    userForm.setFieldsValue({
-      ...user,
-      targetOldHotel: user.targets?.oldHotel,
-      targetNewHotel: user.targets?.newHotel,
-      targetPayment: user.targets?.payment,
-      targetSoftware: user.targets?.software,
-      targetPeople: user.targets?.people,
-      reward14: user.targets?.rewards?.q1,
-      reward12: user.targets?.rewards?.q2,
-      reward34: user.targets?.rewards?.q3,
-      rewardFull: user.targets?.rewards?.full,
-      perms: user.perms,
-      tabAccess: user.tabAccess || {},
-    });
     setAddUserOpen(true);
   };
 
+  // Populate the user form AFTER the modal (and its Form) has mounted.
+  // Calling setFieldsValue before the Form is connected (the modal is lazily
+  // rendered) silently drops the values — including page & tab access — so the
+  // edit form would open blank. Running it in an effect keyed on the open state
+  // guarantees the form is connected when we write to it.
+  useEffect(() => {
+    if (!addUserOpen) return;
+    if (editingUser) {
+      userForm.setFieldsValue({
+        name: editingUser.name,
+        email: editingUser.email,
+        mobile: editingUser.mobile,
+        role: editingUser.role,
+        department: editingUser.department,
+        status: editingUser.status,
+        targetOldHotel: editingUser.targets?.oldHotel,
+        targetNewHotel: editingUser.targets?.newHotel,
+        targetPayment: editingUser.targets?.payment,
+        targetSoftware: editingUser.targets?.software,
+        targetPeople: editingUser.targets?.people,
+        reward14: editingUser.targets?.rewards?.q1,
+        reward12: editingUser.targets?.rewards?.q2,
+        reward34: editingUser.targets?.rewards?.q3,
+        rewardFull: editingUser.targets?.rewards?.full,
+        perms: editingUser.perms || {},
+        tabAccess: editingUser.tabAccess || {},
+      });
+    } else {
+      userForm.resetFields();
+    }
+  }, [addUserOpen, editingUser, userForm]);
+
   const addUser = () => {
     userForm.validateFields().then(async (vals) => {
+      // perms & tabAccess live inside a lazy Collapse: validateFields() only
+      // returns values for module panels that were expanded (mounted). Pull the
+      // full store (incl. values set on edit but never expanded) so saving never
+      // wipes permissions for modules the admin didn't open.
+      const allValues = userForm.getFieldsValue(true);
       const payload = {
         fullName: vals.name,
         email: vals.email,
@@ -376,8 +391,8 @@ export default function Settings() {
         rewardHalf: vals.reward12,
         rewardThreeQtr: vals.reward34,
         rewardFull: vals.rewardFull,
-        permissions: vals.perms,
-        tabAccess: vals.tabAccess || {},
+        permissions: allValues.perms || vals.perms || {},
+        tabAccess: allValues.tabAccess || vals.tabAccess || {},
         ...(userProfilePhotoUrl ? { avatarUrl: userProfilePhotoUrl } : {}),
       };
       try {
@@ -422,7 +437,7 @@ export default function Settings() {
 
       <Tabs
         defaultActiveKey="general"
-        items={[
+        items={filterTabs([
           {
             key: 'general',
             label: 'General',
@@ -471,7 +486,7 @@ export default function Settings() {
             children: (
               <>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                  <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddUserOpen(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add User</Button>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingUser(null); setUserProfilePhotoUrl(null); setAddUserOpen(true); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add User</Button>
                 </div>
                 <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                   <Table
@@ -754,8 +769,8 @@ export default function Settings() {
                                     <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Tab Access:</Text>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                                       {MODULE_TABS[mod].map(tab => (
-                                        <Form.Item key={tab} name={['tabAccess', mod, tab]} valuePropName="checked" style={{ margin: 0 }}>
-                                          <Checkbox style={{ fontSize: 12 }}>{tab}</Checkbox>
+                                        <Form.Item key={tab.key} name={['tabAccess', mod, tab.key]} valuePropName="checked" style={{ margin: 0 }}>
+                                          <Checkbox style={{ fontSize: 12 }}>{tab.label}</Checkbox>
                                         </Form.Item>
                                       ))}
                                     </div>
@@ -1246,7 +1261,7 @@ export default function Settings() {
               </Card>
             ),
           },
-        ]}
+        ])}
       />
     </div>
   );

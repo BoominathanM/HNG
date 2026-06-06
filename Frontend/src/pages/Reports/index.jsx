@@ -8,6 +8,7 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,
@@ -55,6 +56,8 @@ export default function Reports() {
   const borderColor = isDark ? '#333' : '#f0f0f0';
   const gridColor = isDark ? '#333' : '#f0f0f0';
   const tickColor = isDark ? '#aaa' : '#666';
+
+  const { filterTabs } = useTabAccess('Reports');
 
   const [purchaseReportSearch, setPurchaseReportSearch] = useState('');
   const [salesReportSearch, setSalesReportSearch] = useState('');
@@ -243,7 +246,7 @@ export default function Reports() {
 
       <Tabs
         defaultActiveKey="sales_report"
-        items={[
+        items={filterTabs([
           /* ─────────── SALES REPORT ─────────── */
           {
             key: 'sales_report',
@@ -1898,7 +1901,7 @@ export default function Reports() {
               );
             })(),
           },
-        ]}
+        ])}
       />
     </div>
   );

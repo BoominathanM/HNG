@@ -13,6 +13,7 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetTasksQuery,
   useGetSuggestedTasksQuery,
@@ -77,6 +78,7 @@ export default function Tasks() {
   const [filterPriority, setFilterPriority] = useState(null);
   const [filterStatus, setFilterStatus] = useState(null);
   const [mainTab, setMainTab] = useState('current');
+  const { filterTabs, activeKeyFor } = useTabAccess('Task Management');
   const [view, setView] = useState('table');
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
@@ -398,11 +400,10 @@ export default function Tasks() {
 
       {/* ── Main Tabs: Current Task | Suggested Task ─────────────────────────── */}
       <Tabs
-        activeKey={mainTab}
         onChange={setMainTab}
         type="card"
         style={{ marginBottom: 0 }}
-        items={[
+        items={filterTabs([
           {
             key: 'current',
             label: 'Current Task',
@@ -617,7 +618,8 @@ export default function Tasks() {
               </div>
             ),
           },
-        ]}
+        ])}
+        activeKey={activeKeyFor(mainTab)}
       />
 
       {/* ── New Task Modal (existing, unchanged) ─────────────────────────────── */}

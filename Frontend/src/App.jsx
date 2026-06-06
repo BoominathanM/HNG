@@ -8,6 +8,7 @@ import { store } from './store';
 import AppLayout from './components/layout/AppLayout';
 import { lightTheme, darkTheme } from './styles/theme';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import { useGetMeQuery } from './store/api/apiSlice';
 import './styles/global.css';
 
 import Login from './pages/Login';
@@ -36,6 +37,10 @@ const { Text } = Typography;
 
 function PrivateRoute() {
   const isAuthenticated = useSelector((s) => s.auth.isAuthenticated);
+  // Re-fetch the logged-in user's profile on each app load so permission /
+  // tab-access changes made by an admin take effect without a re-login.
+  // (getMe's onQueryStarted dispatches refreshUser to update the auth state.)
+  useGetMeQuery(undefined, { skip: !isAuthenticated, refetchOnMountOrArgChange: true });
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <AppLayout />;
 }

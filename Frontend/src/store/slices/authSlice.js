@@ -35,6 +35,27 @@ const authSlice = createSlice({
         isAuthenticated: true,
       }));
     },
+    // Refresh the logged-in user's profile (e.g. permissions / tabAccess changed
+    // by an admin) without touching the existing tokens. Lets access changes
+    // take effect on the next app load instead of requiring a re-login.
+    refreshUser(state, action) {
+      const incoming = action.payload?.user;
+      if (!incoming) return;
+      const user = { ...incoming };
+      if (user.permissions instanceof Map) {
+        user.permissions = Object.fromEntries(user.permissions);
+      }
+      if (user.tabAccess instanceof Map) {
+        user.tabAccess = Object.fromEntries(user.tabAccess);
+      }
+      state.user = user;
+      localStorage.setItem('hng_auth', JSON.stringify({
+        user,
+        token: state.token,
+        refreshToken: state.refreshToken,
+        isAuthenticated: state.isAuthenticated,
+      }));
+    },
     logout(state) {
       state.user = null;
       state.token = null;
@@ -49,5 +70,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { setUser, logout, clearError } = authSlice.actions;
+export const { setUser, refreshUser, logout, clearError } = authSlice.actions;
 export default authSlice.reducer;

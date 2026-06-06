@@ -1,6 +1,6 @@
 import { createApi } from '@reduxjs/toolkit/query/react';
 import api from '../../api/axios';
-import { setUser, logout as logoutAction } from '../slices/authSlice';
+import { setUser, refreshUser, logout as logoutAction } from '../slices/authSlice';
 
 const axiosBaseQuery = () => async ({ url, method = 'get', data, params }) => {
   try {
@@ -58,6 +58,14 @@ export const apiSlice = createApi({
     getMe: builder.query({
       query: () => ({ url: '/auth/me' }),
       providesTags: ['Auth'],
+      // Keep the logged-in user's permissions/tabAccess in sync with the server
+      // (e.g. after an admin edits their access) without requiring a re-login.
+      async onQueryStarted(_, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          if (data?.data?.user) dispatch(refreshUser({ user: data.data.user }));
+        } catch {}
+      },
     }),
     changePassword: builder.mutation({
       query: (data) => ({ url: '/auth/change-password', method: 'patch', data }),

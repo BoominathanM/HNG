@@ -1,5 +1,6 @@
 ﻿import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, 
   DatePicker, Upload, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, 
@@ -147,6 +148,7 @@ export default function Purchase() {
   const [supplierDateRange, setSupplierDateRange] = useState(null);
 
   const [supplierForm] = Form.useForm();
+  const { filterTabs } = useTabAccess('Purchase');
 
   const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -1020,7 +1022,7 @@ export default function Purchase() {
           >
             <Tabs
               defaultActiveKey="stock_status"
-              items={[
+              items={filterTabs([
                 {
                   key: 'stock_status',
                   label: <Space><WarningOutlined /> Quotation & Raise Request</Space>,
@@ -2369,7 +2371,7 @@ export default function Purchase() {
                     </div>
                   ),
                 },
-              ]}
+              ])}
             />
           </Card>
         </Col>

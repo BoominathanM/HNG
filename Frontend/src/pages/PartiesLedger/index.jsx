@@ -14,6 +14,7 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import useTabAccess from '../../hooks/useTabAccess';
 import dayjs from 'dayjs';
 import {
   useGetPartiesQuery,
@@ -36,6 +37,7 @@ export default function PartiesLedger() {
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
   const [activeTab, setActiveTab] = useState('all');
+  const { filterTabs, activeKeyFor } = useTabAccess('Parties & Ledger');
   const [supplierSearch, setSupplierSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [allSearch, setAllSearch] = useState('');
@@ -517,9 +519,8 @@ export default function PartiesLedger() {
       >
         {viewParty ? renderPartyView() : (
           <Tabs
-            activeKey={activeTab}
             onChange={setActiveTab}
-            items={[
+            items={filterTabs([
               {
                 key: 'all',
                 label: <Space><BookOutlined /> All Parties</Space>,
@@ -576,7 +577,8 @@ export default function PartiesLedger() {
                   </div>
                 )
               },
-            ]}
+            ])}
+            activeKey={activeKeyFor(activeTab)}
           />
         )}
       </Card>

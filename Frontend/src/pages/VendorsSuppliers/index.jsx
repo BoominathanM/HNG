@@ -16,6 +16,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetVendorsQuery,
   useCreateVendorMutation,
@@ -49,6 +50,7 @@ const exportToCSV = (headers, rows, filename) => {
 
 export default function VendorsSuppliers() {
   const makeUpload = useCloudinaryUpload();
+  const { filterTabs } = useTabAccess('Vendors & Suppliers');
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -317,7 +319,7 @@ export default function VendorsSuppliers() {
           >
             <Tabs
               defaultActiveKey="vendors"
-              items={[
+              items={filterTabs([
                 {
                   key: 'vendors',
                   label: <Space><ContactsOutlined />Vendors</Space>,
@@ -603,7 +605,7 @@ export default function VendorsSuppliers() {
                     </div>
                   )
                 },
-              ]}
+              ])}
             />
           </Card>
         </Col>

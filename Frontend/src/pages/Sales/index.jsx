@@ -19,6 +19,7 @@ import {
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetLeadsQuery,
   useGetSalesQuotationsQuery,
@@ -920,6 +921,7 @@ export default function Sales() {
   const [negotiationsData, setNegotiationsData] = useState([]);
   const [ordersData, setOrdersData] = useState([]);
   const [activeTab, setActiveTab] = useState('performance');
+  const { filterTabs, activeKeyFor } = useTabAccess('Sales Team');
   const [searchText, setSearchText] = useState('');
   const [dateRange, setDateRange] = useState(null);
   const [leadStatusFilter, setLeadStatusFilter] = useState(null);
@@ -6034,7 +6036,7 @@ export default function Sales() {
       </div>
 
       <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
-        <Tabs activeKey={activeTab} onChange={setActiveTab} style={{ padding: '0 16px' }}
+        <Tabs onChange={setActiveTab} style={{ padding: '0 16px' }}
           tabBarExtraContent={
             <Space size={8}>
               <div style={{ display: 'flex', alignItems: 'center', background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 8px', borderRadius: 8, border: `1px solid ${borderColor}` }}>
@@ -6056,7 +6058,7 @@ export default function Sales() {
               />
             </Space>
           }
-          items={[
+          items={filterTabs([
             {
               key: 'performance',
               label: 'Performance',
@@ -6319,7 +6321,8 @@ export default function Sales() {
                 </div>
               ),
             },
-          ]}
+          ])}
+          activeKey={activeKeyFor(activeTab)}
         />
       </Card>
 

@@ -16,6 +16,7 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetDispatchesQuery,
   useGetPickupExpensesQuery,
@@ -74,6 +75,7 @@ export default function Dispatch() {
 
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('dispatch');
+  const { filterTabs, activeKeyFor } = useTabAccess('Dispatch Team');
   const [dispatchSubTab, setDispatchSubTab] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [dispatchStatusFilter, setDispatchStatusFilter] = useState(null);
@@ -607,8 +609,8 @@ export default function Dispatch() {
       </Row>
 
       {/* Main Tabs */}
-      <Tabs activeKey={activeTab} onChange={setActiveTab} type="card"
-        items={[
+      <Tabs onChange={setActiveTab} type="card"
+        items={filterTabs([
           {
             key: 'dispatch',
             label: <Space><CarOutlined />Dispatch Orders</Space>,
@@ -1055,7 +1057,8 @@ export default function Dispatch() {
               </div>
             ),
           },
-        ]}
+        ])}
+        activeKey={activeKeyFor(activeTab)}
       />
 
       {/* ── Pickup Payment Modal ─────────────────────────────────────────────── */}

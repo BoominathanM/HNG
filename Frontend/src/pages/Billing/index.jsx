@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
 import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetInvoicesQuery,
   useGetQuotationsInProcessQuery,
@@ -191,6 +192,7 @@ export default function Billing() {
     color: '#B11E6A',
   })), [invItemsData]);
   const [activeTab, setActiveTab] = useState('order-in-process');
+  const { filterTabs, activeKeyFor } = useTabAccess('Billing');
 
   // View invoice / quotation
   const [viewModal, setViewModal] = useState(false);
@@ -704,9 +706,8 @@ export default function Billing() {
 
       {/* Table */}
       <Tabs
-        activeKey={activeTab}
         onChange={(k) => { setActiveTab(k); setQuotStatusFilter('all'); }}
-        items={[
+        items={filterTabs([
           {
             key: 'order-in-process',
             label: 'Order in Process',
@@ -773,7 +774,8 @@ export default function Billing() {
               </Card>
             ),
           },
-        ]}
+        ])}
+        activeKey={activeKeyFor(activeTab)}
       />
 
       {/* ───────────── VIEW QUOTATION / INVOICE ───────────── */}

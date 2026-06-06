@@ -20,6 +20,7 @@ import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import useTabAccess from '../../hooks/useTabAccess';
 import dayjs from 'dayjs';
 import {
   useGetItemsQuery,
@@ -289,6 +290,7 @@ export default function Inventory() {
 
   /* ── Active tab ── */
   const [activeInvTab, setActiveInvTab] = useState('stock');
+  const { filterTabs, activeKeyFor } = useTabAccess('Inventory');
 
   /* ── Category & Kit expand ── */
   const [expandedCategory, setExpandedCategory] = useState(null);
@@ -730,8 +732,8 @@ export default function Inventory() {
       {/* ════════════════════════════════════════
           INVENTORY TABS
       ════════════════════════════════════════ */}
-      <Tabs activeKey={activeInvTab} onChange={setActiveInvTab} style={{ marginBottom: 20 }}
-        items={[
+      <Tabs onChange={setActiveInvTab} style={{ marginBottom: 20 }}
+        items={filterTabs([
           /* ── Tab 1: Stock Inventory ── */
           {
             key: 'stock',
@@ -1238,7 +1240,8 @@ export default function Inventory() {
               </div>
             )
           },
-        ]}
+        ])}
+        activeKey={activeKeyFor(activeInvTab)}
       />
 
       {/* ═══════════════════════════════════════

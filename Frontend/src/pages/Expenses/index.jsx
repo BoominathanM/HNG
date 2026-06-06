@@ -8,6 +8,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetExpensesQuery,
   useCreateExpenseMutation,
@@ -76,6 +77,8 @@ export default function Expenses() {
   const [historyModal, setHistoryModal] = useState(false);
   const [historyItem, setHistoryItem] = useState(null);
   const [historyDateRange, setHistoryDateRange] = useState(null);
+
+  const { filterTabs } = useTabAccess('Expenses');
 
   /* ── Search & Filter state ── */
   const [expSearch, setExpSearch] = useState('');
@@ -250,7 +253,7 @@ export default function Expenses() {
                   </Select>
                 </Space>
               }
-              items={[
+              items={filterTabs([
                 {
                   key: 'all',
                   label: `All Expenses (${applyExpFilter(allExpenses).length})`,
@@ -290,7 +293,7 @@ export default function Expenses() {
                     />
                   ),
                 },
-              ]}
+              ])}
             />
           </Card>
         </Col>

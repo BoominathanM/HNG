@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
+import useTabAccess from '../../hooks/useTabAccess';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -113,6 +114,7 @@ export default function Operations() {
   const isDark = useSelector((state) => state.theme.isDark);
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('orders');
+  const { filterTabs, activeKeyFor } = useTabAccess('Operations');
   const [queueSearch, setQueueSearch] = useState('');
   const [queueStatusFilter, setQueueStatusFilter] = useState(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
@@ -957,10 +959,9 @@ export default function Operations() {
       </Row>
 
       <Tabs
-        activeKey={activeTab}
         onChange={setActiveTab}
         type="card"
-        items={[
+        items={filterTabs([
           {
             key: 'orders',
             label: <Space><ToolOutlined />Order Management</Space>,
@@ -1018,7 +1019,8 @@ export default function Operations() {
             label: <Space><InboxOutlined />Frosted Ziplock</Space>,
             children: renderQueueCard('Frosted Ziplock', productionQueues.frosted, 'Frosted Ziplock Queue'),
           },
-        ]}
+        ])}
+        activeKey={activeKeyFor(activeTab)}
       />
 
       <Modal
