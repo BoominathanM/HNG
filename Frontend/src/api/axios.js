@@ -14,7 +14,7 @@ const BASE_URL =
 
 const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 30000,
+  timeout: 30000,         
 });
 
 // Attach token to every request
