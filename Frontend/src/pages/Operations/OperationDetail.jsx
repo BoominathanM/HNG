@@ -347,6 +347,24 @@ export default function OperationDetail() {
     }
   };
 
+  const handleDownloadFile = async (url, filename) => {
+    if (!url) return;
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename || 'download';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(url, '_blank');
+    }
+  };
+
   // Save the current order's design as an approved hotel design for reuse.
   const handleSaveDesign = async (product, type) => {
     if (!order) return;
@@ -622,9 +640,6 @@ export default function OperationDetail() {
           <Button icon={<TeamOutlined />} onClick={handleAssignAllProducts} style={{ color: '#B11E6A', borderColor: '#B11E6A55' }}>
             Assign Tasks (All Products)
           </Button>
-          <Button onClick={() => { setPartialQtyInput(0); setPartialModalOpen(true); }} style={{ color: '#1677ff', borderColor: '#1677ff55' }}>
-            Partial Delivery Split
-          </Button>
         </div>
       </div>
 
@@ -826,8 +841,7 @@ export default function OperationDetail() {
                             icon={<DownloadOutlined />}
                             type="primary"
                             style={{ background: '#B11E6A', borderColor: '#B11E6A' }}
-                            href={file.url || '#'}
-                            download={file.name}
+                            onClick={() => handleDownloadFile(file.url, file.name)}
                           >
                             Download
                           </Button>

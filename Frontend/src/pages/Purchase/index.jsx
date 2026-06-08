@@ -103,6 +103,12 @@ export default function Purchase() {
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
   })), [itemsData]);
 
+  const dupeItemNames = useMemo(() => {
+    const nameCount = {};
+    inventoryItems.forEach(i => { nameCount[i.name] = (nameCount[i.name] || 0) + 1; });
+    return new Set(Object.keys(nameCount).filter(n => nameCount[n] > 1));
+  }, [inventoryItems]);
+
   // Sync RTK Query data into Redux slices
   useEffect(() => {
     const mapped = (requestsData?.data || []).map((r) => ({
@@ -682,12 +688,12 @@ export default function Purchase() {
         qty: Number(values.qty) || 0,
         unit: values.unit || raiseRequestProduct?.unit || '',
       }];
-      raiseRequestExtraProducts.forEach((productName) => {
-        const invItem = inventoryItems.find((i) => i.name === productName);
+      raiseRequestExtraProducts.forEach((productKey) => {
+        const invItem = inventoryItems.find((i) => i.key === productKey);
         requests.push({
-          itemName: productName,
+          itemName: invItem?.name || productKey,
           itemId: invItem?.key,
-          qty: raiseRequestExtraQtys[productName] || invItem?.min || 1,
+          qty: raiseRequestExtraQtys[productKey] || invItem?.min || 1,
           unit: invItem?.unit || 'Pcs',
         });
       });
@@ -2877,16 +2883,16 @@ export default function Purchase() {
               onChange={(vals) => {
                 setQuotationExtraProducts(vals);
                 const newQtys = { ...quotationExtraQtys };
-                vals.forEach(v => { if (!newQtys[v]) { const inv = inventoryItems.find(i => i.name === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
+                vals.forEach(v => { if (!newQtys[v]) { const inv = inventoryItems.find(i => i.key === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
                 setQuotationExtraQtys(newQtys);
               }}
               optionLabelProp="label"
             >
               {inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== selectedProduct?.name).map(i => (
-                <Option key={i.key} value={i.name} label={i.name}>
+                <Option key={i.key} value={i.key} label={dupeItemNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name}>
                   <Space>
                     <Tag color={i.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0 }}>{i.status}</Tag>
-                    <Text>{i.name}</Text>
+                    <Text>{dupeItemNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name}</Text>
                     <Text type="secondary" style={{ fontSize: 11 }}>({i.current}/{i.min} {i.unit})</Text>
                   </Space>
                 </Option>
@@ -2894,17 +2900,17 @@ export default function Purchase() {
             </Select>
             {quotationExtraProducts.length > 0 && (
               <div style={{ marginTop: 10 }}>
-                {quotationExtraProducts.map(productName => {
-                  const inv = inventoryItems.find(i => i.name === productName);
+                {quotationExtraProducts.map(productKey => {
+                  const inv = inventoryItems.find(i => i.key === productKey);
                   return (
-                    <Row key={productName} gutter={8} align="middle" style={{ marginBottom: 6 }}>
-                      <Col flex="auto"><Text style={{ fontSize: 12 }}>{productName}</Text></Col>
+                    <Row key={productKey} gutter={8} align="middle" style={{ marginBottom: 6 }}>
+                      <Col flex="auto"><Text style={{ fontSize: 12 }}>{inv?.name || productKey}</Text></Col>
                       <Col style={{ width: 120 }}>
                         <InputNumber
                           size="small"
                           min={1}
-                          value={quotationExtraQtys[productName]}
-                          onChange={v => setQuotationExtraQtys(prev => ({ ...prev, [productName]: v }))}
+                          value={quotationExtraQtys[productKey]}
+                          onChange={v => setQuotationExtraQtys(prev => ({ ...prev, [productKey]: v }))}
                           addonAfter={<Text style={{ fontSize: 11 }}>{inv?.unit || 'Pcs'}</Text>}
                           style={{ width: '100%' }}
                         />
@@ -2927,8 +2933,8 @@ export default function Purchase() {
                 if (!values.supplier) { enqueueSnackbar('Please select a supplier first', { variant: 'warning' }); return; }
                 const mainLine = `â€¢ *${values.product}* — Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
                 const extraLines = quotationExtraProducts.map(p => {
-                  const inv = inventoryItems.find(i => i.name === p);
-                  return `â€¢ *${p}* — Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
+                  const inv = inventoryItems.find(i => i.key === p);
+                  return `â€¢ *${inv?.name || p}* — Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
                 });
                 const allLines = [mainLine, ...extraLines].join('\n');
                 const msg = `Hello, I would like to request a quotation for the following items:\n\n${allLines}\n\nPlease advise on pricing and availability.`;
@@ -3189,16 +3195,16 @@ export default function Purchase() {
               onChange={(vals) => {
                 setRaiseRequestExtraProducts(vals);
                 const newQtys = { ...raiseRequestExtraQtys };
-                vals.forEach(v => { if (!newQtys[v]) { const inv = inventoryItems.find(i => i.name === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
+                vals.forEach(v => { if (!newQtys[v]) { const inv = inventoryItems.find(i => i.key === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
                 setRaiseRequestExtraQtys(newQtys);
               }}
               optionLabelProp="label"
             >
               {inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== raiseRequestProduct?.name).map(i => (
-                <Option key={i.key} value={i.name} label={i.name}>
+                <Option key={i.key} value={i.key} label={dupeItemNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name}>
                   <Space>
                     <Tag color={i.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0 }}>{i.status}</Tag>
-                    <Text>{i.name}</Text>
+                    <Text>{dupeItemNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name}</Text>
                     <Text type="secondary" style={{ fontSize: 11 }}>({i.current}/{i.min} {i.unit})</Text>
                   </Space>
                 </Option>
@@ -3206,17 +3212,17 @@ export default function Purchase() {
             </Select>
             {raiseRequestExtraProducts.length > 0 && (
               <div style={{ marginTop: 10 }}>
-                {raiseRequestExtraProducts.map(productName => {
-                  const inv = inventoryItems.find(i => i.name === productName);
+                {raiseRequestExtraProducts.map(productKey => {
+                  const inv = inventoryItems.find(i => i.key === productKey);
                   return (
-                    <Row key={productName} gutter={8} align="middle" style={{ marginBottom: 6 }}>
-                      <Col flex="auto"><Text style={{ fontSize: 12 }}>{productName}</Text></Col>
+                    <Row key={productKey} gutter={8} align="middle" style={{ marginBottom: 6 }}>
+                      <Col flex="auto"><Text style={{ fontSize: 12 }}>{inv?.name || productKey}</Text></Col>
                       <Col style={{ width: 130 }}>
                         <InputNumber
                           size="small"
                           min={1}
-                          value={raiseRequestExtraQtys[productName]}
-                          onChange={v => setRaiseRequestExtraQtys(prev => ({ ...prev, [productName]: v }))}
+                          value={raiseRequestExtraQtys[productKey]}
+                          onChange={v => setRaiseRequestExtraQtys(prev => ({ ...prev, [productKey]: v }))}
                           addonAfter={<Text style={{ fontSize: 11 }}>{inv?.unit || 'Pcs'}</Text>}
                           style={{ width: '100%' }}
                         />

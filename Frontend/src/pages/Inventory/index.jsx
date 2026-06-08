@@ -133,6 +133,12 @@ export default function Inventory() {
     brand: i.brand,
   })), [invData]);
 
+  const dupeInventoryNames = useMemo(() => {
+    const nameCount = {};
+    inventoryList.forEach(i => { nameCount[i.name] = (nameCount[i.name] || 0) + 1; });
+    return new Set(Object.keys(nameCount).filter(n => nameCount[n] > 1));
+  }, [inventoryList]);
+
   const pendingAdjustments = useMemo(() => (approvalsData?.data || []).map((m) => ({
     key: m._id,
     date: m.createdAt?.slice(0, 10),
@@ -185,7 +191,12 @@ export default function Inventory() {
         kitName: kit.kitName,
         displayUnit: kit.displayUnit,
         size: kit.size,
-        products: kit.products?.length ? kit.products : [{ productName: '', qty: 1, gst: 'None' }],
+        products: kit.products?.length
+          ? kit.products.map(p => ({
+              ...p,
+              productName: inventoryList.find(i => i.name === p.productName)?.key || p.productName,
+            }))
+          : [{ productName: '', qty: 1, gst: 'None' }],
       });
     } else {
       kitForm.setFieldsValue({ products: [{ productName: '', qty: 1, gst: 'None' }] });
@@ -199,22 +210,25 @@ export default function Inventory() {
         kitName: vals.kitName,
         displayUnit: vals.displayUnit || '',
         size: vals.size || '',
-        products: (vals.products || []).filter((p) => p && p.productName).map((p) => ({
-          productName: p.productName,
-          category: p.category || '',
-          qty: Number(p.qty) || 1,
-          unit: p.unit || '',
-          defaultSize: p.defaultSize || '',
-          purchasePrice: Number(String(p.purchasePrice ?? '').replace(/[^0-9.]/g, '')) || 0,
-          sellingPrice: Number(String(p.sellingPrice ?? '').replace(/[^0-9.]/g, '')) || 0,
-          gst: p.gst || '',
-          hsnCode: p.hsnCode || '',
-          discountPercent: Number(String(p.discountPercent ?? '').replace(/[^0-9.]/g, '')) || 0,
-          packingMaterial: p.packingMaterial || '',
-          materialCategory: p.materialCategory || '',
-          brand: p.brand || '',
-          rate: Number(String(p.purchasePrice ?? '').replace(/[^0-9.]/g, '')) || 0,
-        })),
+        products: (vals.products || []).filter((p) => p && p.productName).map((p) => {
+          const resolvedName = inventoryList.find(i => i.key === p.productName)?.name || p.productName;
+          return {
+            productName: resolvedName,
+            category: p.category || '',
+            qty: Number(p.qty) || 1,
+            unit: p.unit || '',
+            defaultSize: p.defaultSize || '',
+            purchasePrice: Number(String(p.purchasePrice ?? '').replace(/[^0-9.]/g, '')) || 0,
+            sellingPrice: Number(String(p.sellingPrice ?? '').replace(/[^0-9.]/g, '')) || 0,
+            gst: p.gst || '',
+            hsnCode: p.hsnCode || '',
+            discountPercent: Number(String(p.discountPercent ?? '').replace(/[^0-9.]/g, '')) || 0,
+            packingMaterial: p.packingMaterial || '',
+            materialCategory: p.materialCategory || '',
+            brand: p.brand || '',
+            rate: Number(String(p.purchasePrice ?? '').replace(/[^0-9.]/g, '')) || 0,
+          };
+        }),
       };
       if (editingKit) {
         await updateKitMutation({ id: editingKit._id, ...payload }).unwrap();
@@ -1332,11 +1346,15 @@ export default function Inventory() {
                               optionFilterProp="label"
                               placeholder="Select Product"
                               style={{ width: '100%' }}
-                              options={inventoryList.map((i) => ({ value: i.name, label: i.name }))}
-                              onChange={(selectedName) => {
-                                const item = inventoryList.find((i) => i.name === selectedName);
+                              options={inventoryList.map((i) => ({
+                                value: i.key,
+                                label: dupeInventoryNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name,
+                              }))}
+                              onChange={(selectedKey) => {
+                                const item = inventoryList.find((i) => i.key === selectedKey);
                                 if (!item) return;
                                 kitForm.setFields([
+                                  { name: ['products', field.name, 'productName'], value: item.key },
                                   { name: ['products', field.name, 'category'], value: item.category || '' },
                                   { name: ['products', field.name, 'unit'], value: item.unit || '' },
                                   { name: ['products', field.name, 'defaultSize'], value: item.defaultSize || '' },

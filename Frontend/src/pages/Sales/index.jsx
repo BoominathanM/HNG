@@ -362,7 +362,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
       || kits.find((k) => k._id === formSelectedKitId);
     if (!activeKit) return inventoryItems;
     const kitProductNames = new Set((activeKit.products || []).map((p) => p.productName));
-    return inventoryItems.filter((item) => kitProductNames.has(item.label ?? item.value));
+    return inventoryItems.filter((item) => kitProductNames.has(item.name ?? item.label ?? item.value));
   }, [isKit, kitType, inventoryItems, kits, form, fieldName, name]);
 
   // For kit items, kitType is the registered Form.Item field; selectedName (name field) can get
@@ -397,7 +397,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   };
 
   const handleProductSelect = (value) => {
-    const item = inventoryItemsData.find((i) => i.itemName === value);
+    const item = inventoryItemsData.find((i) => i._id === value);
     if (!item) return;
     if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
     applySpec('packingMaterial', item.packingMaterial);
@@ -436,7 +436,14 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           <Col flex="none" style={{ width: 220 }}>
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
             {!isKit ? (
-              <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Product required' }]}>
+              <Form.Item
+                {...rest}
+                name={[name, 'name']}
+                style={{ marginBottom: 0 }}
+                rules={[{ required: true, message: 'Product required' }]}
+                getValueProps={(val) => ({ value: inventoryItemsData.find(i => i.itemName === val)?._id ?? val })}
+                getValueFromEvent={(val) => inventoryItemsData.find(i => i._id === val)?.itemName ?? val}
+              >
                 <Select
                   showSearch
                   allowClear
@@ -454,7 +461,14 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
               <>
                 {/* Keep 'name' registered in kit mode so it isn't cleared when the non-kit branch unmounts */}
                 <Form.Item {...rest} name={[name, 'name']} hidden noStyle><Input /></Form.Item>
-                <Form.Item {...rest} name={[name, 'kitType']} style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Kit required' }]}>
+                <Form.Item
+                  {...rest}
+                  name={[name, 'kitType']}
+                  style={{ marginBottom: 0 }}
+                  rules={[{ required: true, message: 'Kit required' }]}
+                  getValueProps={(val) => ({ value: inventoryItemsData.find(i => i.itemName === val)?._id ?? val })}
+                  getValueFromEvent={(val) => inventoryItemsData.find(i => i._id === val)?.itemName ?? val}
+                >
                   <Select
                     showSearch
                     allowClear
@@ -464,9 +478,9 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     size="small"
                     style={{ width: '100%' }}
                     options={kitInventoryItems}
-                    onSelect={(val) => {
-                      form.setFieldValue([fieldName, name, 'name'], val);
-                      const item = inventoryItemsData.find((i) => i.itemName === val);
+                    onSelect={(selectedId) => {
+                      const item = inventoryItemsData.find(i => i._id === selectedId);
+                      form.setFieldValue([fieldName, name, 'name'], item?.itemName ?? selectedId);
                       if (!item) return;
                       if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
                       applySpec('packingMaterial', item.packingMaterial);
@@ -1184,10 +1198,15 @@ export default function Sales() {
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
   const { data: itemsRaw } = useGetItemsQuery();
   const inventoryItemsRaw = itemsRaw?.data || [];
-  const inventoryItems = React.useMemo(
-    () => inventoryItemsRaw.map((i) => ({ value: i.itemName, label: i.itemName })),
-    [itemsRaw],
-  );
+  const inventoryItems = React.useMemo(() => {
+    const nameCount = {};
+    inventoryItemsRaw.forEach(i => { nameCount[i.itemName] = (nameCount[i.itemName] || 0) + 1; });
+    return inventoryItemsRaw.map(i => ({
+      value: i._id,
+      label: nameCount[i.itemName] > 1 ? `${i.itemName} (${i.itemCode || ''})` : i.itemName,
+      name: i.itemName,
+    }));
+  }, [itemsRaw]);
 
   // When a kit is picked in the "Products adding" card, auto-fill its products
   // into the kit product list and set the kit-level display unit & size.
