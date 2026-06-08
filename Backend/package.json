@@ -8,7 +8,8 @@
     "predev": "node -e \"require('kill-port')(7007).catch(()=>{})\"",
     "dev": "nodemon src/server.js",
     "kill-port": "node -e \"require('kill-port')(7007).then(()=>console.log('Port 7007 freed')).catch(()=>console.log('Nothing on port 7007'))\"",
-    "seed": "node src/utils/seeder.js"
+    "seed": "node src/utils/seeder.js",
+    "update-admin": "node src/utils/updateAdmin.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

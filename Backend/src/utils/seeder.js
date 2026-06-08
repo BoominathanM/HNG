@@ -73,7 +73,7 @@ const seed = async () => {
   await User.create(ADMIN_DATA);
 
   console.log('✅ Seed complete — database contains only the admin user.');
-  console.log('   Admin Login → email: admin@gmail.com | password: Hng@123');
+  console.log('   Admin Login → email: superadmin@gmail.com | password: Hng@123');
   await mongoose.disconnect();
   process.exit(0);
 };

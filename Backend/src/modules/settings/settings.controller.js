@@ -83,12 +83,29 @@ exports.createUser = asyncHandler(async (req, res, next) => {
 });
 
 exports.updateUser = asyncHandler(async (req, res, next) => {
-  const { password, ...rest } = req.body;
+  const { password, permissions, tabAccess, ...rest } = req.body;
   const user = await User.findOne({ _id: req.params.id, deletedAt: null });
   if (!user) return next(new AppError('User not found', 404));
 
+  // Update simple scalar fields (fullName, email, mobile, role, status, department, targets…)
   Object.assign(user, rest);
+
+  // Hash new password if provided
   if (password) user.password = password;
+
+  // Permissions is a Mongoose Map — must use .set() per key, not direct assignment
+  if (permissions && typeof permissions === 'object') {
+    Object.entries(permissions).forEach(([mod, perm]) => {
+      user.permissions.set(mod, perm);
+    });
+  }
+
+  // tabAccess is Mixed — direct assignment requires markModified to trigger save
+  if (tabAccess !== undefined) {
+    user.tabAccess = tabAccess;
+    user.markModified('tabAccess');
+  }
+
   await user.save();
   const out = user.toObject({ flattenMaps: true });
   delete out.password;

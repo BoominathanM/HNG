@@ -31,7 +31,7 @@ const FONT_SIZE = 13;
 export default function PartiesLedger() {
   const isDark = useSelector((s) => s.theme.isDark);
   const currentUser = useSelector((s) => s.auth.user);
-  const isSuperAdmin = currentUser?.role === 'Super Admin';
+  const isSuperAdmin = currentUser?.role === 'Super Admin' || currentUser?.role === 'Admin';
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';

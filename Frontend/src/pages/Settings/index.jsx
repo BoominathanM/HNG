@@ -100,7 +100,7 @@ const buildPerms = (mods, overrides = {}) =>
   Object.fromEntries(MODULES.map(m => [m, mods.includes(m) ? { ...ALL_PERMS, ...overrides[m] } : { ...NO_PERMS, ...overrides[m] }]));
 
 const initRoles = [
-  { key: 1, role: 'Super Admin',      color: '#B11E6A', users: 1, status: 'Active',
+  { key: 1, role: 'Admin',            color: '#B11E6A', users: 1, status: 'Active',
     perms: buildPerms(MODULES) },
   { key: 2, role: 'Sales Manager',    color: '#8a1652', users: 3, status: 'Active',
     perms: buildPerms(['Dashboard','Sales Team','Reports'], { 'Sales Team': { read:true,add:true,edit:true,delete:false }, Reports: { read:true,add:false,edit:false,delete:false } }) },
@@ -277,6 +277,7 @@ export default function Settings() {
   const [userProfilePhotoUrl, setUserProfilePhotoUrl] = useState(null);
   const [userForm] = Form.useForm();
   const watchedDept = Form.useWatch('department', userForm);
+  const watchedRole = Form.useWatch('role', userForm);
   const watchedOldHotel = Form.useWatch('targetOldHotel', userForm) || 0;
   const watchedNewHotel = Form.useWatch('targetNewHotel', userForm) || 0;
   const watchedPayment = Form.useWatch('targetPayment', userForm) || 0;
@@ -366,6 +367,39 @@ export default function Settings() {
       userForm.resetFields();
     }
   }, [addUserOpen, editingUser, userForm]);
+
+  // Auto-populate page & tab access when role changes (new user only)
+  useEffect(() => {
+    if (!addUserOpen || editingUser || !watchedRole) return;
+    if (watchedRole === 'Admin') {
+      const allPerms = Object.fromEntries(MODULES.map(m => [m, { ...ALL_PERMS }]));
+      const allTabs = {};
+      MODULES.forEach(m => {
+        if (MODULE_TABS[m]?.length) {
+          allTabs[m] = Object.fromEntries(MODULE_TABS[m].map(tab => [tab.key, true]));
+        }
+      });
+      userForm.setFieldsValue({ perms: allPerms, tabAccess: allTabs });
+    } else {
+      const roleData = roles.find(r => r.role === watchedRole);
+      if (roleData?.perms) {
+        userForm.setFieldsValue({ perms: roleData.perms, tabAccess: {} });
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedRole, addUserOpen]);
+
+  // Compute which modules to show based on selected role
+  const visibleModules = (() => {
+    if (!watchedRole) return [];
+    if (watchedRole === 'Admin') return MODULES;
+    const roleData = roles.find(r => r.role === watchedRole);
+    if (!roleData) return MODULES;
+    return MODULES.filter(m => {
+      const p = roleData.perms?.[m];
+      return p && Object.values(p).some(Boolean);
+    });
+  })();
 
   const addUser = () => {
     userForm.validateFields().then(async (vals) => {
@@ -748,55 +782,67 @@ export default function Settings() {
 
                       <div style={{ marginBottom: 16 }}>
                         <Text strong style={{ display: 'block', marginBottom: 8 }}>Page &amp; Tab Access Permissions</Text>
-                        <Collapse
-                          ghost
-                          expandIconPosition="end"
-                          style={{ background: subBg, borderRadius: 8, border: `1px solid ${borderColor}` }}
-                          items={MODULES.map(mod => ({
-                            key: mod,
-                            label: <Text strong style={{ fontSize: 13 }}>{mod}</Text>,
-                            children: (
-                              <div>
-                                {/* Page-level CRUD permissions */}
-                                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-                                  {MODULE_PERM_TYPES[mod].includes('read') && (
-                                    <Form.Item name={['perms', mod, 'read']} valuePropName="checked" style={{ margin: 0 }}>
-                                      <Checkbox>Read</Checkbox>
-                                    </Form.Item>
-                                  )}
-                                  {MODULE_PERM_TYPES[mod].includes('add') && (
-                                    <Form.Item name={['perms', mod, 'add']} valuePropName="checked" style={{ margin: 0 }}>
-                                      <Checkbox>Add</Checkbox>
-                                    </Form.Item>
-                                  )}
-                                  {MODULE_PERM_TYPES[mod].includes('edit') && (
-                                    <Form.Item name={['perms', mod, 'edit']} valuePropName="checked" style={{ margin: 0 }}>
-                                      <Checkbox>Edit</Checkbox>
-                                    </Form.Item>
-                                  )}
-                                  {MODULE_PERM_TYPES[mod].includes('delete') && (
-                                    <Form.Item name={['perms', mod, 'delete']} valuePropName="checked" style={{ margin: 0 }}>
-                                      <Checkbox>Delete</Checkbox>
-                                    </Form.Item>
+                        {watchedRole === 'Admin' && (
+                          <div style={{ background: '#B11E6A12', borderRadius: 8, padding: '8px 12px', marginBottom: 8, border: '1px solid #B11E6A33' }}>
+                            <Text style={{ fontSize: 12, color: '#B11E6A' }}>Admin has full access to all pages and tabs (cannot be restricted)</Text>
+                          </div>
+                        )}
+                        {!watchedRole && (
+                          <div style={{ background: subBg, borderRadius: 8, padding: '12px 16px', border: `1px solid ${borderColor}`, textAlign: 'center' }}>
+                            <Text style={{ fontSize: 12, color: '#aaa' }}>Select a role above to configure page & tab access</Text>
+                          </div>
+                        )}
+                        {visibleModules.length > 0 && (
+                          <Collapse
+                            ghost
+                            expandIconPosition="end"
+                            style={{ background: subBg, borderRadius: 8, border: `1px solid ${borderColor}` }}
+                            items={visibleModules.map(mod => ({
+                              key: mod,
+                              label: <Text strong style={{ fontSize: 13 }}>{mod}</Text>,
+                              children: (
+                                <div>
+                                  {/* Page-level CRUD permissions */}
+                                  <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                                    {MODULE_PERM_TYPES[mod].includes('read') && (
+                                      <Form.Item name={['perms', mod, 'read']} valuePropName="checked" style={{ margin: 0 }}>
+                                        <Checkbox disabled={watchedRole === 'Admin'}>Read</Checkbox>
+                                      </Form.Item>
+                                    )}
+                                    {MODULE_PERM_TYPES[mod].includes('add') && (
+                                      <Form.Item name={['perms', mod, 'add']} valuePropName="checked" style={{ margin: 0 }}>
+                                        <Checkbox disabled={watchedRole === 'Admin'}>Add</Checkbox>
+                                      </Form.Item>
+                                    )}
+                                    {MODULE_PERM_TYPES[mod].includes('edit') && (
+                                      <Form.Item name={['perms', mod, 'edit']} valuePropName="checked" style={{ margin: 0 }}>
+                                        <Checkbox disabled={watchedRole === 'Admin'}>Edit</Checkbox>
+                                      </Form.Item>
+                                    )}
+                                    {MODULE_PERM_TYPES[mod].includes('delete') && (
+                                      <Form.Item name={['perms', mod, 'delete']} valuePropName="checked" style={{ margin: 0 }}>
+                                        <Checkbox disabled={watchedRole === 'Admin'}>Delete</Checkbox>
+                                      </Form.Item>
+                                    )}
+                                  </div>
+                                  {/* Tab-level access */}
+                                  {MODULE_TABS[mod]?.length > 0 && (
+                                    <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
+                                      <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Tab Access:</Text>
+                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                        {MODULE_TABS[mod].map(tab => (
+                                          <Form.Item key={tab.key} name={['tabAccess', mod, tab.key]} valuePropName="checked" style={{ margin: 0 }}>
+                                            <Checkbox disabled={watchedRole === 'Admin'} style={{ fontSize: 12 }}>{tab.label}</Checkbox>
+                                          </Form.Item>
+                                        ))}
+                                      </div>
+                                    </div>
                                   )}
                                 </div>
-                                {/* Tab-level access */}
-                                {MODULE_TABS[mod]?.length > 0 && (
-                                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                                    <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Tab Access:</Text>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                                      {MODULE_TABS[mod].map(tab => (
-                                        <Form.Item key={tab.key} name={['tabAccess', mod, tab.key]} valuePropName="checked" style={{ margin: 0 }}>
-                                          <Checkbox style={{ fontSize: 12 }}>{tab.label}</Checkbox>
-                                        </Form.Item>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            ),
-                          }))}
-                        />
+                              ),
+                            }))}
+                          />
+                        )}
                       </div>
 
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>

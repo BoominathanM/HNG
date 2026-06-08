@@ -40,10 +40,10 @@ MODULES.forEach((m) => {
 
 const ADMIN_DATA = {
   fullName:   'HNG Admin',
-  email:      'admin@gmail.com',
+  email:      'superadmin@gmail.com',
   mobile:     '9000000000',
   password:   'Hng@123',
-  role:       'Super Admin',
+  role:       'Admin',
   department: 'Management',
   status:     'Active',
   permissions: adminPermissions,
@@ -59,7 +59,7 @@ const seedAdminIfEmpty = async () => {
   if (count === 0) {
     await User.create(ADMIN_DATA);
     console.log('✅  Auto-seed: admin user created.');
-    console.log('    Login → email: admin@gmail.com | password: Hng@123');
+    console.log('    Login → email: superadmin@gmail.com | password: Hng@123');
   }
 };
 
