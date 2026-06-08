@@ -1367,7 +1367,10 @@ export default function Sales() {
       const collectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       // paidAmount from backend is the authoritative total collected; use it when collection entries aren't in list response
       const backendPaid = Number(o.paidAmount) || Number(o.totalPaid) || Number(o.amountCollected) || 0;
-      const paidTotal = collectionTotal > 0 ? collectionTotal : (backendPaid || advance);
+      // backendPaid (o.paidAmount) is the authoritative total written by saveOrderEdit —
+      // it includes both advance and any subsequent collection entries.  Only fall back to
+      // collectionTotal or advance when paidAmount was never explicitly stored.
+      const paidTotal = backendPaid > 0 ? backendPaid : (collectionTotal > 0 ? collectionTotal : advance);
       // Compute subtotal from products (qty*rate, always reliable).
       // For GST: prefer per-product % if set; fall back to stored gstAmount (handles converted/legacy orders).
       const subtotal = Math.round(calcTotal(normalizedProducts));
@@ -1425,7 +1428,8 @@ export default function Sales() {
     const prods = full.products?.length ? full.products : itemsToProducts(full.items || []);
     const collTotal = (full.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const adv = Number(full.advancePaidAmount ?? full.advancePaid ?? 0);
-    const paidTotal = collTotal > 0 ? collTotal : (Number(full.paidAmount) || adv);
+    const paidFull = Number(full.paidAmount) || 0;
+    const paidTotal = paidFull > 0 ? paidFull : (collTotal > 0 ? collTotal : adv);
     if (paidTotal <= 0) return;
     const subtotalFull = Math.round(calcTotal(prods));
     const gstFromProdsFull = Math.round(calcGstAmount(prods));

@@ -139,13 +139,30 @@ exports.getPickupExpenses = asyncHandler(async (req, res) => {
 });
 
 exports.payPickupExpense = asyncHandler(async (req, res, next) => {
-  const record = await DispatchRecord.findById(req.params.id);
+  const record = await DispatchRecord.findById(req.params.id).populate('orderId', 'orderCode');
   if (!record) return next(new AppError('Dispatch record not found', 404));
   record.paymentProofUrl = req.file?.path || req.body.proofUrl || record.paymentProofUrl;
   record.paymentStatus = 'Paid';
   record.paidDate = new Date();
-  record.paidBy = req.body.paidBy || req.user.fullName;
+  record.paidBy = req.body.paidBy || req.body.paid_by || req.user.fullName;
   await record.save({ validateBeforeSave: false });
+
+  // Create expense record so the Expenses module reflects this payment
+  const expCode = await generateCode('EXP');
+  await Expense.create({
+    expenseCode: expCode,
+    expenseDate: new Date(),
+    category: 'Shipping / Transportation',
+    description: `Pickup reimbursement paid — Order: ${record.orderId?.orderCode || 'N/A'}`,
+    amount: record.pickupAmount || 0,
+    proofUrl: record.paymentProofUrl,
+    paymentStatus: 'Paid',
+    paidDate: new Date(),
+    paidBy: record.paidBy,
+    expenseSource: 'reimbursement',
+    createdBy: req.user._id,
+  });
+
   res.status(200).json({ success: true, data: record });
 });
 
@@ -163,7 +180,26 @@ exports.payLocalPurchase = asyncHandler(async (req, res, next) => {
   lp.paymentProofUrl = req.file?.path || req.body.proofUrl || lp.paymentProofUrl;
   lp.paymentStatus = 'Paid';
   lp.paidDate = new Date();
-  lp.paidBy = req.body.paidBy || req.user.fullName;
+  lp.paidBy = req.body.paidBy || req.body.paid_by || req.user.fullName;
   await lp.save({ validateBeforeSave: false });
+
+  // Create expense record so the Expenses module reflects this payment
+  const expCode = await generateCode('EXP');
+  const itemNames = (lp.items || []).map(i => i.itemName || i.name).filter(Boolean).join(', ');
+  await Expense.create({
+    expenseCode: expCode,
+    expenseDate: new Date(),
+    category: 'Raw Material',
+    description: `Local purchase paid — Invoice: ${lp.invoiceNo || 'N/A'}${itemNames ? ` (${itemNames})` : ''}`,
+    amount: lp.totalAmount || 0,
+    vendorPayee: lp.vendorName,
+    proofUrl: lp.paymentProofUrl,
+    paymentStatus: 'Paid',
+    paidDate: new Date(),
+    paidBy: lp.paidBy,
+    expenseSource: 'reimbursement',
+    createdBy: req.user._id,
+  });
+
   res.status(200).json({ success: true, data: lp });
 });

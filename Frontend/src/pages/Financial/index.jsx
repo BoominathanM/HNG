@@ -24,6 +24,7 @@ import {
   useUpdateFinancialQuotationMutation,
   usePayPurchaseOrderMutation,
   useGetExpensePaymentsQuery,
+  usePayExpenseMutation,
   useGetPickupExpensesQuery,
   usePayPickupExpenseMutation,
   useGetLocalPurchaseExpensesQuery,
@@ -51,6 +52,7 @@ export default function Financial() {
   const [updateQuotation] = useUpdateFinancialQuotationMutation();
   const [payOrder] = usePayPurchaseOrderMutation();
   const { data: expensePaymentsData } = useGetExpensePaymentsQuery();
+  const [payExpense] = usePayExpenseMutation();
   const { data: pickupExpData } = useGetPickupExpensesQuery();
   const [payPickup] = usePayPickupExpenseMutation();
   const { data: localPurchaseExpData } = useGetLocalPurchaseExpensesQuery();
@@ -163,7 +165,7 @@ export default function Financial() {
     try {
       const fd = new FormData();
       fd.append('paid_by', vals.paid_by || 'Finance Team');
-      const localProofFile = vals.payment_proof?.fileList?.[0];
+      const localProofFile = Array.isArray(vals.payment_proof) ? vals.payment_proof[0] : vals.payment_proof?.fileList?.[0];
       if (localProofFile?.url) {
         fd.append('proofUrl', localProofFile.url);
       } else if (localProofFile?.originFileObj) {
@@ -181,7 +183,7 @@ export default function Financial() {
     try {
       const fd = new FormData();
       fd.append('paid_by', vals.paid_by || 'Finance Team');
-      const reimbProofFile = vals.payment_proof?.fileList?.[0];
+      const reimbProofFile = Array.isArray(vals.payment_proof) ? vals.payment_proof[0] : vals.payment_proof?.fileList?.[0];
       if (reimbProofFile?.url) {
         fd.append('proofUrl', reimbProofFile.url);
       } else if (reimbProofFile?.originFileObj) {
@@ -217,30 +219,29 @@ export default function Financial() {
     category: e.category, desc: e.description,
     amount: e.amount, status: e.paymentStatus,
     vendor: e.vendorPayee, bill_no: e.expenseCode,
+    proofUrl: e.proofUrl,
   })), [expensePaymentsData]);
 
   const handleProcessPayment = async (values) => {
     const paidAmt = values.amount_paid || selectedForPayment.amount;
     const remaining = selectedForPayment.amount - paidAmt;
     const finalStatus = values.status === 'Partial Paid' && remaining > 0 ? 'Partial Paid' : 'Paid';
-    const proofFileName = values.proof?.fileList?.[0]?.name || null;
+    try {
+      const fd = new FormData();
+      fd.append('amountPaid', paidAmt);
+      fd.append('status', finalStatus);
+      const proofFile = values.proof?.fileList?.[0];
+      if (proofFile?.url) fd.append('proofUrl', proofFile.url);
+      else if (proofFile?.originFileObj) fd.append('proof', proofFile.originFileObj);
 
-    enqueueSnackbar(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`, { variant: 'success' });
-
-    if (selectedForPayment.bill_no?.startsWith('EXP')) {
-      setExpenseRequests((prev) => prev.map((r) =>
-        r.key === selectedForPayment.key ? { ...r, status: finalStatus, paid_amount: (r.paid_amount || 0) + paidAmt } : r
-      ));
-    } else {
-      try {
-        const fd = new FormData();
-        fd.append('amountPaid', paidAmt);
-        fd.append('status', finalStatus);
-        const poProofFile = values.proof?.fileList?.[0];
-        if (poProofFile?.url) fd.append('proofUrl', poProofFile.url);
-        else if (poProofFile?.originFileObj) fd.append('proof', poProofFile.originFileObj);
+      if (selectedForPayment.bill_no?.startsWith('EXP')) {
+        await payExpense({ id: selectedForPayment.key, formData: fd }).unwrap();
+      } else {
         await payOrder({ id: selectedForPayment.key, formData: fd }).unwrap();
-      } catch { /* silent */ }
+      }
+      enqueueSnackbar(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`, { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Payment failed', { variant: 'error' });
     }
     setShowPaymentModal(false);
     setSelectedForPayment(null);
@@ -697,7 +698,7 @@ export default function Financial() {
                                           ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #52c41a55' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
                                           : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 12 }}>View File</Button>;
                                       }
-                                      if (v) return <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>;
+                                      if (v) return <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>;
                                       return <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Uploaded</Tag>;
                                     }
                                   },
@@ -795,7 +796,7 @@ export default function Financial() {
                                   },
                                   {
                                     title: 'Payment Proof', dataIndex: 'paymentProof', key: 'paymentProof', width: 125,
-                                    render: v => v ? <Button size="small" icon={<CheckCircleOutlined />} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                    render: v => v ? <Button size="small" icon={<CheckCircleOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
                                   },
                                   {
                                     title: 'Actions', key: 'actions', fixed: 'right', width: 115,
@@ -946,6 +947,27 @@ export default function Financial() {
                 </Form.Item>
               </Col>
             </Row>
+
+            {selectedForPayment?.proofUrl && (
+              <div style={{ marginBottom: 16 }}>
+                <Text strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
+                  Expense Proof (submitted during expense entry)
+                </Text>
+                <div style={{ border: `1px solid ${isDark ? '#2a2a3a' : '#B11E6A33'}`, borderRadius: 8, overflow: 'hidden', maxHeight: 220, overflowY: 'auto', background: isDark ? '#16192a' : '#fafcff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8 }}>
+                  {/\.(jpg|jpeg|png|gif|webp)$/i.test(selectedForPayment.proofUrl) ? (
+                    <Image
+                      src={selectedForPayment.proofUrl}
+                      style={{ maxWidth: '100%', maxHeight: 200, objectFit: 'contain', borderRadius: 6 }}
+                      preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }}
+                    />
+                  ) : (
+                    <Button icon={<FileTextOutlined />} onClick={() => window.open(selectedForPayment.proofUrl, '_blank')} style={{ color: '#B11E6A', borderColor: '#B11E6A' }}>
+                      View Expense Proof Document
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
 
             <Form.Item label="Upload Payment Proof (Receipt/Screenshot)" name="proof">
               <Upload.Dragger
@@ -1108,7 +1130,13 @@ export default function Financial() {
             <Form.Item label="Paid By" name="paid_by" initialValue="Finance Team">
               <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
             </Form.Item>
-            <Form.Item label="Upload Payment Proof" name="payment_proof" rules={[{ required: true, message: 'Please upload payment proof' }]}>
+            <Form.Item
+              label="Upload Payment Proof"
+              name="payment_proof"
+              valuePropName="fileList"
+              getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
+              rules={[{ required: true, message: 'Please upload payment proof' }]}
+            >
               <Upload maxCount={1} customRequest={makeUpload('financial/proofs')} accept=".pdf,.jpg,.jpeg,.png">
                 <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
               </Upload>
@@ -1153,7 +1181,13 @@ export default function Financial() {
             <Form.Item label="Paid By" name="paid_by" initialValue="Finance Team">
               <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
             </Form.Item>
-            <Form.Item label="Upload Payment Proof" name="payment_proof" rules={[{ required: true, message: 'Please upload payment proof' }]}>
+            <Form.Item
+              label="Upload Payment Proof"
+              name="payment_proof"
+              valuePropName="fileList"
+              getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
+              rules={[{ required: true, message: 'Please upload payment proof' }]}
+            >
               <Upload maxCount={1} customRequest={makeUpload('financial/proofs')} accept=".pdf,.jpg,.jpeg,.png">
                 <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
               </Upload>

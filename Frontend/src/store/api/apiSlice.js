@@ -389,7 +389,7 @@ export const apiSlice = createApi({
     }),
     payPickupExpense: builder.mutation({
       query: ({ id, formData }) => ({ url: `/financial/reimbursements/pickup/${id}/pay`, method: 'post', data: formData }),
-      invalidatesTags: ['PickupExpenses'],
+      invalidatesTags: ['PickupExpenses', 'Expenses'],
     }),
     getLocalPurchaseExpenses: builder.query({
       query: (params) => ({ url: '/financial/reimbursements/local-purchase', params }),
@@ -397,7 +397,7 @@ export const apiSlice = createApi({
     }),
     payLocalPurchaseExpense: builder.mutation({
       query: ({ id, formData }) => ({ url: `/financial/reimbursements/local-purchase/${id}/pay`, method: 'post', data: formData }),
-      invalidatesTags: ['LocalPurchaseExpenses'],
+      invalidatesTags: ['LocalPurchaseExpenses', 'Expenses'],
     }),
 
     // ── Sales ────────────────────────────────────────────────────────────────
@@ -479,7 +479,7 @@ export const apiSlice = createApi({
     }),
     updateSalesOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/orders/${id}`, method: 'put', data }),
-      invalidatesTags: ['Orders'],
+      invalidatesTags: ['Orders', 'Operations'],
     }),
     updateSalesOrderStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/sales/orders/${id}/status`, method: 'patch', data: { status } }),

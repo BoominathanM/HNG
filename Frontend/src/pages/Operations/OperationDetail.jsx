@@ -123,7 +123,14 @@ export default function OperationDetail() {
     orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
     specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || '',
     paymentReminderDate: o.paymentReminderDate,
-    totalAmount: o.total || 0, advance: o.advancePaidAmount ?? o.advancePaid ?? 0,
+    totalAmount: o.total || 0,
+    advance: o.advancePaidAmount ?? o.advancePaid ?? 0,
+    paidAmount: (() => {
+      const backendPaid = Number(o.paidAmount) || 0;
+      const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const adv = o.advancePaidAmount ?? o.advancePaid ?? 0;
+      return backendPaid > 0 ? backendPaid : (collTotal > 0 ? collTotal : adv);
+    })(),
     expectedDelivery: o.expectedDeliveryDate
       ? new Date(o.expectedDeliveryDate).toISOString().slice(0, 10)
       : o.expectedDelivery
@@ -147,9 +154,13 @@ export default function OperationDetail() {
     forwardingCharge: o.forwardingCharge || false,
     paymentProofs: (() => {
       const seen = new Set();
+      const logoEntry = o.leadId?.hotelLogoUrl
+        ? [{ url: o.leadId.hotelLogoUrl, name: 'Hotel Logo (Lead)' }]
+        : [];
       return [
         ...(o.paymentProofs || []),
         ...(o.leadId?.paymentProofs || []),
+        ...logoEntry,
       ].filter((p) => {
         if (!p || (!p.url && !p.name)) return false;
         const key = p.url || p.name;
@@ -732,8 +743,20 @@ export default function OperationDetail() {
                   <Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{(order.totalAmount ?? 0).toLocaleString()}</Text>
                 </Col>
                 <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Amount Paid</Text>
+                  <Text strong style={{ color: '#52c41a', fontSize: 16 }}>₹{(order.paidAmount ?? order.advance ?? 0).toLocaleString()}</Text>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Balance Due</Text>
+                  <Text strong style={{ color: Math.max(0, (order.totalAmount ?? 0) - (order.paidAmount ?? order.advance ?? 0)) > 0 ? '#fa8c16' : '#52c41a', fontSize: 16 }}>
+                    ₹{Math.max(0, (order.totalAmount ?? 0) - (order.paidAmount ?? order.advance ?? 0)).toLocaleString()}
+                  </Text>
+                </Col>
+              </Row>
+              <Row gutter={[16, 10]}>
+                <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Advance Paid</Text>
-                  <Text strong style={{ color: '#52c41a', fontSize: 16 }}>₹{(order.advance ?? 0).toLocaleString()}</Text>
+                  <Text strong style={{ color: '#52c41a' }}>₹{(order.advance ?? 0).toLocaleString()}</Text>
                 </Col>
                 <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Expected Delivery</Text>

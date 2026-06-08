@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import dayjs from 'dayjs';
-import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs } from 'antd';
+import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs, Image } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined, SearchOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
@@ -148,6 +148,26 @@ export default function Expenses() {
     {
       title: 'Status', dataIndex: 'status', key: 'status',
       render: s => <Tag color={s === 'Paid' ? 'success' : s === 'Partially Paid' ? 'warning' : 'error'} style={{ borderRadius: 12 }}>{s}</Tag>
+    },
+    {
+      title: 'Proof', key: 'proof', width: 80, align: 'center',
+      render: (_, r) => {
+        if (!r.proofUrl) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+        if (/\.(jpg|jpeg|png|gif|webp)/i.test(r.proofUrl)) {
+          return (
+            <Image
+              src={r.proofUrl}
+              width={36}
+              height={36}
+              style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #B11E6A33' }}
+              preview={{ mask: <EyeOutlined style={{ fontSize: 12 }} /> }}
+            />
+          );
+        }
+        return (
+          <Button size="small" icon={<EyeOutlined />} type="link" style={{ color: '#B11E6A', padding: 0 }} onClick={() => window.open(r.proofUrl, '_blank')}>View</Button>
+        );
+      }
     },
     {
       title: 'History', key: 'history',
