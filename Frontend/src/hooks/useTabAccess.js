@@ -12,12 +12,15 @@ const normalizeMap = (m) =>
  * ("Page & Tab Access"). Those choices are stored on the user as
  * `tabAccess[module][<tab label>] = true | false`.
  *
- * Default-allow semantics (keeps existing users unaffected):
+ * Whitelist semantics:
  *   - Super Admin / Admin see every tab.
- *   - If the module has no tabAccess configured, every tab is visible.
- *   - A tab is hidden ONLY when the admin explicitly unchecked it
- *     (its key maps to an entry that is `=== false`).
- *   - Tabs whose key isn't part of the configurable list stay visible.
+ *   - If a module has no tabAccess configured (empty or missing), every tab
+ *     is visible (no restriction applied).
+ *   - Once the admin grants at least one tab (any key === true), ONLY the
+ *     explicitly-true tabs are shown. Every other tab — including ones whose
+ *     key is absent from the config — is hidden.
+ *   - This means the admin configures access by CHECKING what the user may
+ *     see; unchecked/unconfigured tabs are hidden once any grant exists.
  *
  * Matching is done by the tab's stable `key` (e.g. 'order-in-process'), which
  * is what Settings stores in tabAccess (see src/constants/moduleTabs.js). This
@@ -48,9 +51,10 @@ export default function useTabAccess(module) {
     let visible = items;
     if (user && user.role !== 'Super Admin' && user.role !== 'Admin') {
       const modAccess = normalizeMap(user.tabAccess)[module];
-      // Whitelist semantics: tab access only restricts when the admin granted
-      // at least one tab (some key === true). If nothing is granted (e.g. the
-      // module was expanded only to set CRUD perms), don't restrict tabs at all.
+      // Whitelist: restrict ONLY when the admin has explicitly granted ≥1 tab.
+      // When restricted, ONLY tabs with key === true are shown — tabs missing
+      // from the config are also hidden, so the admin controls access by
+      // checking what the user may see (not by unchecking what they can't).
       const granted = modAccess && typeof modAccess === 'object'
         ? Object.values(modAccess).some((v) => v === true)
         : false;
@@ -58,10 +62,8 @@ export default function useTabAccess(module) {
         visible = items.filter((item) => {
           if (!item) return false;
           const k = item.key;
-          if (k == null) return true; // no key to match — keep it
-          // Tabs the admin can't control (not in the config) stay visible;
-          // controllable tabs show only when granted (true).
-          return k in modAccess ? modAccess[k] === true : true;
+          if (k == null) return true;
+          return modAccess[k] === true;
         });
       }
     }

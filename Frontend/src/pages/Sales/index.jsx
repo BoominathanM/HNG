@@ -963,6 +963,7 @@ export default function Sales() {
   const [orderEditModalOpen, setOrderEditModalOpen] = useState(false);
   const [orderEditTarget, setOrderEditTarget] = useState(null);
   const [orderEditForm] = Form.useForm();
+  const [orderEditPaymentProofs, setOrderEditPaymentProofs] = useState([]);
 
   const handleDownloadQuotation = (order) => {
     const linkedQuot = quotationsData.find(
@@ -998,13 +999,37 @@ export default function Sales() {
 
   const openOrderEditModal = (order) => {
     setOrderEditTarget(order);
+    // Resolve expected delivery date: use the order's own value first, then fall back to the
+    // tentative date on the linked lead / quotation / negotiation (covers orders that predate
+    // the expectedDeliveryDate field or were created without it being explicitly set).
+    let resolvedDelivery = order.expectedDelivery || null;
+    if (!resolvedDelivery) {
+      const leadIdStr = String(order.leadId?._id || order.leadId || '');
+      const linkedLead = leadIdStr ? leadsData.find(l => String(l._id || l.key) === leadIdStr) : null;
+      const negIdStr = String(order.negotiationId?._id || order.negotiationId || '');
+      const linkedNeg = negIdStr ? negotiationsData.find(n => String(n._id || n.key) === negIdStr) : null;
+      const linkedQuot = findLinkedQuotation({ quotationId: order.quotationId, quotationCode: order.quotationCode });
+      const raw = (linkedLead?.orderDeliveryDate) || (linkedNeg?.orderDeliveryDate) || (linkedQuot?.orderDeliveryDate) || null;
+      resolvedDelivery = raw ? String(raw).slice(0, 10) : null;
+    }
     orderEditForm.setFieldsValue({
-      expectedDelivery: order.expectedDelivery ? dayjs(order.expectedDelivery) : null,
+      expectedDelivery: resolvedDelivery ? dayjs(resolvedDelivery) : null,
       advance: order.advance || 0,
       paymentTerms: order.paymentTerms,
       paymentReminderDate: order.paymentReminderDate ? dayjs(order.paymentReminderDate) : null,
       paymentCollection: order.paymentCollection || [],
     });
+    setOrderEditPaymentProofs(
+      (order.paymentProofs || []).map((f, i) => ({
+        uid: f.uid || f.cloudPublicId || `existing-proof-${i}`,
+        name: f.name || f.fileName || `Proof ${i + 1}`,
+        status: 'done',
+        url: f.url || f.thumbUrl,
+        thumbUrl: f.thumbUrl || f.url,
+        cloudPublicId: f.cloudPublicId,
+        uploadedAt: f.uploadedAt,
+      }))
+    );
     setOrderEditModalOpen(true);
   };
 
@@ -1013,13 +1038,40 @@ export default function Sales() {
       const newAdvance = vals.advance ?? orderEditTarget.advance ?? 0;
       const newCollection = (vals.paymentCollection || []).filter(e => e.paymentMethod);
       const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-      const newPaidAmount = collTotal > 0 ? collTotal : newAdvance;
+
+      // Any amount already in paidAmount that wasn't backed by collection entries
+      // (e.g. orders created before paymentCollection tracking) must be preserved so
+      // we don't overwrite a real collected amount with a smaller new entry.
+      const existingCollTotal = (orderEditTarget.paymentCollection || []).reduce(
+        (s, e) => s + Number(e.paidAmount || 0), 0
+      );
+      const uncapturedPaid = Math.max(
+        0,
+        Number(orderEditTarget.paidAmount || 0) - existingCollTotal
+      );
+      const newPaidAmount = (collTotal + uncapturedPaid) > 0
+        ? collTotal + uncapturedPaid
+        : newAdvance;
+
       const orderTotal = orderEditTarget.total || orderEditTarget.totalAmount || 0;
       const paymentStatus = orderTotal > 0 && newPaidAmount >= orderTotal
         ? 'Paid'
         : newPaidAmount > 0
         ? 'Partially Paid'
         : 'Unpaid';
+
+      // Merge existing proofs with any newly uploaded ones from the edit session
+      const mergedProofs = orderEditPaymentProofs
+        .filter(f => f.status === 'done')
+        .map(f => ({
+          uid: f.uid,
+          name: f.name || f.fileName || 'Payment Proof',
+          url: f.url || f.response?.url,
+          cloudPublicId: f.cloudPublicId,
+          thumbUrl: f.thumbUrl || f.url || f.response?.url,
+          uploadedAt: f.uploadedAt || new Date().toISOString(),
+        }));
+
       const updated = {
         ...orderEditTarget,
         expectedDelivery: vals.expectedDelivery ? vals.expectedDelivery.format('YYYY-MM-DD') : orderEditTarget.expectedDelivery,
@@ -1029,6 +1081,7 @@ export default function Sales() {
         paymentTerms: vals.paymentTerms || orderEditTarget.paymentTerms,
         paymentReminderDate: vals.paymentReminderDate ? vals.paymentReminderDate.format('YYYY-MM-DD') : orderEditTarget.paymentReminderDate,
         paymentCollection: newCollection,
+        paymentProofs: mergedProofs,
         paymentStatus,
       };
       try {
@@ -1042,6 +1095,7 @@ export default function Sales() {
           paymentTerms: updated.paymentTerms,
           paymentReminderDate: updated.paymentReminderDate || undefined,
           paymentCollection: newCollection,
+          paymentProofs: mergedProofs,
           paymentStatus,
         };
         await updateSalesOrderMutation(backendPatch).unwrap();
@@ -1050,6 +1104,7 @@ export default function Sales() {
         enqueueSnackbar('Order updated successfully', { variant: 'success' });
         setOrderEditModalOpen(false);
         setOrderEditTarget(null);
+        setOrderEditPaymentProofs([]);
       } catch (err) {
         enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update order', { variant: 'error' });
       }
@@ -2930,6 +2985,14 @@ export default function Sales() {
             <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 10, letterSpacing: 0.5 }}>DELIVERY INFO</Text>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><Text type="secondary" style={{ fontSize: 12 }}>Delivery By</Text><Text strong>{rec.deliveryBy || '—'}</Text></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}><Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text><Text strong>{rec.transportationBy || '—'}</Text></div>
+            {(rec.orderDeliveryDate || rec.expectedDelivery) && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Tentative Date</Text>
+                <Text strong style={{ color: '#fa8c16' }}>
+                  {(() => { const d = rec.orderDeliveryDate || rec.expectedDelivery; return dayjs(d).isValid() ? dayjs(d).format('DD MMM YYYY') : String(d).slice(0, 10); })()}
+                </Text>
+              </div>
+            )}
             <Tag color={rec.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>{rec.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}</Tag>
           </div>
         </Col>
@@ -5500,6 +5563,14 @@ export default function Sales() {
                             <Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text>
                             <Text strong>{record.transportationBy || '—'}</Text>
                           </div>
+                          {record.orderDeliveryDate && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>Tentative Date</Text>
+                              <Text strong style={{ color: '#fa8c16' }}>
+                                {dayjs(record.orderDeliveryDate).isValid() ? dayjs(record.orderDeliveryDate).format('DD MMM YYYY') : String(record.orderDeliveryDate).slice(0, 10)}
+                              </Text>
+                            </div>
+                          )}
                           <Tag color={record.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>
                             {record.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}
                           </Tag>
@@ -6438,9 +6509,9 @@ export default function Sales() {
           </Space>
         }
         open={orderEditModalOpen}
-        onCancel={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); }}
+        onCancel={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); setOrderEditPaymentProofs([]); }}
         footer={[
-          <Button key="cancel" onClick={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); }}>Cancel</Button>,
+          <Button key="cancel" onClick={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); setOrderEditPaymentProofs([]); }}>Cancel</Button>,
           <Button key="save" type="primary" style={{ background: '#B11E6A', border: 'none' }} onClick={saveOrderEdit}>Save Changes</Button>,
         ]}
         width={Math.min(500, window.innerWidth - 32)}
@@ -6537,18 +6608,35 @@ export default function Sales() {
             )}
           </Form.List>
 
+          <Divider style={{ margin: '12px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+            <Space><UploadOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Proof</span></Space>
+          </Divider>
+          <Upload
+            multiple
+            listType="picture"
+            fileList={orderEditPaymentProofs}
+            customRequest={makeCloudinaryRequest('payment-proofs')}
+            accept="image/*,.pdf"
+            onChange={({ fileList }) => setOrderEditPaymentProofs(fileList)}
+          >
+            <Button icon={<UploadOutlined />} size="small">Upload Payment Proof</Button>
+          </Upload>
+
           {/* Auto-computed payment status based on collection entries vs order total */}
           <Form.Item noStyle shouldUpdate>
             {({ getFieldValue }) => {
               const rawColl = getFieldValue('paymentCollection');
               const collection = Array.isArray(rawColl) ? rawColl : [];
               const collTotal = collection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
-              // When no collection entries exist yet, fall back to the order's known paid amount
-              // (advance or paidAmount from the list record) so the status reflects reality.
-              const fallbackPaid = !collection.length
-                ? Number(orderEditTarget?.paidAmount || orderEditTarget?.advance || 0)
-                : 0;
-              const effectivePaid = collTotal + fallbackPaid;
+              // Preserve any amount that was in paidAmount but not captured in collection entries.
+              const existingCollTotal = (orderEditTarget?.paymentCollection || []).reduce(
+                (s, e) => s + Number(e?.paidAmount || 0), 0
+              );
+              const uncapturedPaid = Math.max(
+                0,
+                Number(orderEditTarget?.paidAmount || 0) - existingCollTotal
+              );
+              const effectivePaid = collTotal + uncapturedPaid;
               const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
               const status = orderTotal > 0 && effectivePaid >= orderTotal
                 ? 'Paid'

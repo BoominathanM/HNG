@@ -689,12 +689,29 @@ export default function Settings() {
 
                       <Row gutter={16}>
                         <Col xs={24} sm={12}>
-                          <Form.Item label="Password" name="password" rules={[{ required: true, min: 6, message: 'Min 6 characters' }]}>
-                            <Input.Password placeholder="Min 6 characters" style={{ borderRadius: 8, height: 40 }} />
+                          <Form.Item
+                            label={editingUser ? 'New Password (leave blank to keep current)' : 'Password'}
+                            name="password"
+                            rules={editingUser
+                              ? [{ min: 6, message: 'Min 6 characters' }]
+                              : [{ required: true, min: 6, message: 'Min 6 characters' }]}
+                          >
+                            <Input.Password placeholder={editingUser ? 'Leave blank to keep current' : 'Min 6 characters'} style={{ borderRadius: 8, height: 40 }} />
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={12}>
-                          <Form.Item label="Confirm Password" name="confirm" rules={[{ required: true, message: 'Required' }]}>
+                          <Form.Item
+                            label="Confirm Password"
+                            name="confirm"
+                            rules={editingUser
+                              ? [({ getFieldValue }) => ({
+                                  validator(_, value) {
+                                    if (!value || !getFieldValue('password') || getFieldValue('password') === value) return Promise.resolve();
+                                    return Promise.reject(new Error('Passwords do not match'));
+                                  },
+                                })]
+                              : [{ required: true, message: 'Required' }]}
+                          >
                             <Input.Password placeholder="Confirm password" style={{ borderRadius: 8, height: 40 }} />
                           </Form.Item>
                         </Col>

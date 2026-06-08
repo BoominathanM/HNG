@@ -54,14 +54,16 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
   const authUser = useSelector((s) => s.auth.user);
   const [logout] = useLogoutMutation();
 
-  // Build the visible menu based on page-level read permissions.
-  // Super Admin (or no permissions set) sees everything.
+  // Show a sidebar item only when the user has read permission for that module.
+  // Matches the deny-by-default logic in PermissionRoute (App.jsx).
   const canView = (module) => {
     if (!authUser) return false;
-    if (authUser.role === 'Super Admin') return true;
-    const perm = authUser.permissions?.[module];
-    if (perm === undefined || perm === null) return true;
-    return perm.read === true;
+    if (authUser.role === 'Super Admin' || authUser.role === 'Admin') return true;
+    const rawPerms = authUser.permissions;
+    const perms = rawPerms instanceof Map
+      ? Object.fromEntries(rawPerms)
+      : (rawPerms && typeof rawPerms === 'object' ? rawPerms : {});
+    return perms[module]?.read === true;
   };
 
   const menuItems = ALL_MENU_ITEMS.reduce((acc, item) => {
