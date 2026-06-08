@@ -304,21 +304,32 @@ export default function Inventory() {
   const [detailItem, setDetailItem] = useState(null);
 
   /* ── Live Staff Checking ── */
-  const [checkSession, setCheckSession] = useState(
-    inventoryList.map(i => ({
-      key: i.key,
-      code: i.code,
-      name: i.name,
-      unit: i.unit,
-      systemCount: i.current,
-      physicalCount: i.current,
-      missingType: null,
-      missingReason: '',
-    }))
-  );
+  const [checkSession, setCheckSession] = useState([]);
   const [checkSubmitOpen, setCheckSubmitOpen] = useState(false);
   const [checkNotes, setCheckNotes] = useState('');
   const [checkSubmitted, setCheckSubmitted] = useState(false);
+
+  // Populate checkSession once inventory data loads from RTK Query (useState runs before data arrives).
+  // On subsequent loads (e.g. after an approval), refresh systemCount while preserving the user's
+  // already-entered physicalCount values so an in-progress session isn't wiped out.
+  useEffect(() => {
+    if (inventoryList.length === 0) return;
+    setCheckSession(prev => {
+      if (prev.length === 0) {
+        return inventoryList.map(i => ({
+          key: i.key, code: i.code, name: i.name, unit: i.unit,
+          systemCount: i.current, physicalCount: i.current,
+          missingType: null, missingReason: '',
+        }));
+      }
+      // Merge: keep user-entered counts, update system counts & add any new items
+      return inventoryList.map(i => {
+        const existing = prev.find(p => p.key === i.key);
+        if (existing) return { ...existing, code: i.code, name: i.name, unit: i.unit, systemCount: i.current };
+        return { key: i.key, code: i.code, name: i.name, unit: i.unit, systemCount: i.current, physicalCount: i.current, missingType: null, missingReason: '' };
+      });
+    });
+  }, [inventoryList]);
 
   /* ── Derived ── */
   const filteredInventory = inventoryList.filter((i) => {

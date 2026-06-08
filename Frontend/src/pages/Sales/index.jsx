@@ -2122,11 +2122,29 @@ export default function Sales() {
       const d = res?.data;
       if (d) {
         leadForm.setFieldsValue({
-          billingName: d.billingName, contactPerson: d.contactPerson, pocDesignation: d.pocDesignation,
-          phone: d.phone, email: d.email, locationCity: d.locationCity || d.city, destination: d.destination,
-          gstNumber: d.gstNumber, gstPercent: d.gstPercent, branch: d.branch || branch,
-          altRole: d.altRole, altName: d.altName, altNumber: d.altNumber,
-          generalOccupancy: d.generalOccupancy, numRooms: d.numRooms || d.rowsInHotel,
+          billingName: d.billingName,
+          contactPerson: d.contactPerson,
+          pocDesignation: d.pocDesignation,
+          phone: d.phone,
+          email: d.email,
+          // Form field is "location", not "locationCity"
+          location: d.locationCity || d.location || d.city,
+          destination: d.destination,
+          gstNumber: d.gstNumber,
+          gstPercent: d.gstPercent,
+          branch: d.branch || branch,
+          // Form fields use "alternativeRole/Name/Phone", not "altRole/Name/Number"
+          alternativeRole: d.altRole,
+          alternativeName: d.altName,
+          alternativePhone: d.altNumber,
+          generalOccupancy: d.generalOccupancy,
+          // Form field is "rowsInHotel", not "numRooms"
+          rowsInHotel: d.numRooms || d.rowsInHotel,
+          source: d.source,
+          // Populate logo from stored Cloudinary URL
+          ...(d.hotelLogoUrl ? {
+            hotelLogo: [{ uid: '-1', name: 'hotel-logo', status: 'done', url: d.hotelLogoUrl }],
+          } : {}),
         });
         enqueueSnackbar(`Auto-filled details for ${name}`, { variant: 'success' });
       } else {
@@ -2247,6 +2265,19 @@ export default function Sales() {
     if (!validProducts.length) {
       enqueueSnackbar('Please add product details to the quotation before converting to Order', { variant: 'warning' });
       return;
+    }
+    const qId = String(q.key || q._id || '');
+    if (qId) {
+      const existingOrder = ordersData.find(o => String(o.quotationId?._id || o.quotationId || '') === qId);
+      if (existingOrder) {
+        enqueueSnackbar(`Already converted to Order ${existingOrder.oid || existingOrder.orderCode || ''}. Duplicate not allowed.`, { variant: 'warning' });
+        return;
+      }
+      const existingNeg = negotiationsData.find(n => String(n.quotationId?._id || n.quotationId || '') === qId);
+      if (existingNeg) {
+        enqueueSnackbar(`This quotation is already in Negotiation (${existingNeg.nid || existingNeg.negCode || ''}). Convert to Order from the Negotiations tab.`, { variant: 'info' });
+        return;
+      }
     }
     alertPriorComplaint(q.hotelName || q.billingName || q.clientName);
     try {
@@ -2399,6 +2430,19 @@ export default function Sales() {
       enqueueSnackbar('Please add product details to the quotation before converting to Negotiation', { variant: 'warning' });
       return;
     }
+    const qId = String(q.key || q._id || '');
+    if (qId) {
+      const existingOrder = ordersData.find(o => String(o.quotationId?._id || o.quotationId || '') === qId);
+      if (existingOrder) {
+        enqueueSnackbar(`Already converted to Order ${existingOrder.oid || existingOrder.orderCode || ''}. Cannot move to Negotiation again.`, { variant: 'warning' });
+        return;
+      }
+      const existingNeg = negotiationsData.find(n => String(n.quotationId?._id || n.quotationId || '') === qId);
+      if (existingNeg) {
+        enqueueSnackbar(`Already in Negotiation (${existingNeg.nid || existingNeg.negCode || ''}). Duplicate not allowed.`, { variant: 'info' });
+        return;
+      }
+    }
     try {
       await convertToNegotiationMutation({
         id: q.key,
@@ -2486,6 +2530,14 @@ export default function Sales() {
     if (!validProducts.length) {
       enqueueSnackbar('Please add product details to the negotiation before converting to Order', { variant: 'warning' });
       return;
+    }
+    const nId = String(n.key || n._id || '');
+    if (nId) {
+      const existingOrder = ordersData.find(o => String(o.negotiationId?._id || o.negotiationId || '') === nId);
+      if (existingOrder) {
+        enqueueSnackbar(`Already converted to Order ${existingOrder.oid || existingOrder.orderCode || ''}. Duplicate not allowed.`, { variant: 'warning' });
+        return;
+      }
     }
     alertPriorComplaint(n.hotelName || n.clientName);
     try {
