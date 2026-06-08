@@ -21,6 +21,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import dayjs from 'dayjs';
 import {
   useGetItemsQuery,
@@ -172,6 +173,7 @@ export default function Inventory() {
   const [kitForm] = Form.useForm();
 
   const openAddKit = (kit = null) => {
+    if (!requireAccess(kit ? 'edit' : 'add')) return;
     setEditingKit(kit);
     setKitModal(true);
   };
@@ -230,6 +232,7 @@ export default function Inventory() {
   };
 
   const handleDeleteKit = async (kit) => {
+    if (!requireAccess('delete')) return;
     try {
       await deleteKitMutation(kit._id).unwrap();
       enqueueSnackbar('Kit deleted', { variant: 'success' });
@@ -291,6 +294,7 @@ export default function Inventory() {
   /* ── Active tab ── */
   const [activeInvTab, setActiveInvTab] = useState('stock');
   const { filterTabs, activeKeyFor } = useTabAccess('Inventory');
+  const { requireAccess } = usePageAccess('Inventory');
 
   /* ── Category & Kit expand ── */
   const [expandedCategory, setExpandedCategory] = useState(null);
@@ -365,6 +369,7 @@ export default function Inventory() {
   };
 
   const openReceive = (r) => {
+    if (!requireAccess('add')) return;
     setActiveItem(r);
     setSelectedSupplier(null);
     setSupplierSearch('');
@@ -375,6 +380,7 @@ export default function Inventory() {
   };
 
   const openIssue = (r) => {
+    if (!requireAccess('add')) return;
     setActiveIssueItem(r);
     setSelectedVendor(null);
     setVendorSearch('');
@@ -664,9 +670,9 @@ export default function Inventory() {
       render: (_, r) => (
         <Space size={4} wrap>
           <div style={{ display: 'flex', alignItems: 'center', background: isDark ? '#2a2a3e' : '#f0f0f0', borderRadius: 6, padding: '2px', border: `1px solid ${borderColor}` }}>
-            <Button size="small" type="text" icon={<MinusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Deduction' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+            <Button size="small" type="text" icon={<MinusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Deduction' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
-            <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+            <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
@@ -680,7 +686,7 @@ export default function Inventory() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Inventory" items={[{ label: 'Inventory' }]} style={{ marginBottom: 0 }} />
         {activeInvTab !== 'kit' && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddItemModal(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add Item</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!requireAccess('add')) return; setAddItemModal(true); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add Item</Button>
         )}
       </div>
 

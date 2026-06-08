@@ -9,6 +9,7 @@ import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetExpensesQuery,
   useCreateExpenseMutation,
@@ -79,6 +80,7 @@ export default function Expenses() {
   const [historyDateRange, setHistoryDateRange] = useState(null);
 
   const { filterTabs } = useTabAccess('Expenses');
+  const { requireAccess } = usePageAccess('Expenses');
 
   /* ── Search & Filter state ── */
   const [expSearch, setExpSearch] = useState('');
@@ -187,7 +189,7 @@ export default function Expenses() {
         <PageBreadcrumb title="Expense Management" items={[{ label: 'Expenses' }]} style={{ marginBottom: 0 }} />
         <Space>
           <Button icon={<DownloadOutlined />}>Export</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalOpen(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!requireAccess('add')) return; setIsModalOpen(true); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
             Add Expense
           </Button>
         </Space>

@@ -21,6 +21,7 @@ import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetLeadsQuery,
   useGetSalesQuotationsQuery,
@@ -923,6 +924,7 @@ export default function Sales() {
   const [ordersData, setOrdersData] = useState([]);
   const [activeTab, setActiveTab] = useState('performance');
   const { filterTabs, activeKeyFor } = useTabAccess('Sales Team');
+  const { requireAccess } = usePageAccess('Sales Team');
   const [searchText, setSearchText] = useState('');
   const [dateRange, setDateRange] = useState(null);
   const [leadStatusFilter, setLeadStatusFilter] = useState(null);
@@ -998,6 +1000,7 @@ export default function Sales() {
   };
 
   const openOrderEditModal = (order) => {
+    if (!requireAccess('edit')) return;
     setOrderEditTarget(order);
     // Resolve expected delivery date: use the order's own value first, then fall back to the
     // tentative date on the linked lead / quotation / negotiation (covers orders that predate
@@ -1674,6 +1677,7 @@ export default function Sales() {
 
   // ─── Lead handlers ────────────────────────────────────────────────
   const openAddLead = (lead = null) => {
+    if (!requireAccess(lead ? 'edit' : 'add')) return;
     setEditingLead(lead);
     setSelectedRecord(lead);
     leadForm.resetFields();
@@ -2325,6 +2329,7 @@ export default function Sales() {
 
   // ─── Complaint handlers ───────────────────────────────────────────
   const openComplaintModal = (order) => {
+    if (!requireAccess('add')) return;
     setComplaintOrder(order || null);
     complaintForm.resetFields();
     complaintForm.setFieldsValue({
@@ -4559,7 +4564,7 @@ export default function Sales() {
                       <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
                     </Space>
                   ) : (
-                    <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('hotel')} style={{ borderRadius: 6 }}>Edit</Button>
+                    <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('hotel'); }} style={{ borderRadius: 6 }}>Edit</Button>
                   )
                 )}
               >
@@ -4812,7 +4817,7 @@ export default function Sales() {
                           <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
                         </Space>
                       ) : (
-                        <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('billing')} style={{ borderRadius: 6 }}>Edit</Button>
+                        <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('billing'); }} style={{ borderRadius: 6 }}>Edit</Button>
                       )
                     )}
                   >
@@ -4862,7 +4867,7 @@ export default function Sales() {
                           <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
                         </Space>
                       ) : (
-                        <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('leadStatus')} style={{ borderRadius: 6 }}>Edit</Button>
+                        <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('leadStatus'); }} style={{ borderRadius: 6 }}>Edit</Button>
                       )
                     )}
                   >
@@ -4971,7 +4976,7 @@ export default function Sales() {
                           <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
                         </Space>
                       ) : (
-                        <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('leadJourney')} style={{ borderRadius: 6 }}>Edit</Button>
+                        <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('leadJourney'); }} style={{ borderRadius: 6 }}>Edit</Button>
                       )
                     )}
                   >
@@ -5008,7 +5013,7 @@ export default function Sales() {
                         <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
                       </Space>
                     ) : (
-                      <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('personalization')} style={{ borderRadius: 6 }}>Edit</Button>
+                      <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('personalization'); }} style={{ borderRadius: 6 }}>Edit</Button>
                     )
                   )}
                 >
@@ -5164,7 +5169,7 @@ export default function Sales() {
                             <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
                           </Space>
                         ) : (
-                          <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('products')} style={{ borderRadius: 6 }}>Edit</Button>
+                          <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('products'); }} style={{ borderRadius: 6 }}>Edit</Button>
                         )
                       }
                     >
@@ -5546,7 +5551,7 @@ export default function Sales() {
                         <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
                       </Space>
                     ) : (
-                      <Button size="small" icon={<EditOutlined />} onClick={() => setEditingSection('delivery')} style={{ borderRadius: 6 }}>Edit</Button>
+                      <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('delivery'); }} style={{ borderRadius: 6 }}>Edit</Button>
                     )
                   )}
                 >
@@ -6051,6 +6056,7 @@ export default function Sales() {
             <Button type="primary" icon={<PlusOutlined />}
               style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
               onClick={() => {
+                if (!requireAccess('add')) return;
                 setEditingLead(null);
                 setSelectedRecord(null);
                 leadForm.resetFields();

@@ -17,6 +17,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetDispatchesQuery,
   useGetPickupExpensesQuery,
@@ -76,6 +77,7 @@ export default function Dispatch() {
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('dispatch');
   const { filterTabs, activeKeyFor } = useTabAccess('Dispatch Team');
+  const { requireAccess } = usePageAccess('Dispatch Team');
   const [dispatchSubTab, setDispatchSubTab] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [dispatchStatusFilter, setDispatchStatusFilter] = useState(null);
@@ -222,6 +224,7 @@ export default function Dispatch() {
 
   // ── Pickup Status / Payment handlers ──────────────────────────────────────
   const handlePickupStatusChange = (record, status) => {
+    if (!requireAccess('edit')) return;
     setPickupStatusMap(prev => ({ ...prev, [record.key]: status }));
     if (status === 'pickup_dropped') {
       setReceivedTarget(record);
@@ -230,6 +233,7 @@ export default function Dispatch() {
   };
 
   const handlePickupPayByChange = (record, payBy) => {
+    if (!requireAccess('edit')) return;
     setPickupPayByMap(prev => ({ ...prev, [record.key]: payBy }));
     setPickupPayTarget({ ...record, payBy });
     pickupPayForm.resetFields();

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -115,6 +116,7 @@ export default function Operations() {
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('orders');
   const { filterTabs, activeKeyFor } = useTabAccess('Operations');
+  const { requireAccess } = usePageAccess('Operations');
   const [queueSearch, setQueueSearch] = useState('');
   const [queueStatusFilter, setQueueStatusFilter] = useState(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
@@ -781,6 +783,7 @@ export default function Operations() {
   };
 
   const openRequestModal = (type) => {
+    if (!requireAccess('add')) return;
     setRequestType(type);
     requestForm.resetFields();
     // Auto-fill the automation vendor for this type

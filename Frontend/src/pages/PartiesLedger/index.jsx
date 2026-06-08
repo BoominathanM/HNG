@@ -15,6 +15,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import dayjs from 'dayjs';
 import {
   useGetPartiesQuery,
@@ -38,6 +39,7 @@ export default function PartiesLedger() {
 
   const [activeTab, setActiveTab] = useState('all');
   const { filterTabs, activeKeyFor } = useTabAccess('Parties & Ledger');
+  const { requireAccess } = usePageAccess('Parties & Ledger');
   const [supplierSearch, setSupplierSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [allSearch, setAllSearch] = useState('');

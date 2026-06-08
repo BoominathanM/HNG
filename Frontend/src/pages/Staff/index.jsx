@@ -11,6 +11,7 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetStaffQuery,
   useCreateStaffMutation,
@@ -42,6 +43,7 @@ const teamColor = {
 function StaffList({ isDark }) {
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
+  const { requireAccess } = usePageAccess('Staff Management');
   const [addOpen, setAddOpen] = useState(false);
   const [form] = Form.useForm();
 
@@ -145,7 +147,7 @@ function StaffList({ isDark }) {
         extra={
           <Button
             type="primary" icon={<PlusOutlined />} size="small"
-            onClick={() => setAddOpen(true)}
+            onClick={() => { if (!requireAccess('add')) return; setAddOpen(true); }}
             style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8, margin: '8px 8px 0 0' }}
           >
             Add Staff

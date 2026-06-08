@@ -133,7 +133,7 @@ export default function Settings() {
   const [newRole, setNewRole]   = useState('');
 
   // Departments
-  const [departments, setDepartments] = useState(['Sales', 'Marketing', 'Operations', 'Dispatch', 'Finance', 'Vendors']);
+  const [departments, setDepartments] = useState(['Sales', 'Marketing', 'Operations', 'Dispatch', 'Finance', 'Vendors', 'Admin']);
   const [newDept, setNewDept]         = useState('');
 
   // Users — RTK Query
@@ -381,25 +381,15 @@ export default function Settings() {
       });
       userForm.setFieldsValue({ perms: allPerms, tabAccess: allTabs });
     } else {
-      const roleData = roles.find(r => r.role === watchedRole);
-      if (roleData?.perms) {
-        userForm.setFieldsValue({ perms: roleData.perms, tabAccess: {} });
-      }
+      // Clear permissions so admin manually selects access for this user
+      const emptyPerms = Object.fromEntries(MODULES.map(m => [m, { ...NO_PERMS }]));
+      userForm.setFieldsValue({ perms: emptyPerms, tabAccess: {} });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchedRole, addUserOpen]);
 
-  // Compute which modules to show based on selected role
-  const visibleModules = (() => {
-    if (!watchedRole) return [];
-    if (watchedRole === 'Admin') return MODULES;
-    const roleData = roles.find(r => r.role === watchedRole);
-    if (!roleData) return MODULES;
-    return MODULES.filter(m => {
-      const p = roleData.perms?.[m];
-      return p && Object.values(p).some(Boolean);
-    });
-  })();
+  // Show all modules whenever a role is selected so access can be fully configured
+  const visibleModules = watchedRole ? MODULES : [];
 
   const addUser = () => {
     userForm.validateFields().then(async (vals) => {

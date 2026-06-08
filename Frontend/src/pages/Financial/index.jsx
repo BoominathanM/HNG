@@ -16,6 +16,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetPendingRequestsQuery,
   useApproveFinancialRequestMutation,
@@ -37,6 +38,7 @@ const { Option } = Select;
 export default function Financial() {
   const makeUpload = useCloudinaryUpload();
   const { filterTabs } = useTabAccess('Financial');
+  const { requireAccess } = usePageAccess('Financial');
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -269,7 +271,7 @@ export default function Financial() {
     {
       title: 'Actions', key: 'actions', width: 115,
       render: (_, r) => (
-        <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }}>Pay Now</Button>
+        <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { if (!requireAccess('edit')) return; setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }}>Pay Now</Button>
       )
     }
   ];
@@ -520,7 +522,7 @@ export default function Financial() {
                                     style={{ fontSize: 11 }}>Details</Button>
                                   {order.status !== 'Paid' && (
                                     <Button size="small" type="primary" icon={<DollarCircleOutlined />}
-                                      onClick={() => { setSelectedForPayment(order); setShowPaymentModal(true); }}
+                                      onClick={() => { if (!requireAccess('edit')) return; setSelectedForPayment(order); setShowPaymentModal(true); }}
                                       style={{ background: '#B11E6A', border: 'none', fontSize: 11 }}>Pay Now</Button>
                                   )}
                                 </>
@@ -704,7 +706,7 @@ export default function Financial() {
                                     render: (_, r) => r.paymentStatus === 'Paid' ? (
                                       <Tag color="success" style={{ borderRadius: 8, fontSize: 13 }}>Paid</Tag>
                                     ) : (
-                                      <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { setReimbPayTarget(r); setShowReimbPaymentModal(true); }}>
+                                      <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { if (!requireAccess('edit')) return; setReimbPayTarget(r); setShowReimbPaymentModal(true); }}>
                                         Pay Now
                                       </Button>
                                     )
@@ -800,7 +802,7 @@ export default function Financial() {
                                     render: (_, r) => r.paymentStatus === 'Paid' ? (
                                       <Tag color="success" style={{ borderRadius: 8, fontSize: 13 }}>Paid</Tag>
                                     ) : (
-                                      <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { setLocalPayTarget(r); setShowLocalPaymentModal(true); }}>
+                                      <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { if (!requireAccess('edit')) return; setLocalPayTarget(r); setShowLocalPaymentModal(true); }}>
                                         Pay Now
                                       </Button>
                                     )

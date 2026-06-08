@@ -14,6 +14,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetTasksQuery,
   useGetSuggestedTasksQuery,
@@ -79,6 +80,7 @@ export default function Tasks() {
   const [filterStatus, setFilterStatus] = useState(null);
   const [mainTab, setMainTab] = useState('current');
   const { filterTabs, activeKeyFor } = useTabAccess('Task Management');
+  const { requireAccess } = usePageAccess('Task Management');
   const [view, setView] = useState('table');
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
@@ -124,6 +126,7 @@ export default function Tasks() {
     const id = draggedTaskId;
     setDraggedTaskId(null);
     if (!id) return;
+    if (!requireAccess('edit')) return;
     const task = taskList.find((t) => t.id === id || t.key === id);
     if (!task || task.status === colKey) return;
     try {
@@ -362,7 +365,7 @@ export default function Tasks() {
         <Space wrap>
           <Input prefix={<SearchOutlined />} placeholder="Search tasks..." value={searchText}
             onChange={(e) => setSearchText(e.target.value)} allowClear style={{ width: 200, borderRadius: 8 }} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>New Task</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!requireAccess('add')) return; setModalOpen(true); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>New Task</Button>
         </Space>
       </div>
 

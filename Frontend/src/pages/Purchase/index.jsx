@@ -1,6 +1,7 @@
 ﻿import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, 
   DatePicker, Upload, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, 
@@ -149,6 +150,7 @@ export default function Purchase() {
 
   const [supplierForm] = Form.useForm();
   const { filterTabs } = useTabAccess('Purchase');
+  const { requireAccess } = usePageAccess('Purchase');
 
   const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -508,6 +510,7 @@ export default function Purchase() {
   }));
 
   const handleOpenRequest = (product) => {
+    if (!requireAccess('add')) return;
     setSelectedProduct(product);
     setSelectedSupplier(null);
     setQuotationExtraProducts([]);
@@ -1946,6 +1949,7 @@ export default function Purchase() {
                               icon={<PlusOutlined />}
                               style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
                               onClick={() => {
+                                if (!requireAccess('add')) return;
                                 localPurchaseForm.resetFields();
                                 setLocalPurchaseInvoiceFile(null);
                                 setLocalPurchaseScannedDetails(null);

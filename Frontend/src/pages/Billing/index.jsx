@@ -18,6 +18,7 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
 import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetInvoicesQuery,
   useGetQuotationsInProcessQuery,
@@ -193,6 +194,7 @@ export default function Billing() {
   })), [invItemsData]);
   const [activeTab, setActiveTab] = useState('order-in-process');
   const { filterTabs, activeKeyFor } = useTabAccess('Billing');
+  const { requireAccess } = usePageAccess('Billing');
 
   // View invoice / quotation
   const [viewModal, setViewModal] = useState(false);
@@ -489,6 +491,7 @@ export default function Billing() {
   };
 
   const handleConvertConfirm = async () => {
+    if (!requireAccess('edit')) return;
     if (!convertQuot) return;
     const amt = convertAmt || convertQuot.total;
     const party = partiesList.find(p => p.name === convertQuot.client);
@@ -679,7 +682,7 @@ export default function Billing() {
     <div className="page-container fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Billing" items={[{ label: 'Billing' }]} style={{ marginBottom: 0 }} />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setDrawerOpen(true)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!requireAccess('add')) return; setDrawerOpen(true); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
           New Invoice
         </Button>
       </div>

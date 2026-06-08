@@ -17,6 +17,7 @@ import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
 import useTabAccess from '../../hooks/useTabAccess';
+import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetVendorsQuery,
   useCreateVendorMutation,
@@ -51,6 +52,7 @@ const exportToCSV = (headers, rows, filename) => {
 export default function VendorsSuppliers() {
   const makeUpload = useCloudinaryUpload();
   const { filterTabs } = useTabAccess('Vendors & Suppliers');
+  const { requireAccess } = usePageAccess('Vendors & Suppliers');
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -256,6 +258,7 @@ export default function VendorsSuppliers() {
   };
 
   const handleAddPrintingSupplier = async (vals) => {
+    if (!requireAccess('add')) return;
     try {
       await createVendor({
         name: vals.name,
@@ -452,7 +455,7 @@ export default function VendorsSuppliers() {
                                   enqueueSnackbar('Vendors exported to CSV', { variant: 'success' });
                                 }}
                               >Export</Button>
-                              <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowAddVendorModal(true)} style={{ background: '#B11E6A', border: 'none' }}>Add Vendor</Button>
+                              <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!requireAccess('add')) return; setShowAddVendorModal(true); }} style={{ background: '#B11E6A', border: 'none' }}>Add Vendor</Button>
                             </Space>
                           </div>
                           <Table
