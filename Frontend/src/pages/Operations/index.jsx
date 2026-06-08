@@ -468,13 +468,22 @@ export default function Operations() {
         title: 'Product',
         dataIndex: 'product',
         render: (value, record) => (
-          <Space size={4}>
-            {record.isEmergencyProduct && (
-              <Tooltip title="Emergency / Partial delivery product">
-                <AlertFilled style={{ color: '#ff4d4f', fontSize: 11 }} />
+          <Space size={4} direction="vertical" style={{ gap: 2 }}>
+            <Space size={4}>
+              {record.isEmergencyProduct && (
+                <Tooltip title="Emergency / Partial delivery product — process first">
+                  <AlertFilled style={{ color: '#ff4d4f', fontSize: 11 }} />
+                </Tooltip>
+              )}
+              <Text style={record.isEmergencyProduct ? { color: '#ff4d4f', fontWeight: 600 } : {}}>{value}</Text>
+            </Space>
+            {record.isEmergencyGated && (
+              <Tooltip title="Emergency items for this order must be completed first">
+                <Tag color="orange" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                  After Emergency Items
+                </Tag>
               </Tooltip>
             )}
-            <Text style={record.isEmergencyProduct ? { color: '#ff4d4f', fontWeight: 600 } : {}}>{value}</Text>
           </Space>
         ),
       },
@@ -813,11 +822,21 @@ export default function Operations() {
   };
 
   const renderQueueCard = (type, rows, label) => {
-    // Sort: urgent orders first (stable — so emergency products, already sorted within each
-    // order by buildProductionQueues, stay at the top of their order group)
+    // Sort priority:
+    //   1. Emergency products from urgent orders (process these FIRST)
+    //   2. Other items from urgent orders
+    //   3. All other items
     const allActive = rows
       .filter((r) => getQueueStep(r) < 6)
-      .sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
+      .sort((a, b) => {
+        const aEmg = a.isUrgent && a.isEmergencyProduct;
+        const bEmg = b.isUrgent && b.isEmergencyProduct;
+        if (bEmg && !aEmg) return 1;
+        if (aEmg && !bEmg) return -1;
+        if (b.isUrgent && !a.isUrgent) return 1;
+        if (a.isUrgent && !b.isUrgent) return -1;
+        return 0;
+      });
     const closedRows = rows.filter((r) => getQueueStep(r) === 6);
     const activeRows = allActive.filter((r) => {
       const q = queueSearch.toLowerCase();

@@ -15,7 +15,7 @@ import {
   BankOutlined, EnvironmentOutlined, TeamOutlined, CalendarOutlined,
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
-  WarningOutlined, ExclamationCircleOutlined, DollarOutlined,
+  WarningOutlined, ExclamationCircleOutlined, DollarOutlined, AlertFilled,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -1183,7 +1183,7 @@ export default function Sales() {
   const { data: leadsRaw } = useGetLeadsQuery();
   const { data: quotationsRaw } = useGetSalesQuotationsQuery();
   const { data: negotiationsRaw } = useGetNegotiationsQuery();
-  const { data: ordersRaw } = useGetSalesOrdersQuery();
+  const { data: ordersRaw } = useGetSalesOrdersQuery({ limit: 200 });
   const { data: singleOrderRaw } = useGetSalesOrderQuery(
     selectedRecord?._id,
     { skip: viewMode !== 'order-detail' || !selectedRecord?._id }
@@ -1446,6 +1446,9 @@ export default function Sales() {
         billType: o.billType || (o.type === 'GST' ? 'GST' : o.type === 'Non-GST' ? 'NON_GST' : o.type),
         products: normalizedProducts,
         itemCount: (normalizedProducts.length || 0),
+        splitDates: o.splitDates || [],
+        isEmergency: o.isEmergency || false,
+        isUrgent: o.isUrgent || false,
       };
     }));
   }, [ordersRaw]);
@@ -2193,6 +2196,12 @@ export default function Sales() {
   };
 
   const buildOrderPayloadFromQuotation = (q, status) => {
+    // Look up the originating lead to carry emergency delivery data
+    const qLeadId = String(q.leadId?._id || q.leadId || '');
+    const qLead = qLeadId ? leadsData.find(l => String(l.key) === qLeadId || String(l._id) === qLeadId) : null;
+    const splitDates = qLead?.splitDates?.length ? qLead.splitDates : (q.splitDates || []);
+    const isEmergency = splitDates.length > 0 || !!(qLead?.isEmergency);
+    const isUrgent = splitDates.length > 0 || !!(qLead?.isUrgent);
     // Always compute from products so we never double-count GST when q.amount stores
     // the grand total instead of the subtotal.
     const subtotal = calcTotal(q.products) || Number(q.amount) || 0;
@@ -2258,6 +2267,11 @@ export default function Sales() {
       transportationBy: q.transportationBy,
       // Carry the tentative delivery date through so the order detail can show it
       expectedDeliveryDate: q.orderDeliveryDate || q.expectedDeliveryDate || undefined,
+      // Emergency / partial delivery data from the originating lead
+      splitDates,
+      isEmergency,
+      isUrgent,
+      deliveryType: splitDates.length > 0 ? 'Partial' : (q.deliveryType || 'Full'),
     };
   };
 
@@ -2787,7 +2801,22 @@ export default function Sales() {
   };
 
   const orderColumns = [
-    { title: 'Order ID', dataIndex: 'oid', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Order ID', dataIndex: 'oid', width: 130,
+      render: (v, record) => (
+        <Space size={2} direction="vertical">
+          <Space size={4}>
+            {(record.isUrgent || record.isEmergency) && (
+              <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
+            )}
+            <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
+          </Space>
+          {(record.isUrgent || record.isEmergency) && (
+            <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>Emergency</Tag>
+          )}
+        </Space>
+      ),
+    },
     { title: 'Hotel', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'GST Number', dataIndex: 'gstNumber', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
@@ -3203,6 +3232,43 @@ export default function Sales() {
                 <DetailProductCards products={q.products} totalAmount={q.totalAmount} />
               </Card>
 
+              {/* Urgent / Emergency Deliveries (Partial) — from linked lead */}
+              {(() => {
+                const qLeadId = String(q.leadId?._id || q.leadId || '');
+                const qLead = qLeadId ? leadsData.find(l => String(l.key) === qLeadId || String(l._id) === qLeadId) : null;
+                const qSplitDates = (q.splitDates?.length ? q.splitDates : null) || (qLead?.splitDates?.length ? qLead.splitDates : null) || [];
+                if (!qSplitDates.length) return null;
+                return (
+                  <Card
+                    style={{ borderRadius: 14, marginBottom: 16, border: '1px solid rgba(255,77,79,0.3)', boxShadow: '0 2px 12px rgba(255,77,79,0.08)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><AlertFilled style={{ color: '#ff4d4f' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span style={{ color: '#ff4d4f', fontWeight: 700 }}>Urgent / Emergency Deliveries (Partial)</span></Space>}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {qSplitDates.map((sd, i) => {
+                        const productList = (sd.products && sd.products.length > 0)
+                          ? sd.products
+                          : sd.product ? [{ product: sd.product, qty: sd.qty, notes: sd.note }] : [];
+                        return (
+                          <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
+                            <Text strong style={{ fontSize: 13, color: '#ff4d4f', display: 'block', marginBottom: 8 }}>
+                              <CalendarOutlined style={{ marginRight: 6 }} />
+                              {sd.date ? dayjs(sd.date).format('DD MMM YYYY') : '—'}
+                            </Text>
+                            {productList.length > 0 ? productList.map((p, pi) => (
+                              <Row key={pi} gutter={[16, 4]} style={{ marginBottom: pi < productList.length - 1 ? 8 : 0 }}>
+                                <Col xs={24} sm={8}><Text type="secondary" style={{ fontSize: 11 }}>Product: </Text><Text strong style={{ fontSize: 13 }}>{p.product || '—'}</Text></Col>
+                                <Col xs={24} sm={4}><Text type="secondary" style={{ fontSize: 11 }}>Qty: </Text><Text strong style={{ fontSize: 13 }}>{p.qty || '—'}</Text></Col>
+                                <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Notes: </Text><Text style={{ fontSize: 13 }}>{p.notes || p.note || '—'}</Text></Col>
+                              </Row>
+                            )) : <Text type="secondary" style={{ fontSize: 12 }}>No products specified for this date.</Text>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                );
+              })()}
+
               {/* Delivery & Payment */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
@@ -3414,6 +3480,43 @@ export default function Sales() {
                 <DetailProductCards products={n.products} totalAmount={n.totalAmount} />
               </Card>
 
+              {/* Urgent / Emergency Deliveries (Partial) — from linked lead */}
+              {(() => {
+                const nLeadId = String(n.leadId?._id || n.leadId || '');
+                const nLead = nLeadId ? leadsData.find(l => String(l.key) === nLeadId || String(l._id) === nLeadId) : null;
+                const nSplitDates = (n.splitDates?.length ? n.splitDates : null) || (nLead?.splitDates?.length ? nLead.splitDates : null) || [];
+                if (!nSplitDates.length) return null;
+                return (
+                  <Card
+                    style={{ borderRadius: 14, marginBottom: 16, border: '1px solid rgba(255,77,79,0.3)', boxShadow: '0 2px 12px rgba(255,77,79,0.08)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><AlertFilled style={{ color: '#ff4d4f' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span style={{ color: '#ff4d4f', fontWeight: 700 }}>Urgent / Emergency Deliveries (Partial)</span></Space>}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {nSplitDates.map((sd, i) => {
+                        const productList = (sd.products && sd.products.length > 0)
+                          ? sd.products
+                          : sd.product ? [{ product: sd.product, qty: sd.qty, notes: sd.note }] : [];
+                        return (
+                          <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
+                            <Text strong style={{ fontSize: 13, color: '#ff4d4f', display: 'block', marginBottom: 8 }}>
+                              <CalendarOutlined style={{ marginRight: 6 }} />
+                              {sd.date ? dayjs(sd.date).format('DD MMM YYYY') : '—'}
+                            </Text>
+                            {productList.length > 0 ? productList.map((p, pi) => (
+                              <Row key={pi} gutter={[16, 4]} style={{ marginBottom: pi < productList.length - 1 ? 8 : 0 }}>
+                                <Col xs={24} sm={8}><Text type="secondary" style={{ fontSize: 11 }}>Product: </Text><Text strong style={{ fontSize: 13 }}>{p.product || '—'}</Text></Col>
+                                <Col xs={24} sm={4}><Text type="secondary" style={{ fontSize: 11 }}>Qty: </Text><Text strong style={{ fontSize: 13 }}>{p.qty || '—'}</Text></Col>
+                                <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Notes: </Text><Text style={{ fontSize: 13 }}>{p.notes || p.note || '—'}</Text></Col>
+                              </Row>
+                            )) : <Text type="secondary" style={{ fontSize: 12 }}>No products specified for this date.</Text>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                );
+              })()}
+
               {/* Delivery & Payment */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
@@ -3460,6 +3563,10 @@ export default function Sales() {
       const full = singleOrderRaw?.data || {};
       // Merge list record with populated single-order fetch
       const lead = full.leadId || {};
+      // Look up lead in leadsData for emergency fallback (covers old orders that predate
+      // the fix that stores splitDates directly on the Order document)
+      const orderLeadId = String(lead._id || base.leadId || '');
+      const orderLeadFull = orderLeadId ? leadsData.find(l => String(l.key) === orderLeadId || String(l._id) === orderLeadId) : null;
       const o = {
         ...base,
         phone: base.phone || full.clientPhone || full.phone || lead.phone,
@@ -3502,8 +3609,15 @@ export default function Sales() {
         kitDisplayUnit: base.kitDisplayUnit || base.displayUnit || full.kitDisplayUnit || full.displayUnit || lead.kitDisplayUnit || lead.displayUnit || '',
         kitSize: base.kitSize || full.kitSize || lead.kitSize || '',
         selectedKit: base.selectedKit || full.selectedKit || lead.selectedKit || '',
-        // splitDates lives on the Order document; list rows may omit it, so always prefer full
-        splitDates: (full.splitDates?.length ? full.splitDates : null) || (base.splitDates?.length ? base.splitDates : null) || [],
+        // splitDates: order doc first, then populated lead (backend now includes it),
+        // then leadsData lookup (fallback for orders created before the fix)
+        splitDates: (full.splitDates?.length ? full.splitDates : null)
+          || (base.splitDates?.length ? base.splitDates : null)
+          || (lead.splitDates?.length ? lead.splitDates : null)
+          || (orderLeadFull?.splitDates?.length ? orderLeadFull.splitDates : null)
+          || [],
+        isEmergency: !!(full.isEmergency || base.isEmergency || lead.isEmergency || orderLeadFull?.isEmergency || orderLeadFull?.splitDates?.length),
+        isUrgent: !!(full.isUrgent || base.isUrgent || lead.isUrgent || orderLeadFull?.isUrgent || orderLeadFull?.splitDates?.length),
       };
       const ORDER_STEPS = [
         { title: 'Confirmed', description: 'Order placed' },
@@ -3541,6 +3655,7 @@ export default function Sales() {
         || (linkedQuotForDetail?.orderDeliveryDate ? String(linkedQuotForDetail.orderDeliveryDate).slice(0, 10) : null)
         || null;
       return (
+        <>
         <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('orders'); }} style={{ borderRadius: 8 }}>Back to Orders</Button>
@@ -3574,7 +3689,14 @@ export default function Sales() {
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{o.oid}</Tag>
+                <Space size={6} align="center">
+                  {(o.isUrgent || o.isEmergency) && (
+                    <Tag color="error" icon={<AlertFilled />} style={{ borderRadius: 20, fontSize: 12, fontWeight: 700, padding: '2px 10px' }}>
+                      Emergency Order
+                    </Tag>
+                  )}
+                  <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{o.oid}</Tag>
+                </Space>
                 <Tag color={STATUS_COLORS[o.status] || 'blue'} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{o.status}</Tag>
                 <Space>
                   <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{o.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
@@ -3770,36 +3892,54 @@ export default function Sales() {
                 })()}
               </Card>
 
-              {/* Urgent / Emergency Deliveries (Partial) */}
-              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span>Urgent / Emergency Deliveries (Partial)</span></Space>}>
-                {(o.splitDates || []).length === 0 ? (
-                  <Text type="secondary" style={{ fontSize: 13 }}>No urgent / emergency deliveries added.</Text>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {(o.splitDates || []).map((sd, i) => (
-                      <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
-                        <Row gutter={[16, 8]} align="middle">
-                          <Col xs={24} sm={8}>
-                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PARTIAL DATE</Text>
-                            <Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>
+              {/* Urgent / Emergency Deliveries (Partial) — only shown for emergency orders */}
+              {(o.isUrgent || o.isEmergency || (o.splitDates || []).length > 0) && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: '1px solid rgba(255,77,79,0.3)', boxShadow: '0 2px 12px rgba(255,77,79,0.08)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><AlertFilled style={{ color: '#ff4d4f' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span style={{ color: '#ff4d4f', fontWeight: 700 }}>Urgent / Emergency Deliveries (Partial)</span></Space>}
+                >
+                  {(o.splitDates || []).length === 0 ? (
+                    <Text type="secondary" style={{ fontSize: 13 }}>Emergency order — no partial delivery schedule added yet.</Text>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {(o.splitDates || []).map((sd, i) => {
+                        // Handle both flat {product, note} and nested {products:[{product,qty,notes}]} formats
+                        const productList = (sd.products && sd.products.length > 0)
+                          ? sd.products
+                          : sd.product
+                            ? [{ product: sd.product, qty: sd.qty, notes: sd.note }]
+                            : [];
+                        return (
+                          <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
+                            <Text strong style={{ fontSize: 13, color: '#ff4d4f', display: 'block', marginBottom: 8 }}>
+                              <CalendarOutlined style={{ marginRight: 6 }} />
                               {sd.date ? dayjs(sd.date).format('DD MMM YYYY') : '—'}
                             </Text>
-                          </Col>
-                          <Col xs={24} sm={8}>
-                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>PRODUCT</Text>
-                            <Text strong style={{ fontSize: 13 }}>{sd.product || '—'}</Text>
-                          </Col>
-                          <Col xs={24} sm={8}>
-                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>NOTE</Text>
-                            <Text style={{ fontSize: 13 }}>{sd.note || '—'}</Text>
-                          </Col>
-                        </Row>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
+                            {productList.length > 0 ? productList.map((p, pi) => (
+                              <Row key={pi} gutter={[16, 4]} style={{ marginBottom: pi < productList.length - 1 ? 8 : 0 }}>
+                                <Col xs={24} sm={8}>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>Product: </Text>
+                                  <Text strong style={{ fontSize: 13 }}>{p.product || '—'}</Text>
+                                </Col>
+                                <Col xs={24} sm={4}>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>Qty: </Text>
+                                  <Text strong style={{ fontSize: 13 }}>{p.qty || '—'}</Text>
+                                </Col>
+                                <Col xs={24} sm={12}>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>Notes: </Text>
+                                  <Text style={{ fontSize: 13 }}>{p.notes || p.note || '—'}</Text>
+                                </Col>
+                              </Row>
+                            )) : (
+                              <Text type="secondary" style={{ fontSize: 12 }}>No products specified for this date.</Text>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              )}
 
               {/* Delivery & Payment */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -4067,9 +4207,238 @@ export default function Sales() {
             </Col>
           </Row>
 
-          {/* Raise Complaint Modal — handled via shared modal at end of file */}
-
         </motion.div>
+
+        {/* ── Raise Complaint Modal ─────────────────────────────────────────────── */}
+        <Modal
+          title={
+            <Space>
+              <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+              <span>{complaintOrder ? `Raise Complaint — ${complaintOrder.oid}` : 'Raise Complaint'}</span>
+            </Space>
+          }
+          open={complaintModalOpen}
+          onCancel={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}
+          width={Math.min(580, window.innerWidth - 32)}
+          footer={[
+            <Button key="cancel" onClick={() => { setComplaintModalOpen(false); complaintForm.resetFields(); }}>Cancel</Button>,
+            <Button key="submit" type="primary" style={{ background: '#ff4d4f', border: 'none' }} onClick={submitComplaint}>Submit Complaint</Button>,
+          ]}
+        >
+          <Form form={complaintForm} layout="vertical" style={{ marginTop: 16 }}>
+            <Row gutter={16}>
+              <Col xs={24}>
+                {complaintOrder ? (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Order ID</div>
+                    <div style={{ padding: '6px 12px', background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 6, fontSize: 13, fontWeight: 600, color: '#ff4d4f' }}>
+                      {complaintOrder.oid}
+                    </div>
+                  </div>
+                ) : (
+                  <Form.Item label="Order ID" name="orderId" rules={[{ required: true, message: 'Please select an Order ID' }]}>
+                    <Select placeholder="Select Order ID" showSearch optionFilterProp="children">
+                      {ordersData.map(o => (
+                        <Option key={o.oid} value={o.oid}>{o.oid} — {o.hotelName}</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                )}
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Raised Date" name="raisedDate">
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Raised Time" name="raisedTime">
+                  <Input type="time" />
+                </Form.Item>
+              </Col>
+              <Col xs={24}>
+                <Form.Item label="Complaint Description" name="description" rules={[{ required: true, message: 'Please describe the complaint' }]}>
+                  <Input.TextArea rows={4} placeholder="E.g., Missing items in the last delivery" />
+                </Form.Item>
+              </Col>
+              <Col xs={24}>
+                <Form.Item
+                  label="Attach Evidence (Optional)"
+                  name="files"
+                  valuePropName="fileList"
+                  getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
+                >
+                  <Upload customRequest={makeCloudinaryRequest('complaints')} multiple accept="image/*,.pdf,.doc,.docx" listType="picture">
+                    <Button icon={<UploadOutlined />} style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>Upload Files</Button>
+                  </Upload>
+                </Form.Item>
+              </Col>
+            </Row>
+          </Form>
+        </Modal>
+
+        {/* ── Order Edit Modal (Delivery Date & Payment) ─────────────────────── */}
+        <Modal
+          title={
+            <Space>
+              <EditOutlined style={{ color: '#B11E6A' }} />
+              <span>Edit Order — {orderEditTarget?.oid}</span>
+            </Space>
+          }
+          open={orderEditModalOpen}
+          onCancel={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); setOrderEditPaymentProofs([]); }}
+          footer={[
+            <Button key="cancel" onClick={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); setOrderEditPaymentProofs([]); }}>Cancel</Button>,
+            <Button key="save" type="primary" style={{ background: '#B11E6A', border: 'none' }} onClick={saveOrderEdit}>Save Changes</Button>,
+          ]}
+          width={Math.min(500, window.innerWidth - 32)}
+        >
+          <Form form={orderEditForm} layout="vertical" style={{ marginTop: 16 }}>
+            <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}>
+              <DatePicker style={{ width: '100%' }} />
+            </Form.Item>
+            {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
+              <Select onChange={(val) => {
+                const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+                let suggestedAdvance = 0;
+                if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
+                else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') suggestedAdvance = Math.round(orderTotal * 0.5);
+                else if (val === 'CREDIT_10_30') suggestedAdvance = 0;
+                orderEditForm.setFieldValue('advance', suggestedAdvance);
+              }}>
+                {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+              </Select>
+            </Form.Item>}
+            {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+              {({ getFieldValue }) => {
+                const pt = getFieldValue('paymentTerms');
+                const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+                let adviceText = '';
+                if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
+                else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
+                else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
+                else if (pt === 'CREDIT_10_30') adviceText = 'Credit terms — advance: ₹0';
+                return adviceText ? (
+                  <div style={{ marginTop: -10, marginBottom: 12, padding: '6px 10px', background: 'rgba(177,30,106,0.06)', borderRadius: 6, border: '1px solid rgba(177,30,106,0.15)' }}>
+                    <Text type="secondary" style={{ fontSize: 12, color: '#B11E6A' }}>{adviceText}</Text>
+                  </div>
+                ) : null;
+              }}
+            </Form.Item>}
+            {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+              {({ getFieldValue }) => {
+                const pt = getFieldValue('paymentTerms');
+                if (pt === '50_ADVANCE_50_AFTER') {
+                  return (
+                    <Form.Item label="Payment Reminder Date" name="paymentReminderDate" rules={[{ required: true, message: 'Select reminder date' }]}>
+                      <DatePicker style={{ width: '100%' }} />
+                    </Form.Item>
+                  );
+                }
+                if (pt === 'CREDIT_10_30') {
+                  return (
+                    <Form.Item label="Credit Due Date" name="paymentReminderDate" rules={[{ required: true, message: 'Select credit due date' }]}>
+                      <DatePicker style={{ width: '100%' }} />
+                    </Form.Item>
+                  );
+                }
+                return null;
+              }}
+            </Form.Item>}
+
+            {orderEditTarget?.orderCategory !== 'SAMPLE' && <>
+            <Divider style={{ margin: '12px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+              <Space><DollarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Collection</span></Space>
+            </Divider>
+            <Form.List name="paymentCollection">
+              {(fields, { add, remove }) => (
+                <>
+                  {fields.map(({ key, name, ...rest }) => (
+                    <div key={key} style={{ background: 'rgba(177,30,106,0.03)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
+                      <Row gutter={[8, 0]} align="middle">
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...rest} name={[name, 'paymentMethod']} label="Method" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Select method' }]}>
+                            <Select placeholder="Select method" size="small">
+                              {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...rest} name={[name, 'paidAmount']} label="Amount (₹)" style={{ marginBottom: 0 }}>
+                            <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="e.g. 5000" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={6}>
+                          <Form.Item {...rest} name={[name, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
+                            <Input size="small" placeholder="Ref / notes" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 20 }}>
+                          <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                        </Col>
+                      </Row>
+                    </div>
+                  ))}
+                  <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
+                    + Add Payment Entry
+                  </Button>
+                </>
+              )}
+            </Form.List>
+
+            <Divider style={{ margin: '12px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+              <Space><UploadOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Proof</span></Space>
+            </Divider>
+            <Upload
+              multiple
+              listType="picture"
+              fileList={orderEditPaymentProofs}
+              customRequest={makeCloudinaryRequest('payment-proofs')}
+              accept="image/*,.pdf"
+              onChange={({ fileList }) => setOrderEditPaymentProofs(fileList)}
+            >
+              <Button icon={<UploadOutlined />} size="small">Upload Payment Proof</Button>
+            </Upload>
+
+            <Form.Item noStyle shouldUpdate>
+              {({ getFieldValue }) => {
+                const rawColl = getFieldValue('paymentCollection');
+                const collection = Array.isArray(rawColl) ? rawColl : [];
+                const collTotal = collection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+                const existingCollTotal = (orderEditTarget?.paymentCollection || []).reduce(
+                  (s, e) => s + Number(e?.paidAmount || 0), 0
+                );
+                const uncapturedPaid = Math.max(
+                  0,
+                  Number(orderEditTarget?.paidAmount || 0) - existingCollTotal
+                );
+                const effectivePaid = collTotal + uncapturedPaid;
+                const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+                const status = orderTotal > 0 && effectivePaid >= orderTotal
+                  ? 'Paid'
+                  : effectivePaid > 0
+                  ? 'Partially Paid'
+                  : 'Unpaid';
+                const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
+                const bg = status === 'Paid' ? 'rgba(82,196,26,0.08)' : status === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
+                return (
+                  <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
+                    <Space size={12}>
+                      {effectivePaid > 0 && (
+                        <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
+                          Collected: ₹{effectivePaid.toLocaleString()} / ₹{orderTotal.toLocaleString()}
+                        </Text>
+                      )}
+                      <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
+                    </Space>
+                  </div>
+                );
+              }}
+            </Form.Item>
+            </>}
+          </Form>
+        </Modal>
+        </>
       );
     }
 
@@ -5244,8 +5613,11 @@ export default function Sales() {
                   ? ordersData.filter(o => o.hotelName === record.hotelName).slice(-1)[0]
                   : null;
 
-                const hasKit = watchedProductType?.includes('PERSONALIZED_KIT');
-                const hasSeparate = watchedProductType?.includes('SEPARATE_PRODUCT');
+                // In detail view the productType Form.Item isn't rendered so Form.useWatch
+                // returns undefined; fall back to the record's saved value.
+                const effectiveProductType = watchedProductType ?? record.productType;
+                const hasKit = effectiveProductType?.includes('PERSONALIZED_KIT');
+                const hasSeparate = effectiveProductType?.includes('SEPARATE_PRODUCT');
                 const showKitCard = hasKit || (!hasKit && !hasSeparate);
                 const showSeparateCard = hasSeparate || (!hasKit && !hasSeparate);
 
@@ -5609,36 +5981,50 @@ export default function Sales() {
               })()}
 
               {/* ── Urgent / Emergency Deliveries (Partial) — detail only ─────────── */}
-              {isDetail && (record.splitDates || []).length > 0 && (
+              {isDetail && (record.isUrgent || record.isEmergency || (record.splitDates || []).length > 0) && (
                 <Card
-                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                  title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span>Urgent / Emergency Deliveries (Partial)</span></Space>}
+                  style={{ borderRadius: 14, marginBottom: 16, border: '1px solid rgba(255,77,79,0.3)', boxShadow: '0 2px 12px rgba(255,77,79,0.08)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><AlertFilled style={{ color: '#ff4d4f' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span style={{ color: '#ff4d4f', fontWeight: 700 }}>Urgent / Emergency Deliveries (Partial)</span></Space>}
                 >
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {(record.splitDates || []).map((sd, i) => (
-                      <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
-                        <Text strong style={{ fontSize: 13, color: '#ff4d4f', display: 'block', marginBottom: 8 }}>
-                          {sd.date ? dayjs(sd.date).format('DD MMM YYYY') : '—'}
-                        </Text>
-                        {(sd.products || (sd.product ? [{ product: sd.product, qty: sd.qty, notes: sd.note }] : [])).filter(Boolean).map((p, pi) => (
-                          <Row key={pi} gutter={[16, 4]} style={{ marginBottom: 4 }}>
-                            <Col xs={24} sm={8}>
-                              <Text type="secondary" style={{ fontSize: 11 }}>Product: </Text>
-                              <Text strong style={{ fontSize: 13 }}>{p.product || '—'}</Text>
-                            </Col>
-                            <Col xs={24} sm={6}>
-                              <Text type="secondary" style={{ fontSize: 11 }}>Qty: </Text>
-                              <Text strong style={{ fontSize: 13 }}>{p.qty || '—'}</Text>
-                            </Col>
-                            <Col xs={24} sm={10}>
-                              <Text type="secondary" style={{ fontSize: 11 }}>Notes: </Text>
-                              <Text style={{ fontSize: 13 }}>{p.notes || p.note || '—'}</Text>
-                            </Col>
-                          </Row>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
+                  {(record.splitDates || []).length === 0 ? (
+                    <Text type="secondary" style={{ fontSize: 13 }}>Emergency order — no partial delivery schedule added yet.</Text>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {(record.splitDates || []).map((sd, i) => {
+                        const productList = (sd.products && sd.products.length > 0)
+                          ? sd.products
+                          : sd.product
+                            ? [{ product: sd.product, qty: sd.qty, notes: sd.note }]
+                            : [];
+                        return (
+                          <div key={i} style={{ background: isDark ? 'rgba(255,77,79,0.06)' : 'rgba(255,77,79,0.04)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 16px' }}>
+                            <Text strong style={{ fontSize: 13, color: '#ff4d4f', display: 'block', marginBottom: 8 }}>
+                              <CalendarOutlined style={{ marginRight: 6 }} />
+                              {sd.date ? dayjs(sd.date).format('DD MMM YYYY') : '—'}
+                            </Text>
+                            {productList.length > 0 ? productList.map((p, pi) => (
+                              <Row key={pi} gutter={[16, 4]} style={{ marginBottom: pi < productList.length - 1 ? 8 : 0 }}>
+                                <Col xs={24} sm={8}>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>Product: </Text>
+                                  <Text strong style={{ fontSize: 13 }}>{p.product || '—'}</Text>
+                                </Col>
+                                <Col xs={24} sm={4}>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>Qty: </Text>
+                                  <Text strong style={{ fontSize: 13 }}>{p.qty || '—'}</Text>
+                                </Col>
+                                <Col xs={24} sm={12}>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>Notes: </Text>
+                                  <Text style={{ fontSize: 13 }}>{p.notes || p.note || '—'}</Text>
+                                </Col>
+                              </Row>
+                            )) : (
+                              <Text type="secondary" style={{ fontSize: 12 }}>No products specified for this date.</Text>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </Card>
               )}
 
@@ -6469,7 +6855,7 @@ export default function Sales() {
                     </Select>
                   </div>
                   <Table
-                    dataSource={filtered(ordersData).filter(r => !orderStatusFilter || r.status === orderStatusFilter)}
+                    dataSource={[...filtered(ordersData).filter(r => !orderStatusFilter || r.status === orderStatusFilter)].sort((a, b) => ((b.isUrgent || b.isEmergency) ? 1 : 0) - ((a.isUrgent || a.isEmergency) ? 1 : 0))}
                     columns={orderColumns}
                     pagination={{ pageSize: 8, size: 'small' }}
                     size="small"

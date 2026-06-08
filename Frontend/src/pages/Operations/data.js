@@ -109,6 +109,9 @@ export const PACKAGING_TYPE_LABELS = {
 // from the sticker queue and, in lockstep, added to the box/frosted queue.
 const STICKER_MOVED_ON_STATUSES = new Set(['In Process', 'Printing', 'Dispatch', 'Received', 'Done']);
 
+// Statuses that mean an emergency item's production is fully complete.
+const EMERGENCY_COMPLETE_STATUSES = new Set(['Done', 'Received', 'Closed']);
+
 // Returns a Set of product names that have an emergency delivery date in splitDates.
 // Handles both formats: new {products:[{product}]} and legacy {product} at sd level.
 const getEmergencyProductSet = (order) => {
@@ -132,6 +135,18 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     );
   };
 
+  // Returns true when every emergency product for the order has a completed StickerRequest.
+  // Used to determine whether non-emergency items can advance ("emergency phase done").
+  const areAllEmergencyItemsDone = (order) => {
+    const emergencySet = getEmergencyProductSet(order);
+    if (emergencySet.size === 0) return true;
+    for (const product of emergencySet) {
+      const sr = findSR(order.id, product);
+      if (!sr || !EMERGENCY_COMPLETE_STATUSES.has(sr.status)) return false;
+    }
+    return true;
+  };
+
   // Returns the local queue step for a sticker-queue item (orderId + item index).
   const localStickerStep = (orderId, itemIdx) =>
     queueSteps[`${orderId}-${itemIdx}-sticker`] ?? 0;
@@ -152,9 +167,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     // Sticker queue: all items that need sticker printing (logoType=Sticker or sticker=YES),
     // excluding pure frosted/ziplock items that don't need sticker printing.
     // Also excludes items that have already moved on to box/frosted manufacturing.
-    // Within each order: emergency products (from splitDates) appear first.
+    // Within each order: emergency products (from splitDates) appear first; remaining items
+    // carry isEmergencyGated=true until all emergency items for that order are done.
     sticker: orders.flatMap((order) => {
       const emergencySet = getEmergencyProductSet(order);
+      const emergencyAllDone = areAllEmergencyItemsDone(order);
       const items = (order.items || []).map((item, idx) => ({ item, idx }))
         .filter(({ item, idx }) => {
           if (!((item.logoType === 'Sticker' || item.sticker === 'YES') && !isFrostedZiplock(item, order))) return false;
@@ -173,6 +190,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         .map(({ item, idx }) => {
           const packagingType = getItemPackagingType(item, order);
           const productName = item.product || item.itemName;
+          const isEmergencyProduct = emergencySet.has(productName);
           return {
             key: `${order.id}-${idx}-sticker`,
             orderId: order.id,
@@ -187,7 +205,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             stickerPrinting: 'Yes',
             packagingType, // where this item moves after sticker approval
             isUrgent: order.isUrgent || false,
-            isEmergencyProduct: emergencySet.has(productName),
+            isEmergencyProduct,
+            // Non-emergency items of an emergency order are gated until emergency items are done
+            isEmergencyGated: emergencySet.size > 0 && !isEmergencyProduct && !emergencyAllDone,
           };
         });
       // Emergency products first within this order
@@ -198,9 +218,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     // If sticker printing is also needed (sticker=YES), the item only appears here
     // AFTER its sticker has been printed — preventing premature box-queue entry and
     // keeping it out of the sticker tab and box tab simultaneously.
-    // Within each order: emergency products (from splitDates) appear first.
+    // Within each order: emergency products (from splitDates) appear first; remaining items
+    // carry isEmergencyGated=true until all emergency items for that order are done.
     box: orders.flatMap((order) => {
       const emergencySet = getEmergencyProductSet(order);
+      const emergencyAllDone = areAllEmergencyItemsDone(order);
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const packType = getItemPackagingType(item, order);
@@ -208,6 +230,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const product = item.product || item.itemName;
         const needsSticker = item.logoType === 'Sticker' || item.sticker === 'YES';
         if (needsSticker && !isStickerPrinted(order.id, product, idx)) return;
+        const isEmergencyProduct = emergencySet.has(product);
         result.push({
           key: `${order.id}-${idx}-box`,
           orderId: order.id,
@@ -224,7 +247,8 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           stickerPrinting: needsSticker ? 'Yes' : 'No',
           packagingType: 'box',
           isUrgent: order.isUrgent || false,
-          isEmergencyProduct: emergencySet.has(product),
+          isEmergencyProduct,
+          isEmergencyGated: emergencySet.size > 0 && !isEmergencyProduct && !emergencyAllDone,
         });
       });
       // Emergency products first within this order
@@ -233,15 +257,18 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
 
     // Frosted Ziplock queue: items with frosted/ziplock/pouch packaging.
     // Same sticker-first rule applies — only appears here after the sticker is printed.
-    // Within each order: emergency products (from splitDates) appear first.
+    // Within each order: emergency products (from splitDates) appear first; remaining items
+    // carry isEmergencyGated=true until all emergency items for that order are done.
     frosted: orders.flatMap((order) => {
       const emergencySet = getEmergencyProductSet(order);
+      const emergencyAllDone = areAllEmergencyItemsDone(order);
       const result = [];
       (order.items || []).forEach((item, idx) => {
         if (!hasFrostedPackaging(item, order)) return;
         const product = item.product || item.itemName;
         const needsSticker = item.logoType === 'Sticker' || item.sticker === 'YES';
         if (needsSticker && !isStickerPrinted(order.id, product, idx)) return;
+        const isEmergencyProduct = emergencySet.has(product);
         result.push({
           key: `${order.id}-${idx}-frosted`,
           orderId: order.id,
@@ -258,7 +285,8 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           stickerPrinting: needsSticker ? 'Yes' : 'No',
           packagingType: 'frosted',
           isUrgent: order.isUrgent || false,
-          isEmergencyProduct: emergencySet.has(product),
+          isEmergencyProduct,
+          isEmergencyGated: emergencySet.size > 0 && !isEmergencyProduct && !emergencyAllDone,
         });
       });
       // Emergency products first within this order
