@@ -505,16 +505,6 @@ export default function OperationDetail() {
       },
     },
     {
-      title: 'Discount',
-      key: 'discount',
-      align: 'center',
-      render: (_, record) => {
-        const name = record.itemName || record.name;
-        const disc = record.discountPercent ?? record.itemId?.discountPercent ?? invMap[name]?.discountPercent;
-        return disc != null && disc > 0 ? <Tag color="orange">{disc}%</Tag> : '—';
-      },
-    },
-    {
       title: 'Default Size',
       key: 'defaultSize',
       render: (_, record) => {
@@ -710,28 +700,30 @@ export default function OperationDetail() {
             title={
               <Space>
                 <CreditCardOutlined style={{ color: '#B11E6A' }} />
-                <Text strong style={{ color: textColor }}>Payment & Delivery Terms</Text>
+                <Text strong style={{ color: textColor }}>{order.orderCategory === 'SAMPLE' ? 'Delivery Terms' : 'Payment & Delivery Terms'}</Text>
               </Space>
             }
           >
             <Space direction="vertical" size={18} style={{ width: '100%' }}>
 
-              {/* Payment Terms */}
-              <div>
-                <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 8 }}>
-                  Payment Terms
-                </Text>
-                <Space wrap>
-                  <Tag color="blue" style={{ fontSize: 13, padding: '4px 14px', borderRadius: 20 }}>
-                    {PAYMENT_LABELS[order.paymentTerms] || order.paymentTerms || '—'}
-                  </Tag>
-                  {order.paymentTerms === '50_ADVANCE_50_AFTER' && order.paymentReminderDate && (
-                    <Tag color="orange" style={{ fontSize: 12 }}>
-                      Reminder: {new Date(order.paymentReminderDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+              {/* Payment Terms — hidden for sample orders */}
+              {order.orderCategory !== 'SAMPLE' && (
+                <div>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 8 }}>
+                    Payment Terms
+                  </Text>
+                  <Space wrap>
+                    <Tag color="blue" style={{ fontSize: 13, padding: '4px 14px', borderRadius: 20 }}>
+                      {PAYMENT_LABELS[order.paymentTerms] || order.paymentTerms || '—'}
                     </Tag>
-                  )}
-                </Space>
-              </div>
+                    {order.paymentTerms === '50_ADVANCE_50_AFTER' && order.paymentReminderDate && (
+                      <Tag color="orange" style={{ fontSize: 12 }}>
+                        Reminder: {new Date(order.paymentReminderDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                      </Tag>
+                    )}
+                  </Space>
+                </div>
+              )}
 
               {/* Delivery & Forwarding */}
               <Row gutter={[16, 10]}>
@@ -751,28 +743,34 @@ export default function OperationDetail() {
                 </Col>
               </Row>
 
-              {/* Financial Summary */}
+              {/* Financial Summary — hidden for sample orders */}
+              {order.orderCategory !== 'SAMPLE' && (
+                <>
+                  <Row gutter={[16, 10]}>
+                    <Col xs={12} sm={8}>
+                      <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Total Amount</Text>
+                      <Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{(order.totalAmount ?? 0).toLocaleString()}</Text>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Amount Paid</Text>
+                      <Text strong style={{ color: '#52c41a', fontSize: 16 }}>₹{(order.paidAmount ?? order.advance ?? 0).toLocaleString()}</Text>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Balance Due</Text>
+                      <Text strong style={{ color: Math.max(0, (order.totalAmount ?? 0) - (order.paidAmount ?? order.advance ?? 0)) > 0 ? '#fa8c16' : '#52c41a', fontSize: 16 }}>
+                        ₹{Math.max(0, (order.totalAmount ?? 0) - (order.paidAmount ?? order.advance ?? 0)).toLocaleString()}
+                      </Text>
+                    </Col>
+                  </Row>
+                  <Row gutter={[16, 10]}>
+                    <Col xs={12} sm={8}>
+                      <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Advance Paid</Text>
+                      <Text strong style={{ color: '#52c41a' }}>₹{(order.advance ?? 0).toLocaleString()}</Text>
+                    </Col>
+                  </Row>
+                </>
+              )}
               <Row gutter={[16, 10]}>
-                <Col xs={12} sm={8}>
-                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Total Amount</Text>
-                  <Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{(order.totalAmount ?? 0).toLocaleString()}</Text>
-                </Col>
-                <Col xs={12} sm={8}>
-                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Amount Paid</Text>
-                  <Text strong style={{ color: '#52c41a', fontSize: 16 }}>₹{(order.paidAmount ?? order.advance ?? 0).toLocaleString()}</Text>
-                </Col>
-                <Col xs={12} sm={8}>
-                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Balance Due</Text>
-                  <Text strong style={{ color: Math.max(0, (order.totalAmount ?? 0) - (order.paidAmount ?? order.advance ?? 0)) > 0 ? '#fa8c16' : '#52c41a', fontSize: 16 }}>
-                    ₹{Math.max(0, (order.totalAmount ?? 0) - (order.paidAmount ?? order.advance ?? 0)).toLocaleString()}
-                  </Text>
-                </Col>
-              </Row>
-              <Row gutter={[16, 10]}>
-                <Col xs={12} sm={8}>
-                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Advance Paid</Text>
-                  <Text strong style={{ color: '#52c41a' }}>₹{(order.advance ?? 0).toLocaleString()}</Text>
-                </Col>
                 <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Expected Delivery</Text>
                   <Text strong style={{ color: textColor }}>
@@ -799,8 +797,8 @@ export default function OperationDetail() {
                 </Col>
               </Row>
 
-              {/* Payment Proofs */}
-              <div>
+              {/* Payment Proofs — hidden for sample orders */}
+              {order.orderCategory !== 'SAMPLE' && <div>
                 <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 10 }}>
                   Payment Proof {order.paymentProofs?.length > 0 && `(${order.paymentProofs.length} file${order.paymentProofs.length > 1 ? 's' : ''})`}
                 </Text>
@@ -854,7 +852,7 @@ export default function OperationDetail() {
                     <Text type="secondary" style={{ fontSize: 12 }}>No payment proof attached</Text>
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Order Info */}
               <div>

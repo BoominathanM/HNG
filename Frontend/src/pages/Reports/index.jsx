@@ -146,7 +146,8 @@ export default function Reports() {
   const salesTotal = filteredSalesData.reduce((s, r) => s + r.inv_value, 0);
   const purchaseTotal = filteredPurchaseData.reduce((s, r) => s + r.inv_value, 0);
 
-  const plMonthlyDataActive = apiPLData.monthlyData?.length ? apiPLData.monthlyData : [];
+  const plMonthlyDataActive = (apiPLData.monthlyData?.length ? apiPLData.monthlyData : [])
+    .map(d => ({ ...d, expenses: d.expenses || {} }));
   const plProductMonthlyDataActive = apiPLData.productMonthlyData || {};
   const activeBillPLData = apiBillPL.length ? apiBillPL : [];
   const activeGstData = apiGstData.length ? apiGstData : [];
@@ -162,7 +163,7 @@ export default function Reports() {
         if (!allRow) return { ...pd, expenses: { rent: 0, salary: 0, utilities: 0, transport: 0, marketing: 0, other: 0 } };
         const ratio = allRow.sales > 0 ? pd.sales / allRow.sales : 0;
         const expenses = Object.fromEntries(
-          Object.entries(allRow.expenses).map(([k, v]) => [k, Math.round(v * ratio)])
+          Object.entries(allRow.expenses || {}).map(([k, v]) => [k, Math.round(v * ratio)])
         );
         return { ...pd, expenses };
       });

@@ -1009,8 +1009,19 @@ export default function Sales() {
       },
     };
     const html = generatePrintHTML('quotation', data);
-    const win = window.open('', '_blank', 'width=900,height=700');
-    if (win) { win.document.write(html); win.document.close(); }
+    const blob = new Blob([html], { type: 'text/html' });
+    const blobUrl = URL.createObjectURL(blob);
+    const win = window.open(blobUrl, '_blank');
+    if (!win) {
+      enqueueSnackbar('Popup blocked — downloading as file instead.', { variant: 'info' });
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `quotation-${data.quot || 'doc'}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
   };
 
   const openOrderEditModal = (order) => {
@@ -2803,6 +2814,7 @@ export default function Sales() {
     {
       title: 'Payment', key: 'payStatus', width: 155,
       render: (_, r) => {
+        if (r.orderCategory === 'SAMPLE') return <Tag color="default" style={{ borderRadius: 20, fontSize: 12, fontWeight: 600 }}>N/A</Tag>;
         const linkedNeg = negotiationsData.find(n => String(n.key) === String(r.negotiationId));
         const linkedQuot = findLinkedQuotation(r);
         const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || linkedQuot?.paidAmount || 0);
@@ -2940,8 +2952,8 @@ export default function Sales() {
           const productName     = p.name || p.itemName || p.kitType || '—';
           const isKitItem       = p.isKit || !!p.kitType;
           const kitLabel        = p.kitName || p.kitType || '';
-          const unitLabel       = p.unit || '';
-          const sizeLabel       = p.size || '';
+          const unitLabel       = p.unit || (isKitItem ? (kitDisplayUnit || '').replace(/_/g, ' ') : '') || '';
+          const sizeLabel       = p.size || (isKitItem ? kitSize || '' : '') || '';
           const gstVal          = Number(p.gst) || 0;
           const lineTotal       = Math.round((p.qty || 0) * (p.rate || 0) * (1 + gstVal / 100));
           const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel;
@@ -3058,38 +3070,43 @@ export default function Sales() {
       );
     };
 
-    const DetailDeliveryPayment = ({ rec }) => (
-      <Row gutter={12}>
-        <Col xs={24} sm={12}>
-          <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
-            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 10, letterSpacing: 0.5 }}>DELIVERY INFO</Text>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><Text type="secondary" style={{ fontSize: 12 }}>Delivery By</Text><Text strong>{rec.deliveryBy || '—'}</Text></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}><Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text><Text strong>{rec.transportationBy || '—'}</Text></div>
-            {(rec.orderDeliveryDate || rec.expectedDelivery) && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Tentative Date</Text>
-                <Text strong style={{ color: '#fa8c16' }}>
-                  {(() => { const d = rec.orderDeliveryDate || rec.expectedDelivery; return dayjs(d).isValid() ? dayjs(d).format('DD MMM YYYY') : String(d).slice(0, 10); })()}
-                </Text>
+    const DetailDeliveryPayment = ({ rec }) => {
+      const isSample = rec.orderCategory === 'SAMPLE' || rec.leadType === 'SAMPLE';
+      return (
+        <Row gutter={12}>
+          <Col xs={24} sm={isSample ? 24 : 12}>
+            <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
+              <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 10, letterSpacing: 0.5 }}>DELIVERY INFO</Text>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><Text type="secondary" style={{ fontSize: 12 }}>Delivery By</Text><Text strong>{rec.deliveryBy || '—'}</Text></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}><Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text><Text strong>{rec.transportationBy || '—'}</Text></div>
+              {(rec.orderDeliveryDate || rec.expectedDelivery) && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Tentative Date</Text>
+                  <Text strong style={{ color: '#fa8c16' }}>
+                    {(() => { const d = rec.orderDeliveryDate || rec.expectedDelivery; return dayjs(d).isValid() ? dayjs(d).format('DD MMM YYYY') : String(d).slice(0, 10); })()}
+                  </Text>
+                </div>
+              )}
+              <Tag color={rec.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>{rec.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}</Tag>
+            </div>
+          </Col>
+          {!isSample && (
+            <Col xs={24} sm={12}>
+              <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.12)', height: '100%' }}>
+                <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 10, letterSpacing: 0.5 }}>PAYMENT TERMS</Text>
+                <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[rec.paymentTerms] || rec.paymentTerms || '—'}</Text>
+                {rec.paymentTerms === '50_ADVANCE_50_AFTER' && rec.paymentReminderDate && (
+                  <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE DUE DATE</Text>
+                    <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{rec.paymentReminderDate ? (rec.paymentReminderDate.format ? rec.paymentReminderDate.format('DD MMM YYYY') : dayjs(rec.paymentReminderDate).format('DD MMM YYYY')) : '—'}</Text>
+                  </div>
+                )}
               </div>
-            )}
-            <Tag color={rec.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>{rec.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}</Tag>
-          </div>
-        </Col>
-        <Col xs={24} sm={12}>
-          <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.12)', height: '100%' }}>
-            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 10, letterSpacing: 0.5 }}>PAYMENT TERMS</Text>
-            <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[rec.paymentTerms] || rec.paymentTerms || '—'}</Text>
-            {rec.paymentTerms === '50_ADVANCE_50_AFTER' && rec.paymentReminderDate && (
-              <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
-                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE DUE DATE</Text>
-                <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{rec.paymentReminderDate ? (rec.paymentReminderDate.format ? rec.paymentReminderDate.format('DD MMM YYYY') : dayjs(rec.paymentReminderDate).format('DD MMM YYYY')) : '—'}</Text>
-              </div>
-            )}
-          </div>
-        </Col>
-      </Row>
-    );
+            </Col>
+          )}
+        </Row>
+      );
+    };
 
     // ── Quotation detail ───────────────────────────────────────────
     if (viewMode === 'quotation-detail') {
@@ -3480,10 +3497,11 @@ export default function Sales() {
         paymentProofs: (full.paymentProofs?.length ? full.paymentProofs : null)
           || (base.paymentProofs?.length ? base.paymentProofs : null)
           || [],
-        // Kit display fields — explicitly merge from full in case list record omitted them
-        kitDisplayUnit: base.kitDisplayUnit || base.displayUnit || full.kitDisplayUnit || full.displayUnit || '',
-        kitSize: base.kitSize || full.kitSize || '',
-        selectedKit: base.selectedKit || full.selectedKit || '',
+        // Kit display fields — prefer order-level, then populated lead (fallback for orders
+        // created before displayUnit was copied to the Order document)
+        kitDisplayUnit: base.kitDisplayUnit || base.displayUnit || full.kitDisplayUnit || full.displayUnit || lead.kitDisplayUnit || lead.displayUnit || '',
+        kitSize: base.kitSize || full.kitSize || lead.kitSize || '',
+        selectedKit: base.selectedKit || full.selectedKit || lead.selectedKit || '',
         // splitDates lives on the Order document; list rows may omit it, so always prefer full
         splitDates: (full.splitDates?.length ? full.splitDates : null) || (base.splitDates?.length ? base.splitDates : null) || [],
       };
@@ -3790,7 +3808,7 @@ export default function Sales() {
               </Card>
 
               {/* Payment summary */}
-              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+              {o.orderCategory !== 'SAMPLE' && <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><CreditCardOutlined style={{ color: '#52c41a' }} /><span>Payment Summary</span></Space>}>
                 <Row gutter={12}>
                   <Col xs={24} sm={6}>
@@ -3822,7 +3840,7 @@ export default function Sales() {
                     </div>
                   </Col>
                 </Row>
-              </Card>
+              </Card>}
 
               {/* Compliance — visible if status is Completed or Partially Completed */}
               {(o.status === 'Completed' || o.status === 'Partially Completed') && (
@@ -4269,22 +4287,38 @@ export default function Sales() {
                         {fields.map(({ key, name, ...rest }) => (
                           <div key={key} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 8, border: '1px solid #ff4d4f33' }}>
                             <Row gutter={[8, 0]} align="middle">
-                              <Col xs={24} sm={7}>
+                              <Col xs={24} sm={6}>
                                 <Form.Item {...rest} name={[name, 'date']} label="Partial Date" style={{ marginBottom: 6 }}>
                                   <DatePicker style={{ width: '100%' }} size="small" />
                                 </Form.Item>
                               </Col>
-                              <Col xs={24} sm={8}>
+                              <Col xs={24} sm={7}>
                                 <Form.Item {...rest} name={[name, 'product']} label="Product" style={{ marginBottom: 6 }}>
-                                  <Select size="small" placeholder="Select product" allowClear>
+                                  <Select
+                                    size="small"
+                                    placeholder="Select product"
+                                    allowClear
+                                    onChange={(val) => {
+                                      const matched = (Array.isArray(watchedOrderProducts) ? watchedOrderProducts : [])
+                                        .find(p => (p.name || p.kitType) === val);
+                                      if (matched?.qty) {
+                                        orderForm.setFieldValue(['splitDates', name, 'qty'], matched.qty);
+                                      }
+                                    }}
+                                  >
                                     {(Array.isArray(watchedOrderProducts) ? watchedOrderProducts : []).filter(p => p?.name || p?.kitType).map((p, i) => (
                                       <Option key={i} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
                                     ))}
                                   </Select>
                                 </Form.Item>
                               </Col>
-                              <Col xs={24} sm={7}>
-                                <Form.Item {...rest} name={[name, 'note']} label="Note" style={{ marginBottom: 6 }}>
+                              <Col xs={24} sm={4}>
+                                <Form.Item {...rest} name={[name, 'qty']} label="Qty" style={{ marginBottom: 6 }}>
+                                  <InputNumber size="small" style={{ width: '100%' }} min={1} placeholder="Qty" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={5}>
+                                <Form.Item {...rest} name={[name, 'note']} label="Notes" style={{ marginBottom: 6 }}>
                                   <Input size="small" placeholder="e.g. First batch 500 units" />
                                 </Form.Item>
                               </Col>
@@ -5632,7 +5666,7 @@ export default function Sales() {
                 >
                   {usePerCardEdit && editingSection !== 'delivery' ? (
                     <Row gutter={12}>
-                      <Col xs={24} sm={12}>
+                      <Col xs={24} sm={record.leadType === 'SAMPLE' ? 24 : 12}>
                         <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>DELIVERY INFO</Text>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -5656,7 +5690,7 @@ export default function Sales() {
                           </Tag>
                         </div>
                       </Col>
-                      <Col xs={24} sm={12}>
+                      {record.leadType !== 'SAMPLE' && <Col xs={24} sm={12}>
                         <div style={{ padding: '14px 16px', background: 'rgba(177,30,106,0.05)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.12)', height: '100%' }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>PAYMENT TERMS</Text>
                           <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[record.paymentTerms] || record.paymentTerms || '—'}</Text>
@@ -5683,8 +5717,8 @@ export default function Sales() {
                             </div>
                           )}
                         </div>
-                      </Col>
-                      {(record.paymentCollection || []).length > 0 && (
+                      </Col>}
+                      {record.leadType !== 'SAMPLE' && (record.paymentCollection || []).length > 0 && (
                         <Col xs={24} style={{ marginTop: 12 }}>
                           <div style={{ padding: '14px 16px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
                             <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10, fontWeight: 600, letterSpacing: 0.5 }}>
@@ -5711,7 +5745,7 @@ export default function Sales() {
                           </div>
                         </Col>
                       )}
-                      {(record.paymentProofs || []).length > 0 && (
+                      {record.leadType !== 'SAMPLE' && (record.paymentProofs || []).length > 0 && (
                         <Col xs={24} style={{ marginTop: 12 }}>
                           <div style={{ padding: '14px 16px', background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 10, border: '1px solid #f0f0f0' }}>
                             <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10, fontWeight: 600, letterSpacing: 0.5 }}>
@@ -6601,7 +6635,7 @@ export default function Sales() {
           <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
+          {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
             <Select onChange={(val) => {
               const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
               let suggestedAdvance = 0;
@@ -6612,8 +6646,8 @@ export default function Sales() {
             }}>
               {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
             </Select>
-          </Form.Item>
-          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+          </Form.Item>}
+          {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
             {({ getFieldValue }) => {
               const pt = getFieldValue('paymentTerms');
               const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
@@ -6628,8 +6662,8 @@ export default function Sales() {
                 </div>
               ) : null;
             }}
-          </Form.Item>
-          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+          </Form.Item>}
+          {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
             {({ getFieldValue }) => {
               const pt = getFieldValue('paymentTerms');
               if (pt === '50_ADVANCE_50_AFTER') {
@@ -6648,8 +6682,9 @@ export default function Sales() {
               }
               return null;
             }}
-          </Form.Item>
+          </Form.Item>}
 
+          {orderEditTarget?.orderCategory !== 'SAMPLE' && <>
           <Divider style={{ margin: '12px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
             <Space><DollarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Collection</span></Space>
           </Divider>
@@ -6741,6 +6776,7 @@ export default function Sales() {
               );
             }}
           </Form.Item>
+          </>}
         </Form>
       </Modal>
 

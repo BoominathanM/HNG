@@ -364,6 +364,11 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     paymentTerms: resolveField(negObj.paymentTerms, lead?.paymentTerms),
     // Tentative delivery date flows from negotiation/quotation extras or the originating lead
     expectedDeliveryDate: resolveField(negObj.expectedDeliveryDate, negObj.orderDeliveryDate, lead?.orderDeliveryDate),
+    // Display/kit fields chosen during lead creation
+    displayUnit: resolveField(negObj.displayUnit, lead?.displayUnit),
+    kitDisplayUnit: resolveField(negObj.kitDisplayUnit, lead?.kitDisplayUnit),
+    kitSize: resolveField(negObj.kitSize, lead?.kitSize),
+    selectedKit: resolveField(negObj.selectedKit, lead?.selectedKit),
     assignedTo: req.user._id,
     createdBy: req.user._id,
     statusHistory: [{ status: 'In Production', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
@@ -423,7 +428,7 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null })
     .populate('clientPartyId')
     .populate('assignedTo', 'fullName email')
-    .populate('leadId', 'leadCode hotelName phone contactPerson location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode deliveryBy transportationBy forwardingCharge paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl')
+    .populate('leadId', 'leadCode hotelName phone contactPerson location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode deliveryBy transportationBy forwardingCharge paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl displayUnit kitDisplayUnit kitSize selectedKit')
     .populate('negotiationId', 'negCode')
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));
