@@ -34,6 +34,8 @@ import {
 import { motion } from 'framer-motion';
 import { enqueueSnackbar } from 'notistack';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import PhoneInput from '../../components/common/PhoneInput';
+import { emailRules, phoneValidator } from '../../utils/validation';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -2523,8 +2525,8 @@ export default function Purchase() {
           </Row>
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item label="Vendor Phone" name="vendorPhone">
-                <Input placeholder="+91 00000 00000" prefix={<PhoneOutlined />} />
+              <Form.Item label="Vendor Phone" name="vendorPhone" rules={[phoneValidator(false)]}>
+                <PhoneInput placeholder="Phone / WhatsApp" />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -2658,14 +2660,14 @@ export default function Purchase() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="Phone / WhatsApp" name="phone" rules={[{ required: true, message: 'Required' }]}>
-                <Input placeholder="+91 00000 00000" prefix={<PhoneOutlined />} />
+              <Form.Item label="Phone / WhatsApp" name="phone" rules={[{ required: true, message: 'Required' }, phoneValidator(true)]}>
+                <PhoneInput placeholder="Phone / WhatsApp" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item label="Email" name="email">
+              <Form.Item label="Email" name="email" rules={emailRules(false)}>
                 <Input placeholder="email@supplier.com" />
               </Form.Item>
             </Col>
@@ -2707,14 +2709,14 @@ export default function Purchase() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="Phone / WhatsApp" name="phone" rules={[{ required: true, message: 'Required' }]}>
-                <Input placeholder="+91 00000 00000" prefix={<PhoneOutlined />} />
+              <Form.Item label="Phone / WhatsApp" name="phone" rules={[{ required: true, message: 'Required' }, phoneValidator(true)]}>
+                <PhoneInput placeholder="Phone / WhatsApp" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item label="Email" name="email">
+              <Form.Item label="Email" name="email" rules={emailRules(false)}>
                 <Input placeholder="email@vendor.com" />
               </Form.Item>
             </Col>
@@ -3538,14 +3540,14 @@ export default function Purchase() {
               </Form.Item>
             </Col>
             <Col span={10}>
-              <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="sup_phone" style={{ marginBottom: 12 }}>
-                <Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} />
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="sup_phone" style={{ marginBottom: 12 }} rules={[phoneValidator(false)]}>
+                <PhoneInput placeholder="Phone number" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={10}>
             <Col span={14}>
-              <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="sup_email" style={{ marginBottom: 12 }}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="sup_email" style={{ marginBottom: 12 }} rules={emailRules(false)}>
                 <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
               </Form.Item>
             </Col>

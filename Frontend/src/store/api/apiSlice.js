@@ -735,6 +735,9 @@ export const apiSlice = createApi({
     }),
 
     // ── Settings ─────────────────────────────────────────────────────────────
+    getCountryCodes: builder.query({
+      query: () => ({ url: '/settings/country-codes' }),
+    }),
     getCompanySettings: builder.query({
       query: () => ({ url: '/settings/company' }),
       providesTags: ['Settings'],
@@ -1020,6 +1023,7 @@ export const {
   useGetPaymentAlertsQuery,
   useDeleteNotificationMutation,
   // Settings
+  useGetCountryCodesQuery,
   useGetCompanySettingsQuery,
   useUpdateCompanySettingsMutation,
   useUploadLogoMutation,

@@ -5,6 +5,11 @@ const DropdownOption = require('../../models/DropdownOption');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const bcrypt = require('bcryptjs');
+const COUNTRY_CODES = require('./countrycodes');
+
+exports.getCountryCodes = asyncHandler(async (req, res) => {
+  res.status(200).json({ success: true, data: COUNTRY_CODES });
+});
 
 // ─── Dropdown Options (user-added select values) ─────────────────────────────
 exports.getOptions = asyncHandler(async (req, res) => {

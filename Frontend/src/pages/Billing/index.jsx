@@ -15,6 +15,8 @@ import {
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import PhoneInput from '../../components/common/PhoneInput';
+import { phoneValidator } from '../../utils/validation';
 import dayjs from 'dayjs';
 import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import useTabAccess from '../../hooks/useTabAccess';
@@ -1021,8 +1023,8 @@ export default function Billing() {
 
                       <Row gutter={10} style={{ marginBottom: 10 }}>
                         <Col span={14}>
-                          <Form.Item label={<Text style={{ fontSize: 13 }}>Contact Number</Text>} name="phone" style={{ marginBottom: 0 }}>
-                            <Input placeholder="9876543210" style={{ borderRadius: 8, height: 40 }} />
+                          <Form.Item label={<Text style={{ fontSize: 13 }}>Contact Number</Text>} name="phone" style={{ marginBottom: 0 }} rules={[phoneValidator(false)]}>
+                            <PhoneInput placeholder="Contact number" />
                           </Form.Item>
                         </Col>
                         <Col span={10}>

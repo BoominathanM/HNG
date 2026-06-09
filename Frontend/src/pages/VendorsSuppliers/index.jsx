@@ -15,6 +15,8 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import PhoneInput from '../../components/common/PhoneInput';
+import { emailRules, phoneValidator } from '../../utils/validation';
 import dayjs from 'dayjs';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
@@ -688,14 +690,14 @@ export default function VendorsSuppliers() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={10}>
-              <Form.Item label="Phone" name="phone">
-                <Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} />
+              <Form.Item label="Phone" name="phone" rules={[phoneValidator(false)]}>
+                <PhoneInput placeholder="Phone number" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col xs={24} sm={12}>
-              <Form.Item label="Email" name="email">
+              <Form.Item label="Email" name="email" rules={emailRules(false)}>
                 <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
               </Form.Item>
             </Col>
@@ -775,14 +777,14 @@ export default function VendorsSuppliers() {
               </Form.Item>
             </Col>
             <Col span={10}>
-              <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="cust_phone" style={{ marginBottom: 12 }}>
-                <Input placeholder="+91..." style={{ borderRadius: 8, height: 40 }} />
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="cust_phone" style={{ marginBottom: 12 }} rules={[phoneValidator(false)]}>
+                <PhoneInput placeholder="Phone number" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={10}>
             <Col span={14}>
-              <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="cust_email" style={{ marginBottom: 12 }}>
+              <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="cust_email" style={{ marginBottom: 12 }} rules={emailRules(false)}>
                 <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
               </Form.Item>
             </Col>

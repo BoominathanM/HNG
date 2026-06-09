@@ -6,6 +6,7 @@ const upload = require('../../config/multer');
 
 router.use(protect);
 
+router.get('/country-codes', ctrl.getCountryCodes);
 router.get('/company', ctrl.getCompanySettings);
 router.put('/company', ctrl.updateCompanySettings);
 router.post('/company/logo', upload.single('logo'), ctrl.uploadLogo);

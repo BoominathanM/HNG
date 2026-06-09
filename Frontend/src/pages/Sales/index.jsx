@@ -63,6 +63,8 @@ import {
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
+import PhoneInput from '../../components/common/PhoneInput';
+import { emailRules, phoneValidator } from '../../utils/validation';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -5205,8 +5207,8 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Phone" name="phone" rules={[{ required: true }]}>
-                        <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
+                      <Form.Item label="Phone" name="phone" rules={[{ required: true, message: 'Phone is required' }, phoneValidator(true)]}>
+                        <PhoneInput placeholder="Phone number" />
                       </Form.Item>
                     </Col>
 
@@ -5221,13 +5223,13 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Alternative Number" name="alternativePhone">
-                        <Input placeholder="+91 XXXXX XXXXX" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
+                      <Form.Item label="Alternative Number" name="alternativePhone" rules={[phoneValidator(false)]}>
+                        <PhoneInput placeholder="Alternative number" />
                       </Form.Item>
                     </Col>
 
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Email" name="email">
+                      <Form.Item label="Email" name="email" rules={emailRules(false)}>
                         <Input placeholder="optional" prefix={<MailOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>

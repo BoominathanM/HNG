@@ -13,6 +13,8 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import PhoneInput from '../../components/common/PhoneInput';
+import { emailRules, phoneValidator } from '../../utils/validation';
 import useTabAccess from '../../hooks/useTabAccess';
 import { MODULE_TAB_DEFS } from '../../constants/moduleTabs';
 import {
@@ -587,7 +589,7 @@ export default function Settings() {
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={12}>
-                          <Form.Item label="Email Address" name="email" rules={[{ required: true, type: 'email', message: 'Valid email required' }]}>
+                          <Form.Item label="Email Address" name="email" rules={emailRules(true)}>
                             <Input placeholder="Enter email" style={{ borderRadius: 8, height: 40 }} />
                           </Form.Item>
                         </Col>
@@ -595,8 +597,8 @@ export default function Settings() {
 
                       <Row gutter={16}>
                         <Col xs={24} sm={8}>
-                          <Form.Item label="Mobile" name="mobile" rules={[{ required: true, message: 'Required' }]}>
-                            <Input placeholder="Enter mobile number" style={{ borderRadius: 8, height: 40 }} />
+                          <Form.Item label="Mobile" name="mobile" rules={[{ required: true, message: 'Required' }, phoneValidator(true)]}>
+                            <PhoneInput placeholder="Mobile number" />
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={8}>

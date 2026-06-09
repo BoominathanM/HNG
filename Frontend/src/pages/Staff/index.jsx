@@ -11,6 +11,8 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import PhoneInput from '../../components/common/PhoneInput';
+import { phoneValidator } from '../../utils/validation';
 import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetStaffQuery,
@@ -235,8 +237,8 @@ function StaffList({ isDark }) {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item label="Phone" name="phone">
-                <Input placeholder="+91 XXXXX XXXXX" />
+              <Form.Item label="Phone" name="phone" rules={[phoneValidator(false)]}>
+                <PhoneInput placeholder="Phone number" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
