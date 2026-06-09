@@ -8,7 +8,7 @@ import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
-  FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined,
+  FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -219,6 +219,7 @@ export default function Tasks() {
           <Space size={2} direction="vertical">
             <Space size={4} align="center">
               {isUrgent && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
+              {r.isSample && <ExperimentOutlined style={{ color: '#722ed1', fontSize: 13 }} />}
               <Button
                 type="link"
                 style={{ color: isUrgent ? '#ff4d4f' : '#B11E6A', padding: 0, fontWeight: 700 }}
@@ -229,6 +230,9 @@ export default function Tasks() {
             </Space>
             {isUrgent && (
               <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Emergency Order</Tag>
+            )}
+            {r.isSample && (
+              <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Sample Order</Tag>
             )}
           </Space>
         );

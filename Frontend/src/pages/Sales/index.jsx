@@ -15,7 +15,7 @@ import {
   BankOutlined, EnvironmentOutlined, TeamOutlined, CalendarOutlined,
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
-  WarningOutlined, ExclamationCircleOutlined, DollarOutlined, AlertFilled,
+  WarningOutlined, ExclamationCircleOutlined, DollarOutlined, AlertFilled, ExperimentOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -2815,10 +2815,16 @@ export default function Sales() {
             {(record.isUrgent || record.isEmergency) && (
               <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
             )}
+            {record.orderCategory === 'SAMPLE' && (
+              <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />
+            )}
             <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
           </Space>
           {(record.isUrgent || record.isEmergency) && (
             <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>Emergency</Tag>
+          )}
+          {record.orderCategory === 'SAMPLE' && (
+            <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>Sample</Tag>
           )}
         </Space>
       ),

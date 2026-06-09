@@ -29,6 +29,7 @@ import {
   BoxPlotOutlined,
   CheckCircleOutlined,
   CopyOutlined,
+  ExperimentOutlined,
   EyeOutlined,
   FileImageOutlined,
   InboxOutlined,
@@ -344,10 +345,16 @@ export default function Operations() {
             {record.hasEmergencyProducts && (
               <AlertFilled style={{ color: '#ff4d4f', fontSize: 14 }} />
             )}
+            {record.orderCategory === 'SAMPLE' && (
+              <ExperimentOutlined style={{ color: '#722ed1', fontSize: 14 }} />
+            )}
             <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
           </Space>
           {record.hasEmergencyProducts && (
             <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Emergency Delivery</Tag>
+          )}
+          {record.orderCategory === 'SAMPLE' && (
+            <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Sample Order</Tag>
           )}
         </Space>
       ),
@@ -471,10 +478,16 @@ export default function Operations() {
               {record.isUrgent && (
                 <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
               )}
+              {record.orderCategory === 'SAMPLE' && (
+                <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />
+              )}
               <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
             </Space>
             {record.isUrgent && (
               <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Emergency Order</Tag>
+            )}
+            {record.orderCategory === 'SAMPLE' && (
+              <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Sample</Tag>
             )}
           </Space>
         ),

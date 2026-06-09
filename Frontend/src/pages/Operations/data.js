@@ -112,18 +112,28 @@ const STICKER_MOVED_ON_STATUSES = new Set(['In Process', 'Printing', 'Dispatch',
 // Statuses that mean an emergency item's production is fully complete.
 const EMERGENCY_COMPLETE_STATUSES = new Set(['Done', 'Received', 'Closed']);
 
-// Returns a Set of lowercase product names that have an emergency delivery date in splitDates.
-// Handles both formats: new {products:[{product}]} and legacy {product} at sd level.
-// Lowercase normalisation ensures matching is case-insensitive (item names are compared
-// with .toLowerCase() at each call site).
-export const getEmergencyProductSet = (order) => {
-  const set = new Set();
+// Returns a Map of lowercase product name → emergency qty (number) or null if no qty specified.
+// When qty is present, only the order item with that exact qty should be marked emergency.
+// When qty is null, all items with that product name are emergency (legacy / no-qty entries).
+export const getEmergencyProductQtyMap = (order) => {
+  const map = new Map();
   (order.splitDates || []).forEach((sd) => {
-    (sd.products || []).forEach((ep) => { if (ep.product) set.add(ep.product.toLowerCase()); });
-    if (sd.product) set.add(sd.product.toLowerCase());
+    (sd.products || []).forEach((ep) => {
+      if (ep.product) {
+        const key = ep.product.toLowerCase();
+        if (!map.has(key)) map.set(key, ep.qty != null ? Number(ep.qty) : null);
+      }
+    });
+    if (sd.product) {
+      const key = sd.product.toLowerCase();
+      if (!map.has(key)) map.set(key, sd.qty != null ? Number(sd.qty) : null);
+    }
   });
-  return set;
+  return map;
 };
+
+// Returns a Set of lowercase product names that have an emergency delivery date in splitDates.
+export const getEmergencyProductSet = (order) => new Set(getEmergencyProductQtyMap(order).keys());
 
 export const buildProductionQueues = (orders = [], stickerRequests = [], queueSteps = {}) => {
   // Find the StickerRequest document for a given order + product combination.
@@ -172,7 +182,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     // Within each order: emergency products (from splitDates) appear first; remaining items
     // carry isEmergencyGated=true until all emergency items for that order are done.
     sticker: orders.flatMap((order) => {
-      const emergencySet = getEmergencyProductSet(order);
+      const emergencyQtyMap = getEmergencyProductQtyMap(order);
       const emergencyAllDone = areAllEmergencyItemsDone(order);
       const items = (order.items || []).map((item, idx) => ({ item, idx }))
         .filter(({ item, idx }) => {
@@ -192,10 +202,13 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         .map(({ item, idx }) => {
           const packagingType = getItemPackagingType(item, order);
           const productName = item.product || item.itemName;
-          const isEmergencyProduct = emergencySet.has((productName || '').toLowerCase());
+          const pKey = (productName || '').toLowerCase();
+          const eQty = emergencyQtyMap.get(pKey);
+          const isEmergencyProduct = eQty !== undefined && (eQty === null || Number(item.qty) === eQty);
           return {
             key: `${order.id}-${idx}-sticker`,
             orderId: order.id,
+            orderCategory: order.orderCategory || 'ORDER',
             hotelLogo: order.hotelLogo || order.clientName,
             product: productName,
             qty: item.qty,
@@ -209,7 +222,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             isUrgent: order.isUrgent || false,
             isEmergencyProduct,
             // Non-emergency items of an emergency order are gated until emergency items are done
-            isEmergencyGated: emergencySet.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+            isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
           };
         });
       // Emergency products first within this order
@@ -223,7 +236,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     // Within each order: emergency products (from splitDates) appear first; remaining items
     // carry isEmergencyGated=true until all emergency items for that order are done.
     box: orders.flatMap((order) => {
-      const emergencySet = getEmergencyProductSet(order);
+      const emergencyQtyMap = getEmergencyProductQtyMap(order);
       const emergencyAllDone = areAllEmergencyItemsDone(order);
       const result = [];
       (order.items || []).forEach((item, idx) => {
@@ -232,10 +245,13 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const product = item.product || item.itemName;
         const needsSticker = item.logoType === 'Sticker' || item.sticker === 'YES';
         if (needsSticker && !isStickerPrinted(order.id, product, idx)) return;
-        const isEmergencyProduct = emergencySet.has((product || '').toLowerCase());
+        const pKey = (product || '').toLowerCase();
+        const eQty = emergencyQtyMap.get(pKey);
+        const isEmergencyProduct = eQty !== undefined && (eQty === null || Number(item.qty) === eQty);
         result.push({
           key: `${order.id}-${idx}-box`,
           orderId: order.id,
+          orderCategory: order.orderCategory || 'ORDER',
           hotelLogo: order.hotelLogo || order.clientName,
           product,
           qty: item.qty,
@@ -250,7 +266,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           packagingType: 'box',
           isUrgent: order.isUrgent || false,
           isEmergencyProduct,
-          isEmergencyGated: emergencySet.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+          isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
         });
       });
       // Emergency products first within this order
@@ -262,7 +278,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     // Within each order: emergency products (from splitDates) appear first; remaining items
     // carry isEmergencyGated=true until all emergency items for that order are done.
     frosted: orders.flatMap((order) => {
-      const emergencySet = getEmergencyProductSet(order);
+      const emergencyQtyMap = getEmergencyProductQtyMap(order);
       const emergencyAllDone = areAllEmergencyItemsDone(order);
       const result = [];
       (order.items || []).forEach((item, idx) => {
@@ -282,10 +298,13 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const sr = findSR(order.id, product);
         const hasActiveSR = sr && !STICKER_MOVED_ON_STATUSES.has(sr.status);
         if ((needsSticker || hasActiveSR) && !isStickerPrinted(order.id, product, idx)) return;
-        const isEmergencyProduct = emergencySet.has((product || '').toLowerCase());
+        const pKey = (product || '').toLowerCase();
+        const eQty = emergencyQtyMap.get(pKey);
+        const isEmergencyProduct = eQty !== undefined && (eQty === null || Number(item.qty) === eQty);
         result.push({
           key: `${order.id}-${idx}-frosted`,
           orderId: order.id,
+          orderCategory: order.orderCategory || 'ORDER',
           hotelLogo: order.hotelLogo || order.clientName,
           product,
           qty: item.qty,
@@ -300,7 +319,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           packagingType: 'frosted',
           isUrgent: order.isUrgent || false,
           isEmergencyProduct,
-          isEmergencyGated: emergencySet.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+          isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
         });
       });
       // Emergency products first within this order

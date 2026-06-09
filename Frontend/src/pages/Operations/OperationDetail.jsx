@@ -292,18 +292,23 @@ export default function OperationDetail() {
   );
   const hotelDesigns = hotelDesignsRaw?.data || [];
 
-  // Build map: lowercase productName → earliest emergency delivery date (from splitDates, both formats)
-  // Keys are normalised to lowercase so lookup is case-insensitive (item names may differ in casing).
+  // Build map: lowercase productName → { date, qty } from splitDates.
+  // qty is the emergency delivery quantity; if not specified, null means all items of that name are emergency.
+  // When qty is present, only the order item whose qty matches is flagged as emergency.
   const emergencyProductMap = useMemo(() => {
     const map = {};
     (order?.splitDates || []).forEach((sd) => {
       const sdDate = sd.date || null;
       (sd.products || []).forEach((ep) => {
         const key = ep.product?.toLowerCase();
-        if (key && (!map[key] || (sdDate && sdDate < map[key]))) map[key] = sdDate;
+        if (key && (!map[key] || (sdDate && sdDate < map[key].date))) {
+          map[key] = { date: sdDate, qty: ep.qty != null ? Number(ep.qty) : null };
+        }
       });
       const key = sd.product?.toLowerCase();
-      if (key && (!map[key] || (sdDate && sdDate < map[key]))) map[key] = sdDate;
+      if (key && (!map[key] || (sdDate && sdDate < map[key].date))) {
+        map[key] = { date: sdDate, qty: sd.qty != null ? Number(sd.qty) : null };
+      }
     });
     return map;
   }, [order?.splitDates]);
@@ -325,8 +330,9 @@ export default function OperationDetail() {
   }, [order?.items, order?.splitDates, emergencyProductMap]);
 
   // Determine if the emergency phase for this order is complete.
-  // Emergency phase is done when every emergency-product queue item across sticker/box/frosted
-  // is no longer gated (meaning areAllEmergencyItemsDone returned true in buildProductionQueues).
+  // Phase is done only when queue items exist for this order AND none are still gated.
+  // If there are no queue items (products have no sticker/box/frosted printing), the phase
+  // is NOT done — emergency products still need to be processed first.
   const emergencyPhaseDone = useMemo(() => {
     if (Object.keys(emergencyProductMap).length === 0) return true;
     const allQueues = [
@@ -334,17 +340,27 @@ export default function OperationDetail() {
       ...productionQueues.box,
       ...productionQueues.frosted,
     ].filter((item) => item.orderId === id);
-    if (allQueues.length === 0) return true;
+    if (allQueues.length === 0) return false;
     return !allQueues.some((item) => item.isEmergencyGated);
   }, [emergencyProductMap, productionQueues, id]);
 
   // Annotate every item with isEmergencyProduct / isEmergencyGated flags — mirrors the
   // Sticker/Box queue treatment so Overview shows the same status indicators.
+  // When the splitDate specifies a qty, only the item whose qty matches is flagged; this
+  // prevents the full-order item from being shown as emergency when only a partial qty is urgent.
   const visibleOrderItems = useMemo(() => {
     const hasEmergency = Object.keys(emergencyProductMap).length > 0;
     return sortedOrderItems.map((item) => {
       const name = (item.product || item.itemName || '').toLowerCase();
-      const isEmergencyProduct = hasEmergency && !!emergencyProductMap[name];
+      const emergencyInfo = emergencyProductMap[name];
+      let isEmergencyProduct = false;
+      if (hasEmergency && emergencyInfo) {
+        if (emergencyInfo.qty != null) {
+          isEmergencyProduct = Number(item.qty) === emergencyInfo.qty;
+        } else {
+          isEmergencyProduct = true;
+        }
+      }
       const isEmergencyGated = hasEmergency && !isEmergencyProduct && !emergencyPhaseDone;
       return { ...item, isEmergencyProduct, isEmergencyGated };
     });
@@ -444,9 +460,9 @@ export default function OperationDetail() {
       key: 'product',
       render: (_, record) => {
         const name = record.itemName || record.name || record.product;
-        const emergencyDate = emergencyProductMap[(name || '').toLowerCase()];
-        const isEmergencyProduct = record.isEmergencyProduct || !!emergencyDate;
+        const isEmergencyProduct = record.isEmergencyProduct;
         const isEmergencyGated = record.isEmergencyGated;
+        const emergencyDate = isEmergencyProduct ? emergencyProductMap[(name || '').toLowerCase()]?.date : null;
         return (
           <Space direction="vertical" size={2} style={{ gap: 2 }}>
             <Space size={6}>
@@ -986,7 +1002,7 @@ export default function OperationDetail() {
                           return { style: { background: 'rgba(255,77,79,0.07)', borderLeft: '3px solid #ff4d4f' } };
                         }
                         if (record.isEmergencyGated) {
-                          return { style: { opacity: 0.55 } };
+                          return { style: { opacity: 0.45, pointerEvents: 'none', background: 'rgba(0,0,0,0.02)', cursor: 'not-allowed' } };
                         }
                         return {};
                       }}
