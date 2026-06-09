@@ -1168,15 +1168,6 @@ export default function OperationDetail() {
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item label="Printing" name="printing">
-                <Select placeholder="Select printing type">
-                  <Option value="sticker_printing">Sticker Printing</Option>
-                  <Option value="box">Box</Option>
-                  <Option value="frosted_ziplock">Frosted Ziplock</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
               <Form.Item label="Assign To" name="assignee">
                 <Select>
                   {[...new Map(allOrders.filter((o) => o.assignedEmployee).map((o) => [o.assignedEmployee, { key: o.key, name: o.assignedEmployee }])).values()].map((emp) => (

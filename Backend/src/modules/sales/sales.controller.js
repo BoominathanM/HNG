@@ -387,6 +387,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     kitDisplayUnit: resolveField(negObj.kitDisplayUnit, lead?.kitDisplayUnit),
     kitSize: resolveField(negObj.kitSize, lead?.kitSize),
     selectedKit: resolveField(negObj.selectedKit, lead?.selectedKit),
+    orderCategory: resolveField(lead?.leadType, 'ORDER'),
     assignedTo: req.user._id,
     createdBy: req.user._id,
     statusHistory: [{ status: 'In Production', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],

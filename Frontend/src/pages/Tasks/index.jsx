@@ -54,6 +54,7 @@ export default function Tasks() {
     key: t._id,
     id: t.taskCode,
     type: t.taskType || 'Packing',
+    title: t.taskName || '',
     name: t.taskName || t.taskCode,
     order: t.orderId?.orderCode || '—',
     client: t.orderId?.clientName || t.clientName || '—',
@@ -64,11 +65,12 @@ export default function Tasks() {
     status: t.status === 'Done' ? 'Completed' : t.status,
     priority: t.priority || (t.isEmergency ? 'High' : 'Normal'),
     isEmergency: t.isEmergency,
+    isSample: t.orderId?.orderCategory === 'SAMPLE' || t.orderId?.leadId?.leadType === 'SAMPLE',
     payment: t.paymentStatus || 'Pending',
     paymentStatus: t.paymentStatus || 'Pending',
     salesPerson: t.assignedTo?.fullName || t.assigneeName || '—',
-    // Needs sales follow-up: work done but payment not yet collected.
-    salesFollowup: t.status === 'Done' && (t.paymentStatus || 'Pending') !== 'Paid',
+    // Sample orders need no payment follow-up; only regular completed+unpaid orders do.
+    salesFollowup: t.orderId?.orderCategory !== 'SAMPLE' && t.orderId?.leadId?.leadType !== 'SAMPLE' && t.status === 'Done' && (t.paymentStatus || 'Pending') !== 'Paid',
     due: t.dueDate ? t.dueDate.slice(0, 10) : undefined,
     qty: t.qty,
     subTasks: t.subTasks || [],
@@ -254,20 +256,18 @@ export default function Tasks() {
       title: 'Current Task',
       key: 'suggestedTask',
       render: (_, r) => {
-        const suggestions = getSuggestedTasks(r);
-        if (!suggestions.length) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-        const s = suggestions[0];
-        return (
-          <Tooltip title={s.isLow ? `${s.product} — short by ${s.short.toLocaleString()} units` : s.product}>
-            <Tag
-              color={s.isLow ? 'error' : 'processing'}
-              icon={s.isLow ? <ExclamationCircleOutlined /> : undefined}
-              style={{ fontSize: 11, margin: 0 }}
-            >
-              {s.label}{s.isLow ? ` (−${s.short.toLocaleString()})` : ''}
-            </Tag>
-          </Tooltip>
-        );
+        const pending = (r.subTasks || []).find((s) => !s.done);
+        if (pending?.label) {
+          return (
+            <Tooltip title={pending.assigneeName ? `Assigned to: ${pending.assigneeName}` : pending.label}>
+              <Tag color="processing" style={{ fontSize: 11, margin: 0 }}>{pending.label}</Tag>
+            </Tooltip>
+          );
+        }
+        if (r.name) {
+          return <Tag color="default" style={{ fontSize: 11, margin: 0, color: '#666' }}>{r.name}</Tag>;
+        }
+        return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
       },
     },
     {
@@ -283,7 +283,9 @@ export default function Tasks() {
     { title: 'Priority', dataIndex: 'priority', responsive: ['sm'], render: (v) => <Tag color={priorityColor[v]}>{v}</Tag> },
     {
       title: 'Payment', dataIndex: 'paymentStatus', responsive: ['lg'],
-      render: (v) => v ? <Tag color={paymentColor[v] || 'default'}>{v}</Tag> : <Text style={{ color: '#999', fontSize: 11 }}>N/A</Text>,
+      render: (v, r) => r.isSample
+        ? <Tag color="blue" style={{ fontSize: 11 }}>Sample</Tag>
+        : v ? <Tag color={paymentColor[v] || 'default'}>{v}</Tag> : <Text style={{ color: '#999', fontSize: 11 }}>N/A</Text>,
     },
     {
       title: 'Follow-up', key: 'followup', responsive: ['md'],
@@ -322,13 +324,13 @@ export default function Tasks() {
           {r.status === 'Completed' && (
             <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>Completed</Tag>
           )}
-          {r.status === 'Completed' && r.paymentStatus === 'Paid' && !r.dispatchStatus && (
+          {r.status === 'Completed' && (r.isSample || r.paymentStatus === 'Paid') && !r.dispatchStatus && (
             <Button size="small" type="primary" icon={<ShoppingOutlined />}
               style={{ background: '#52c41a', border: 'none' }}>
               Dispatch
             </Button>
           )}
-          {r.status === 'Completed' && r.paymentStatus && r.paymentStatus !== 'Paid' && !r.dispatchStatus && (
+          {r.status === 'Completed' && !r.isSample && r.paymentStatus && r.paymentStatus !== 'Paid' && !r.dispatchStatus && (
             <Space direction="vertical" size={2}>
               <Tag color="warning" style={{ fontSize: 10 }}>Awaiting Payment</Tag>
               <Button size="small" danger icon={<ExclamationCircleOutlined />}
@@ -504,7 +506,10 @@ export default function Tasks() {
                                   <Space size={4}><Avatar size={20} icon={<UserOutlined />} style={{ background: '#B11E6A' }} /><Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>{task.assignee}</Text></Space>
                                   <Tag color={priorityColor[task.priority]} style={{ margin: 0, fontSize: 11 }}>{task.priority}</Tag>
                                 </div>
-                                {task.paymentStatus && <Tag color={paymentColor[task.paymentStatus] || 'default'} style={{ fontSize: 10, marginBottom: 6 }}>{task.paymentStatus}</Tag>}
+                                {task.isSample
+                                  ? <Tag color="blue" style={{ fontSize: 10, marginBottom: 6 }}>Sample</Tag>
+                                  : task.paymentStatus && <Tag color={paymentColor[task.paymentStatus] || 'default'} style={{ fontSize: 10, marginBottom: 6 }}>{task.paymentStatus}</Tag>
+                                }
                                 <Space direction="vertical" size={2} style={{ width: '100%', marginTop: 8 }}>
                                   {task.status === 'Pending' && (
                                     <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => handleStartTask(task.id)} style={{ background: '#1890ff', border: 'none', width: '100%' }}>Start</Button>
@@ -518,10 +523,10 @@ export default function Tasks() {
                                   {task.status === 'Completed' && (
                                     <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Completed</Tag>
                                   )}
-                                  {task.status === 'Completed' && task.paymentStatus === 'Paid' && !task.dispatchStatus && (
+                                  {task.status === 'Completed' && (task.isSample || task.paymentStatus === 'Paid') && !task.dispatchStatus && (
                                     <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}>Dispatch</Button>
                                   )}
-                                  {task.status === 'Completed' && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
+                                  {task.status === 'Completed' && !task.isSample && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
                                     <Button size="small" danger icon={<ExclamationCircleOutlined />} onClick={() => openEmergency(task)} style={{ width: '100%' }}>Emergency Dispatch</Button>
                                   )}
                                   {task.startTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Started: {new Date(task.startTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
@@ -774,8 +779,8 @@ export default function Tasks() {
               </div>
             )}
 
-            {/* Dispatch blocked notice */}
-            {selectedTask.status === 'Completed' && selectedTask.paymentStatus && selectedTask.paymentStatus !== 'Paid' && !selectedTask.dispatchStatus && (
+            {/* Dispatch blocked notice — skipped for sample orders */}
+            {selectedTask.status === 'Completed' && !selectedTask.isSample && selectedTask.paymentStatus && selectedTask.paymentStatus !== 'Paid' && !selectedTask.dispatchStatus && (
               <Alert type="error" showIcon icon={<ExclamationCircleOutlined />}
                 message="Dispatch Blocked — Payment Pending"
                 description={`Payment status: "${selectedTask.paymentStatus}". Dispatch is enabled only after full payment. For emergencies, use Emergency Dispatch — requires Sales Person + Operation Head approval.`}

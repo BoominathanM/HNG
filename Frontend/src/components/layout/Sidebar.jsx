@@ -129,7 +129,6 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
     const handleClick = () => {
       if (hasChildren && !collapsed) {
         toggleExpand(item.key);
-        navigate(item.key);
       } else {
         navigate(item.key);
         onMobileClose?.();

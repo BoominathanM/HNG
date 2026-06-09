@@ -119,10 +119,17 @@ exports.getExpensePayments = asyncHandler(async (req, res) => {
 exports.payExpense = asyncHandler(async (req, res, next) => {
   const expense = await Expense.findById(req.params.id);
   if (!expense) return next(new AppError('Expense not found', 404));
+
+  const amountPaid = parseFloat(req.body.amountPaid) || 0;
+  expense.paidAmount = (expense.paidAmount || 0) + amountPaid;
   expense.proofUrl = req.file?.path || req.body.proofUrl || expense.proofUrl;
-  expense.paymentStatus = req.body.status || 'Paid';
   expense.paidBy = req.body.paidBy || req.user.fullName;
   expense.paidDate = new Date();
+
+  const remaining = expense.amount - expense.paidAmount;
+  if (remaining <= 0) expense.paymentStatus = 'Paid';
+  else if (expense.paidAmount > 0) expense.paymentStatus = 'Partially Paid';
+
   await expense.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, data: expense });
 });

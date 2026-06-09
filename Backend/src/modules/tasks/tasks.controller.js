@@ -11,7 +11,11 @@ exports.getTasks = asyncHandler(async (req, res) => {
   if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
   if (req.query.orderId) filter.orderId = req.query.orderId;
   const tasks = await Task.find(filter)
-    .populate('orderId', 'orderCode clientName')
+    .populate({
+      path: 'orderId',
+      select: 'orderCode clientName orderCategory leadId',
+      populate: { path: 'leadId', select: 'leadType' },
+    })
     .populate('assignedTo', 'fullName role')
     .sort('-createdAt');
   res.status(200).json({ success: true, data: tasks });

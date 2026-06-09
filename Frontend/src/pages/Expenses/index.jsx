@@ -82,6 +82,34 @@ export default function Expenses() {
   const { filterTabs } = useTabAccess('Expenses');
   const { requireAccess } = usePageAccess('Expenses');
 
+  const handleExport = () => {
+    const rows = applyExpFilter(allExpenses);
+    if (!rows.length) { enqueueSnackbar('No data to export', { variant: 'warning' }); return; }
+    const headers = ['Date', 'Category', 'Description', 'Vendor', 'Amount', 'Status'];
+    const csv = [
+      headers.join(','),
+      ...rows.map(r => {
+        const cat = EXPENSE_CATEGORIES.find(x => x.value === r.category);
+        const catLabel = r.category === 'OTHER' ? (r.customCategory || 'Other') : (cat?.label || r.category);
+        return [
+          r.date || '',
+          `"${catLabel}"`,
+          `"${(r.desc || '').replace(/"/g, '""')}"`,
+          `"${(r.vendor || '').replace(/"/g, '""')}"`,
+          r.amount || 0,
+          r.status || '',
+        ].join(',');
+      }),
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `expenses_${dayjs().format('YYYY-MM-DD')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   /* ── Search & Filter state ── */
   const [expSearch, setExpSearch] = useState('');
   const [expCategory, setExpCategory] = useState('all');
@@ -208,7 +236,7 @@ export default function Expenses() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Expense Management" items={[{ label: 'Expenses' }]} style={{ marginBottom: 0 }} />
         <Space>
-          <Button icon={<DownloadOutlined />}>Export</Button>
+          <Button icon={<DownloadOutlined />} onClick={handleExport}>Export</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!requireAccess('add')) return; setIsModalOpen(true); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
             Add Expense
           </Button>

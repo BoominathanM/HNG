@@ -216,16 +216,26 @@ export default function Financial() {
   // ── Expense Payments — from RTK Query ──
   const expenseRequests = useMemo(() => (expensePaymentsData?.data || []).map((e) => ({
     key: e._id, date: e.expenseDate?.slice(0, 10),
-    category: e.category, desc: e.description,
-    amount: e.amount, status: e.paymentStatus,
+    category: e.category, customCategory: e.customCategory, desc: e.description,
+    amount: e.amount, paid_amount: e.paidAmount || 0, status: e.paymentStatus,
     vendor: e.vendorPayee, bill_no: e.expenseCode,
     proofUrl: e.proofUrl,
   })), [expensePaymentsData]);
 
+  const EXPENSE_CATEGORY_META = {
+    'Raw Material':               { color: '#B11E6A' },
+    'Shipping / Transportation':  { color: '#1890ff' },
+    'Utility':                    { color: '#fa8c16' },
+    'Utilities (Rent/Elec)':      { color: '#fa8c16' },
+    'Other':                      { color: '#722ed1' },
+    'Purchase':                   { color: '#52c41a' },
+  };
+
   const handleProcessPayment = async (values) => {
     const paidAmt = values.amount_paid || selectedForPayment.amount;
-    const remaining = selectedForPayment.amount - paidAmt;
-    const finalStatus = values.status === 'Partial Paid' && remaining > 0 ? 'Partial Paid' : 'Paid';
+    const alreadyPaid = selectedForPayment.paid_amount || 0;
+    const totalPaid = alreadyPaid + paidAmt;
+    const finalStatus = totalPaid >= selectedForPayment.amount ? 'Paid' : 'Partially Paid';
     try {
       const fd = new FormData();
       fd.append('amountPaid', paidAmt);
@@ -250,7 +260,7 @@ export default function Financial() {
 
   const getStatusColor = (status) => {
     if (status === 'Paid') return 'success';
-    if (status === 'Partial Paid') return 'warning';
+    if (status === 'Partially Paid' || status === 'Partial Paid') return 'warning';
     return 'error';
   };
 
@@ -266,12 +276,32 @@ export default function Financial() {
   const expenseColumns = [
     { title: 'Date', dataIndex: 'date', key: 'date', width: 100, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Bill No', dataIndex: 'bill_no', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Category', key: 'category', width: 160,
+      render: (_, r) => {
+        const label = r.category === 'Other' && r.customCategory ? r.customCategory : (r.category || '—');
+        const meta = EXPENSE_CATEGORY_META[r.category] || { color: '#722ed1' };
+        return <Tag color={meta.color} style={{ borderRadius: 10, padding: '0 10px', fontSize: 12 }}>{label}</Tag>;
+      }
+    },
     { title: 'Description', dataIndex: 'desc', key: 'desc', render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 120, align: 'right', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Status', dataIndex: 'status', key: 'status', width: 100, render: (v) => <Tag color={getStatusColor(v)} style={{ fontSize: 13 }}>{v}</Tag> },
+    {
+      title: 'Status', key: 'status', width: 140,
+      render: (_, r) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={getStatusColor(r.status)} style={{ fontSize: 12, borderRadius: 8, margin: 0 }}>{r.status || 'Unpaid'}</Tag>
+          {r.paid_amount > 0 && r.status !== 'Paid' && (
+            <Text type="secondary" style={{ fontSize: 11 }}>Paid: ₹{r.paid_amount.toLocaleString()} / ₹{r.amount.toLocaleString()}</Text>
+          )}
+        </Space>
+      )
+    },
     {
       title: 'Actions', key: 'actions', width: 115,
-      render: (_, r) => (
+      render: (_, r) => r.status === 'Paid' ? (
+        <Tag color="success" style={{ borderRadius: 8, fontSize: 12 }}>Paid</Tag>
+      ) : (
         <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { if (!requireAccess('edit')) return; setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }}>Pay Now</Button>
       )
     }
@@ -574,7 +604,7 @@ export default function Financial() {
                     })}
                     columns={expenseColumns}
                     pagination={{ pageSize: 8 }}
-                    scroll={{ x: 700 }}
+                    scroll={{ x: 860 }}
                   />
                 </div>
               )
@@ -912,38 +942,59 @@ export default function Financial() {
         centered
       >
         {selectedForPayment && (
-          <Form form={paymentForm} layout="vertical" onFinish={handleProcessPayment} initialValues={{ status: 'Paid', amount_paid: selectedForPayment.amount }}>
+          <Form form={paymentForm} layout="vertical" onFinish={handleProcessPayment} initialValues={{ amount_paid: selectedForPayment.amount - (selectedForPayment.paid_amount || 0) }}>
             <Descriptions bordered column={1} size="small">
               <Descriptions.Item label="Payee">{selectedForPayment.item || selectedForPayment.desc}</Descriptions.Item>
               <Descriptions.Item label="Total Amount Due"><Text strong style={{ color: '#B11E6A', fontSize: 18 }}>₹{selectedForPayment.amount.toLocaleString()}</Text></Descriptions.Item>
               <Descriptions.Item label="Paid Till Now">₹{(selectedForPayment.paid_amount || 0).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Balance Remaining"><Text strong style={{ color: '#fa8c16' }}>₹{(selectedForPayment.amount - (selectedForPayment.paid_amount || 0)).toLocaleString()}</Text></Descriptions.Item>
             </Descriptions>
-            
-            <div style={{ marginTop: 20 }}>
-              <Form.Item label="Update Payment Status" name="status" rules={[{ required: true }]}>
-                <Select style={{ width: '100%' }}>
-                  <Option value="Paid">100% Full Payment (Paid)</Option>
-                  <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
-                  <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
-                  <Option value="Partial Paid">Other Partial Payment</Option>
-                </Select>
-              </Form.Item>
-            </div>
 
-            <Row gutter={12}>
-              <Col span={24}>
-                <Form.Item 
-                  label="Enter Amount to Pay Now" 
-                  name="amount_paid" 
-                  rules={[{ required: true, message: 'Please enter amount' }]}
+            <Row gutter={12} style={{ marginTop: 20 }}>
+              <Col span={14}>
+                <Form.Item
+                  label="Enter Amount to Pay Now"
+                  name="amount_paid"
+                  rules={[
+                    { required: true, message: 'Please enter amount' },
+                    ({ getFieldValue }) => ({
+                      validator(_, value) {
+                        const balance = selectedForPayment.amount - (selectedForPayment.paid_amount || 0);
+                        if (!value || value <= 0) return Promise.reject('Amount must be greater than 0');
+                        if (value > balance) return Promise.reject(`Cannot exceed balance ₹${balance.toLocaleString()}`);
+                        return Promise.resolve();
+                      },
+                    }),
+                  ]}
                 >
-                  <InputNumber 
-                    prefix="₹" 
-                    style={{ width: '100%' }} 
+                  <InputNumber
+                    prefix="₹"
+                    style={{ width: '100%' }}
                     placeholder="0.00"
+                    min={1}
+                    max={selectedForPayment.amount - (selectedForPayment.paid_amount || 0)}
                     formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
                     parser={value => value.replace(/\₹\s?|(,*)/g, '')}
                   />
+                </Form.Item>
+              </Col>
+              <Col span={10}>
+                <Form.Item label="Payment Status (Auto)">
+                  <Form.Item noStyle dependencies={['amount_paid']}>
+                    {({ getFieldValue }) => {
+                      const entered = getFieldValue('amount_paid') || 0;
+                      const alreadyPaid = selectedForPayment.paid_amount || 0;
+                      const isFullyPaid = (alreadyPaid + entered) >= selectedForPayment.amount;
+                      return (
+                        <Tag
+                          color={isFullyPaid ? 'success' : 'warning'}
+                          style={{ borderRadius: 10, padding: '4px 14px', fontSize: 13, fontWeight: 600, width: '100%', textAlign: 'center', display: 'block' }}
+                        >
+                          {isFullyPaid ? 'Paid' : 'Partially Paid'}
+                        </Tag>
+                      );
+                    }}
+                  </Form.Item>
                 </Form.Item>
               </Col>
             </Row>
