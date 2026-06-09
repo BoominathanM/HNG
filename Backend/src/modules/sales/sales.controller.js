@@ -232,6 +232,16 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     price: Number(p.price ?? p.rate) || 0,
     qty: Number(p.qty) || 0,
     lineTotal: Number(p.lineTotal) || (Number(p.qty) || 0) * (Number(p.price ?? p.rate) || 0),
+    // Preserve packaging/logo fields so they survive the negotiation → order conversion
+    logoType: p.logoType || '',
+    packaging: p.packaging || p.packingMaterial || '',
+    packingMaterial: p.packingMaterial || p.packaging || '',
+    sticker: p.sticker || '',
+    size: p.size || '',
+    material: p.material || p.materialCategory || '',
+    isKit: p.isKit || false,
+    kitName: p.kitName || '',
+    kitType: p.kitType || '',
   }));
   const negotiation = await Negotiation.create({
     negCode,
@@ -242,6 +252,9 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     total: req.body.total || req.body.totalAmount || 0,
     type: req.body.billType === 'GST' ? 'GST' : 'Non-GST',
     items,
+    kitDisplayUnit: req.body.kitDisplayUnit || lead.kitDisplayUnit || lead.displayUnit || '',
+    displayUnit: req.body.displayUnit || lead.displayUnit || lead.kitDisplayUnit || '',
+    kitSize: req.body.kitSize || lead.kitSize || '',
     // Copy lead contact details so they flow through to the eventual order
     location: lead.location || lead.locationCity,
     phone: lead.phone,

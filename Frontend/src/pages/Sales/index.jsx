@@ -161,6 +161,7 @@ const PACKING_MATERIAL_OPTIONS = [
   { value: 'Plastic Box', label: 'Plastic Box' },
   { value: 'Paper Box', label: 'Paper Box' },
   { value: 'Pouch', label: 'Pouch' },
+  { value: 'Ziplock', label: 'Ziplock' },
   { value: 'Wrapper', label: 'Wrapper' },
 ];
 
@@ -1932,6 +1933,9 @@ export default function Sales() {
         total: calcTotal(lead.products),
         items: (lead.products || []).map(p => mapOrderItem(p, lead.kitDisplayUnit || lead.displayUnit || '')),
         products: lead.products || [],
+        kitDisplayUnit: lead.kitDisplayUnit || lead.displayUnit || '',
+        displayUnit: lead.displayUnit || lead.kitDisplayUnit || '',
+        kitSize: lead.kitSize || '',
         // Contact + billing fields
         hotelName: lead.hotelName,
         billingName: lead.billingName,
@@ -2102,7 +2106,7 @@ export default function Sales() {
     // including the kit-level display unit (e.g. ZIPLOCK_POUCH).
     if (p?.sticker === 'YES') return 'Sticker';
     const hay = `${p?.printing || ''} ${p?.packingMaterial || ''} ${p?.materialCategory || ''} ${p?.logoType || ''} ${kitDisplayUnit}`.toLowerCase();
-    if (hay.includes('frosted') || hay.includes('ziplock')) return 'Frosted Ziplock';
+    if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
     if (hay.includes('box')) return 'Box';
     if (hay.includes('sticker')) return 'Sticker';
     return p?.logoType || 'Sticker';
@@ -5100,7 +5104,30 @@ export default function Sales() {
                       <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
                         <Select
                           placeholder="Select hotel type"
-                          onChange={(val) => { if (val !== 'NEW') leadForm.setFieldValue('leadType', undefined); }}
+                          onChange={(val) => {
+                            if (val !== 'NEW') leadForm.setFieldValue('leadType', undefined);
+                            // Clear auto-filled hotel lookup fields when switching hotel type
+                            // to prevent stale OLD hotel data appearing for a NEW hotel entry (and vice versa)
+                            leadForm.setFieldsValue({
+                              hotelName: undefined,
+                              billingName: undefined,
+                              contactPerson: undefined,
+                              pocDesignation: undefined,
+                              phone: undefined,
+                              email: undefined,
+                              location: undefined,
+                              destination: undefined,
+                              gstNumber: undefined,
+                              gstPercent: undefined,
+                              branch: undefined,
+                              alternativeRole: undefined,
+                              alternativeName: undefined,
+                              alternativePhone: undefined,
+                              generalOccupancy: undefined,
+                              rowsInHotel: undefined,
+                              hotelLogo: [],
+                            });
+                          }}
                         >
                           <Option value="OLD">Old Hotel</Option>
                           <Option value="NEW">New Hotel</Option>

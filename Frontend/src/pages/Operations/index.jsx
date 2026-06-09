@@ -73,6 +73,7 @@ import {
   designerCredentials,
   FLOW_STAGES,
   getCheckStateMap,
+  getEmergencyProductSet,
   getFlowStep,
   getProgressFromChecks,
   PACKAGING_TYPE_LABELS,
@@ -184,14 +185,23 @@ export default function Operations() {
     orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
     specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || '',
     totalAmount: o.total || 0, advance: o.advancePaid || 0,
-    expectedDelivery: o.expectedDeliveryDate || o.leadId?.orderDeliveryDate || null, isUrgent: o.isUrgent || false,
-    splitDates: o.splitDates || [],
+    expectedDelivery: o.expectedDeliveryDate || o.leadId?.orderDeliveryDate || null,
+    isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
+    // Fall back to linked lead's splitDates so emergency products identified on the lead
+    // (before order creation) are still reflected in the Operations queue.
+    splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
+    // True when any product in this order has an emergency (partial) delivery date in splitDates.
+    hasEmergencyProducts: (() => {
+      const sds = (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []);
+      return sds.some((sd) => (sd.products || []).some((ep) => ep.product) || !!sd.product);
+    })(),
     items: o.items || [], readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || '',
     paymentProofs: o.paymentProofs || [],
-    // Kit display fields — needed by buildProductionQueues to detect Frosted Ziplock orders
-    kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || '',
-    displayUnit: o.displayUnit || o.kitDisplayUnit || '',
+    // Kit display fields — fall back to the populated leadId fields for orders created
+    // before kitDisplayUnit was copied onto the Order document itself.
+    kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
+    displayUnit: o.displayUnit || o.kitDisplayUnit || o.leadId?.displayUnit || o.leadId?.kitDisplayUnit || '',
   })), [ordersData]);
 
   const [queueSteps, setQueueSteps] = useState({});
@@ -269,7 +279,13 @@ export default function Operations() {
       const matchStatus = !orderStatusFilter || (orderStatusFilter === 'urgent' ? order.isUrgent : !order.isUrgent);
       return matchSearch && matchStatus;
     });
-    return [...result].sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
+    return [...result].sort((a, b) => {
+      if (b.hasEmergencyProducts && !a.hasEmergencyProducts) return 1;
+      if (a.hasEmergencyProducts && !b.hasEmergencyProducts) return -1;
+      if (b.isUrgent && !a.isUrgent) return 1;
+      if (a.isUrgent && !b.isUrgent) return -1;
+      return 0;
+    });
   }, [searchText, orderStatusFilter, apiOrders]);
 
   const teamSendItems = useMemo(() => {
@@ -325,13 +341,13 @@ export default function Operations() {
       render: (value, record) => (
         <Space size={2} direction="vertical">
           <Space size={4}>
-            {record.isUrgent && (
+            {record.hasEmergencyProducts && (
               <AlertFilled style={{ color: '#ff4d4f', fontSize: 14 }} />
             )}
             <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
           </Space>
-          {record.isUrgent && (
-            <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Emergency Order</Tag>
+          {record.hasEmergencyProducts && (
+            <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Emergency Delivery</Tag>
           )}
         </Space>
       ),
@@ -514,6 +530,17 @@ export default function Operations() {
         key: 'actions',
         width: 320,
         render: (_, record) => {
+          if (record.isEmergencyGated) {
+            return (
+              <Tag
+                icon={<LockOutlined />}
+                color="orange"
+                style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8 }}
+              >
+                Locked — complete emergency items first
+              </Tag>
+            );
+          }
           const step = getQueueStep(record);
           const sr = findStickerReq(record);
           return (
@@ -879,6 +906,11 @@ export default function Operations() {
               columns={queueColumns(type)}
               pagination={type === 'Sticker' ? { pageSize: 5, size: 'small' } : false}
               size="small"
+              onRow={(record) =>
+                record.isEmergencyGated
+                  ? { style: { opacity: 0.45, pointerEvents: 'none', background: 'rgba(0,0,0,0.02)' } }
+                  : {}
+              }
             />
           </div>
         </Card>
@@ -1042,7 +1074,10 @@ export default function Operations() {
                       size="small"
                       onRow={(record) => ({
                         onClick: () => navigate(`/operations/${record.id}`),
-                        style: { cursor: 'pointer', background: record.isUrgent ? '#fff2f0' : undefined }
+                        style: {
+                          cursor: 'pointer',
+                          background: record.hasEmergencyProducts ? '#fff2f0' : (record.isUrgent ? '#fffbe6' : undefined),
+                        },
                       })}
                     />
                   </div>

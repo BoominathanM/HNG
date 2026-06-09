@@ -112,13 +112,15 @@ const STICKER_MOVED_ON_STATUSES = new Set(['In Process', 'Printing', 'Dispatch',
 // Statuses that mean an emergency item's production is fully complete.
 const EMERGENCY_COMPLETE_STATUSES = new Set(['Done', 'Received', 'Closed']);
 
-// Returns a Set of product names that have an emergency delivery date in splitDates.
+// Returns a Set of lowercase product names that have an emergency delivery date in splitDates.
 // Handles both formats: new {products:[{product}]} and legacy {product} at sd level.
-const getEmergencyProductSet = (order) => {
+// Lowercase normalisation ensures matching is case-insensitive (item names are compared
+// with .toLowerCase() at each call site).
+export const getEmergencyProductSet = (order) => {
   const set = new Set();
   (order.splitDates || []).forEach((sd) => {
-    (sd.products || []).forEach((ep) => { if (ep.product) set.add(ep.product); });
-    if (sd.product) set.add(sd.product);
+    (sd.products || []).forEach((ep) => { if (ep.product) set.add(ep.product.toLowerCase()); });
+    if (sd.product) set.add(sd.product.toLowerCase());
   });
   return set;
 };
@@ -190,7 +192,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         .map(({ item, idx }) => {
           const packagingType = getItemPackagingType(item, order);
           const productName = item.product || item.itemName;
-          const isEmergencyProduct = emergencySet.has(productName);
+          const isEmergencyProduct = emergencySet.has((productName || '').toLowerCase());
           return {
             key: `${order.id}-${idx}-sticker`,
             orderId: order.id,
@@ -230,7 +232,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const product = item.product || item.itemName;
         const needsSticker = item.logoType === 'Sticker' || item.sticker === 'YES';
         if (needsSticker && !isStickerPrinted(order.id, product, idx)) return;
-        const isEmergencyProduct = emergencySet.has(product);
+        const isEmergencyProduct = emergencySet.has((product || '').toLowerCase());
         result.push({
           key: `${order.id}-${idx}-box`,
           orderId: order.id,
@@ -266,9 +268,21 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       (order.items || []).forEach((item, idx) => {
         if (!hasFrostedPackaging(item, order)) return;
         const product = item.product || item.itemName;
-        const needsSticker = item.logoType === 'Sticker' || item.sticker === 'YES';
-        if (needsSticker && !isStickerPrinted(order.id, product, idx)) return;
-        const isEmergencyProduct = emergencySet.has(product);
+        // An item needs sticker printing first only when its logoType is explicitly
+        // 'Sticker' AND its own packaging field does NOT indicate frosted/ziplock/pouch.
+        // This handles existing orders where logoType='Sticker' was saved as the default
+        // fallback (e.g. for STICKY_POUCH display unit before the inferLogoType fix) —
+        // the item.packaging field still carries the correct value and is the reliable signal.
+        const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
+        const itemHasOwnFrostedPkg = pm.includes('ziplock') || pm.includes('frosted') || pm.includes('pouch');
+        const needsSticker = item.logoType === 'Sticker' && !itemHasOwnFrostedPkg;
+        // Also gate on an active StickerRequest that hasn't been printed yet — covers the
+        // case where sticker=YES was selected alongside frosted packaging (the SR was created
+        // in the sticker queue and must be printed before the item moves here).
+        const sr = findSR(order.id, product);
+        const hasActiveSR = sr && !STICKER_MOVED_ON_STATUSES.has(sr.status);
+        if ((needsSticker || hasActiveSR) && !isStickerPrinted(order.id, product, idx)) return;
+        const isEmergencyProduct = emergencySet.has((product || '').toLowerCase());
         result.push({
           key: `${order.id}-${idx}-frosted`,
           orderId: order.id,

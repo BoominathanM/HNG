@@ -40,6 +40,7 @@ import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import {
   useGetOperationOrdersQuery,
+  useGetStickerRequestsQuery,
   useUpdateOperationOrderStatusMutation,
   useAssignTaskMutation,
   useAssignTasksPerProductMutation,
@@ -78,6 +79,8 @@ export default function OperationDetail() {
   const [taskForm] = Form.useForm();
   const [assignModalForm] = Form.useForm();
   const { data: ordersData } = useGetOperationOrdersQuery();
+  const { data: stickerData } = useGetStickerRequestsQuery();
+  const stickerRequests = stickerData?.data || [];
   const { data: invData } = useGetItemsQuery();
   const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
 
@@ -137,8 +140,8 @@ export default function OperationDetail() {
       || (o.leadId?.orderDeliveryDate
         ? new Date(o.leadId.orderDeliveryDate).toISOString().slice(0, 10)
         : null),
-    isUrgent: o.isUrgent || false,
-    splitDates: o.splitDates || [],
+    isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
+    splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
     items: (o.items || []).map((it, idx) => ({ ...it, key: it._id ? String(it._id) : String(idx) })),
     readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || o.phone || '',
@@ -171,7 +174,7 @@ export default function OperationDetail() {
     })(),
   })), [ordersData]);
   const checkStates = useMemo(() => getCheckStateMap(allOrders), [allOrders]);
-  const productionQueues = useMemo(() => buildProductionQueues(allOrders), [allOrders]);
+  const productionQueues = useMemo(() => buildProductionQueues(allOrders, stickerRequests), [allOrders, stickerRequests]);
   const [taskOptions, setTaskOptions] = useState(['Packing', 'Labeling', 'Filling']);
   const [newTaskValue, setNewTaskValue] = useState('');
   const [printingValues, setPrintingValues] = useState({});
@@ -262,11 +265,11 @@ export default function OperationDetail() {
     };
     const currentOrder = allOrders.find((o) => o.id === id);
     const splitDates = currentOrder?.splitDates || [];
-    // Build set of emergency product names from splitDates (both formats)
+    // Build set of lowercase emergency product names from splitDates (both formats)
     const emergencyProducts = new Set();
     splitDates.forEach((sd) => {
-      (sd.products || []).forEach((ep) => { if (ep.product) emergencyProducts.add(ep.product); });
-      if (sd.product) emergencyProducts.add(sd.product);
+      (sd.products || []).forEach((ep) => { if (ep.product) emergencyProducts.add(ep.product.toLowerCase()); });
+      if (sd.product) emergencyProducts.add(sd.product.toLowerCase());
     });
     // Include ALL products from this order (not just emergency) so sticker/box/ziplock teams see full order
     const items = (queueMap[printingModalType] || [])
@@ -274,7 +277,7 @@ export default function OperationDetail() {
       .map((item) => ({
         ...item,
         isUrgent: currentOrder?.isUrgent || false,
-        isEmergencyProduct: emergencyProducts.has(item.product),
+        isEmergencyProduct: emergencyProducts.has((item.product || '').toLowerCase()),
       }));
     return items.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
   }, [printingModalType, id, allOrders, productionQueues]);
@@ -289,19 +292,18 @@ export default function OperationDetail() {
   );
   const hotelDesigns = hotelDesignsRaw?.data || [];
 
-  // Build map: productName → earliest emergency delivery date (from splitDates, both formats)
+  // Build map: lowercase productName → earliest emergency delivery date (from splitDates, both formats)
+  // Keys are normalised to lowercase so lookup is case-insensitive (item names may differ in casing).
   const emergencyProductMap = useMemo(() => {
     const map = {};
     (order?.splitDates || []).forEach((sd) => {
       const sdDate = sd.date || null;
       (sd.products || []).forEach((ep) => {
-        if (ep.product && (!map[ep.product] || (sdDate && sdDate < map[ep.product]))) {
-          map[ep.product] = sdDate;
-        }
+        const key = ep.product?.toLowerCase();
+        if (key && (!map[key] || (sdDate && sdDate < map[key]))) map[key] = sdDate;
       });
-      if (sd.product && (!map[sd.product] || (sdDate && sdDate < map[sd.product]))) {
-        map[sd.product] = sdDate;
-      }
+      const key = sd.product?.toLowerCase();
+      if (key && (!map[key] || (sdDate && sdDate < map[key]))) map[key] = sdDate;
     });
     return map;
   }, [order?.splitDates]);
@@ -311,8 +313,8 @@ export default function OperationDetail() {
     const items = order?.items || [];
     if (!order?.splitDates?.length) return items;
     return [...items].sort((a, b) => {
-      const aName = a.product || a.itemName;
-      const bName = b.product || b.itemName;
+      const aName = (a.product || a.itemName || '').toLowerCase();
+      const bName = (b.product || b.itemName || '').toLowerCase();
       const aDate = emergencyProductMap[aName];
       const bDate = emergencyProductMap[bName];
       if (aDate && !bDate) return -1;
@@ -321,6 +323,32 @@ export default function OperationDetail() {
       return 0;
     });
   }, [order?.items, order?.splitDates, emergencyProductMap]);
+
+  // Determine if the emergency phase for this order is complete.
+  // Emergency phase is done when every emergency-product queue item across sticker/box/frosted
+  // is no longer gated (meaning areAllEmergencyItemsDone returned true in buildProductionQueues).
+  const emergencyPhaseDone = useMemo(() => {
+    if (Object.keys(emergencyProductMap).length === 0) return true;
+    const allQueues = [
+      ...productionQueues.sticker,
+      ...productionQueues.box,
+      ...productionQueues.frosted,
+    ].filter((item) => item.orderId === id);
+    if (allQueues.length === 0) return true;
+    return !allQueues.some((item) => item.isEmergencyGated);
+  }, [emergencyProductMap, productionQueues, id]);
+
+  // Annotate every item with isEmergencyProduct / isEmergencyGated flags — mirrors the
+  // Sticker/Box queue treatment so Overview shows the same status indicators.
+  const visibleOrderItems = useMemo(() => {
+    const hasEmergency = Object.keys(emergencyProductMap).length > 0;
+    return sortedOrderItems.map((item) => {
+      const name = (item.product || item.itemName || '').toLowerCase();
+      const isEmergencyProduct = hasEmergency && !!emergencyProductMap[name];
+      const isEmergencyGated = hasEmergency && !isEmergencyProduct && !emergencyPhaseDone;
+      return { ...item, isEmergencyProduct, isEmergencyGated };
+    });
+  }, [sortedOrderItems, emergencyPhaseDone, emergencyProductMap]);
 
   // Per-product task fan-out: one task per order line item in a single click.
   const handleAssignAllProducts = async () => {
@@ -416,17 +444,27 @@ export default function OperationDetail() {
       key: 'product',
       render: (_, record) => {
         const name = record.itemName || record.name || record.product;
-        const emergencyDate = emergencyProductMap[name];
+        const emergencyDate = emergencyProductMap[(name || '').toLowerCase()];
+        const isEmergencyProduct = record.isEmergencyProduct || !!emergencyDate;
+        const isEmergencyGated = record.isEmergencyGated;
         return (
-          <Space direction="vertical" size={2}>
-            <Text strong>{name || '—'}</Text>
-            {emergencyDate && (
+          <Space direction="vertical" size={2} style={{ gap: 2 }}>
+            <Space size={6}>
+              {isEmergencyProduct && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
+              <Text strong style={isEmergencyProduct ? { color: '#ff4d4f' } : {}}>{name || '—'}</Text>
+            </Space>
+            {isEmergencyProduct && emergencyDate && (
               <Space size={4}>
                 <Tag color="error" icon={<AlertFilled />} style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Emergency</Tag>
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   {new Date(emergencyDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
                 </Text>
               </Space>
+            )}
+            {isEmergencyGated && (
+              <Tag color="orange" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                After Emergency Items
+              </Tag>
             )}
           </Space>
         );
@@ -924,8 +962,35 @@ export default function OperationDetail() {
                   style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
                   styles={{ body: { padding: 0 } }}
                 >
+                  {!emergencyPhaseDone && visibleOrderItems.some(i => i.isEmergencyProduct) && (
+                    <div style={{ padding: '8px 16px', background: 'rgba(255,77,79,0.06)', borderBottom: '1px solid rgba(255,77,79,0.2)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <AlertFilled style={{ color: '#ff4d4f' }} />
+                      <Text style={{ fontSize: 12, color: '#ff4d4f', fontWeight: 600 }}>
+                        Process emergency products first.
+                      </Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        Remaining products are queued — they will be unlocked after emergency items are completed.
+                      </Text>
+                    </div>
+                  )}
                   <div className="table-responsive" style={{ padding: 4 }}>
-                    <Table dataSource={sortedOrderItems} rowKey={(r, idx) => r.key || r._id || String(idx)} columns={productColumns} pagination={false} size="small" scroll={{ x: 'max-content' }} />
+                    <Table
+                      dataSource={visibleOrderItems}
+                      rowKey={(r, idx) => r.key || r._id || String(idx)}
+                      columns={productColumns}
+                      pagination={false}
+                      size="small"
+                      scroll={{ x: 'max-content' }}
+                      onRow={(record) => {
+                        if (record.isEmergencyProduct) {
+                          return { style: { background: 'rgba(255,77,79,0.07)', borderLeft: '3px solid #ff4d4f' } };
+                        }
+                        if (record.isEmergencyGated) {
+                          return { style: { opacity: 0.55 } };
+                        }
+                        return {};
+                      }}
+                    />
                   </div>
                 </Card>
 
