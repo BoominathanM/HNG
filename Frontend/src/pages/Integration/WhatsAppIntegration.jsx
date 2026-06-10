@@ -1,19 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Row, Col, Card, Form, Input, Button, Typography, Tabs, Tag, Table,
-  Select, Modal, Space, Tooltip
+  Select, Modal, Space, Tooltip, Spin, Empty, Popconfirm,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
   ArrowLeftOutlined, SyncOutlined, PlusOutlined,
   EditOutlined, DeleteOutlined, EyeOutlined, EyeInvisibleOutlined,
   CheckCircleFilled, SettingFilled, LinkOutlined, DisconnectOutlined,
-  ThunderboltOutlined, MessageOutlined
+  ThunderboltOutlined, MessageOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import {
+  useGetWhatsAppConfigQuery,
+  useGetWhatsAppCredentialsQuery,
+  useSaveWhatsAppConfigMutation,
+  useTestWhatsAppConnectionMutation,
+  useDisconnectWhatsAppMutation,
+  useSyncWhatsAppTemplatesMutation,
+  useGetWhatsAppTemplatesQuery,
+  useGetWhatsAppEventsQuery,
+  useGetWhatsAppEventMappingsQuery,
+  useSaveWhatsAppEventMappingMutation,
+  useDeleteWhatsAppEventMappingMutation,
+} from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -22,119 +35,255 @@ const PRIMARY = '#B11E6A';
 const PRIMARY_GRAD = 'linear-gradient(90deg,#8e1450,#B11E6A)';
 const PRIMARY_ALPHA = (a) => `rgba(177,30,106,${a})`;
 
-const initTemplates = [
-  { key: 1, name: 'order_confirmation', components: 'Header, Body, Footer', language: 'en', category: 'UTILITY', status: 'APPROVED', mappedEvents: 'Order Placed', lastSynced: '5/13/2026, 1:35 PM' },
-  { key: 2, name: 'order_shipped', components: 'Body, Footer', language: 'en', category: 'UTILITY', status: 'APPROVED', mappedEvents: 'Order Shipped', lastSynced: '5/13/2026, 1:35 PM' },
-  { key: 3, name: 'payment_reminder', components: 'Body', language: 'en', category: 'UTILITY', status: 'APPROVED', mappedEvents: 'Payment Due', lastSynced: '5/13/2026, 1:35 PM' },
-  { key: 4, name: 'delivery_update', components: 'Header, Body', language: 'en', category: 'UTILITY', status: 'PENDING', mappedEvents: '—', lastSynced: '5/13/2026, 1:35 PM' },
-  { key: 5, name: 'welcome_message', components: 'Body, Buttons', language: 'en', category: 'MARKETING', status: 'APPROVED', mappedEvents: 'New Customer', lastSynced: '5/13/2026, 1:35 PM' },
-  { key: 6, name: 'low_stock_alert', components: 'Body', language: 'en', category: 'UTILITY', status: 'APPROVED', mappedEvents: '—', lastSynced: '5/13/2026, 1:35 PM' },
-];
-
-const initMappings = [
-  { key: 1, eventType: 'Order Placed', template: 'order_confirmation', variablesMapped: 3, status: 'Active' },
-  { key: 2, eventType: 'Order Shipped', template: 'order_shipped', variablesMapped: 2, status: 'Active' },
-  { key: 3, eventType: 'Payment Due', template: 'payment_reminder', variablesMapped: 2, status: 'Active' },
-  { key: 4, eventType: 'New Customer', template: 'welcome_message', variablesMapped: 1, status: 'Inactive' },
-];
-
-const EVENT_TYPES = ['Order Placed', 'Order Shipped', 'Order Delivered', 'Payment Due', 'Payment Received', 'New Customer', 'Low Stock Alert', 'Dispatch Update'];
-
 export default function WhatsAppIntegration() {
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
 
-  const cardBg = isDark ? '#1E1E2E' : '#ffffff';
-  const pageBg = isDark ? '#13131f' : '#f8f5f9';
-  const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
-  const subText = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)';
+  const cardBg     = isDark ? '#1E1E2E' : '#ffffff';
+  const pageBg     = isDark ? '#13131f' : '#f8f5f9';
+  const textColor  = isDark ? '#e0e0e0' : '#1a1a2e';
+  const subText    = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
-  const inputBg = isDark ? '#2a2a3a' : '#fafafa';
+  const inputBg    = isDark ? '#2a2a3a' : '#fafafa';
 
-  const [connected] = useState(true);
-  const [configured] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [showKey, setShowKey] = useState(false);
-  const [backendUrl, setBackendUrl] = useState('https://backend.healandglow.io');
-  const [apiKey, setApiKey] = useState('••••••••••••');
-  const [templates, setTemplates] = useState(initTemplates);
-  const [mappings, setMappings] = useState(initMappings);
-  const [syncing, setSyncing] = useState(false);
-  const [activeTab, setActiveTab] = useState('config');
+  // ── State ─────────────────────────────────────────────────────────────────
+  const [editing, setEditing]             = useState(false);
+  const [showKey, setShowKey]             = useState(false);
+  const [backendUrl, setBackendUrl]       = useState('');
+  const [apiKey, setApiKey]               = useState('');
+  const [activeTab, setActiveTab]         = useState('config');
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
-  const [editMapping, setEditMapping] = useState(null);
+  const [editMapping, setEditMapping]     = useState(null);
+  const [variableRows, setVariableRows]   = useState([]);
   const [mappingForm] = Form.useForm();
-  const [configForm] = Form.useForm();
 
-  const handleSync = () => {
-    setSyncing(true);
-    setTimeout(() => { setSyncing(false); enqueueSnackbar('Templates synced successfully!', { variant: 'success' }); }, 2000);
+  // ── RTK Queries ───────────────────────────────────────────────────────────
+  const { data: configData, isLoading: configLoading } = useGetWhatsAppConfigQuery();
+  const { data: credsData }  = useGetWhatsAppCredentialsQuery(undefined, { skip: !editing });
+  const { data: templatesData, isLoading: templatesLoading } = useGetWhatsAppTemplatesQuery({ limit: 5000 });
+  const { data: eventsData }  = useGetWhatsAppEventsQuery();
+  const { data: mappingsData, isLoading: mappingsLoading } = useGetWhatsAppEventMappingsQuery();
+
+  // ── RTK Mutations ─────────────────────────────────────────────────────────
+  const [saveConfig,           { isLoading: saving }]    = useSaveWhatsAppConfigMutation();
+  const [testConnection,       { isLoading: testing }]   = useTestWhatsAppConnectionMutation();
+  const [disconnectWA,         { isLoading: disconnecting }] = useDisconnectWhatsAppMutation();
+  const [syncTemplates,        { isLoading: syncing }]   = useSyncWhatsAppTemplatesMutation();
+  const [saveMapping,          { isLoading: savingMap }] = useSaveWhatsAppEventMappingMutation();
+  const [deleteMapping,        { isLoading: deletingMap }] = useDeleteWhatsAppEventMappingMutation();
+
+  const config     = configData?.data;
+  const templates  = templatesData?.data?.templates || [];
+  const events     = eventsData?.data || [];
+  const mappings   = mappingsData?.data || [];
+  const isConnected = Boolean(config?.isConnected);
+  const isConfigured = Boolean(config?.backendUrl);
+
+  // Pre-fill credentials when entering edit mode
+  useEffect(() => {
+    if (editing && credsData?.data) {
+      setBackendUrl(credsData.data.backendUrl || '');
+      setApiKey(credsData.data.apiToken || '');
+    }
+  }, [editing, credsData]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const handleSaveConfig = async () => {
+    if (!backendUrl.trim() || !apiKey.trim()) {
+      enqueueSnackbar('Backend URL and API key are required', { variant: 'warning' });
+      return;
+    }
+    try {
+      const res = await saveConfig({ backendUrl: backendUrl.trim(), apiToken: apiKey.trim() }).unwrap();
+      enqueueSnackbar(res.message || 'Configuration saved', { variant: 'success' });
+      setEditing(false);
+    } catch (err) {
+      enqueueSnackbar(err?.data || 'Failed to save configuration', { variant: 'error' });
+    }
   };
 
-  const handleTestConnection = () => {
-    enqueueSnackbar('Testing connection...', { variant: 'info' });
-    setTimeout(() => enqueueSnackbar('Connection successful!', { variant: 'success' }), 1500);
+  const handleTestConnection = async () => {
+    const url   = editing ? backendUrl.trim() : config?.backendUrl || '';
+    const token = editing ? apiKey.trim() : '';
+    if (!url) { enqueueSnackbar('Enter a backend URL first', { variant: 'warning' }); return; }
+
+    enqueueSnackbar('Testing connection…', { variant: 'info' });
+    try {
+      const res = await testConnection({ backendUrl: url, ...(token ? { apiToken: token } : {}) }).unwrap();
+      enqueueSnackbar(
+        `Connection successful — ${res.data?.templateCount ?? 0} template(s) found`,
+        { variant: 'success' }
+      );
+    } catch (err) {
+      enqueueSnackbar(err?.data || 'Connection failed', { variant: 'error' });
+    }
   };
 
   const handleDisconnect = () => {
     Modal.confirm({
       title: 'Disconnect WhatsApp Integration?',
-      content: 'This will remove all saved credentials. You will need to reconnect to use WhatsApp features.',
+      icon: <ExclamationCircleOutlined />,
+      content: 'This removes all saved credentials, synced templates, and event mappings. You will need to reconnect to use WhatsApp features.',
       okText: 'Disconnect',
       okButtonProps: { danger: true },
-      onOk: () => enqueueSnackbar('Disconnected successfully', { variant: 'success' }),
+      onOk: async () => {
+        try {
+          await disconnectWA().unwrap();
+          setBackendUrl('');
+          setApiKey('');
+          setEditing(false);
+          enqueueSnackbar('WhatsApp integration disconnected', { variant: 'success' });
+        } catch {
+          enqueueSnackbar('Failed to disconnect', { variant: 'error' });
+        }
+      },
     });
   };
 
+  const handleSync = async () => {
+    try {
+      const res = await syncTemplates().unwrap();
+      enqueueSnackbar(`${res.data?.synced ?? 0} templates synced successfully`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data || 'Sync failed — check your configuration', { variant: 'error' });
+    }
+  };
+
+  // ── Mapping Modal ─────────────────────────────────────────────────────────
   const openMappingModal = (record = null) => {
     setEditMapping(record);
     mappingForm.resetFields();
-    if (record) mappingForm.setFieldsValue({ eventType: record.eventType, template: record.template, status: record.status });
+    if (record) {
+      const eventId   = record.eventId?._id || record.eventId;
+      const templateId = record.templateId?._id || record.templateId;
+      mappingForm.setFieldsValue({ eventId, templateId, isEnabled: record.isEnabled !== false });
+      setVariableRows(Array.isArray(record.variables) ? record.variables : []);
+    } else {
+      setVariableRows([]);
+    }
     setMappingModalOpen(true);
   };
 
-  const saveMappingModal = () => {
-    mappingForm.validateFields().then((vals) => {
-      if (editMapping) {
-        setMappings((prev) => prev.map((m) => m.key === editMapping.key ? { ...m, ...vals, variablesMapped: 2 } : m));
-      } else {
-        setMappings((prev) => [...prev, { key: Date.now(), ...vals, variablesMapped: 0 }]);
-      }
-      setMappingModalOpen(false);
-      enqueueSnackbar('Mapping saved!', { variant: 'success' });
-    });
+  const handleTemplateSelect = (templateId) => {
+    const tpl = templates.find((t) => String(t._id) === String(templateId));
+    if (tpl?.variables?.length) {
+      setVariableRows(tpl.variables.map((v) => ({ templateVariable: v, eventField: '' })));
+    } else {
+      setVariableRows([]);
+    }
   };
 
+  const saveMappingModal = async () => {
+    try {
+      const vals = await mappingForm.validateFields();
+      const payload = {
+        ...(editMapping?._id ? { id: editMapping._id } : {}),
+        eventId: vals.eventId,
+        templateId: vals.templateId,
+        isEnabled: vals.isEnabled !== false,
+        variables: variableRows.filter((r) => r.templateVariable && r.eventField),
+      };
+      const res = await saveMapping(payload).unwrap();
+      enqueueSnackbar(res.message || 'Mapping saved', { variant: 'success' });
+      setMappingModalOpen(false);
+    } catch (err) {
+      if (err?.data) enqueueSnackbar(err.data, { variant: 'error' });
+    }
+  };
+
+  const handleDeleteMapping = async (id) => {
+    try {
+      await deleteMapping(id).unwrap();
+      enqueueSnackbar('Mapping deleted', { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Failed to delete mapping', { variant: 'error' });
+    }
+  };
+
+  // ── Columns ───────────────────────────────────────────────────────────────
   const templateColumns = [
-    { title: 'Template Name', dataIndex: 'name', key: 'name', render: (v) => <Text style={{ color: PRIMARY, fontWeight: 500 }}>{v}</Text> },
-    { title: 'Components', dataIndex: 'components', key: 'components', render: (v) => <Text style={{ color: textColor, fontSize: 13 }}>{v}</Text> },
-    { title: 'Language', dataIndex: 'language', key: 'language', width: 90, render: (v) => <Tag>{v}</Tag> },
-    { title: 'Category', dataIndex: 'category', key: 'category', width: 110, render: (v) => <Tag style={{ color: PRIMARY, borderColor: PRIMARY_ALPHA(0.4), background: PRIMARY_ALPHA(0.07) }}>{v}</Tag> },
-    { title: 'Status', dataIndex: 'status', key: 'status', width: 110, render: (v) => <Tag color={v === 'APPROVED' ? 'success' : 'warning'}>{v}</Tag> },
-    { title: 'Mapped Events', dataIndex: 'mappedEvents', key: 'mappedEvents', render: (v) => <Text style={{ color: v === '—' ? subText : PRIMARY }}>{v}</Text> },
     {
-      title: 'Actions', key: 'actions', width: 80,
-      render: (_, r) => (
-        <Space>
-          <Tooltip title="View"><Button type="text" size="small" icon={<EyeOutlined />} style={{ color: PRIMARY }} /></Tooltip>
-          <Tooltip title="Delete"><Button type="text" size="small" icon={<DeleteOutlined />} danger /></Tooltip>
-        </Space>
+      title: 'Template Name', dataIndex: 'name', key: 'name',
+      render: (v) => <Text style={{ color: PRIMARY, fontWeight: 500 }}>{v}</Text>,
+    },
+    {
+      title: 'Components', key: 'components',
+      render: (_, r) => {
+        const types = Array.isArray(r.components) ? r.components.map((c) => c?.type).filter(Boolean) : [];
+        return <Text style={{ color: textColor, fontSize: 13 }}>{types.length ? types.join(', ') : '—'}</Text>;
+      },
+    },
+    {
+      title: 'Language', dataIndex: 'language', key: 'language', width: 90,
+      render: (v) => <Tag>{v || 'en'}</Tag>,
+    },
+    {
+      title: 'Category', dataIndex: 'category', key: 'category', width: 120,
+      render: (v) => (
+        <Tag style={{ color: PRIMARY, borderColor: PRIMARY_ALPHA(0.4), background: PRIMARY_ALPHA(0.07) }}>
+          {v || 'UTILITY'}
+        </Tag>
       ),
     },
-    { title: 'Last Synced', dataIndex: 'lastSynced', key: 'lastSynced', render: (v) => <Text style={{ color: subText, fontSize: 12 }}>{v}</Text> },
+    {
+      title: 'Status', dataIndex: 'status', key: 'status', width: 110,
+      render: (v) => <Tag color={v === 'APPROVED' ? 'success' : 'warning'}>{v || 'UNKNOWN'}</Tag>,
+    },
+    {
+      title: 'Mapped Events', dataIndex: 'mappedEvents', key: 'mappedEvents',
+      render: (v) => {
+        const arr = Array.isArray(v) ? v : [];
+        return arr.length
+          ? arr.map((e) => <Tag key={e} color="processing">{e}</Tag>)
+          : <Text style={{ color: subText }}>—</Text>;
+      },
+    },
+    {
+      title: 'Last Synced', dataIndex: 'lastSyncedAt', key: 'lastSyncedAt',
+      render: (v) => <Text style={{ color: subText, fontSize: 12 }}>{v ? new Date(v).toLocaleString() : '—'}</Text>,
+    },
   ];
 
   const mappingColumns = [
-    { title: 'Event Type', dataIndex: 'eventType', key: 'eventType', render: (v) => <Text style={{ color: textColor, fontWeight: 500 }}>{v}</Text> },
-    { title: 'Template', dataIndex: 'template', key: 'template', render: (v) => <Tag style={{ color: PRIMARY, borderColor: PRIMARY_ALPHA(0.4), background: PRIMARY_ALPHA(0.07) }}>{v}</Tag> },
-    { title: 'Variables Mapped', dataIndex: 'variablesMapped', key: 'variablesMapped', width: 150, render: (v) => <Text style={{ color: textColor }}>{v} variable{v !== 1 ? 's' : ''}</Text> },
-    { title: 'Status', dataIndex: 'status', key: 'status', width: 110, render: (v) => <Tag color={v === 'Active' ? 'success' : 'default'}>{v}</Tag> },
+    {
+      title: 'Event', key: 'event',
+      render: (_, r) => <Text style={{ color: textColor, fontWeight: 500 }}>{r.eventId?.label || '—'}</Text>,
+    },
+    {
+      title: 'Template', key: 'template',
+      render: (_, r) => (
+        <Tag style={{ color: PRIMARY, borderColor: PRIMARY_ALPHA(0.4), background: PRIMARY_ALPHA(0.07) }}>
+          {r.templateId?.name || '—'}
+        </Tag>
+      ),
+    },
+    {
+      title: 'Variables', key: 'vars', width: 130,
+      render: (_, r) => {
+        const count = Array.isArray(r.variables) ? r.variables.filter((v) => v.templateVariable && v.eventField).length : 0;
+        return <Text style={{ color: textColor }}>{count} variable{count !== 1 ? 's' : ''}</Text>;
+      },
+    },
+    {
+      title: 'Status', dataIndex: 'isEnabled', key: 'status', width: 100,
+      render: (v) => <Tag color={v !== false ? 'success' : 'default'}>{v !== false ? 'Active' : 'Inactive'}</Tag>,
+    },
     {
       title: 'Actions', key: 'actions', width: 100,
       render: (_, r) => (
         <Space>
-          <Tooltip title="Edit"><Button type="text" size="small" icon={<EditOutlined />} style={{ color: PRIMARY }} onClick={() => openMappingModal(r)} /></Tooltip>
-          <Tooltip title="Delete"><Button type="text" size="small" icon={<DeleteOutlined />} danger onClick={() => setMappings((p) => p.filter((m) => m.key !== r.key))} /></Tooltip>
+          <Tooltip title="Edit">
+            <Button type="text" size="small" icon={<EditOutlined />} style={{ color: PRIMARY }} onClick={() => openMappingModal(r)} />
+          </Tooltip>
+          <Popconfirm
+            title="Delete this mapping?"
+            onConfirm={() => handleDeleteMapping(r._id)}
+            okButtonProps={{ danger: true }}
+          >
+            <Tooltip title="Delete">
+              <Button type="text" size="small" icon={<DeleteOutlined />} danger loading={deletingMap} />
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -150,7 +299,12 @@ export default function WhatsAppIntegration() {
     </Card>
   );
 
+  // ── Selected event's available fields for variable mapping ────────────────
+  const selectedEventId = mappingForm.getFieldValue('eventId');
+  const selectedEvent   = events.find((e) => String(e._id) === String(selectedEventId));
+
   const tabItems = [
+    // ── Configuration Tab ──────────────────────────────────────────────────
     {
       key: 'config',
       label: <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><SettingFilled /> Configuration</span>,
@@ -161,64 +315,115 @@ export default function WhatsAppIntegration() {
             <Title level={5} style={{ color: PRIMARY, margin: 0 }}>WhatsApp Configuration</Title>
           </div>
 
-          <Form layout="vertical" form={configForm} disabled={!editing && configured}>
-            <Form.Item
-              label={<Text style={{ color: textColor, fontWeight: 500 }}>Backend URL <Text style={{ color: '#ff4d4f' }}>*</Text></Text>}
-              style={{ marginBottom: 20 }}
-            >
-              <Input
-                value={backendUrl}
-                onChange={(e) => setBackendUrl(e.target.value)}
-                placeholder="https://backend.healandglow.io"
-                style={{ background: inputBg, border: `1px solid ${borderColor}`, color: textColor, borderRadius: 8, height: 42 }}
-              />
-            </Form.Item>
+          {configLoading ? (
+            <Spin />
+          ) : (
+            <Form layout="vertical" disabled={!editing && isConfigured}>
+              <Form.Item
+                label={<Text style={{ color: textColor, fontWeight: 500 }}>Backend URL <Text style={{ color: '#ff4d4f' }}>*</Text></Text>}
+                style={{ marginBottom: 20 }}
+              >
+                <Input
+                  value={editing ? backendUrl : (config?.backendUrl || '')}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  placeholder="https://backend.askeva.io"
+                  style={{ background: inputBg, border: `1px solid ${borderColor}`, color: textColor, borderRadius: 8, height: 42 }}
+                />
+              </Form.Item>
 
-            <Form.Item
-              label={<Text style={{ color: textColor, fontWeight: 500 }}>API Key / Access Token <Text style={{ color: '#ff4d4f' }}>*</Text></Text>}
-              style={{ marginBottom: 28 }}
-            >
-              <Input
-                type={showKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                suffix={
-                  <Button type="text" size="small" icon={showKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                    onClick={() => setShowKey(!showKey)} style={{ color: subText }} />
-                }
-                style={{ background: inputBg, border: `1px solid ${borderColor}`, color: textColor, borderRadius: 8, height: 42 }}
-              />
-            </Form.Item>
-          </Form>
+              <Form.Item
+                label={<Text style={{ color: textColor, fontWeight: 500 }}>API Key / Access Token <Text style={{ color: '#ff4d4f' }}>*</Text></Text>}
+                style={{ marginBottom: 28 }}
+              >
+                <Input
+                  type={showKey ? 'text' : 'password'}
+                  value={editing ? apiKey : (isConfigured ? '••••••••••••••••' : '')}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Enter your API key"
+                  suffix={
+                    <Button
+                      type="text" size="small"
+                      icon={showKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                      onClick={() => setShowKey(!showKey)}
+                      style={{ color: subText }}
+                    />
+                  }
+                  style={{ background: inputBg, border: `1px solid ${borderColor}`, color: textColor, borderRadius: 8, height: 42 }}
+                />
+              </Form.Item>
+            </Form>
+          )}
 
           <Space wrap>
             <Button
               type="primary"
               icon={<ThunderboltOutlined />}
               onClick={handleTestConnection}
+              loading={testing}
               style={{ background: PRIMARY_GRAD, border: 'none', borderRadius: 8, height: 38 }}
             >
               Test Connection
             </Button>
-            <Button
-              icon={<EditOutlined />}
-              onClick={() => setEditing(!editing)}
-              style={{ borderRadius: 8, height: 38, borderColor: PRIMARY, color: PRIMARY }}
-            >
-              {editing ? 'Save Configuration' : 'Edit Configuration'}
-            </Button>
-            <Button danger icon={<DisconnectOutlined />} onClick={handleDisconnect} style={{ borderRadius: 8, height: 38 }}>
-              Disconnect
-            </Button>
+
+            {editing ? (
+              <>
+                <Button
+                  icon={<CheckCircleFilled />}
+                  onClick={handleSaveConfig}
+                  loading={saving}
+                  style={{ borderRadius: 8, height: 38, borderColor: PRIMARY, color: PRIMARY }}
+                >
+                  Save Configuration
+                </Button>
+                <Button
+                  onClick={() => setEditing(false)}
+                  style={{ borderRadius: 8, height: 38 }}
+                >
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <Button
+                icon={<EditOutlined />}
+                onClick={() => setEditing(true)}
+                style={{ borderRadius: 8, height: 38, borderColor: PRIMARY, color: PRIMARY }}
+              >
+                Edit Configuration
+              </Button>
+            )}
+
+            {isConfigured && (
+              <Button
+                danger icon={<DisconnectOutlined />}
+                onClick={handleDisconnect}
+                loading={disconnecting}
+                style={{ borderRadius: 8, height: 38 }}
+              >
+                Disconnect
+              </Button>
+            )}
           </Space>
 
-          <div style={{ marginTop: 24, padding: '10px 14px', background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {config?.lastVerifiedAt && (
+            <div style={{ marginTop: 20, padding: '10px 14px', background: PRIMARY_ALPHA(0.05), border: `1px solid ${PRIMARY_ALPHA(0.15)}`, borderRadius: 8 }}>
+              <Text style={{ color: PRIMARY, fontSize: 13 }}>
+                Last verified: {new Date(config.lastVerifiedAt).toLocaleString()}
+                {config.lastSyncedAt && (
+                  <>  ·  Last sync: {new Date(config.lastSyncedAt).toLocaleString()}  ·  {config.lastSyncCount || 0} template(s)</>
+                )}
+              </Text>
+            </div>
+          )}
+
+          <div style={{ marginTop: 16, padding: '10px 14px', background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 14 }}>🔒</span>
-            <Text style={{ color: subText, fontSize: 13 }}>All sensitive data is encrypted. Disconnect removes saved config so you can enter new credentials.</Text>
+            <Text style={{ color: subText, fontSize: 13 }}>All sensitive data is encrypted at rest. Disconnect removes all saved config so you can enter new credentials.</Text>
           </div>
         </>
       ),
     },
+
+    // ── Templates Tab ──────────────────────────────────────────────────────
     {
       key: 'templates',
       label: <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><MessageOutlined /> Templates</span>,
@@ -229,27 +434,58 @@ export default function WhatsAppIntegration() {
             <Title level={5} style={{ color: PRIMARY, margin: 0 }}>WhatsApp Templates</Title>
           </div>
           <Text style={{ color: subText, display: 'block', marginBottom: 16 }}>
-            Manage and sync message templates from your Heal & Glow / WhatsApp account.
+            Templates are synced from your WhatsApp backend. Click "Sync Templates" to refresh.
           </Text>
-          {!syncing && (
+
+          {config?.lastSyncedAt && (
             <div style={{ marginBottom: 16, padding: '10px 14px', background: PRIMARY_ALPHA(0.06), border: `1px solid ${PRIMARY_ALPHA(0.18)}`, borderRadius: 8 }}>
-              <Text style={{ color: PRIMARY, fontSize: 13 }}>Last synced: 5/13/2026, 1:35:00 PM</Text>
-              <br />
-              <Text style={{ color: PRIMARY, fontSize: 13 }}>{templates.length} template(s) synced</Text>
+              <Text style={{ color: PRIMARY, fontSize: 13 }}>
+                Last synced: {new Date(config.lastSyncedAt).toLocaleString()} · {templates.length} template(s)
+              </Text>
             </div>
           )}
-          <Table columns={templateColumns} dataSource={templates} pagination={false} scroll={{ x: 700 }} style={{ marginTop: 8 }} />
+
+          {templatesLoading ? (
+            <div style={{ textAlign: 'center', padding: 40 }}><Spin size="large" /></div>
+          ) : templates.length === 0 ? (
+            <Empty
+              description={
+                <Text style={{ color: subText }}>
+                  {isConfigured
+                    ? 'No templates synced yet. Click "Sync Templates" to fetch from your backend.'
+                    : 'Configure your WhatsApp backend first, then sync templates.'}
+                </Text>
+              }
+            />
+          ) : (
+            <Table
+              columns={templateColumns}
+              dataSource={templates.map((t) => ({ ...t, key: t._id }))}
+              pagination={{
+                defaultPageSize: 20,
+                pageSizeOptions: ['10', '20', '50', '100'],
+                showSizeChanger: true,
+                showTotal: (total, range) => `${range[0]}–${range[1]} of ${total} templates`,
+              }}
+              scroll={{ x: 800 }}
+              style={{ marginTop: 8 }}
+            />
+          )}
         </>,
         <Button
           type="primary"
           icon={<SyncOutlined spin={syncing} />}
           onClick={handleSync}
+          loading={syncing}
+          disabled={!isConfigured}
           style={{ background: PRIMARY_GRAD, border: 'none', borderRadius: 8 }}
         >
           Sync Templates
         </Button>
       ),
     },
+
+    // ── Event Mapping Tab ──────────────────────────────────────────────────
     {
       key: 'events',
       label: <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><LinkOutlined /> Event Mapping</span>,
@@ -257,23 +493,37 @@ export default function WhatsAppIntegration() {
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <LinkOutlined style={{ color: PRIMARY, fontSize: 18 }} />
-            <Title level={5} style={{ color: PRIMARY, margin: 0 }}>Event Template Configuration</Title>
+            <Title level={5} style={{ color: PRIMARY, margin: 0 }}>Event → Template Mapping</Title>
           </div>
           <Text style={{ color: subText, display: 'block', marginBottom: 20 }}>
-            Configure templates and variable mappings for each event.
+            Map CRM events to WhatsApp templates. When an event fires (e.g. order placed), the mapped template is sent automatically.
           </Text>
-          <Table columns={mappingColumns} dataSource={mappings} pagination={false} scroll={{ x: 500 }} />
+
+          {mappingsLoading ? (
+            <div style={{ textAlign: 'center', padding: 40 }}><Spin size="large" /></div>
+          ) : mappings.length === 0 ? (
+            <Empty description={<Text style={{ color: subText }}>No mappings yet. Create one to start automating WhatsApp messages.</Text>} />
+          ) : (
+            <Table
+              columns={mappingColumns}
+              dataSource={mappings.map((m) => ({ ...m, key: m._id }))}
+              pagination={false}
+              scroll={{ x: 600 }}
+            />
+          )}
         </>,
         <Button
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => openMappingModal(null)}
+          disabled={!isConfigured || templates.length === 0}
           style={{ background: PRIMARY_GRAD, border: 'none', borderRadius: 8 }}
         >
           Create New Mapping
         </Button>
       ),
     },
+
   ];
 
   return (
@@ -282,7 +532,7 @@ export default function WhatsAppIntegration() {
         <PageBreadcrumb items={[{ label: 'Integration' }, { label: 'WhatsApp Integration' }]} />
       </div>
 
-      {connected && (
+      {isConnected && (
         <motion.div
           initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}
           style={{
@@ -296,7 +546,28 @@ export default function WhatsAppIntegration() {
           <div>
             <Text style={{ color: textColor, fontWeight: 600 }}>Integration connected</Text>
             <br />
-            <Text style={{ color: subText, fontSize: 13 }}>WhatsApp is connected and ready. Use the Templates tab to sync templates.</Text>
+            <Text style={{ color: subText, fontSize: 13 }}>
+              Connected to {config?.backendUrl}. {config?.lastSyncCount || 0} templates synced.
+            </Text>
+          </div>
+        </motion.div>
+      )}
+
+      {isConfigured && !isConnected && config?.connectionError && (
+        <motion.div
+          initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}
+          style={{
+            margin: '16px 24px 0', padding: '14px 20px',
+            background: isDark ? 'rgba(255,77,79,0.1)' : 'rgba(255,77,79,0.06)',
+            border: '1px solid rgba(255,77,79,0.3)', borderRadius: 12,
+            display: 'flex', alignItems: 'center', gap: 12,
+          }}
+        >
+          <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 18 }} />
+          <div>
+            <Text style={{ color: textColor, fontWeight: 600 }}>Connection error</Text>
+            <br />
+            <Text style={{ color: subText, fontSize: 13 }}>{config.connectionError}</Text>
           </div>
         </motion.div>
       )}
@@ -315,21 +586,21 @@ export default function WhatsAppIntegration() {
             <MessageOutlined style={{ fontSize: 28, color: PRIMARY }} />
             <div>
               <Title level={3} style={{ color: PRIMARY, margin: 0 }}>WhatsApp Integration</Title>
-              <Text style={{ color: subText }}>Configure WhatsApp messaging and webhook handling.</Text>
+              <Text style={{ color: subText }}>Configure WhatsApp messaging for automated notifications.</Text>
             </div>
           </div>
           <Space>
-            {connected && (
+            {isConnected && (
               <Tag
                 icon={<CheckCircleFilled />}
-                style={{ borderRadius: 20, padding: '4px 12px', fontSize: 13, color: PRIMARY, borderColor: PRIMARY_ALPHA(0.4), background: PRIMARY_ALPHA(0.07) }}
+                style={{ borderRadius: 20, padding: '4px 12px', fontSize: 13, color: '#52c41a', borderColor: 'rgba(82,196,26,0.4)', background: 'rgba(82,196,26,0.07)' }}
               >
                 Connected
               </Tag>
             )}
-            {configured && (
+            {isConfigured && (
               <Tag
-                icon={<CheckCircleFilled />}
+                icon={<SettingFilled />}
                 style={{ borderRadius: 20, padding: '4px 12px', fontSize: 13, color: PRIMARY, borderColor: PRIMARY_ALPHA(0.4), background: PRIMARY_ALPHA(0.07) }}
               >
                 Configured
@@ -341,32 +612,82 @@ export default function WhatsAppIntegration() {
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} style={{ color: textColor }} />
       </div>
 
+      {/* ── Mapping Modal ────────────────────────────────────────────────── */}
       <Modal
-        title={<Text style={{ color: textColor, fontWeight: 600 }}>{editMapping ? 'Edit Mapping' : 'Create New Mapping'}</Text>}
+        title={<Text style={{ color: textColor, fontWeight: 600 }}>{editMapping ? 'Edit Event Mapping' : 'Create Event Mapping'}</Text>}
         open={mappingModalOpen}
         onOk={saveMappingModal}
         onCancel={() => setMappingModalOpen(false)}
-        okText="Save"
+        confirmLoading={savingMap}
+        okText="Save Mapping"
         okButtonProps={{ style: { background: PRIMARY_GRAD, border: 'none' } }}
-        style={{ top: '20%' }}
+        width={600}
+        style={{ top: '10%' }}
       >
         <Form form={mappingForm} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="eventType" label="Event Type" rules={[{ required: true }]}>
-            <Select placeholder="Select event type">
-              {EVENT_TYPES.map((e) => <Option key={e} value={e}>{e}</Option>)}
+          <Form.Item name="eventId" label="CRM Event" rules={[{ required: true, message: 'Select an event' }]}>
+            <Select
+              placeholder="Select the CRM event that triggers this message"
+              onChange={() => setVariableRows([])}
+            >
+              {events.map((e) => <Option key={e._id} value={e._id}>{e.label}</Option>)}
             </Select>
           </Form.Item>
-          <Form.Item name="template" label="Template" rules={[{ required: true }]}>
-            <Select placeholder="Select template">
-              {templates.map((t) => <Option key={t.name} value={t.name}>{t.name}</Option>)}
+
+          <Form.Item name="templateId" label="WhatsApp Template" rules={[{ required: true, message: 'Select a template' }]}>
+            <Select
+              placeholder="Select template to send"
+              onChange={handleTemplateSelect}
+              showSearch
+              optionFilterProp="children"
+            >
+              {templates.map((t) => (
+                <Option key={t._id} value={t._id}>
+                  {t.name} <Tag style={{ marginLeft: 6 }} color={t.status === 'APPROVED' ? 'success' : 'warning'}>{t.status}</Tag>
+                </Option>
+              ))}
             </Select>
           </Form.Item>
-          <Form.Item name="status" label="Status" initialValue="Active">
+
+          <Form.Item name="isEnabled" label="Status" initialValue={true}>
             <Select>
-              <Option value="Active">Active</Option>
-              <Option value="Inactive">Inactive</Option>
+              <Option value={true}>Active</Option>
+              <Option value={false}>Inactive</Option>
             </Select>
           </Form.Item>
+
+          {variableRows.length > 0 && (
+            <Form.Item label="Variable Mapping">
+              <Text style={{ color: subText, fontSize: 12, display: 'block', marginBottom: 10 }}>
+                Map each template variable to a CRM event field.
+              </Text>
+              {variableRows.map((row, idx) => (
+                <Row key={idx} gutter={8} style={{ marginBottom: 8 }}>
+                  <Col span={10}>
+                    <Input
+                      value={row.templateVariable}
+                      readOnly
+                      style={{ background: inputBg, border: `1px solid ${borderColor}`, color: textColor, borderRadius: 6 }}
+                      prefix={<Text style={{ color: subText, fontSize: 11 }}>TPL</Text>}
+                    />
+                  </Col>
+                  <Col span={1} style={{ textAlign: 'center', paddingTop: 6 }}>→</Col>
+                  <Col span={13}>
+                    <Select
+                      style={{ width: '100%' }}
+                      placeholder="Select event field"
+                      value={row.eventField || undefined}
+                      onChange={(val) => setVariableRows((prev) => prev.map((r, i) => i === idx ? { ...r, eventField: val } : r))}
+                    >
+                      {(selectedEvent?.availableFields || []).map((f) => (
+                        <Option key={f} value={f}>{f}</Option>
+                      ))}
+                    </Select>
+                  </Col>
+                </Row>
+              ))}
+            </Form.Item>
+          )}
         </Form>
       </Modal>
     </div>

@@ -30,6 +30,7 @@ export const apiSlice = createApi({
     'Parties', 'PartyLedger', 'Expenses', 'Tasks', 'Operations', 'Stickers',
     'Dashboard', 'Kits', 'Options',
     'Reminders', 'Transport', 'Pickups', 'HotelDesigns', 'SuggestedTasks',
+    'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
   ],
   endpoints: (builder) => ({
 
@@ -847,6 +848,55 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/performance', params }),
       providesTags: ['Reports'],
     }),
+
+    // ── WhatsApp ────────────────────────────────────────────────────────────
+    getWhatsAppConfig: builder.query({
+      query: () => ({ url: '/whatsapp/config' }),
+      providesTags: ['WhatsApp'],
+    }),
+    getWhatsAppCredentials: builder.query({
+      query: () => ({ url: '/whatsapp/credentials' }),
+      providesTags: ['WhatsApp'],
+    }),
+    saveWhatsAppConfig: builder.mutation({
+      query: (data) => ({ url: '/whatsapp/config', method: 'post', data }),
+      invalidatesTags: ['WhatsApp', 'WhatsAppTemplates'],
+    }),
+    testWhatsAppConnection: builder.mutation({
+      query: (data) => ({ url: '/whatsapp/test', method: 'post', data }),
+      invalidatesTags: ['WhatsApp', 'WhatsAppTemplates'],
+    }),
+    disconnectWhatsApp: builder.mutation({
+      query: () => ({ url: '/whatsapp/disconnect', method: 'post' }),
+      invalidatesTags: ['WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings'],
+    }),
+    syncWhatsAppTemplates: builder.mutation({
+      query: () => ({ url: '/whatsapp/sync-templates', method: 'post' }),
+      invalidatesTags: ['WhatsAppTemplates'],
+    }),
+    getWhatsAppTemplates: builder.query({
+      query: (params) => ({ url: '/whatsapp/templates', params }),
+      providesTags: ['WhatsAppTemplates'],
+    }),
+    getWhatsAppEvents: builder.query({
+      query: () => ({ url: '/whatsapp/events' }),
+      providesTags: ['WhatsAppEvents'],
+    }),
+    getWhatsAppEventMappings: builder.query({
+      query: () => ({ url: '/whatsapp/event-mappings' }),
+      providesTags: ['WhatsAppMappings'],
+    }),
+    saveWhatsAppEventMapping: builder.mutation({
+      query: (data) => ({ url: '/whatsapp/event-mappings', method: 'post', data }),
+      invalidatesTags: ['WhatsAppMappings', 'WhatsAppTemplates'],
+    }),
+    deleteWhatsAppEventMapping: builder.mutation({
+      query: (id) => ({ url: `/whatsapp/event-mappings/${id}`, method: 'delete' }),
+      invalidatesTags: ['WhatsAppMappings', 'WhatsAppTemplates'],
+    }),
+    sendWhatsAppMessage: builder.mutation({
+      query: (data) => ({ url: '/whatsapp/send', method: 'post', data }),
+    }),
   }),
 });
 
@@ -1054,4 +1104,17 @@ export const {
   useGetPerformanceQuery,
   useUploadFilesMutation,
   useDeleteFileMutation,
+  // WhatsApp
+  useGetWhatsAppConfigQuery,
+  useGetWhatsAppCredentialsQuery,
+  useSaveWhatsAppConfigMutation,
+  useTestWhatsAppConnectionMutation,
+  useDisconnectWhatsAppMutation,
+  useSyncWhatsAppTemplatesMutation,
+  useGetWhatsAppTemplatesQuery,
+  useGetWhatsAppEventsQuery,
+  useGetWhatsAppEventMappingsQuery,
+  useSaveWhatsAppEventMappingMutation,
+  useDeleteWhatsAppEventMappingMutation,
+  useSendWhatsAppMessageMutation,
 } = apiSlice;

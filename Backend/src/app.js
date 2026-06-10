@@ -28,6 +28,7 @@ const partiesRoutes = require('./modules/parties/parties.routes');
 const notificationsRoutes = require('./modules/notifications/notifications.routes');
 const dashboardRoutes = require('./modules/dashboard/dashboard.routes');
 const reportsRoutes = require('./modules/reports/reports.routes');
+const whatsappRoutes = require('./modules/whatsapp/whatsapp.routes');
 
 const app = express();
 
@@ -80,6 +81,7 @@ app.use('/api/parties', partiesRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
