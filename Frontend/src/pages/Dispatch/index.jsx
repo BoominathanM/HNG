@@ -12,6 +12,7 @@ import {
   InboxOutlined, FilterOutlined, GlobalOutlined,
   ExportOutlined, CheckSquareOutlined, WalletOutlined, UserOutlined,
   PhoneOutlined, FileTextOutlined, DollarCircleOutlined,
+  AlertFilled, ExperimentOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -126,6 +127,8 @@ export default function Dispatch() {
     weight: '—',
     payment: d.orderId?.paymentTerms || 'Pending',
     status: d.status === 'Dispatched' ? 'Dispatched' : d.status === 'Confirmed' ? 'Ready to Dispatch' : 'Packing',
+    orderCategory: (d.orderId?.orderCategory === 'SAMPLE' || d.orderId?.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (d.orderId?.orderCategory || 'ORDER'),
+    isEmergency: !!(d.orderId?.isEmergency),
     transport: d.lrNumber || '—',
     lrNumber: d.lrNumber,
     trackingUrl: d.trackingUrl,
@@ -472,7 +475,20 @@ export default function Dispatch() {
 
   // ── Columns ────────────────────────────────────────────────────────────────
   const buildColumns = (showTodayActions = false) => [
-    { title: 'Order', dataIndex: 'id', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Order', dataIndex: 'id', width: 120,
+      render: (v, r) => (
+        <Space direction="vertical" size={2}>
+          <Space size={4}>
+            {r.isEmergency && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
+            {r.orderCategory === 'SAMPLE' && <ExperimentOutlined style={{ color: '#722ed1', fontSize: 13 }} />}
+            <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
+          </Space>
+          {r.isEmergency && <Tag color="red" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency</Tag>}
+          {r.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Sample Order</Tag>}
+        </Space>
+      ),
+    },
     { title: 'Client', dataIndex: 'client', width: 150, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Destination', dataIndex: 'destination', width: 120, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     { title: 'Location', dataIndex: 'address', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
@@ -517,7 +533,7 @@ export default function Dispatch() {
       title: 'Actions', key: 'actions', width: 110,
       render: (_, r) => (
         <Space onClick={(e) => e.stopPropagation()}>
-          <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/dispatch/${r.id}`)} />
+          <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/dispatch/${r.key}`)} />
           <Button size="small" icon={<PrinterOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => openPrintModal(r)} />
           {showTodayActions && (
             <Button size="small" icon={<ExportOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
@@ -641,12 +657,12 @@ export default function Dispatch() {
                               dataSource={filteredOrders}
                               columns={buildColumns(false)}
                               expandable={expandable}
-                              rowKey="id"
+                              rowKey="key"
                               pagination={{ pageSize: 8, size: 'small' }}
                               size="small"
                               scroll={{ x: 1400 }}
                               onRow={(record) => ({
-                                onClick: () => navigate(`/dispatch/${record.id}`),
+                                onClick: () => navigate(`/dispatch/${record.key}`),
                                 style: { cursor: 'pointer' },
                               })}
                             />
@@ -694,12 +710,12 @@ export default function Dispatch() {
                                 dataSource={todayOrders}
                                 columns={buildColumns(true)}
                                 expandable={expandable}
-                                rowKey="id"
+                                rowKey="key"
                                 pagination={{ pageSize: 8, size: 'small' }}
                                 size="small"
                                 scroll={{ x: 1400 }}
                                 onRow={(record) => ({
-                                  onClick: () => navigate(`/dispatch/${record.id}`),
+                                  onClick: () => navigate(`/dispatch/${record.key}`),
                                   style: { cursor: 'pointer' },
                                 })}
                               />

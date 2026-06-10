@@ -13,7 +13,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   const dispatches = await DispatchRecord.find(filter)
-    .populate('orderId', 'orderCode clientName total')
+    .populate({ path: 'orderId', select: 'orderCode clientName total orderCategory isEmergency leadId', populate: { path: 'leadId', select: 'leadType' } })
     .populate('pickupEmpId', 'fullName')
     .sort('-createdAt');
   res.status(200).json({ success: true, data: dispatches });
@@ -28,7 +28,7 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
       { dispatchedAt: { $gte: start, $lte: end } },
       { updatedAt: { $gte: start, $lte: end }, status: { $in: ['Draft', 'Confirmed'] } },
     ],
-  }).populate('orderId', 'orderCode clientName expectedDeliveryDate').sort('-updatedAt').lean();
+  }).populate({ path: 'orderId', select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency leadId', populate: { path: 'leadId', select: 'leadType' } }).sort('-updatedAt').lean();
   res.status(200).json({ success: true, total: dispatches.length, data: dispatches });
 });
 

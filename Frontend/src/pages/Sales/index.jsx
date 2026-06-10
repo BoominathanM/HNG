@@ -1452,6 +1452,7 @@ export default function Sales() {
         splitDates: o.splitDates || [],
         isEmergency: o.isEmergency || false,
         isUrgent: o.isUrgent || false,
+        orderCategory: (o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (o.orderCategory || 'ORDER'),
       };
     }));
   }, [ordersRaw]);
@@ -2273,6 +2274,7 @@ export default function Sales() {
       transportationBy: q.transportationBy,
       // Carry the tentative delivery date through so the order detail can show it
       expectedDeliveryDate: q.orderDeliveryDate || q.expectedDeliveryDate || undefined,
+      orderCategory: qLead?.leadType === 'SAMPLE' ? 'SAMPLE' : (q.orderCategory || 'ORDER'),
       // Emergency / partial delivery data from the originating lead
       splitDates,
       isEmergency,

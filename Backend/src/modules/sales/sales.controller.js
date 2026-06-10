@@ -174,7 +174,7 @@ exports.getQuotations = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.leadId) filter.leadId = req.query.leadId;
   if (req.query.status) filter.status = req.query.status;
-  const quotations = await Quotation.find(filter).populate('leadId', 'hotelName').sort('-createdAt');
+  const quotations = await Quotation.find(filter).populate('leadId', 'hotelName leadType').sort('-createdAt');
   res.status(200).json({ success: true, total: quotations.length, data: quotations });
 });
 
@@ -437,7 +437,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [orders, total] = await Promise.all([
-    Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').populate('leadId', 'leadType').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     Order.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: orders });

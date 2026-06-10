@@ -124,7 +124,7 @@ export default function Operations() {
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
 
   // API-backed state — RTK Query
-  const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery();
+  const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery(undefined, { refetchOnMountOrArgChange: true });
   const { data: stickerData } = useGetStickerRequestsQuery();
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
   const [createStickerRequest] = useCreateStickerRequestMutation();
@@ -175,7 +175,7 @@ export default function Operations() {
     key: o._id, id: o.orderCode || o._id,
     hotelLogo: o.clientName || '—', salesPerson: o.salesPerson || o.assignedTo?.fullName || '—',
     createdAt: o.createdAt, orderType: o.orderType || 'Sticker',
-    orderCategory: o.orderCategory || 'ORDER',
+    orderCategory: (o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (o.orderCategory || 'ORDER'),
     clientApproval: o.clientApproval || 'Waiting',
     designStatus: o.designStatus || 'Not Started',
     printingStatus: o.printingStatus || 'Not Started',
@@ -646,76 +646,19 @@ export default function Operations() {
                       <Button size="small" icon={<UploadOutlined />} danger>Upload Design *</Button>
                     </Upload>
                   )}
-                  {/* Sales approval */}
-                  {sr?.salesApproved ? (
+                  {/* Approval status indicators (read-only — approval is done from Operation detail view) */}
+                  {sr?.salesApproved && (
                     <Tooltip title={`Sales approved by ${sr.salesApprovedBy?.fullName || 'Sales'} on ${sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
                       <Tag color="green" icon={<CheckCircleOutlined />} style={{ cursor: 'default' }}>
                         Sales ✓ {sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleDateString('en-IN') : ''}
                       </Tag>
                     </Tooltip>
-                  ) : (
-                    <Tooltip title="Sales person approval">
-                      <Button
-                        size="small"
-                        icon={<CheckCircleOutlined />}
-                        style={{ borderColor: '#52c41a', color: '#52c41a' }}
-                        onClick={async () => {
-                          try {
-                            const res = await approveStickerRequest({ id: sr?._id || record.key, role: 'sales' }).unwrap();
-                            enqueueSnackbar(
-                              res?.data?.status === 'Approved'
-                                ? `${record.orderId} fully approved — printing can start`
-                                : 'Sales approved — awaiting Ops Head',
-                              { variant: 'success' },
-                            );
-                            if (res?.data?.status === 'Approved') {
-                              // Stay on the Sticker tab — the item moves to Box/Frosted
-                              // only after Print (step 2 → 3), per the production flow.
-                              advanceStep(record.key, 2);
-                            }
-                          } catch (err) {
-                            enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-                          }
-                        }}
-                      >
-                        Sales OK
-                      </Button>
-                    </Tooltip>
                   )}
-                  {/* Ops Head approval */}
-                  {sr?.opsHeadApproved ? (
+                  {sr?.opsHeadApproved && (
                     <Tooltip title={`Ops approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
                       <Tag color="blue" icon={<CheckCircleOutlined />} style={{ cursor: 'default' }}>
                         Ops ✓ {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
                       </Tag>
-                    </Tooltip>
-                  ) : (
-                    <Tooltip title="Operations head approval">
-                      <Button
-                        size="small"
-                        icon={<CheckCircleOutlined />}
-                        style={{ borderColor: '#1677ff', color: '#1677ff' }}
-                        onClick={async () => {
-                          try {
-                            const res = await approveStickerRequest({ id: sr?._id || record.key, role: 'opsHead' }).unwrap();
-                            enqueueSnackbar(
-                              res?.data?.status === 'Approved'
-                                ? `${record.orderId} fully approved — printing can start`
-                                : 'Ops Head approved — awaiting Sales',
-                              { variant: 'success' },
-                            );
-                            if (res?.data?.status === 'Approved') {
-                              // Stay on the Sticker tab — the item moves to Box/Frosted
-                              // only after Print (step 2 → 3), per the production flow.
-                              advanceStep(record.key, 2);
-                            }
-                          } catch (err) {
-                            enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-                          }
-                        }}
-                      >
-                        Ops OK
-                      </Button>
                     </Tooltip>
                   )}
                   <Button
@@ -949,14 +892,21 @@ export default function Operations() {
                   {
                     title: 'Order',
                     dataIndex: 'orderId',
-                    render: (v) => (
-                      <Space size={4}>
-                        {apiOrders.find((o) => o.id === v)?.isUrgent && (
-                          <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
-                        )}
-                        <Text strong style={{ color: '#B11E6A' }}>{v}</Text>
-                      </Space>
-                    ),
+                    render: (v) => {
+                      const ord = apiOrders.find((o) => o.id === v);
+                      return (
+                        <Space direction="vertical" size={2}>
+                          <Space size={4}>
+                            {ord?.isUrgent && <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />}
+                            {ord?.orderCategory === 'SAMPLE' && <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />}
+                            <Text strong style={{ color: '#B11E6A' }}>{v}</Text>
+                          </Space>
+                          {ord?.orderCategory === 'SAMPLE' && (
+                            <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>Sample Order</Tag>
+                          )}
+                        </Space>
+                      );
+                    },
                   },
                   { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
                   { title: 'Product', dataIndex: 'product' },

@@ -81,7 +81,7 @@ exports.getInvoices = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [invoices, total] = await Promise.all([
-    Invoice.find(filter).populate('partyId', 'name phone').populate('orderId', 'orderCode').sort('-invoiceDate').skip((page - 1) * limit).limit(limit),
+    Invoice.find(filter).populate('partyId', 'name phone').populate({ path: 'orderId', select: 'orderCode orderCategory isEmergency leadId', populate: { path: 'leadId', select: 'leadType' } }).sort('-invoiceDate').skip((page - 1) * limit).limit(limit),
     Invoice.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: invoices });

@@ -12,7 +12,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
   const orders = await Order.find(filter)
     .populate('assignedTo', 'fullName')
     .populate('items.itemId', 'sellingPrice hsnCode discountPercent packingMaterial materialCategory brand currentStock defaultSize')
-    .populate('leadId', 'paymentProofs orderDeliveryDate hotelLogoUrl splitDates isEmergency isUrgent kitDisplayUnit displayUnit')
+    .populate('leadId', 'paymentProofs orderDeliveryDate hotelLogoUrl splitDates isEmergency isUrgent kitDisplayUnit displayUnit leadType')
     .sort('-createdAt');
   res.status(200).json({ success: true, data: orders });
 });

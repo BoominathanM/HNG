@@ -18,14 +18,17 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import {
   AlertFilled,
   ArrowLeftOutlined,
+  CheckCircleOutlined,
   CreditCardOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  ExperimentOutlined,
   EyeOutlined,
   FileImageOutlined,
   FilePdfOutlined,
@@ -50,6 +53,7 @@ import {
   useGetItemsQuery,
   useGetVendorsQuery,
   useSendToStickerTeamMutation,
+  useApproveStickerRequestMutation,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -110,6 +114,7 @@ export default function OperationDetail() {
   const [splitPartialDelivery] = useSplitPartialDeliveryMutation();
   const [saveHotelDesign] = useSaveHotelDesignMutation();
   const [sendToStickerTeam] = useSendToStickerTeamMutation();
+  const [approveStickerRequest] = useApproveStickerRequestMutation();
 
   const allOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
@@ -150,7 +155,7 @@ export default function OperationDetail() {
     gstNumber: o.gstNumber || '',
     gstPercent: o.gstPercent,
     salesPerson: o.salesPerson || o.assignedTo?.fullName || '',
-    orderCategory: o.orderCategory || 'ORDER',
+    orderCategory: (o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (o.orderCategory || 'ORDER'),
     billType: o.billType || o.type || 'GST',
     deliveryBy: o.deliveryBy || '',
     transportationBy: o.transportationBy || '',
@@ -343,6 +348,18 @@ export default function OperationDetail() {
     if (allQueues.length === 0) return false;
     return !allQueues.some((item) => item.isEmergencyGated);
   }, [emergencyProductMap, productionQueues, id]);
+
+  // Map product name (lowercase) → sticker request for this order.
+  const stickerRequestMap = useMemo(() => {
+    const map = {};
+    stickerRequests
+      .filter((sr) => sr.orderId === order?.key || sr.orderId === id)
+      .forEach((sr) => {
+        const key = (sr.product || sr.hotelLogo || '').toLowerCase();
+        if (key) map[key] = sr;
+      });
+    return map;
+  }, [stickerRequests, order?.key, id]);
 
   // Annotate every item with isEmergencyProduct / isEmergencyGated flags — mirrors the
   // Sticker/Box queue treatment so Overview shows the same status indicators.
@@ -627,6 +644,46 @@ export default function OperationDetail() {
             style={{ width: 150 }}
             options={vendors}
           />
+        );
+      },
+    },
+    {
+      title: 'Ops Approval',
+      key: 'opsApproval',
+      render: (_, record) => {
+        const name = (record.product || record.itemName || record.name || '').toLowerCase();
+        const sr = stickerRequestMap[name];
+        if (!sr) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
+        if (sr.opsHeadApproved) {
+          return (
+            <Tooltip title={`Approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
+              <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
+                Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+              </Tag>
+            </Tooltip>
+          );
+        }
+        return (
+          <Button
+            size="small"
+            icon={<CheckCircleOutlined />}
+            style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
+            onClick={async () => {
+              try {
+                const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
+                enqueueSnackbar(
+                  res?.data?.status === 'Approved'
+                    ? 'Design fully approved — printing can start!'
+                    : 'Ops Head approval recorded — awaiting Sales approval',
+                  { variant: 'success' },
+                );
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+              }
+            }}
+          >
+            Ops OK
+          </Button>
         );
       },
     },
@@ -973,11 +1030,22 @@ export default function OperationDetail() {
                     <Space>
                       <Text strong style={{ color: textColor }}>Product Specifications</Text>
                       <Tag color="purple" icon={<FileImageOutlined />}>{order.hotelLogo}</Tag>
+                      {order.orderCategory === 'SAMPLE' && (
+                        <Tag color="purple" icon={<ExperimentOutlined />} style={{ fontWeight: 600 }}>Sample Order</Tag>
+                      )}
                     </Space>
                   }
                   style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
                   styles={{ body: { padding: 0 } }}
                 >
+                  {order.orderCategory === 'SAMPLE' && (
+                    <div style={{ padding: '8px 16px', background: 'rgba(114,46,209,0.06)', borderBottom: '1px solid rgba(114,46,209,0.2)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <ExperimentOutlined style={{ color: '#722ed1' }} />
+                      <Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 600 }}>
+                        Sample Order — no billing or dispatch will be generated.
+                      </Text>
+                    </div>
+                  )}
                   {!emergencyPhaseDone && visibleOrderItems.some(i => i.isEmergencyProduct) && (
                     <div style={{ padding: '8px 16px', background: 'rgba(255,77,79,0.06)', borderBottom: '1px solid rgba(255,77,79,0.2)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <AlertFilled style={{ color: '#ff4d4f' }} />

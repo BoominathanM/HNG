@@ -10,7 +10,7 @@ import {
   SearchOutlined, DeleteOutlined, CalendarOutlined, MinusOutlined,
   ShopOutlined, EnvironmentOutlined, BankOutlined, WhatsAppOutlined,
   FileDoneOutlined, EditOutlined, UploadOutlined, BellOutlined, SafetyCertificateOutlined,
-  GiftOutlined,
+  GiftOutlined, AlertFilled, ExperimentOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -78,6 +78,8 @@ export default function Billing() {
       partyPhone: inv.partyId?.phone || '',
       partyGst: inv.partyId?.gstNumber || '',
       order: inv.orderId?.orderCode || '—',
+      orderCategory: (inv.orderId?.orderCategory === 'SAMPLE' || inv.orderId?.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (inv.orderId?.orderCategory || 'ORDER'),
+      isEmergency: !!(inv.orderId?.isEmergency),
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
       amount: inv.subtotal,
@@ -127,6 +129,8 @@ export default function Billing() {
       quot: q.quotCode,
       client: q.clientName || '—',
       order: q.orderId?.orderCode || '—',
+      orderCategory: (q.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : 'ORDER',
+      isEmergency: false,
       date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
       amount: q.amount,
       gst: q.gstAmount,
@@ -588,7 +592,20 @@ export default function Billing() {
     { title: 'Invoice #', dataIndex: 'inv', width: 120, fixed: 'left', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
     { title: 'Date', dataIndex: 'date', width: 155, render: (v) => <Text style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{v}</Text> },
     { title: 'Client', dataIndex: 'client', width: 165, render: colText },
-    { title: 'Order', dataIndex: 'order', width: 115, render: (v) => <Text style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Order', dataIndex: 'order', width: 130,
+      render: (v, r) => (
+        <Space direction="vertical" size={2}>
+          <Space size={4}>
+            {r.isEmergency && <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />}
+            {r.orderCategory === 'SAMPLE' && <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />}
+            <Text style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
+          </Space>
+          {r.isEmergency && <Tag color="red" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency</Tag>}
+          {r.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Sample Order</Tag>}
+        </Space>
+      ),
+    },
     { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
     { title: 'Total', dataIndex: 'total', width: 115, render: (v) => colMoney(v) },
     { title: 'Advance', dataIndex: 'advance', width: 115, render: (v) => colMoney(v, '#8a1652') },
@@ -632,7 +649,20 @@ export default function Billing() {
     { title: 'Quotation #', dataIndex: 'quot', width: 120, fixed: 'left', render: (v) => <Text strong style={{ color: '#7c3aed', fontSize: 13 }}>{v}</Text> },
     { title: 'Date', dataIndex: 'date', width: 155, render: (v) => <Text style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{v}</Text> },
     { title: 'Client', dataIndex: 'client', width: 165, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Order', dataIndex: 'order', width: 115, render: (v) => <Text style={{ color: '#7c3aed', fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Order', dataIndex: 'order', width: 130,
+      render: (v, r) => (
+        <Space direction="vertical" size={2}>
+          <Space size={4}>
+            {r.isEmergency && <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />}
+            {r.orderCategory === 'SAMPLE' && <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />}
+            <Text style={{ color: '#7c3aed', fontSize: 13 }}>{v}</Text>
+          </Space>
+          {r.isEmergency && <Tag color="red" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency</Tag>}
+          {r.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Sample Order</Tag>}
+        </Space>
+      ),
+    },
     { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, background: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44' }}>{v}</Tag> },
     { title: 'Total', dataIndex: 'total', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
     { title: 'Advance', dataIndex: 'advance', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600, color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
