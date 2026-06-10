@@ -4,6 +4,9 @@ const ctrl = require('./settings.controller');
 const { protect } = require('../../middleware/auth');
 const upload = require('../../config/multer');
 
+// Public — must be registered before the auth gate so the login page can fetch it.
+router.get('/public-branding', ctrl.getPublicBranding);
+
 router.use(protect);
 
 router.get('/country-codes', ctrl.getCountryCodes);

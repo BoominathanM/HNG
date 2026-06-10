@@ -755,6 +755,10 @@ export const apiSlice = createApi({
       query: () => ({ url: '/settings/company' }),
       providesTags: ['Settings'],
     }),
+    getPublicBranding: builder.query({
+      query: () => ({ url: '/settings/public-branding' }),
+      providesTags: ['Settings'],
+    }),
     updateCompanySettings: builder.mutation({
       query: (data) => ({ url: '/settings/company', method: 'put', data }),
       invalidatesTags: ['Settings'],
@@ -789,7 +793,14 @@ export const apiSlice = createApi({
     }),
     restoreRecord: builder.mutation({
       query: ({ type, id }) => ({ url: `/settings/deleted-records/${type}/${id}/restore`, method: 'post' }),
-      invalidatesTags: ['DeletedRecords'],
+      // Refresh the archive AND every module list a restored record could belong
+      // to, so it immediately reappears in its original place without a reload.
+      invalidatesTags: [
+        'DeletedRecords',
+        'Parties', 'BillingParties', 'PartyLedger',
+        'Leads', 'Sales', 'Orders', 'Quotations',
+        'Inventory', 'Kits', 'Vendors', 'Staff', 'Users',
+      ],
     }),
     // Dropdown options (user-added select values)
     getOptions: builder.query({
@@ -1090,6 +1101,7 @@ export const {
   // Settings
   useGetCountryCodesQuery,
   useGetCompanySettingsQuery,
+  useGetPublicBrandingQuery,
   useUpdateCompanySettingsMutation,
   useUploadLogoMutation,
   useGetUsersQuery,

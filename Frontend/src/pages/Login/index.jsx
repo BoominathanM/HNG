@@ -4,17 +4,22 @@ import { UserOutlined, LockOutlined, EyeTwoTone, EyeInvisibleOutlined } from '@a
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { clearError } from '../../store/slices/authSlice';
-import { useLoginMutation } from '../../store/api/apiSlice';
+import { useLoginMutation, useGetPublicBrandingQuery } from '../../store/api/apiSlice';
 import { enqueueSnackbar } from 'notistack';
 import { motion } from 'framer-motion';
 
 const { Title, Text } = Typography;
+
+const DEFAULT_LOGO = '/hng%20logo%20new.png';
 
 export default function Login() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { error: authError } = useSelector((s) => s.auth);
   const [login, { isLoading, error: loginError }] = useLoginMutation();
+  const { data: branding } = useGetPublicBrandingQuery();
+  const companyName = branding?.data?.companyName || 'Heal N Glow';
+  const logoSrc = branding?.data?.logoUrl || DEFAULT_LOGO;
 
   const errorMsg = loginError?.data || authError || null;
 
@@ -49,7 +54,7 @@ export default function Login() {
       >
         <div style={{ background: '#ffffff', borderRadius: 20, padding: '36px 44px 36px', boxShadow: '0 24px 64px rgba(107,18,64,0.35)' }}>
           <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            <img src="/hng%20logo%20new.png" alt="Heal N Glow" style={{ height: 90, maxWidth: 240, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
+            <img src={logoSrc} alt={companyName} onError={(e) => { if (!e.target.src.endsWith(DEFAULT_LOGO)) e.target.src = DEFAULT_LOGO; }} style={{ height: 90, maxWidth: 240, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
             <Title level={4} style={{ margin: '4px 0 2px', color: '#1a1a2e', fontWeight: 700, lineHeight: 1.2 }}>Welcome Back</Title>
             <Text style={{ color: '#888', fontSize: 13 }}>Sign in to your HNG CRM account</Text>
           </div>

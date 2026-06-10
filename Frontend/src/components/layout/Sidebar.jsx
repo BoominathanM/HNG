@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Typography, Badge, Button } from 'antd';
+import { Layout, Menu, Typography, Badge, Button, Tooltip } from 'antd';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -11,10 +11,12 @@ import {
   ContactsOutlined
 } from '@ant-design/icons';
 import { toggleSidebar } from '../../store/slices/themeSlice';
-import { useLogoutMutation } from '../../store/api/apiSlice';
+import { useLogoutMutation, useGetCompanySettingsQuery } from '../../store/api/apiSlice';
 
 const { Sider } = Layout;
 const { Text } = Typography;
+
+const DEFAULT_LOGO = '/hng logo new.png';
 
 const ALL_MENU_ITEMS = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard', module: 'Dashboard' },
@@ -53,6 +55,9 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const authUser = useSelector((s) => s.auth.user);
   const [logout] = useLogoutMutation();
+  const { data: companyData } = useGetCompanySettingsQuery();
+  const companyName = companyData?.data?.companyName || 'Heal N Glow';
+  const logoSrc = companyData?.data?.logoUrl || DEFAULT_LOGO;
 
   // Show a sidebar item only when the user has read permission for that module.
   // Matches the deny-by-default logic in PermissionRoute (App.jsx).
@@ -333,8 +338,9 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}
               >
                 <img
-                  src="/hng logo new.png"
-                  alt="Heal N Glow"
+                  src={logoSrc}
+                  alt={companyName}
+                  onError={(e) => { if (e.target.src !== window.location.origin + DEFAULT_LOGO) e.target.src = DEFAULT_LOGO; }}
                   style={{ height: 90, width: '100%', maxWidth: 210, objectFit: 'contain' }}
                 />
               </motion.div>
@@ -345,11 +351,27 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
                 exit={{ opacity: 0 }} transition={{ duration: 0.2 }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
-                <img
-                  src="/hng logo new.png"
-                  alt="HNG"
-                  style={{ height: 54, width: 54, objectFit: 'contain' }}
-                />
+                <Tooltip
+                  placement="right"
+                  title={
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: 4 }}>
+                      <img
+                        src={logoSrc}
+                        alt={companyName}
+                        onError={(e) => { if (e.target.src !== window.location.origin + DEFAULT_LOGO) e.target.src = DEFAULT_LOGO; }}
+                        style={{ height: 48, maxWidth: 120, objectFit: 'contain', background: '#fff', borderRadius: 6, padding: 4 }}
+                      />
+                      <span style={{ fontWeight: 600 }}>{companyName}</span>
+                    </div>
+                  }
+                >
+                  <img
+                    src={logoSrc}
+                    alt={companyName}
+                    onError={(e) => { if (e.target.src !== window.location.origin + DEFAULT_LOGO) e.target.src = DEFAULT_LOGO; }}
+                    style={{ height: 54, width: 54, objectFit: 'contain' }}
+                  />
+                </Tooltip>
               </motion.div>
             )}
           </AnimatePresence>

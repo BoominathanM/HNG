@@ -32,6 +32,7 @@ import {
   useCreateBillingPartyMutation,
   useUpdateInvoiceGstMutation,
   useGetBillingPartyLedgerQuery,
+  useGetCompanySettingsQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -63,6 +64,8 @@ export default function Billing() {
   const { data: quotationsData } = useGetQuotationsInProcessQuery();
   const { data: partiesData } = useGetBillingPartiesQuery();
   const { data: invItemsData } = useGetItemsQuery();
+  const { data: companySettingsData } = useGetCompanySettingsQuery();
+  const invoiceSettings = companySettingsData?.data || {};
   const [createInvoiceMutation] = useCreateInvoiceMutation();
   const [recordPaymentMutation] = useRecordPaymentMutation();
   const [convertQuotationMutation] = useConvertQuotationToInvoiceMutation();
@@ -539,7 +542,7 @@ export default function Billing() {
   };
 
   const handlePrintDocument = (docType, data) => {
-    const html = generatePrintHTML(docType, data);
+    const html = generatePrintHTML(docType, data, invoiceSettings);
     const win = window.open('', '_blank', 'width=900,height=700');
     win.document.write(html);
     win.document.close();
@@ -845,7 +848,7 @@ export default function Billing() {
         }
       >
         {selectedInv && (
-          <DocumentTemplate type={viewDocType} data={selectedInv} />
+          <DocumentTemplate type={viewDocType} data={selectedInv} settings={invoiceSettings} />
         )}
       </Modal>
 

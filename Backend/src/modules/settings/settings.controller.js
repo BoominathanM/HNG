@@ -2,6 +2,7 @@ const User = require('../../models/User');
 const CompanySettings = require('../../models/CompanySettings');
 const Party = require('../../models/Party');
 const DropdownOption = require('../../models/DropdownOption');
+const DeletedRecord = require('../../models/DeletedRecord');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const bcrypt = require('bcryptjs');
@@ -29,6 +30,18 @@ exports.createOption = asyncHandler(async (req, res, next) => {
     { new: true, upsert: true, setDefaultsOnInsert: true }
   );
   res.status(201).json({ success: true, data: option });
+});
+
+// ─── Public Branding (no auth — used by the login screen) ────────────────────
+exports.getPublicBranding = asyncHandler(async (req, res) => {
+  const settings = await CompanySettings.findOne().select('logoUrl companyName');
+  res.status(200).json({
+    success: true,
+    data: {
+      logoUrl: settings?.logoUrl || null,
+      companyName: settings?.companyName || 'Heal N Glow',
+    },
+  });
 });
 
 // ─── Company Settings ───────────────────────────────────────────────────────
@@ -157,30 +170,59 @@ const getModel = (name) => {
   try { return require(`../../models/${name}`); } catch { return null; }
 };
 
-exports.getDeletedRecords = asyncHandler(async (req, res) => {
-  const result = {};
-  const all = [];
+// Reconcile the DeletedRecord archive collection with the live soft-deleted docs
+// across every module. This (a) backfills archive entries for records deleted
+// before the collection existed, (b) refreshes their snapshot/deletedBy, and
+// (c) drops archive entries whose original has since been restored. After this
+// runs, the DeletedRecord collection is the single source of truth for the tab.
+const syncDeletedRecords = async () => {
+  const liveKeys = new Set();
   for (const [type, cfg] of Object.entries(DELETED_SOURCES)) {
     const Model = getModel(cfg.model);
     if (!Model) continue;
     const docs = await Model.find({ deletedAt: { $ne: null } })
       .populate({ path: 'deletedBy', select: 'fullName' })
       .lean();
-    result[type] = docs;
-    docs.forEach((d) => {
-      all.push({
-        _id: d._id,
-        type,
-        module: cfg.module,
-        name: cfg.label(d) || '—',
-        deletedAt: d.deletedAt,
-        deletedBy: d.deletedBy?.fullName || 'System',
-      });
-    });
+    for (const d of docs) {
+      liveKeys.add(`${type}:${d._id}`);
+      await DeletedRecord.findOneAndUpdate(
+        { type, refId: d._id },
+        {
+          type,
+          module: cfg.module,
+          name: cfg.label(d) || '—',
+          refId: d._id,
+          snapshot: d,
+          deletedBy: d.deletedBy?._id || d.deletedBy || null,
+          deletedAt: d.deletedAt || Date.now(),
+        },
+        { upsert: true, setDefaultsOnInsert: true }
+      );
+    }
   }
-  all.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
-  // `records` is the flat, UI-friendly list; the per-type buckets remain for back-compat.
-  res.status(200).json({ success: true, data: { ...result, records: all } });
+  // Purge archive entries whose original is no longer soft-deleted (restored).
+  const archived = await DeletedRecord.find().select('type refId').lean();
+  const stale = archived
+    .filter((a) => !liveKeys.has(`${a.type}:${a.refId}`))
+    .map((a) => a._id);
+  if (stale.length) await DeletedRecord.deleteMany({ _id: { $in: stale } });
+};
+
+exports.getDeletedRecords = asyncHandler(async (req, res) => {
+  await syncDeletedRecords();
+  const docs = await DeletedRecord.find()
+    .populate({ path: 'deletedBy', select: 'fullName' })
+    .sort('-deletedAt')
+    .lean();
+  const records = docs.map((d) => ({
+    _id: d.refId,           // original record id — used by restore
+    type: d.type,
+    module: d.module,
+    name: d.name || '—',
+    deletedAt: d.deletedAt,
+    deletedBy: d.deletedBy?.fullName || 'System',
+  }));
+  res.status(200).json({ success: true, data: { records } });
 });
 
 exports.restoreRecord = asyncHandler(async (req, res, next) => {
@@ -191,8 +233,12 @@ exports.restoreRecord = asyncHandler(async (req, res, next) => {
   if (!Model) return next(new AppError('Model not available', 400));
   const doc = await Model.findById(id);
   if (!doc) return next(new AppError('Record not found', 404));
-  doc.deletedAt = undefined;
-  doc.deletedBy = undefined;
-  await doc.save({ validateBeforeSave: false });
+  // Reliably clear the soft-delete flags. Assigning `undefined` + save() is
+  // flaky in Mongoose (the field may not be unset), which leaves the record
+  // filtered out of its module list. $unset guarantees the field is removed so
+  // the record reappears in its original place with every detail intact.
+  await Model.updateOne({ _id: id }, { $unset: { deletedAt: '', deletedBy: '' } });
+  // Remove its entry from the archive collection now that it's live again.
+  await DeletedRecord.deleteOne({ type, refId: id });
   res.status(200).json({ success: true, message: 'Record restored successfully' });
 });

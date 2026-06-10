@@ -190,9 +190,8 @@ export default function Settings() {
   const [updateCompanyMutation] = useUpdateCompanySettingsMutation();
   const [uploadLogoMutation] = useUploadLogoMutation();
 
-  // Form instances for the General + GST tabs (so their Save buttons can persist)
+  // Form instance for the General tab (so its Save button can persist)
   const [generalForm] = Form.useForm();
-  const [gstForm] = Form.useForm();
   const [notifPrefs, setNotifPrefs] = useState({ pay: true, stock: true, dispatch: true, task: true, wa: false, email: false });
 
   useEffect(() => {
@@ -222,16 +221,8 @@ export default function Settings() {
         dateFormat: s.dateFormat || 'DD/MM/YYYY',
         address: s.address,
       });
-      gstForm.setFieldsValue({
-        defaultGst: String(s.defaultGst || '18'),
-        cgst: s.cgst || '9%',
-        sgst: s.sgst || '9%',
-        igst: s.igst || '18%',
-        hsnCode: s.hsnCode || '',
-        invoicePrefix: s.invoicePrefix || 'INV-',
-      });
     }
-  }, [companyData, generalForm, gstForm]);
+  }, [companyData, generalForm]);
 
   // ─── Save handlers (persist via updateCompanySettings) ───
   const persistCompany = async (patch, label) => {
@@ -244,7 +235,6 @@ export default function Settings() {
   };
 
   const saveGeneral = () => generalForm.validateFields().then((v) => persistCompany(v, 'General settings saved'));
-  const saveGst = () => gstForm.validateFields().then((v) => persistCompany(v, 'GST & Tax settings saved'));
   const saveNotifications = () => persistCompany({ notifPrefs }, 'Notification settings saved');
   const saveInvoiceSettings = () => persistCompany({
     invoiceTheme,
@@ -872,37 +862,6 @@ export default function Settings() {
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 8 }}>
                     <Button>Cancel</Button>
                     <Button type="primary" icon={<SaveOutlined />} onClick={saveNotifications} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
-                  </div>
-                </Form>
-              </Card>
-            ),
-          },
-          {
-            key: 'gst',
-            label: 'GST & Tax',
-            children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-                <Form layout="vertical" form={gstForm}>
-                  <Row gutter={16}>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Default GST Rate" name="defaultGst">
-                        <Select>
-                          <Option value="5">5%</Option>
-                          <Option value="12">12%</Option>
-                          <Option value="18">18%</Option>
-                          <Option value="28">28%</Option>
-                        </Select>
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={12}><Form.Item label="CGST" name="cgst"><Input /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="SGST" name="sgst"><Input /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="IGST (Interstate)" name="igst"><Input /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="HSN Code (Default)" name="hsnCode"><Input placeholder="Ex: 3401" /></Form.Item></Col>
-                    <Col xs={24} sm={12}><Form.Item label="Tax Invoice Prefix" name="invoicePrefix"><Input /></Form.Item></Col>
-                  </Row>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 4 }}>
-                    <Button onClick={() => gstForm.resetFields()}>Cancel</Button>
-                    <Button type="primary" icon={<SaveOutlined />} onClick={saveGst} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
                   </div>
                 </Form>
               </Card>

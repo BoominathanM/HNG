@@ -60,6 +60,7 @@ import {
   useUploadFilesMutation,
   useGetStickerRequestsQuery,
   useApproveStickerRequestMutation,
+  useGetCompanySettingsQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -1011,7 +1012,7 @@ export default function Sales() {
         placeOfSupply: src.state || '',
       },
     };
-    const html = generatePrintHTML('quotation', data);
+    const html = generatePrintHTML('quotation', data, invoiceSettings);
     const blob = new Blob([html], { type: 'text/html' });
     const blobUrl = URL.createObjectURL(blob);
     const win = window.open(blobUrl, '_blank');
@@ -1202,6 +1203,8 @@ export default function Sales() {
   const { data: staffRaw } = useGetStaffQuery();
   const { data: usersRaw } = useGetUsersQuery();
   const { data: kitsRaw } = useGetKitsQuery();
+  const { data: companySettingsData } = useGetCompanySettingsQuery();
+  const invoiceSettings = companySettingsData?.data || {};
 
   const performanceTargets = perfRaw?.data?.targets || [];
   const performanceRewards = perfRaw?.data?.rewards || {};
