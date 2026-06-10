@@ -54,6 +54,7 @@ import {
   useGetVendorsQuery,
   useSendToStickerTeamMutation,
   useApproveStickerRequestMutation,
+  useGetTasksQuery,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -82,6 +83,7 @@ export default function OperationDetail() {
   const loggedInUser = useSelector((state) => state.auth.user);
   const [taskForm] = Form.useForm();
   const [assignModalForm] = Form.useForm();
+  const [kitPackingForm] = Form.useForm();
   const { data: ordersData } = useGetOperationOrdersQuery();
   const { data: stickerData } = useGetStickerRequestsQuery();
   const stickerRequests = stickerData?.data || [];
@@ -108,6 +110,42 @@ export default function OperationDetail() {
     (invData?.data || []).forEach((i) => { m[i.itemName] = i; });
     return m;
   }, [invData]);
+  // Resolve the MongoDB _id for this order so the task query uses the correct ObjectId filter.
+  const orderMongoId = useMemo(
+    () => (ordersData?.data || []).find((o) => o.orderCode === id || o._id === id)?._id || null,
+    [ordersData, id]
+  );
+  // Fetch existing tasks for this order to detect already-assigned products
+  const { data: orderTasksData } = useGetTasksQuery({ orderId: orderMongoId }, { skip: !orderMongoId });
+  // Set of productIndex values that already have tasks on this order
+  const taskedProductIndices = useMemo(() => {
+    const tasks = orderTasksData?.data || [];
+    const set = new Set();
+    tasks.forEach((t) => {
+      if (t.productIndex !== undefined && t.productIndex !== null) set.add(t.productIndex);
+    });
+    return set;
+  }, [orderTasksData]);
+  // Set of product names (lowercase) that already have tasks (fallback when no productIndex)
+  const taskedProductNames = useMemo(() => {
+    const tasks = orderTasksData?.data || [];
+    return new Set(tasks.filter((t) => t.product).map((t) => (t.product || '').toLowerCase()));
+  }, [orderTasksData]);
+
+  // Kit Packing task state
+  const kitPackingTask = useMemo(
+    () => (orderTasksData?.data || []).find((t) => t.taskType === 'Kit Packing') || null,
+    [orderTasksData]
+  );
+  const productTasks = useMemo(
+    () => (orderTasksData?.data || []).filter((t) => t.taskType !== 'Kit Packing'),
+    [orderTasksData]
+  );
+  const allProductTasksDone = useMemo(
+    () => productTasks.length > 0 && productTasks.every((t) => t.status === 'Done'),
+    [productTasks]
+  );
+
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
   const [assignTask] = useAssignTaskMutation();
   const [assignTasksPerProduct] = useAssignTasksPerProductMutation();
@@ -160,6 +198,7 @@ export default function OperationDetail() {
     deliveryBy: o.deliveryBy || '',
     transportationBy: o.transportationBy || '',
     forwardingCharge: o.forwardingCharge || false,
+    kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
     paymentProofs: (() => {
       const seen = new Set();
       const logoEntry = o.leadId?.hotelLogoUrl
@@ -212,6 +251,12 @@ export default function OperationDetail() {
     try {
       vals = await assignModalForm.validateFields();
     } catch { return; }
+
+    // Resolve numeric productIndex: find this record's position in order.items
+    const productIndex = (order?.items || []).findIndex(
+      (it) => String(it.key) === String(assignModalRecord?.key)
+    );
+
     const cleanSubTasks = subTasks
       .filter((t) => t.description || t.qty || t.assignee)
       .map((t) => ({ label: t.description, qty: Number(t.qty) || 0, assigneeName: t.assignee }));
@@ -220,6 +265,7 @@ export default function OperationDetail() {
       taskName: vals.taskName,
       taskType: vals.taskType,
       product: vals.product,
+      productIndex: productIndex >= 0 ? productIndex : undefined,
       printingType: vals.printing,
       qty: taskRequiredQty,
       assigneeName: vals.assignee,
@@ -289,6 +335,7 @@ export default function OperationDetail() {
 
   const order = allOrders.find((item) => item.id === id);
   const assignedEmployee = order ? { key: order.key, name: order.assignedEmployee } : null;
+  const isKitOrder = !!(order?.kitDisplayUnit);
 
   // Approved designs for this hotel (reuse in future orders).
   const { data: hotelDesignsRaw } = useGetHotelDesignsQuery(
@@ -388,13 +435,21 @@ export default function OperationDetail() {
     if (!order) return;
     try {
       const res = await assignTasksPerProduct({ orderId: order.key, taskType: 'Production' }).unwrap();
-      enqueueSnackbar(`Created ${res.total || res.data?.length || 0} product task(s)`, { variant: 'success' });
+      if (res.skippedProducts?.length) {
+        enqueueSnackbar(
+          `Created ${res.total} task(s). Already assigned (skipped): ${res.skippedProducts.join(', ')}`,
+          { variant: 'warning' }
+        );
+      } else {
+        enqueueSnackbar(`Created ${res.total || res.data?.length || 0} product task(s)`, { variant: 'success' });
+      }
     } catch (e) {
       enqueueSnackbar(e?.data?.message || e?.data || 'Failed to assign tasks', { variant: 'error' });
     }
   };
 
   // Partial-delivery split: record a partial qty; the balance becomes a follow-on entry.
+  const [kitPackingModalOpen, setKitPackingModalOpen] = useState(false);
   const [partialModalOpen, setPartialModalOpen] = useState(false);
   const [partialQtyInput, setPartialQtyInput] = useState(0);
   const handlePartialSplit = async () => {
@@ -405,6 +460,31 @@ export default function OperationDetail() {
       setPartialModalOpen(false);
     } catch (e) {
       enqueueSnackbar(e?.data?.message || e?.data || 'Failed to split delivery', { variant: 'error' });
+    }
+  };
+
+  const submitKitPackingTask = async () => {
+    let vals;
+    try { vals = await kitPackingForm.validateFields(); } catch { return; }
+    const totalQty = (order?.items || []).reduce((s, it) => s + (it.qty || 0), 0);
+    const payload = {
+      orderId: order?.key,
+      taskName: vals.taskName || `Kit Packing — ${order?.kitDisplayUnit}`,
+      taskType: 'Kit Packing',
+      product: order?.kitDisplayUnit || 'Kit',
+      qty: totalQty,
+      assigneeName: vals.assignee,
+      clientName: order?.hotelName,
+      description: vals.description,
+      status: 'Pending',
+    };
+    try {
+      await assignTask(payload).unwrap();
+      enqueueSnackbar('Kit Packing task assigned', { variant: 'success' });
+      setKitPackingModalOpen(false);
+      kitPackingForm.resetFields();
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to assign Kit Packing task', { variant: 'error' });
     }
   };
 
@@ -690,16 +770,31 @@ export default function OperationDetail() {
     {
       title: 'Assign Task',
       key: 'assignTask',
-      render: (_, record) => (
-        <Button
-          type="primary"
-          size="small"
-          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-          onClick={() => openAssignModal(record, order)}
-        >
-          Assign Task
-        </Button>
-      ),
+      render: (_, record) => {
+        // Determine if this product already has a task
+        const itemIndex = (order?.items || []).findIndex((it) => String(it.key) === String(record.key));
+        const alreadyTasked = (itemIndex >= 0 && taskedProductIndices.has(itemIndex))
+          || taskedProductNames.has((record.product || record.itemName || record.name || '').toLowerCase());
+        if (alreadyTasked) {
+          return (
+            <Tooltip title="A task is already assigned for this product on this order. Delete the existing task to reassign.">
+              <Tag color="green" style={{ borderRadius: 6, cursor: 'default', fontSize: 11 }}>
+                ✓ Task Assigned
+              </Tag>
+            </Tooltip>
+          );
+        }
+        return (
+          <Button
+            type="primary"
+            size="small"
+            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+            onClick={() => openAssignModal(record, order)}
+          >
+            Assign Task
+          </Button>
+        );
+      },
     },
   ];
 
@@ -1078,6 +1173,92 @@ export default function OperationDetail() {
                   </div>
                 </Card>
 
+                {/* Kit Packing Task — shown only for kit orders */}
+                {isKitOrder && (
+                  <Card
+                    title={
+                      <Space>
+                        <ExperimentOutlined style={{ color: '#B11E6A' }} />
+                        <Text strong style={{ color: textColor }}>Kit Packing Task</Text>
+                        <Tag color="purple">{order.kitDisplayUnit}</Tag>
+                      </Space>
+                    }
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  >
+                    {!allProductTasksDone && !kitPackingTask && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0' }}>
+                        <div>
+                          <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                            Kit Packing can only be assigned after all individual product tasks are completed.
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#faad14' }}>
+                            Product tasks done: {productTasks.filter((t) => t.status === 'Done').length} / {productTasks.length || '—'}
+                          </Text>
+                        </div>
+                        <Tooltip title="Complete all product tasks first to enable Kit Packing assignment">
+                          <Button
+                            type="primary"
+                            disabled
+                            icon={<TeamOutlined />}
+                            style={{ borderRadius: 8 }}
+                          >
+                            Assign Kit Packing Task
+                          </Button>
+                        </Tooltip>
+                      </div>
+                    )}
+
+                    {allProductTasksDone && !kitPackingTask && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0' }}>
+                        <div>
+                          <Space>
+                            <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                            <Text style={{ color: '#52c41a', fontWeight: 600 }}>All product tasks completed!</Text>
+                          </Space>
+                          <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
+                            Assign the Kit Packing task to begin the final packaging step.
+                          </Text>
+                        </div>
+                        <Button
+                          type="primary"
+                          icon={<TeamOutlined />}
+                          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 }}
+                          onClick={() => {
+                            kitPackingForm.setFieldsValue({
+                              taskName: `Kit Packing — ${order.kitDisplayUnit}`,
+                              assignee: loggedInUser?.name || order.assignedEmployee,
+                            });
+                            setKitPackingModalOpen(true);
+                          }}
+                        >
+                          Assign Kit Packing Task
+                        </Button>
+                      </div>
+                    )}
+
+                    {kitPackingTask && (
+                      <Space direction="vertical" size={8} style={{ width: '100%', padding: '8px 0' }}>
+                        <Space wrap>
+                          <Text strong>Status:</Text>
+                          <Tag color={kitPackingTask.status === 'Done' ? 'success' : kitPackingTask.status === 'In Progress' ? 'processing' : 'default'}>
+                            {kitPackingTask.status}
+                          </Tag>
+                          {kitPackingTask.taskCode && <Tag color="default">{kitPackingTask.taskCode}</Tag>}
+                        </Space>
+                        {kitPackingTask.assigneeName && (
+                          <Space><Text strong>Assigned To:</Text><Text>{kitPackingTask.assigneeName}</Text></Space>
+                        )}
+                        {kitPackingTask.status === 'Done' && (
+                          <Space>
+                            <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                            <Text style={{ color: '#52c41a', fontWeight: 600 }}>Kit Packing completed — order will proceed to Dispatch.</Text>
+                          </Space>
+                        )}
+                      </Space>
+                    )}
+                  </Card>
+                )}
+
               </Space>
             ),
           },
@@ -1391,6 +1572,56 @@ export default function OperationDetail() {
               onClick={submitAssignTask}
             >
               Create and Assign Task
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Kit Packing Task Assignment Modal */}
+      <Modal
+        open={kitPackingModalOpen}
+        onCancel={() => { setKitPackingModalOpen(false); kitPackingForm.resetFields(); }}
+        title={
+          <Space>
+            <ExperimentOutlined style={{ color: '#B11E6A' }} />
+            <span>Assign Kit Packing Task</span>
+            {order?.kitDisplayUnit && <Tag color="purple">{order.kitDisplayUnit}</Tag>}
+          </Space>
+        }
+        footer={null}
+        width={480}
+        destroyOnClose
+      >
+        <Form form={kitPackingForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item label="Task Name" name="taskName">
+            <Input placeholder={`Kit Packing — ${order?.kitDisplayUnit || 'Kit'}`} style={{ borderRadius: 8 }} />
+          </Form.Item>
+          <Form.Item label="Assign To" name="assignee" rules={[{ required: true, message: 'Please assign to someone' }]}>
+            <Select placeholder="Select assignee">
+              {[...new Map(
+                allOrders.filter((o) => o.assignedEmployee)
+                  .map((o) => [o.assignedEmployee, { key: o.key, name: o.assignedEmployee }])
+              ).values()].map((emp) => (
+                <Option key={emp.key} value={emp.name}>{emp.name}</Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item label="Notes" name="description">
+            <Input.TextArea rows={2} placeholder="Optional notes for the kit packing task" style={{ borderRadius: 8 }} />
+          </Form.Item>
+          <Form.Item style={{ marginBottom: 0, marginTop: 16 }}>
+            <Button
+              type="primary"
+              block
+              style={{
+                height: 42, borderRadius: 10,
+                background: 'linear-gradient(135deg,#B11E6A,#D85C9E)',
+                border: 'none', fontWeight: 600,
+                boxShadow: '0 4px 15px rgba(177,30,106,0.3)',
+              }}
+              onClick={submitKitPackingTask}
+            >
+              Create and Assign Kit Packing Task
             </Button>
           </Form.Item>
         </Form>

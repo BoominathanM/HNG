@@ -382,7 +382,7 @@ export const apiSlice = createApi({
     }),
     payExpense: builder.mutation({
       query: ({ id, formData }) => ({ url: `/financial/expense-payments/${id}/pay`, method: 'post', data: formData }),
-      invalidatesTags: ['ExpensePayments'],
+      invalidatesTags: (result, error, { id }) => ['ExpensePayments', 'Expenses', { type: 'Expenses', id }],
     }),
     getPickupExpenses: builder.query({
       query: (params) => ({ url: '/financial/reimbursements/pickup', params }),
@@ -594,6 +594,14 @@ export const apiSlice = createApi({
     getExpenseHistory: builder.query({
       query: (params) => ({ url: '/expenses/history', params }),
       providesTags: ['Expenses'],
+    }),
+    getExpenseById: builder.query({
+      query: (id) => ({ url: `/expenses/${id}` }),
+      providesTags: (result, error, id) => [{ type: 'Expenses', id }],
+    }),
+    recordExpensePayment: builder.mutation({
+      query: ({ id, formData }) => ({ url: `/expenses/${id}/pay`, method: 'post', data: formData }),
+      invalidatesTags: (result, error, { id }) => ['Expenses', { type: 'Expenses', id }],
     }),
 
     // ── Tasks ────────────────────────────────────────────────────────────────
@@ -1047,6 +1055,8 @@ export const {
   useUpdateExpenseMutation,
   useDeleteExpenseMutation,
   useGetExpenseHistoryQuery,
+  useGetExpenseByIdQuery,
+  useRecordExpensePaymentMutation,
   // Tasks
   useGetTasksQuery,
   useGetTaskQuery,

@@ -10,6 +10,8 @@ router.get('/', ctrl.getExpenses);
 router.post('/', upload.single('proof'), ctrl.createExpense);
 router.get('/history', ctrl.getExpenseHistory);
 router.get('/export', ctrl.exportExpenses);
+router.get('/:id', ctrl.getExpenseById);
+router.post('/:id/pay', upload.single('proof'), ctrl.recordPayment);
 router.put('/:id', ctrl.updateExpense);
 router.delete('/:id', ctrl.deleteExpense);
 

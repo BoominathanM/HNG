@@ -69,12 +69,40 @@ exports.saveHotelDesign = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: design });
 });
 
-exports.assignTask = asyncHandler(async (req, res) => {
+exports.assignTask = asyncHandler(async (req, res, next) => {
+  const { productIndex, product } = req.body;
+  const orderId = req.params.id;
+
+  // Prevent duplicate: same product slot on the same order already has a task
+  const dupFilter = { orderId };
+  if (productIndex !== undefined && productIndex !== null && !isNaN(productIndex)) {
+    dupFilter.productIndex = Number(productIndex);
+  } else if (product) {
+    dupFilter.product = product;
+  }
+  if (Object.keys(dupFilter).length > 1) {
+    const existing = await Task.findOne(dupFilter);
+    if (existing) {
+      return next(new AppError(
+        `A task for "${product || `product #${productIndex}`}" on this order already exists (${existing.taskCode}). Delete the existing task first if you need to reassign.`,
+        409
+      ));
+    }
+  }
+
+  // Prevent duplicate Kit Packing task per order
+  if (req.body.taskType === 'Kit Packing') {
+    const existingKitPacking = await Task.findOne({ orderId, taskType: 'Kit Packing' });
+    if (existingKitPacking) {
+      return next(new AppError('A Kit Packing task already exists for this order.', 409));
+    }
+  }
+
   const taskCode = await generateCode('TASK');
   const task = await Task.create({
     ...req.body,
     taskCode,
-    orderId: req.params.id,
+    orderId,
     createdBy: req.user._id,
   });
   res.status(201).json({ success: true, data: task });
@@ -84,10 +112,25 @@ exports.assignTask = asyncHandler(async (req, res) => {
 exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
   if (!order) return next(new AppError('Order not found', 404));
+
+  // Build set of product indices that already have tasks for this order
+  const existingTasks = await Task.find({ orderId: order._id }).select('productIndex').lean();
+  const taskedIndices = new Set(
+    existingTasks
+      .filter((t) => t.productIndex !== undefined && t.productIndex !== null)
+      .map((t) => t.productIndex)
+  );
+
   const baseType = req.body.taskType || 'Production';
   const tasks = [];
+  const skippedProducts = [];
+
   for (let i = 0; i < (order.items || []).length; i++) {
     const it = order.items[i];
+    if (taskedIndices.has(i)) {
+      skippedProducts.push(it.itemName);
+      continue;
+    }
     const taskCode = await generateCode('TASK');
     tasks.push(await Task.create({
       taskCode,
@@ -102,7 +145,20 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
       createdBy: req.user._id,
     }));
   }
-  res.status(201).json({ success: true, total: tasks.length, data: tasks });
+
+  if (tasks.length === 0) {
+    return next(new AppError(
+      `All products for this order already have tasks assigned (${skippedProducts.join(', ')}).`,
+      409
+    ));
+  }
+
+  res.status(201).json({
+    success: true,
+    total: tasks.length,
+    data: tasks,
+    ...(skippedProducts.length > 0 && { skippedProducts }),
+  });
 });
 
 // Mark / unmark an order as emergency (top-of-list priority in Operations).

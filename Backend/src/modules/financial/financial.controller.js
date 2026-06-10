@@ -121,10 +121,20 @@ exports.payExpense = asyncHandler(async (req, res, next) => {
   if (!expense) return next(new AppError('Expense not found', 404));
 
   const amountPaid = parseFloat(req.body.amountPaid) || 0;
+  const paymentProofUrl = req.file?.path || req.body.proofUrl || undefined;
+  const paidBy = req.body.paidBy || req.user.fullName;
+
   expense.paidAmount = (expense.paidAmount || 0) + amountPaid;
-  expense.proofUrl = req.file?.path || req.body.proofUrl || expense.proofUrl;
-  expense.paidBy = req.body.paidBy || req.user.fullName;
+  expense.paidBy = paidBy;
   expense.paidDate = new Date();
+
+  expense.paymentHistory.push({
+    amount: amountPaid,
+    paidBy,
+    paidDate: new Date(),
+    proofUrl: paymentProofUrl,
+    note: req.body.note || 'Paid via Financial module',
+  });
 
   const remaining = expense.amount - expense.paidAmount;
   if (remaining <= 0) expense.paymentStatus = 'Paid';

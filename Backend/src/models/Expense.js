@@ -17,6 +17,13 @@ const expenseSchema = new mongoose.Schema({
   paymentStatus: { type: String, enum: ['Unpaid', 'Paid', 'Partially Paid', 'Partial Paid'], default: 'Unpaid' },
   paidBy: String,
   paidDate: Date,
+  paymentHistory: [{
+    amount: { type: Number, required: true },
+    paidBy: String,
+    paidDate: { type: Date, default: Date.now },
+    proofUrl: String,
+    note: String,
+  }],
   expenseSource: { type: String, enum: ['manual', 'purchase', 'reimbursement'], default: 'manual' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });

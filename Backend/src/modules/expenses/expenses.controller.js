@@ -62,6 +62,43 @@ exports.getExpenseHistory = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: expenses, summary, total: expenses.length });
 });
 
+exports.getExpenseById = asyncHandler(async (req, res, next) => {
+  const expense = await Expense.findById(req.params.id);
+  if (!expense) return next(new AppError('Expense not found', 404));
+  res.status(200).json({ success: true, data: expense });
+});
+
+exports.recordPayment = asyncHandler(async (req, res, next) => {
+  const expense = await Expense.findById(req.params.id);
+  if (!expense) return next(new AppError('Expense not found', 404));
+
+  const amountPaid = parseFloat(req.body.amountPaid) || 0;
+  if (amountPaid <= 0) return next(new AppError('Payment amount must be positive', 400));
+
+  const proofUrl = req.file?.path || req.body.proofUrl || undefined;
+  const paidBy = req.body.paidBy || req.user.fullName;
+
+  expense.paymentHistory.push({
+    amount: amountPaid,
+    paidBy,
+    paidDate: new Date(),
+    proofUrl,
+    note: req.body.note || '',
+  });
+
+  expense.paidAmount = (expense.paidAmount || 0) + amountPaid;
+  expense.paidBy = paidBy;
+  expense.paidDate = new Date();
+  if (proofUrl) expense.proofUrl = proofUrl;
+
+  const remaining = expense.amount - expense.paidAmount;
+  if (remaining <= 0) expense.paymentStatus = 'Paid';
+  else if (expense.paidAmount > 0) expense.paymentStatus = 'Partially Paid';
+
+  await expense.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, data: expense });
+});
+
 exports.exportExpenses = asyncHandler(async (req, res) => {
   const expenses = await Expense.find().sort('-expenseDate');
   const csv = ['Date,Code,Category,Description,Vendor,Amount,Status']

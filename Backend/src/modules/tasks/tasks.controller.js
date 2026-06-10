@@ -13,7 +13,7 @@ exports.getTasks = asyncHandler(async (req, res) => {
   const tasks = await Task.find(filter)
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName orderCategory leadId',
+      select: 'orderCode clientName orderCategory leadId items status expectedDeliveryDate',
       populate: { path: 'leadId', select: 'leadType' },
     })
     .populate('assignedTo', 'fullName role')
@@ -71,12 +71,46 @@ exports.getSuggestedTasks = asyncHandler(async (req, res) => {
 
 exports.getTask = asyncHandler(async (req, res, next) => {
   const task = await Task.findById(req.params.id)
-    .populate('orderId').populate('assignedTo', 'fullName');
+    .populate({
+      path: 'orderId',
+      select: 'orderCode clientName orderCategory leadId items status expectedDeliveryDate',
+      populate: { path: 'leadId', select: 'leadType' },
+    })
+    .populate('assignedTo', 'fullName role');
   if (!task) return next(new AppError('Task not found', 404));
   res.status(200).json({ success: true, data: task });
 });
 
-exports.createTask = asyncHandler(async (req, res) => {
+exports.createTask = asyncHandler(async (req, res, next) => {
+  const { orderId, productIndex, product } = req.body;
+
+  // Prevent duplicate when linked to an order + specific product slot
+  if (orderId) {
+    const dupFilter = { orderId };
+    if (productIndex !== undefined && productIndex !== null && !isNaN(productIndex)) {
+      dupFilter.productIndex = Number(productIndex);
+    } else if (product) {
+      dupFilter.product = product;
+    }
+    if (Object.keys(dupFilter).length > 1) {
+      const existing = await Task.findOne(dupFilter);
+      if (existing) {
+        return next(new AppError(
+          `A task for "${product || `product #${productIndex}`}" on this order already exists (${existing.taskCode}). Delete the existing task first if you need to reassign.`,
+          409
+        ));
+      }
+    }
+  }
+
+  // Prevent duplicate Kit Packing task per order
+  if (orderId && req.body.taskType === 'Kit Packing') {
+    const existingKitPacking = await Task.findOne({ orderId, taskType: 'Kit Packing' });
+    if (existingKitPacking) {
+      return next(new AppError('A Kit Packing task already exists for this order.', 409));
+    }
+  }
+
   const taskCode = await generateCode('TASK');
   const task = await Task.create({ ...req.body, taskCode, createdBy: req.user._id });
   res.status(201).json({ success: true, data: task });
@@ -98,30 +132,41 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
     const siblings = await Task.find({ orderId: task.orderId });
     const allDone = siblings.length > 0 && siblings.every((t) => t.status === 'Done');
     if (allDone) {
-      const order = await Order.findByIdAndUpdate(
-        task.orderId,
-        { status: 'Dispatch Ready', taskStatus: 'Completed' },
-        { new: true }
-      );
-      orderForwarded = true;
-      // Create a DispatchRecord so the order surfaces in the Dispatch UI (idempotent).
-      if (order) {
-        const existing = await DispatchRecord.findOne({ orderId: order._id });
-        if (!existing) {
-          const dispatchCode = await generateCode('DISP');
-          await DispatchRecord.create({
-            dispatchCode,
-            orderId: order._id,
-            status: 'Draft',
-            dispatchType: order.deliveryType === 'Partial' ? 'Partial Dispatch' : 'Full Dispatch',
-            items: (order.items || []).map((it) => ({
-              itemId: it.itemId,
-              itemName: it.itemName,
-              qtyOrdered: it.qty,
-              qtyDispatched: it.qty,
-            })),
-            createdBy: req.user._id,
-          });
+      // Kit orders require a Kit Packing task to be completed before forwarding.
+      const orderDoc = await Order.findById(task.orderId).populate('leadId', 'kitDisplayUnit displayUnit');
+      const kitDisplayUnit = orderDoc?.kitDisplayUnit || orderDoc?.displayUnit
+        || orderDoc?.leadId?.kitDisplayUnit || orderDoc?.leadId?.displayUnit;
+      const hasKitPackingTask = siblings.some((t) => t.taskType === 'Kit Packing');
+
+      if (kitDisplayUnit && !hasKitPackingTask) {
+        // All product tasks done but Kit Packing not yet assigned — signal the UI.
+        await Order.findByIdAndUpdate(task.orderId, { taskStatus: 'Kit Packing Required' });
+      } else {
+        const order = await Order.findByIdAndUpdate(
+          task.orderId,
+          { status: 'Dispatch Ready', taskStatus: 'Completed' },
+          { new: true }
+        );
+        orderForwarded = true;
+        // Create a DispatchRecord so the order surfaces in the Dispatch UI (idempotent).
+        if (order) {
+          const existing = await DispatchRecord.findOne({ orderId: order._id });
+          if (!existing) {
+            const dispatchCode = await generateCode('DISP');
+            await DispatchRecord.create({
+              dispatchCode,
+              orderId: order._id,
+              status: 'Draft',
+              dispatchType: order.deliveryType === 'Partial' ? 'Partial Dispatch' : 'Full Dispatch',
+              items: (order.items || []).map((it) => ({
+                itemId: it.itemId,
+                itemName: it.itemName,
+                qtyOrdered: it.qty,
+                qtyDispatched: it.qty,
+              })),
+              createdBy: req.user._id,
+            });
+          }
         }
       }
     }

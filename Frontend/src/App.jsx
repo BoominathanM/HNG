@@ -17,6 +17,7 @@ import Sales from './pages/Sales';
 import Operations from './pages/Operations';
 import OperationDetail from './pages/Operations/OperationDetail';
 import Tasks from './pages/Tasks';
+import TaskDetail from './pages/Tasks/TaskDetail';
 import Dispatch from './pages/Dispatch';
 import DispatchDetail from './pages/Dispatch/DispatchDetail';
 import Staff from './pages/Staff';
@@ -89,6 +90,7 @@ function ThemedApp() {
               <Route path="/operations" element={<PermissionRoute module="Operations"><Operations /></PermissionRoute>} />
               <Route path="/operations/:id" element={<PermissionRoute module="Operations"><OperationDetail /></PermissionRoute>} />
               <Route path="/tasks" element={<PermissionRoute module="Task Management"><Tasks /></PermissionRoute>} />
+              <Route path="/tasks/:id" element={<PermissionRoute module="Task Management"><TaskDetail /></PermissionRoute>} />
               <Route path="/dispatch" element={<PermissionRoute module="Dispatch Team"><Dispatch /></PermissionRoute>} />
               <Route path="/dispatch/:id" element={<PermissionRoute module="Dispatch Team"><DispatchDetail /></PermissionRoute>} />
               <Route path="/staff" element={<PermissionRoute module="Staff Management"><Staff /></PermissionRoute>} />
