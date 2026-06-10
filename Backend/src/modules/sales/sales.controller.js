@@ -12,7 +12,20 @@ const { cloudinary } = require('../../config/cloudinary');
 // ─── LEADS ───────────────────────────────────────────────────────────────────
 exports.getLeads = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
-  if (req.query.status) filter.status = req.query.status;
+  if (req.query.status) {
+    filter.status = req.query.status;
+  } else {
+    // Cross-reference orders: exclude any lead whose linked order is dispatched/delivered
+    const dispatchedLeadIds = await Order.distinct('leadId', {
+      deletedAt: null,
+      status: { $in: ['Dispatched', 'Delivered'] },
+      leadId: { $ne: null },
+    });
+    filter.status = { $nin: ['Dispatched', 'Delivered'] };
+    if (dispatchedLeadIds.length) {
+      filter._id = { $nin: dispatchedLeadIds };
+    }
+  }
   if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
   if (req.query.search) {
     const re = new RegExp(req.query.search, 'i');
@@ -175,7 +188,10 @@ exports.getQuotations = asyncHandler(async (req, res) => {
   if (req.query.leadId) filter.leadId = req.query.leadId;
   if (req.query.status) filter.status = req.query.status;
   const quotations = await Quotation.find(filter).populate('leadId', 'hotelName leadType').sort('-createdAt');
-  res.status(200).json({ success: true, total: quotations.length, data: quotations });
+  const convertedQuotIds = await Order.distinct('quotationId', { deletedAt: null, quotationId: { $ne: null } });
+  const convertedSet = new Set(convertedQuotIds.map(id => String(id)));
+  const active = quotations.filter(q => !convertedSet.has(String(q._id)));
+  res.status(200).json({ success: true, total: active.length, data: active });
 });
 
 exports.createQuotation = asyncHandler(async (req, res) => {
@@ -312,7 +328,10 @@ exports.getNegotiations = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.leadId) filter.leadId = req.query.leadId;
   const negotiations = await Negotiation.find(filter).sort('-createdAt');
-  res.status(200).json({ success: true, total: negotiations.length, data: negotiations });
+  const convertedNegIds = await Order.distinct('negotiationId', { deletedAt: null, negotiationId: { $ne: null } });
+  const convertedSet = new Set(convertedNegIds.map(id => String(id)));
+  const active = negotiations.filter(n => !convertedSet.has(String(n._id)));
+  res.status(200).json({ success: true, total: active.length, data: active });
 });
 
 // Finds or creates a Customer party by name; returns its _id.
@@ -482,6 +501,9 @@ exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
     { new: true }
   );
   if (!order) return next(new AppError('Order not found', 404));
+  if (['Dispatched', 'Delivered'].includes(req.body.status) && order.leadId) {
+    await Lead.findByIdAndUpdate(order.leadId, { status: req.body.status });
+  }
   res.status(200).json({ success: true, data: order });
 });
 

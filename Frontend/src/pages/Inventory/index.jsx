@@ -9,7 +9,7 @@ import {
 import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, WarningOutlined, CalculatorOutlined, SearchOutlined, CheckOutlined,
-  DownloadOutlined, ShoppingOutlined, LeftOutlined, CloseOutlined,
+  DownloadOutlined, ShoppingOutlined, LeftOutlined, CloseOutlined, EditOutlined,
   UserOutlined, InfoCircleOutlined, MinusOutlined,
   EyeOutlined, UploadOutlined, SafetyCertificateOutlined, HistoryOutlined,
   ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, SwapOutlined,
@@ -130,6 +130,7 @@ export default function Inventory() {
     price: `₹${i.purchasePrice}/${i.unit}`,
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
     hsnCode: i.hsnCode,
+    gstPercent: i.gstPercent || 0,
     discountPercent: i.discountPercent,
     packingMaterial: i.packingMaterial,
     materialCategory: i.materialCategory,
@@ -159,8 +160,9 @@ export default function Inventory() {
   const [adjustModal, setAdjustModal] = useState({ open: false, item: null, type: null });
   const [adjustForm] = Form.useForm();
 
-  /* ── Add Item modal ── */
+  /* ── Add / Edit Item modal ── */
   const [addItemModal, setAddItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
   const [addItemForm] = Form.useForm();
 
   /* ── Kits ── */
@@ -453,30 +455,36 @@ export default function Inventory() {
   const handleSaveItem = async () => {
     try {
       const vals = await addItemForm.validateFields();
-      const opening = Number(vals.current) || 0;
-      await createItemMutation({
+      const payload = {
         itemName: vals.name,
         category: vals.category || '',
         unit: vals.unit || 'Pcs',
         unitValue: Number(String(vals.value ?? '').replace(/[^0-9.]/g, '')) || 0,
         defaultSize: vals.default_size || '',
-        openingStock: opening,
-        currentStock: opening,
         minStock: Number(vals.min) || 0,
         purchasePrice: Number(String(vals.purchase_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
+        gstPercent: Number(vals.gstPercent) || 0,
         hsnCode: vals.hsn || '',
         discountPercent: Number(String(vals.discount ?? '').replace(/[^0-9.]/g, '')) || 0,
         packingMaterial: Array.isArray(vals.packingMaterial) ? vals.packingMaterial.join(', ') : (vals.packingMaterial || ''),
         materialCategory: Array.isArray(vals.materialCategory) ? vals.materialCategory.join(', ') : (vals.materialCategory || ''),
         brand: Array.isArray(vals.brand) ? vals.brand.join(', ') : (vals.brand || ''),
-      }).unwrap();
+      };
+      if (editingItem) {
+        await updateItemMutation({ id: editingItem.key, ...payload }).unwrap();
+        enqueueSnackbar('Item updated', { variant: 'success' });
+      } else {
+        const opening = Number(vals.current) || 0;
+        await createItemMutation({ ...payload, openingStock: opening, currentStock: opening }).unwrap();
+        enqueueSnackbar('Item added', { variant: 'success' });
+      }
       addItemForm.resetFields();
+      setEditingItem(null);
       setAddItemModal(false);
-      enqueueSnackbar('Item added', { variant: 'success' });
     } catch (err) {
-      if (err?.errorFields) return; // form validation error — fields already highlighted
-      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add item', { variant: 'error' });
+      if (err?.errorFields) return;
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to save item', { variant: 'error' });
     }
   };
 
@@ -664,6 +672,7 @@ export default function Inventory() {
         : <Tag color="success" style={{ borderRadius: 12 }}>Healthy</Tag>
     },
     { title: 'Price', dataIndex: 'price', responsive: ['md'] },
+    { title: 'GST', dataIndex: 'gstPercent', responsive: ['md'], render: (v) => v > 0 ? <Tag style={{ borderRadius: 12, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33' }}>{v}%</Tag> : <Text type="secondary">—</Text> },
     {
       title: 'Vendors', dataIndex: 'sellers', key: 'sellers', responsive: ['lg'],
       render: (v, r) => {
@@ -703,6 +712,7 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
+          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, value: r.unitValue, default_size: r.defaultSize, min: r.min, purchase_price: r.value, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, discount: r.discountPercent, packingMaterial: r.packingMaterial ? r.packingMaterial.split(', ').filter(Boolean) : [], materialCategory: r.materialCategory ? r.materialCategory.split(', ').filter(Boolean) : [], brand: r.brand ? r.brand.split(', ').filter(Boolean) : [] }); setAddItemModal(true); }}>Edit</Button>
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
         </Space>
@@ -1365,6 +1375,7 @@ export default function Inventory() {
                                   { name: ['products', field.name, 'purchasePrice'], value: item.value || '' },
                                   { name: ['products', field.name, 'sellingPrice'], value: item.sellingPrice || '' },
                                   { name: ['products', field.name, 'hsnCode'], value: item.hsnCode || '' },
+                                  { name: ['products', field.name, 'gst'], value: item.gstPercent > 0 ? `${item.gstPercent}%` : 'None' },
                                   { name: ['products', field.name, 'discountPercent'], value: item.discountPercent || '' },
                                   { name: ['products', field.name, 'packingMaterial'], value: item.packingMaterial || '' },
                                   { name: ['products', field.name, 'materialCategory'], value: item.materialCategory || '' },
@@ -1516,6 +1527,7 @@ export default function Inventory() {
                 <Descriptions.Item label="Selling Price">{detailItem.sellingPrice != null ? `₹${Number(detailItem.sellingPrice).toLocaleString()}` : '—'}</Descriptions.Item>
                 <Descriptions.Item label="Default Size">{detailItem.defaultSize || '—'}</Descriptions.Item>
                 <Descriptions.Item label="HSN Code">{detailItem.hsnCode || '—'}</Descriptions.Item>
+                <Descriptions.Item label="GST %">{detailItem.gstPercent > 0 ? `${detailItem.gstPercent}%` : '—'}</Descriptions.Item>
                 <Descriptions.Item label="Discount">{detailItem.discountPercent != null && detailItem.discountPercent > 0 ? `${detailItem.discountPercent}%` : '—'}</Descriptions.Item>
                 <Descriptions.Item label="Brand">{detailItem.brand || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Packing Material">{detailItem.packingMaterial || '—'}</Descriptions.Item>
@@ -1727,13 +1739,13 @@ export default function Inventory() {
           ADD ITEM MODAL
       ═══════════════════════════════════════ */}
       <Modal
-        title={<span style={{ fontSize: 16, fontWeight: 700 }}>Add Inventory Item</span>}
+        title={<span style={{ fontSize: 16, fontWeight: 700 }}>{editingItem ? 'Edit Inventory Item' : 'Add Inventory Item'}</span>}
         open={addItemModal}
-        onCancel={() => { setAddItemModal(false); addItemForm.resetFields(); }}
+        onCancel={() => { setAddItemModal(false); setEditingItem(null); addItemForm.resetFields(); }}
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Button onClick={() => { setAddItemModal(false); addItemForm.resetFields(); }}>Cancel</Button>
-            <Button type="primary" onClick={handleSaveItem} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Item</Button>
+            <Button onClick={() => { setAddItemModal(false); setEditingItem(null); addItemForm.resetFields(); }}>Cancel</Button>
+            <Button type="primary" onClick={handleSaveItem} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>{editingItem ? 'Update Item' : 'Save Item'}</Button>
           </div>
         }
         width={Math.min(560, window.innerWidth - 24)} centered
@@ -1761,7 +1773,7 @@ export default function Inventory() {
                 <Input placeholder="e.g. 2.5cm x 2.5cm" />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
+            {!editingItem && <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>}
             <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Purchase Price" name="purchase_price">
@@ -1773,7 +1785,17 @@ export default function Inventory() {
                 <Input prefix="₹" addonAfter={<Form.Item name="selling_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={8}><Form.Item label="GST" name="gst"><Select defaultValue="None"><Option value="None">None</Option><Option value="5%">5%</Option><Option value="12%">12%</Option><Option value="18%">18%</Option><Option value="28%">28%</Option></Select></Form.Item></Col>
+            <Col xs={24} sm={8}>
+              <Form.Item label="GST %" name="gstPercent" tooltip="GST percentage applied to this product. Orders/leads auto-fill this value when the product is selected.">
+                <Select allowClear placeholder="Select GST %">
+                  <Option value={0}>None (0%)</Option>
+                  <Option value={5}>5%</Option>
+                  <Option value={12}>12%</Option>
+                  <Option value={18}>18%</Option>
+                  <Option value={28}>28%</Option>
+                </Select>
+              </Form.Item>
+            </Col>
             <Col xs={24} sm={8}><Form.Item label="HSN" name="hsn"><Input placeholder="Ex: 6704" /></Form.Item></Col>
             <Col xs={24} sm={8}><Form.Item label="Discount on Sales Price" name="discount"><Input suffix="%" /></Form.Item></Col>
             <Col xs={24} sm={8}>

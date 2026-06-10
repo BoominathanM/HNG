@@ -246,7 +246,7 @@ export const apiSlice = createApi({
     }),
     confirmDispatch: builder.mutation({
       query: ({ id, formData }) => ({ url: `/dispatch/${id}/confirm`, method: 'post', data: formData }),
-      invalidatesTags: ['Dispatch'],
+      invalidatesTags: ['Dispatch', 'Leads', 'Orders'],
     }),
     uploadDispatchLR: builder.mutation({
       query: ({ id, formData, ...data }) => ({ url: `/dispatch/${id}/lr`, method: 'patch', data: formData || data }),
@@ -480,7 +480,7 @@ export const apiSlice = createApi({
     }),
     createSalesOrder: builder.mutation({
       query: (data) => ({ url: '/sales/orders', method: 'post', data }),
-      invalidatesTags: ['Orders', 'Leads'],
+      invalidatesTags: ['Orders', 'Leads', 'Quotations', 'Negotiations'],
     }),
     updateSalesOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/orders/${id}`, method: 'put', data }),
@@ -488,7 +488,7 @@ export const apiSlice = createApi({
     }),
     updateSalesOrderStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/sales/orders/${id}/status`, method: 'patch', data: { status } }),
-      invalidatesTags: ['Orders'],
+      invalidatesTags: ['Orders', 'Leads'],
     }),
     getComplaints: builder.query({
       query: (params) => ({ url: '/sales/complaints', params }),

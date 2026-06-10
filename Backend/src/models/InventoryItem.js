@@ -13,6 +13,7 @@ const inventoryItemSchema = new mongoose.Schema({
   purchasePrice: { type: Number, default: 0 },
   sellingPrice: { type: Number, default: 0 },
   hsnCode: String,
+  gstPercent: { type: Number, default: 0 },
   discountPercent: { type: Number, default: 0 },
   packingMaterial: String,
   materialCategory: String,

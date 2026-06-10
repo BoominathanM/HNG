@@ -1,5 +1,6 @@
 const DispatchRecord = require('../../models/DispatchRecord');
 const Order = require('../../models/Order');
+const Lead = require('../../models/Lead');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const Transport = require('../../models/Transport');
@@ -102,10 +103,13 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
     }
   }
 
-  // Update order status
+  // Update order status and mark linked lead as Dispatched
   const orderDoc = dispatch.orderId && (dispatch.orderId._id ? dispatch.orderId : await Order.findById(dispatch.orderId));
   if (orderDoc) {
     await Order.findByIdAndUpdate(orderDoc._id, { status: 'Dispatched' });
+    if (orderDoc.leadId) {
+      await Lead.findByIdAndUpdate(orderDoc.leadId, { status: 'Dispatched' });
+    }
   }
 
   // Notify sales person + customer (in-app + WhatsApp when enabled).

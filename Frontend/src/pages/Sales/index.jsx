@@ -404,6 +404,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     const item = inventoryItemsData.find((i) => i._id === value);
     if (!item) return;
     if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
+    if (item.gstPercent != null && item.gstPercent > 0) form.setFieldValue([fieldName, name, 'gst'], item.gstPercent);
     applySpec('packingMaterial', item.packingMaterial);
     applySpec('materialCategory', item.materialCategory);
     applySpec('brand', item.brand);
@@ -487,6 +488,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       form.setFieldValue([fieldName, name, 'name'], item?.itemName ?? selectedId);
                       if (!item) return;
                       if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
+                      if (item.gstPercent != null && item.gstPercent > 0) form.setFieldValue([fieldName, name, 'gst'], item.gstPercent);
                       applySpec('packingMaterial', item.packingMaterial);
                       applySpec('materialCategory', item.materialCategory);
                       applySpec('brand', item.brand);
@@ -533,8 +535,28 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   </Form.Item>
                 </Col>
                 <Col span={6}>
-                  <Form.Item {...rest} name={[name, 'gst']} style={{ marginBottom: 0 }}>
-                    <InputNumber placeholder="GST %" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
+                  <Form.Item
+                    {...rest}
+                    name={[name, 'gst']}
+                    style={{ marginBottom: 0 }}
+                    tooltip={invItem?.gstPercent > 0 ? `Product GST: ${invItem.gstPercent}% (min)` : undefined}
+                    rules={[{
+                      validator: (_, val) => {
+                        const minGst = invItem?.gstPercent || 0;
+                        if (minGst > 0 && (Number(val) || 0) < minGst) {
+                          return Promise.reject(new Error(`Min ${minGst}%`));
+                        }
+                        return Promise.resolve();
+                      }
+                    }]}
+                  >
+                    <InputNumber
+                      placeholder="GST %"
+                      style={{ width: '100%' }}
+                      min={invItem?.gstPercent || 0}
+                      disabled={isItemDisabled}
+                      size="small"
+                    />
                   </Form.Item>
                 </Col>
                 <Col span={7}>
@@ -1249,7 +1271,7 @@ export default function Sales() {
         packingMaterial: p.packingMaterial || invItem?.packingMaterial || '',
         materialCategory: p.materialCategory || invItem?.materialCategory || '',
         brand: p.brand || invItem?.brand || '',
-        gst: p.gst || invItem?.gst || 0,
+        gst: p.gstPercent || Number(String(p.gst || '').replace('%', '')) || invItem?.gstPercent || 0,
       };
     });
     const pt = leadForm.getFieldValue('productType') || [];
@@ -1496,27 +1518,32 @@ export default function Sales() {
   useEffect(() => {
     if (complaintsRaw?.data) setComplaintsData((complaintsRaw.data).map((c) => ({ ...c, key: c._id, orderId: c.orderId?.orderCode || c.orderId, hotelName: c.clientName, description: c.description, raisedAt: c.createdAt, salesPerson: c.salesPerson, status: c.status })));
   }, [complaintsRaw]);
-  // Derive one row per unique hotel from leads (most-recent lead wins)
+  // Build Parties tab from the Party collection (Customer type) — independent of leadsData
+  // so dispatched/converted leads don't hide hotels from the Parties tab.
+  // Enrich each party with phone/location/salesPerson from the most-recent order for that hotel.
   useEffect(() => {
-    if (!leadsData.length) return;
-    const map = new Map();
-    [...leadsData]
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .forEach(lead => {
-        const key = (lead.hotelName || '').toLowerCase().trim();
-        if (key && !map.has(key)) map.set(key, lead);
+    const parties = (partiesRaw?.data || []).filter(p => !p.type || p.type === 'Customer');
+    if (!parties.length) return;
+    const orderByHotel = new Map();
+    [...ordersData].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .forEach(o => {
+        const k = (o.hotelName || o.clientName || '').toLowerCase().trim();
+        if (k && !orderByHotel.has(k)) orderByHotel.set(k, o);
       });
-    setCustomersData(Array.from(map.values()).map((lead, i) => ({
-      ...lead,
-      key: lead.key || lead._id || i,
-      customerId: lead.customerId || `HOTEL-${String(lead._id || i).slice(-5)}`,
-      hotelName: lead.hotelName,
-      location: lead.location || lead.locationCity || '—',
-      phone: lead.phone,
-      salesPerson: lead.salesPerson || '—',
-      createdAt: lead.createdAt,
-    })));
-  }, [leadsData]);
+    setCustomersData(parties.map((p) => {
+      const o = orderByHotel.get((p.name || '').toLowerCase().trim());
+      return {
+        ...p,
+        key: p._id,
+        customerId: `HOTEL-${String(p._id).slice(-5)}`,
+        hotelName: p.name,
+        location: p.city || o?.location || o?.city || '—',
+        phone: p.phone || o?.phone || o?.clientPhone || '—',
+        salesPerson: o?.salesPerson || '—',
+        createdAt: p.createdAt,
+      };
+    }));
+  }, [partiesRaw, ordersData]);
 
   useEffect(() => {
     if (viewMode === 'order-detail' && selectedRecord?.gstNumber) {
@@ -2664,19 +2691,6 @@ export default function Sales() {
     { title: 'Phone', dataIndex: 'phone', width: 130, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Created At', dataIndex: 'createdAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
-    {
-      title: 'Actions', key: 'actions',
-      render: (_, r) => (
-        <Space size={4}>
-          <Tooltip title="View Detail"><Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); openDetailNextScreen(r); }} /></Tooltip>
-          <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); openAddLead(r); }} /></Tooltip>
-          <Tooltip title="Get Order & Send Quotation">
-            <Button size="small" icon={<FileTextOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
-              onClick={(e) => { e.stopPropagation(); startQuotationFromLead(r); }} />
-          </Tooltip>
-        </Space>
-      ),
-    },
   ];
 
   const negotiationColumns = [
@@ -4298,7 +4312,7 @@ export default function Sales() {
           title={
             <Space>
               <EditOutlined style={{ color: '#B11E6A' }} />
-              <span>Edit Order — {orderEditTarget?.oid}</span>
+              <span>Edit Order — {orderEditTarget?.oid || orderEditTarget?.orderCode}</span>
             </Space>
           }
           open={orderEditModalOpen}
@@ -6926,7 +6940,7 @@ export default function Sales() {
                       expandRowByClick: true,
                       showExpandColumn: false,
                       expandedRowRender: (record) => (
-                        <ExpandedPartyOrders hotelName={record.hotelName} />
+                        <ExpandedPartyOrders hotelName={record.hotelName} onView={openOrderDetail} onEdit={openOrderEditModal} />
                       ),
                     }}
                   />
@@ -7046,7 +7060,7 @@ export default function Sales() {
         title={
           <Space>
             <EditOutlined style={{ color: '#B11E6A' }} />
-            <span>Edit Order — {orderEditTarget?.oid}</span>
+            <span>Edit Order — {orderEditTarget?.oid || orderEditTarget?.orderCode}</span>
           </Space>
         }
         open={orderEditModalOpen}
@@ -7216,7 +7230,7 @@ const ORDER_STATUS_COLORS = {
   Dispatched: '#1890ff', Closed: '#aaa', Cancelled: '#ff4d4f',
 };
 
-function ExpandedPartyOrders({ hotelName }) {
+function ExpandedPartyOrders({ hotelName, onView, onEdit }) {
   const { data, isLoading } = useGetOrdersByHotelNameQuery(hotelName, { skip: !hotelName });
   const orders = data?.data || [];
 
@@ -7245,6 +7259,7 @@ function ExpandedPartyOrders({ hotelName }) {
           const _gstFromItems = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
           const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(order.gstAmount) || 0);
           const amount = _subtotal > 0 ? Math.round(_subtotal + _gst) : (Number(order.total) || Number(order.amount) || 0);
+          const orderWithKey = { ...order, key: order._id, oid: order.orderCode };
           return (
             <div
               key={order._id || i}
@@ -7252,7 +7267,9 @@ function ExpandedPartyOrders({ hotelName }) {
                 display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12,
                 background: '#fff', borderRadius: 8, padding: '10px 14px',
                 border: '1px solid #f0f0f0', fontSize: 13,
+                cursor: onView ? 'pointer' : 'default',
               }}
+              onClick={() => onView && onView(orderWithKey)}
             >
               <Text strong style={{ color: '#B11E6A', width: 110, flexShrink: 0 }}>
                 {order.orderCode || `#${i + 1}`}
@@ -7281,6 +7298,18 @@ function ExpandedPartyOrders({ hotelName }) {
                   ? new Date(order.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
                   : '—'}
               </Text>
+              <Space size={4} style={{ marginLeft: 'auto', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                {onView && (
+                  <Tooltip title="View Order">
+                    <Button size="small" icon={<EyeOutlined />} onClick={() => onView(orderWithKey)} />
+                  </Tooltip>
+                )}
+                {onEdit && (
+                  <Tooltip title="Edit Order">
+                    <Button size="small" icon={<EditOutlined />} onClick={() => onEdit(orderWithKey)} />
+                  </Tooltip>
+                )}
+              </Space>
             </div>
           );
         })}
