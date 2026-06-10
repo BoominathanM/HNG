@@ -372,6 +372,10 @@ export const apiSlice = createApi({
       query: ({ id, ...data }) => ({ url: `/financial/requests/${id}/quotation`, method: 'put', data }),
       invalidatesTags: ['Financial'],
     }),
+    requestQuotationModification: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/financial/requests/${id}/request-modification`, method: 'patch', data }),
+      invalidatesTags: ['Financial', 'Purchase'],
+    }),
     payPurchaseOrder: builder.mutation({
       query: ({ id, formData }) => ({ url: `/financial/pay/${id}`, method: 'post', data: formData }),
       invalidatesTags: ['Financial', 'PurchaseOrders'],
@@ -1004,6 +1008,7 @@ export const {
   useApproveFinancialRequestMutation,
   useRejectFinancialRequestMutation,
   useUpdateFinancialQuotationMutation,
+  useRequestQuotationModificationMutation,
   usePayPurchaseOrderMutation,
   useGetExpensePaymentsQuery,
   usePayExpenseMutation,

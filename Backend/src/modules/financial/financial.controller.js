@@ -64,6 +64,21 @@ exports.rejectRequest = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: request });
 });
 
+// Finance sends the quotation back to the Purchase team for corrections / more info
+exports.requestModification = asyncHandler(async (req, res, next) => {
+  const request = await PurchaseRequest.findById(req.params.id);
+  if (!request) return next(new AppError('Request not found', 404));
+  if (request.status === 'Approved') return next(new AppError('Approved request cannot be sent back', 400));
+
+  request.status = 'Modification';
+  const note = req.body.note || req.body.reason || '';
+  request.financeNote = note;
+  if (note) request.notes.push({ text: note, createdBy: req.user._id });
+  await request.save({ validateBeforeSave: false });
+
+  res.status(200).json({ success: true, data: request, message: 'Quotation sent back for modification' });
+});
+
 exports.updateQuotationDetails = asyncHandler(async (req, res, next) => {
   const request = await PurchaseRequest.findByIdAndUpdate(
     req.params.id,

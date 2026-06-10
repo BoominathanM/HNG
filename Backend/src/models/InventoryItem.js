@@ -5,6 +5,7 @@ const inventoryItemSchema = new mongoose.Schema({
   itemName: { type: String, required: [true, 'Item name is required'], trim: true },
   category: String,
   unit: { type: String, default: 'Pcs' },
+  unitValue: { type: Number, default: 0 },
   defaultSize: String,
   openingStock: { type: Number, default: 0 },
   currentStock: { type: Number, default: 0 },

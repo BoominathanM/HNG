@@ -120,6 +120,7 @@ export default function Inventory() {
     name: i.itemName,
     category: i.category,
     unit: i.unit,
+    unitValue: i.unitValue,
     value: i.purchasePrice,
     sellingPrice: i.sellingPrice,
     defaultSize: i.defaultSize,
@@ -457,6 +458,7 @@ export default function Inventory() {
         itemName: vals.name,
         category: vals.category || '',
         unit: vals.unit || 'Pcs',
+        unitValue: Number(String(vals.value ?? '').replace(/[^0-9.]/g, '')) || 0,
         defaultSize: vals.default_size || '',
         openingStock: opening,
         currentStock: opening,
@@ -642,7 +644,7 @@ export default function Inventory() {
     { title: 'Code', dataIndex: 'code', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text> },
     { title: 'Item Name', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
     { title: 'Category', dataIndex: 'category', responsive: ['sm'], render: (v) => <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
-    { title: 'Unit', dataIndex: 'unit', responsive: ['lg'] },
+    { title: 'Value', key: 'value', responsive: ['lg'], render: (_, r) => r.unitValue ? `${r.unitValue} ${r.unit}` : (r.unit || '—') },
     {
       title: 'Stock Level', key: 'level',
       render: (_, r) => (
@@ -650,11 +652,11 @@ export default function Inventory() {
           <Text strong style={{ fontSize: 14, color: r.status === 'Out' ? '#8a1652' : r.status === 'Low' ? '#C94F8A' : '#B11E6A' }}>
             {(r.current ?? 0).toLocaleString()}
           </Text>
-          <Text style={{ fontSize: 11, color: '#999', marginLeft: 4 }}>{r.unit}</Text>
+          <Text style={{ fontSize: 11, color: '#999', marginLeft: 4 }}>units</Text>
         </div>
       ),
     },
-    { title: 'Min Req', dataIndex: 'min', responsive: ['lg'], render: (v, r) => `${v} ${r.unit}` },
+    { title: 'Min Req', dataIndex: 'min', responsive: ['lg'], render: (v) => `${v} units` },
     {
       title: 'Low Stock Alert', key: 'alert',
       render: (_, r) => r.current <= r.min
@@ -675,7 +677,7 @@ export default function Inventory() {
               return (
                 <Tag key={i} style={{ borderRadius: 20, fontSize: 10, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 0, padding: '0 6px 0 8px' }}>
                   <span>{name}</span>
-                  <span style={{ background: '#B11E6A', color: '#fff', borderRadius: 10, padding: '0 6px', fontSize: 9, fontWeight: 700, lineHeight: '16px', marginLeft: 6 }}>{stock} {r.unit}</span>
+                  <span style={{ background: '#B11E6A', color: '#fff', borderRadius: 10, padding: '0 6px', fontSize: 9, fontWeight: 700, lineHeight: '16px', marginLeft: 6 }}>{stock} units</span>
                 </Tag>
               );
             })}
@@ -892,7 +894,7 @@ export default function Inventory() {
                     { title: 'Date', dataIndex: 'date', key: 'date' },
                     { title: 'Item', dataIndex: 'item', key: 'item', render: (v) => <Text strong>{v}</Text> },
                     { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t === 'Addition' ? 'success' : 'error'} icon={t === 'Addition' ? <PlusOutlined /> : <MinusOutlined />} style={{ borderRadius: 12 }}>{t}</Tag> },
-                    { title: 'Qty', dataIndex: 'qty', key: 'qty', render: (q, r) => <Text strong>{q} {r.unit}</Text> },
+                    { title: 'Qty', dataIndex: 'qty', key: 'qty', render: (q) => <Text strong>{q} units</Text> },
                     { title: 'Notes', dataIndex: 'notes', key: 'notes', render: (v) => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>—</Text> },
                     { title: 'Requested By', dataIndex: 'person', key: 'person' },
                     {
@@ -956,7 +958,7 @@ export default function Inventory() {
                       title: 'Action', dataIndex: 'action', key: 'action',
                       render: v => <Tag color={v === 'Stock Added' ? 'success' : v === 'Stock Deducted' ? 'error' : 'warning'} style={{ borderRadius: 12 }}>{v}</Tag>
                     },
-                    { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.action === 'Stock Added' ? '#52c41a' : '#ff4d4f' }}>{r.action === 'Stock Added' ? '+' : '-'}{r.qty} {r.unit}</Text> },
+                    { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.action === 'Stock Added' ? '#52c41a' : '#ff4d4f' }}>{r.action === 'Stock Added' ? '+' : '-'}{r.qty} units</Text> },
                     { title: 'Source / Entity', dataIndex: 'source', key: 'source', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
                     { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', render: v => v ? <Text style={{ color: '#7c3aed' }}>{v}</Text> : <Text type="secondary">—</Text> },
                     { title: 'Person', dataIndex: 'person', key: 'person' },
@@ -1035,7 +1037,7 @@ export default function Inventory() {
                       },
                       {
                         title: 'System Count', dataIndex: 'systemCount', width: 120, align: 'center',
-                        render: (v, r) => <Text strong style={{ color: '#B11E6A' }}>{v} {r.unit}</Text>
+                        render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v} units</Text>
                       },
                       {
                         title: 'Physical Count', width: 180, align: 'center',
@@ -1070,7 +1072,7 @@ export default function Inventory() {
                           const diff = r.physicalCount - r.systemCount;
                           return (
                             <Text strong style={{ color: diff < 0 ? '#ff4d4f' : diff > 0 ? '#fa8c16' : '#52c41a', fontSize: 13 }}>
-                              {diff > 0 ? '+' : ''}{diff} {r.unit}
+                              {diff > 0 ? '+' : ''}{diff} units
                             </Text>
                           );
                         }
@@ -1104,7 +1106,7 @@ export default function Inventory() {
 
                               {r.missingType === 'known' && (
                                 <Input.TextArea
-                                  placeholder={`Enter reason for ${Math.abs(diff)} ${r.unit} missing...`}
+                                  placeholder={`Enter reason for ${Math.abs(diff)} units missing...`}
                                   value={r.missingReason}
                                   onChange={e => setCheckSession(prev => prev.map(i => i.key === r.key ? { ...i, missingReason: e.target.value } : i))}
                                   rows={2}
@@ -1121,7 +1123,7 @@ export default function Inventory() {
                                   message={<Text strong style={{ fontSize: 12 }}>Unknown Shortage — Will be Reported</Text>}
                                   description={
                                     <Text style={{ fontSize: 11 }}>
-                                      {Math.abs(diff)} {r.unit} of <strong>{r.name}</strong> is unaccounted for.
+                                      {Math.abs(diff)} units of <strong>{r.name}</strong> is unaccounted for.
                                       This will be automatically reported to <strong>Super Admin</strong> and <strong>Manager</strong> upon submission.
                                     </Text>
                                   }
@@ -1551,7 +1553,7 @@ export default function Inventory() {
                     <Text style={{ fontSize: 12, color: '#aaa' }}>{h.date}</Text>
                   </Space>
                   <Text strong style={{ color: h.action === 'Stock Added' ? '#52c41a' : '#ff4d4f', fontSize: 13 }}>
-                    {h.action === 'Stock Added' ? '+' : '-'}{h.qty} {h.unit}
+                    {h.action === 'Stock Added' ? '+' : '-'}{h.qty} units
                   </Text>
                 </div>
               ))}
@@ -1713,7 +1715,7 @@ export default function Inventory() {
             rules={[{ required: true, message: 'Enter count' }, { type: 'number', min: 1, message: 'Must be at least 1' }]}
             style={{ marginBottom: 16 }}
           >
-            <InputNumber min={1} style={{ width: '100%', borderRadius: 8 }} placeholder={`Enter quantity to ${adjustModal.type === 'Addition' ? 'add' : 'reduce'}`} addonAfter={adjustModal.item?.unit} />
+            <InputNumber min={1} style={{ width: '100%', borderRadius: 8 }} placeholder={`Enter quantity to ${adjustModal.type === 'Addition' ? 'add' : 'reduce'}`} addonAfter="units" />
           </Form.Item>
           <Form.Item label={<Text style={{ fontWeight: 600 }}>Notes / Description</Text>} name="notes" style={{ marginBottom: 0 }}>
             <Input.TextArea rows={3} placeholder="Reason for this adjustment..." style={{ borderRadius: 8 }} />
@@ -1750,8 +1752,8 @@ export default function Inventory() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item label="Value" name="value">
-                <Input prefix="₹" addonAfter={<Form.Item name="unit" noStyle><Select style={{ width: 80 }} placeholder="Unit"><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option><Option value="ml">ml</Option><Option value="gram">gram</Option></Select></Form.Item>} />
+              <Form.Item label="Value" name="value" tooltip="Quantity / weight / volume of a single product unit (e.g. 10 gram per soap)">
+                <Input placeholder="e.g. 10" addonAfter={<Form.Item name="unit" noStyle><Select style={{ width: 80 }} placeholder="Unit"><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option><Option value="ml">ml</Option><Option value="gram">gram</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
@@ -1843,8 +1845,8 @@ export default function Inventory() {
                   <Text style={{ fontWeight: 700, color: textColor, display: 'block', fontSize: 14 }}>{activeItem.name}</Text>
                   <Space size={6} style={{ flexWrap: 'wrap' }}>
                     <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', margin: 0 }}>{activeItem.category}</Tag>
-                    <Text style={{ fontSize: 12, color: '#aaa' }}>Current: <strong style={{ color: activeItem.status === 'OK' ? '#B11E6A' : '#C94F8A' }}>{activeItem.current} {activeItem.unit}</strong></Text>
-                    <Text style={{ fontSize: 12, color: '#aaa' }}>Min: {activeItem.min} {activeItem.unit}</Text>
+                    <Text style={{ fontSize: 12, color: '#aaa' }}>Current: <strong style={{ color: activeItem.status === 'OK' ? '#B11E6A' : '#C94F8A' }}>{activeItem.current} units</strong></Text>
+                    <Text style={{ fontSize: 12, color: '#aaa' }}>Min: {activeItem.min} units</Text>
                   </Space>
                 </div>
               </div>
@@ -1852,7 +1854,7 @@ export default function Inventory() {
                 <Progress percent={Math.min(100, Math.round((activeItem.current / activeItem.max) * 100))} size="small" strokeColor={activeItem.status === 'OK' ? '#B11E6A' : '#C94F8A'} showInfo={false} />
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <Text style={{ fontSize: 11, color: '#aaa' }}>0</Text>
-                  <Text style={{ fontSize: 11, color: '#aaa' }}>Max: {activeItem.max} {activeItem.unit}</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa' }}>Max: {activeItem.max} units</Text>
                 </div>
               </div>
             </div>
@@ -1985,7 +1987,7 @@ export default function Inventory() {
                   <Text style={{ fontWeight: 700, color: textColor, display: 'block', fontSize: 14 }}>{activeIssueItem.name}</Text>
                   <Space size={6} style={{ flexWrap: 'wrap' }}>
                     <Tag style={{ borderRadius: 20, fontSize: 11, background: '#8a165222', color: '#8a1652', border: '1px solid #8a165244', margin: 0 }}>{activeIssueItem.category}</Tag>
-                    <Text style={{ fontSize: 12, color: '#aaa' }}>Available: <strong style={{ color: activeIssueItem.current === 0 ? '#ff4d4f' : '#8a1652' }}>{activeIssueItem.current} {activeIssueItem.unit}</strong></Text>
+                    <Text style={{ fontSize: 12, color: '#aaa' }}>Available: <strong style={{ color: activeIssueItem.current === 0 ? '#ff4d4f' : '#8a1652' }}>{activeIssueItem.current} units</strong></Text>
                     <Text style={{ fontSize: 12, color: '#aaa' }}>Price: {activeIssueItem.price}</Text>
                   </Space>
                 </div>
@@ -1994,7 +1996,7 @@ export default function Inventory() {
                 <Progress percent={Math.min(100, Math.round((activeIssueItem.current / activeIssueItem.max) * 100))} size="small" strokeColor={activeIssueItem.status === 'OK' ? '#8a1652' : '#C94F8A'} showInfo={false} />
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <Text style={{ fontSize: 11, color: '#aaa' }}>0</Text>
-                  <Text style={{ fontSize: 11, color: '#aaa' }}>Max: {activeIssueItem.max} {activeIssueItem.unit}</Text>
+                  <Text style={{ fontSize: 11, color: '#aaa' }}>Max: {activeIssueItem.max} units</Text>
                 </div>
               </div>
             </div>

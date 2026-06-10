@@ -1239,7 +1239,7 @@ export default function Purchase() {
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
                               if (!req) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-                              const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
+                              const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing', Modification: 'warning' };
                               return <Tag color={colorMap[req.status]} style={{ borderRadius: 12 }}>{req.status}</Tag>;
                             }
                           },
@@ -1429,7 +1429,7 @@ export default function Purchase() {
                           {
                             title: 'Quotation Status', key: 'status', width: 120,
                             render: (_, r) => {
-                              const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
+                              const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing', Modification: 'warning' };
                               return <Tag color={colorMap[r.status] || 'default'} style={{ borderRadius: 12 }}>{r.status}</Tag>;
                             }
                           },

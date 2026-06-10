@@ -11,7 +11,7 @@ const purchaseRequestSchema = new mongoose.Schema({
   firstReminderDate: Date,
   secondReminderDate: Date,
   quotationFileUrl: String,
-  status: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
+  status: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Modification'], default: 'Pending' },
   financeNote: String,
   notes: [{
     text: { type: String, required: true },

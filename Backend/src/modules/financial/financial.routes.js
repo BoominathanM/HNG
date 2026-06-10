@@ -10,6 +10,7 @@ router.use(protect);
 router.get('/requests', ctrl.getPendingRequests);
 router.patch('/requests/:id/approve', ctrl.approveRequest);
 router.patch('/requests/:id/reject', ctrl.rejectRequest);
+router.patch('/requests/:id/request-modification', ctrl.requestModification);
 router.put('/requests/:id/quotation', ctrl.updateQuotationDetails);
 
 // Purchase Order Payments

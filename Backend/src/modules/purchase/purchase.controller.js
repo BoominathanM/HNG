@@ -55,12 +55,12 @@ exports.raiseRequest = asyncHandler(async (req, res) => {
 
 exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
   if (!req.file) return next(new AppError('Please upload a file', 400));
-  const request = await PurchaseRequest.findByIdAndUpdate(
-    req.params.id,
-    { quotationFileUrl: req.file.path },
-    { new: true }
-  );
+  const request = await PurchaseRequest.findById(req.params.id);
   if (!request) return next(new AppError('Request not found', 404));
+  request.quotationFileUrl = req.file.path;
+  // Re-uploading after a Finance modification request sends it back for review
+  if (request.status === 'Modification') request.status = 'Pending';
+  await request.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, data: request });
 });
 

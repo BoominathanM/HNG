@@ -22,6 +22,7 @@ import {
   useApproveFinancialRequestMutation,
   useRejectFinancialRequestMutation,
   useUpdateFinancialQuotationMutation,
+  useRequestQuotationModificationMutation,
   usePayPurchaseOrderMutation,
   useGetExpensePaymentsQuery,
   usePayExpenseMutation,
@@ -50,6 +51,7 @@ export default function Financial() {
   const [approveReq] = useApproveFinancialRequestMutation();
   const [rejectReq] = useRejectFinancialRequestMutation();
   const [updateQuotation] = useUpdateFinancialQuotationMutation();
+  const [requestModification] = useRequestQuotationModificationMutation();
   const [payOrder] = usePayPurchaseOrderMutation();
   const { data: expensePaymentsData } = useGetExpensePaymentsQuery();
   const [payExpense] = usePayExpenseMutation();
@@ -69,18 +71,34 @@ export default function Financial() {
     payment_terms: r.paymentTerms,
     date: r.createdAt?.slice(0, 10),
     notes: r.notes || [],
+    quotation_file_url: r.quotationFileUrl || null,
+    quotation_file: r.quotationFileUrl ? r.quotationFileUrl.split('/').pop() : null,
+    finance_note: r.financeNote || '',
   })), [pendingReqData]);
 
   const purchaseOrders = useMemo(() => raisedRequests
     .filter((r) => r.linkedOrder)
-    .map((r) => ({
-      ...r.linkedOrder,
-      key: r.linkedOrder._id,
-      requestKey: r._id,
-      item: r.item,
-      supplier: r.supplier,
-      unit: r.unit,
-    })), [raisedRequests]);
+    .map((r) => {
+      const o = r.linkedOrder;
+      return {
+        ...o,
+        key: o._id,
+        requestKey: r._id,
+        item: r.item,
+        supplier: r.supplier,
+        unit: r.unit,
+        vendor: r.vendorId || null,
+        // Normalize backend (camelCase) → field names the table/Details modal read
+        bill_no: o.billNo || o.poCode || '—',
+        inv_no: o.invNo || '—',
+        status: o.paymentStatus || 'Unpaid',
+        payment_terms: o.paymentTerms || r.payment_terms,
+        date: (o.createdAt || r.createdAt)?.slice(0, 10),
+        amount: o.amount || 0,
+        paid_amount: o.paidAmount || 0,
+        notes: o.notes || [],
+      };
+    }), [raisedRequests]);
 
   const [viewRequest, setViewRequest] = useState(null);
   const [viewQuotationFile, setViewQuotationFile] = useState(null);
@@ -113,6 +131,23 @@ export default function Financial() {
 
   const handleAddOrderNote = (orderKey) => {
     setOrderNoteInput(prev => ({ ...prev, [orderKey]: '' }));
+  };
+
+  /* Finance sends a quotation back to Purchase for corrections → status becomes "Modification" */
+  const handleReRequest = async (key) => {
+    const text = reqNoteInput.trim();
+    if (!text) {
+      enqueueSnackbar('Please describe the corrections / details needed.', { variant: 'warning' });
+      return;
+    }
+    try {
+      await requestModification({ id: key, note: text }).unwrap();
+      enqueueSnackbar('Quotation sent back for modification.', { variant: 'success' });
+      setReqNoteInput('');
+      setOpenReqNotes(null);
+    } catch {
+      enqueueSnackbar('Failed to send back for modification.', { variant: 'error' });
+    }
   };
 
 
@@ -365,6 +400,7 @@ export default function Financial() {
                       <Option value="Pending">Pending</Option>
                       <Option value="Approved">Approved</Option>
                       <Option value="Rejected">Rejected</Option>
+                      <Option value="Modification">Modification</Option>
                     </Select>
                   </div>
                   <Table
@@ -410,6 +446,12 @@ export default function Financial() {
                                   <Button size="small" type="primary" onClick={() => handleAddReqNote(r.key)}
                                     style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Add</Button>
                                 </div>
+                                {r.status === 'Pending' && (
+                                  <Button size="small" icon={<EditOutlined />} onClick={() => handleReRequest(r.key)}
+                                    style={{ marginTop: 8, width: '100%', borderColor: '#fa8c16', color: '#fa8c16', borderRadius: 6 }}>
+                                    Send Back for Modification
+                                  </Button>
+                                )}
                               </Col>
                               {linkedOrder && (
                                 <Col xs={24} md={12}>
@@ -499,7 +541,7 @@ export default function Financial() {
                       {
                         title: 'Quotation Status', dataIndex: 'status', key: 'status', width: 120, align: 'center',
                         render: v => {
-                          const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing' };
+                          const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing', Modification: 'warning' };
                           return <Tag color={colorMap[v]} style={{ borderRadius: 12, margin: 0 }}>{v}</Tag>;
                         }
                       },
@@ -512,7 +554,7 @@ export default function Financial() {
                               <Button size="small" icon={<MessageOutlined />}
                                 onClick={() => { setOpenReqNotes(openReqNotes === r.key ? null : r.key); setReqNoteInput(''); }}
                                 style={{ color: openReqNotes === r.key ? '#fff' : '#B11E6A', background: openReqNotes === r.key ? '#B11E6A' : 'transparent', borderColor: '#B11E6A55' }}
-                              >Modify</Button>
+                              >Re-Request Quotation</Button>
                             </Badge>
                           );
                           const supPhone = (suppliersData[r.supplier]?.phone || '').replace(/\D/g, '');
@@ -1066,10 +1108,14 @@ export default function Financial() {
             <Button
               type="primary"
               icon={<UploadOutlined />}
+              disabled={!viewQuotationFile?.quotation_file_url}
               style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
-              onClick={() => { enqueueSnackbar('File downloaded', { variant: 'success' }); }}
+              onClick={() => {
+                if (!viewQuotationFile?.quotation_file_url) return;
+                window.open(viewQuotationFile.quotation_file_url, '_blank');
+              }}
             >
-              Download File
+              Open / Download File
             </Button>
           </div>
         }
@@ -1084,10 +1130,22 @@ export default function Financial() {
                 <FileTextOutlined style={{ color: '#fff', fontSize: 22 }} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <Text strong style={{ color: '#B11E6A', fontSize: 13, display: 'block', wordBreak: 'break-all' }}>{viewQuotationFile.quotation_file}</Text>
-                <Text type="secondary" style={{ fontSize: 11 }}>Uploaded via AI Quotation Scanner</Text>
+                <Text strong style={{ color: '#B11E6A', fontSize: 13, display: 'block', wordBreak: 'break-all' }}>{viewQuotationFile.quotation_file || 'No file uploaded'}</Text>
+                <Text type="secondary" style={{ fontSize: 11 }}>Uploaded by the Purchase team</Text>
               </div>
             </div>
+
+            {/* Inline preview of the uploaded quotation */}
+            {viewQuotationFile.quotation_file_url && (
+              /\.(png|jpe?g|gif|webp|bmp)$/i.test(viewQuotationFile.quotation_file_url) ? (
+                <Image src={viewQuotationFile.quotation_file_url} alt="Quotation" style={{ width: '100%', borderRadius: 8, marginBottom: 16, border: '1px solid #f0f0f0' }} />
+              ) : (
+                <a href={viewQuotationFile.quotation_file_url} target="_blank" rel="noreferrer"
+                  style={{ display: 'block', marginBottom: 16, color: '#B11E6A', fontWeight: 600 }}>
+                  <FileTextOutlined style={{ marginRight: 6 }} />Open attached document in new tab
+                </a>
+              )
+            )}
 
             {/* Request summary */}
             <Descriptions bordered size="small" column={2}>
@@ -1097,10 +1155,13 @@ export default function Financial() {
               <Descriptions.Item label="Payment Terms" span={2}><Text style={{ fontSize: 11 }}>{viewQuotationFile.payment_terms}</Text></Descriptions.Item>
               <Descriptions.Item label="Date">{viewQuotationFile.date}</Descriptions.Item>
               <Descriptions.Item label="Status">
-                <Tag color={viewQuotationFile.status === 'Approved' ? 'success' : viewQuotationFile.status === 'Rejected' ? 'error' : 'processing'} style={{ borderRadius: 10 }}>
+                <Tag color={{ Approved: 'success', Rejected: 'error', Modification: 'warning', Pending: 'processing' }[viewQuotationFile.status] || 'processing'} style={{ borderRadius: 10 }}>
                   {viewQuotationFile.status}
                 </Tag>
               </Descriptions.Item>
+              {viewQuotationFile.finance_note && (
+                <Descriptions.Item label="Finance Note" span={2}><Text type="warning">{viewQuotationFile.finance_note}</Text></Descriptions.Item>
+              )}
             </Descriptions>
           </div>
         )}
@@ -1116,27 +1177,35 @@ export default function Financial() {
         centered
       >
         {viewRequest && (() => {
-          const sup = suppliersData[viewRequest.supplier] || null;
+          const sup = viewRequest.vendor || suppliersData[viewRequest.supplier] || null;
+          const bank = sup?.bankDetails || sup?.bank;
+          const bankText = bank
+            ? (typeof bank === 'string' ? bank : [bank.bankName, bank.accountNo, bank.ifsc].filter(Boolean).join(' · '))
+            : '—';
           return (
             <div style={{ marginTop: 16 }}>
               <Descriptions bordered size="small" column={2}>
-                <Descriptions.Item label="Date">{viewRequest.date}</Descriptions.Item>
-                <Descriptions.Item label="Status"><Tag color={getStatusColor(viewRequest.status)}>{viewRequest.status}</Tag></Descriptions.Item>
-                <Descriptions.Item label="Bill No">{viewRequest.bill_no}</Descriptions.Item>
+                <Descriptions.Item label="Date">{viewRequest.date || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Status"><Tag color={getStatusColor(viewRequest.status)}>{viewRequest.status || 'Unpaid'}</Tag></Descriptions.Item>
+                <Descriptions.Item label="Item" span={2}><Text strong>{viewRequest.item || viewRequest.itemName || '—'}</Text></Descriptions.Item>
+                <Descriptions.Item label="Qty">{viewRequest.qty} {viewRequest.unit}</Descriptions.Item>
+                <Descriptions.Item label="Amount"><Text strong style={{ color: '#B11E6A' }}>₹{(viewRequest.amount || 0).toLocaleString()}</Text></Descriptions.Item>
+                <Descriptions.Item label="Bill / PO No">{viewRequest.bill_no || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Invoice No">{viewRequest.inv_no || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Payment Terms" span={2}>{viewRequest.payment_terms || 'N/A'}</Descriptions.Item>
               </Descriptions>
               {viewRequest.supplier && (
                 <>
                   <Divider orientation="left" style={{ marginTop: 16 }}>Supplier / Vendor Details</Divider>
                   <Descriptions bordered size="small" column={2}>
-                    <Descriptions.Item label="Name"><Text strong style={{ color: '#B11E6A' }}>{viewRequest.supplier}</Text></Descriptions.Item>
+                    <Descriptions.Item label="Name"><Text strong style={{ color: '#B11E6A' }}>{sup?.name || viewRequest.supplier}</Text></Descriptions.Item>
                     <Descriptions.Item label="Phone">{sup?.phone || '—'}</Descriptions.Item>
                     <Descriptions.Item label="Email">{sup?.email || '—'}</Descriptions.Item>
                     <Descriptions.Item label="Address" span={2}>{sup?.address || '—'}</Descriptions.Item>
                   </Descriptions>
                   <Divider orientation="left" style={{ marginTop: 16 }}>Bank Details</Divider>
                   <Descriptions bordered size="small" column={1}>
-                    <Descriptions.Item label="Bank / A/C">{sup?.bank || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Bank / A/C">{bankText}</Descriptions.Item>
                   </Descriptions>
                 </>
               )}
