@@ -203,6 +203,9 @@ export default function Operations() {
     // before kitDisplayUnit was copied onto the Order document itself.
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
     displayUnit: o.displayUnit || o.kitDisplayUnit || o.leadId?.displayUnit || o.leadId?.kitDisplayUnit || '',
+    displayUnitTab: o.displayUnitTab || o.leadId?.displayUnitTab || '',
+    logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
+    logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
   })), [ordersData]);
 
   const [queueSteps, setQueueSteps] = useState({});
@@ -492,7 +495,17 @@ export default function Operations() {
           </Space>
         ),
       },
-      { title: 'Hotel Logo', dataIndex: 'hotelLogo' },
+      { title: 'Hotel Name', dataIndex: 'hotelLogo' },
+      {
+        title: 'Logo',
+        key: 'logo',
+        width: 80,
+        render: (_, record) => record.logoUrl
+          ? <a href={record.logoUrl} target="_blank" rel="noreferrer"><img src={record.logoUrl} alt="logo" style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 6, border: '1px solid #eee' }} /></a>
+          : record.logoRequired
+            ? <Tag color="orange" style={{ fontSize: 10 }}>Logo Req.</Tag>
+            : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+      },
       {
         title: 'Product',
         dataIndex: 'product',

@@ -354,6 +354,23 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/inventory/kits/${id}`, method: 'delete' }),
       invalidatesTags: ['Kits'],
     }),
+    // Packing Material Config
+    getPackingConfig: builder.query({
+      query: () => ({ url: '/inventory/packing-config' }),
+      providesTags: ['PackingConfig'],
+    }),
+    createPackingConfig: builder.mutation({
+      query: (data) => ({ url: '/inventory/packing-config', method: 'post', data }),
+      invalidatesTags: ['PackingConfig'],
+    }),
+    updatePackingConfig: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/inventory/packing-config/${id}`, method: 'put', data }),
+      invalidatesTags: ['PackingConfig'],
+    }),
+    deletePackingConfig: builder.mutation({
+      query: (id) => ({ url: `/inventory/packing-config/${id}`, method: 'delete' }),
+      invalidatesTags: ['PackingConfig'],
+    }),
 
     // ── Financial ────────────────────────────────────────────────────────────
     getPendingRequests: builder.query({
@@ -1014,6 +1031,11 @@ export const {
   useCreateKitMutation,
   useUpdateKitMutation,
   useDeleteKitMutation,
+  // Packing Config
+  useGetPackingConfigQuery,
+  useCreatePackingConfigMutation,
+  useUpdatePackingConfigMutation,
+  useDeletePackingConfigMutation,
   // Financial
   useGetPendingRequestsQuery,
   useApproveFinancialRequestMutation,

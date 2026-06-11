@@ -199,6 +199,9 @@ export default function OperationDetail() {
     transportationBy: o.transportationBy || '',
     forwardingCharge: o.forwardingCharge || false,
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
+    displayUnitTab: o.displayUnitTab || o.leadId?.displayUnitTab || '',
+    logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
+    logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
     paymentProofs: (() => {
       const seen = new Set();
       const logoEntry = o.leadId?.hotelLogoUrl
@@ -1338,6 +1341,12 @@ export default function OperationDetail() {
                 columns={[
                   { title: 'Order', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
                   { title: 'Hotel', dataIndex: 'hotelLogo' },
+                  {
+                    title: 'Logo', key: 'logo', width: 70,
+                    render: (_, r) => r.logoUrl
+                      ? <a href={r.logoUrl} target="_blank" rel="noreferrer"><img src={r.logoUrl} alt="logo" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 4, border: '1px solid #eee' }} /></a>
+                      : r.logoRequired ? <Tag color="orange" style={{ fontSize: 10 }}>Logo Req.</Tag> : <Text type="secondary">—</Text>,
+                  },
                   { title: 'Product', dataIndex: 'product' },
                   { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
                   { title: 'Priority', key: 'urgentStatus', render: () => <Tag icon={<AlertFilled />} color="error">Emergency</Tag> },
@@ -1359,6 +1368,12 @@ export default function OperationDetail() {
                 columns={[
                   { title: 'Order', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
                   { title: 'Hotel', dataIndex: 'hotelLogo' },
+                  {
+                    title: 'Logo', key: 'logo', width: 70,
+                    render: (_, r) => r.logoUrl
+                      ? <a href={r.logoUrl} target="_blank" rel="noreferrer"><img src={r.logoUrl} alt="logo" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 4, border: '1px solid #eee' }} /></a>
+                      : r.logoRequired ? <Tag color="orange" style={{ fontSize: 10 }}>Logo Req.</Tag> : <Text type="secondary">—</Text>,
+                  },
                   { title: 'Product', dataIndex: 'product' },
                   { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
                   { title: 'Priority', key: 'pendingStatus', render: () => <Tag color="default">Regular</Tag> },

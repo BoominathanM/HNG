@@ -33,6 +33,7 @@ const orderSchema = new mongoose.Schema({
     lineTotal: Number,
     // ─── Operations / packaging fields ───
     logoType: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'None', ''], default: '' },
+    sticker: { type: String, enum: ['YES', 'NO', ''], default: '' },
     size: String,
     packaging: String,
     material: String,
@@ -41,6 +42,11 @@ const orderSchema = new mongoose.Schema({
     inventoryStock: { type: Number, default: 0 },
     verified: { type: Boolean, default: false },
   }],
+  // Resolved from selected display unit's tabMapping (Box | Ziplock | Sticker)
+  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', ''], default: '' },
+  // Logo branding
+  logoRequired: { type: Boolean, default: false },
+  logoUrl: String,
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   // ─── Operations workflow tracking ───
   isUrgent: { type: Boolean, default: false },

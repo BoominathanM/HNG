@@ -61,6 +61,7 @@ import {
   useGetStickerRequestsQuery,
   useApproveStickerRequestMutation,
   useGetCompanySettingsQuery,
+  useGetPackingConfigQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -342,7 +343,7 @@ Miss. Priya will Contact you
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────
-function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], inventoryItemsData = [], kits = [] }) {
+function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], inventoryItemsData = [], kits = [], packingMaterialOptions = PACKING_MATERIAL_OPTIONS }) {
   const { name, key, ...rest } = field;
   const isKit = Form.useWatch([fieldName, name, 'isKit']);
   const kitType = Form.useWatch([fieldName, name, 'kitType']);
@@ -617,12 +618,14 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
               <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} style={{ marginBottom: 0 }}>
                 {/* When the selected inventory item defines its own packing materials, show only
                     those (drop the global `field` fetch); otherwise fall back to global options. */}
-                <SelectWithAdd
-                  field={packingOptions.length ? undefined : 'packingMaterial'}
-                  defaultOptions={packingOptions.length ? packingOptions : PACKING_MATERIAL_OPTIONS}
-                  placeholder="Select / Add"
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Select"
                   disabled={isItemDisabled}
                   size="small"
+                  options={packingOptions.length ? packingOptions : packingMaterialOptions}
                 />
               </Form.Item>
             </div>
@@ -684,7 +687,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   );
 }
 
-function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false, inventoryItems = [], inventoryItemsData = [], kits = [] }) {
+function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false, inventoryItems = [], inventoryItemsData = [], kits = [], packingMaterialOptions = PACKING_MATERIAL_OPTIONS }) {
   const isDark = useSelector((s) => s.theme.isDark);
   return (
     <Form.List name={fieldName}>
@@ -703,6 +706,7 @@ function ProductFormList({ fieldName = 'products', disabled = false, showSpecs =
               inventoryItems={inventoryItems}
               inventoryItemsData={inventoryItemsData}
               kits={kits}
+              packingMaterialOptions={packingMaterialOptions}
             />
           ))}
           {!disabled && (
@@ -1227,6 +1231,16 @@ export default function Sales() {
   const { data: kitsRaw } = useGetKitsQuery();
   const { data: companySettingsData } = useGetCompanySettingsQuery();
   const invoiceSettings = companySettingsData?.data || {};
+  const { data: packingConfigRaw } = useGetPackingConfigQuery();
+  const packingConfigAll = packingConfigRaw?.data || [];
+  const configDisplayUnitOptions = React.useMemo(
+    () => packingConfigAll.filter(c => c.type === 'displayUnit').map(c => ({ value: c.value, label: c.label, tabMapping: c.tabMapping })),
+    [packingConfigAll],
+  );
+  const configPackingMaterialOptions = React.useMemo(
+    () => packingConfigAll.filter(c => c.type === 'packingMaterial').map(c => ({ value: c.value, label: c.label })),
+    [packingConfigAll],
+  );
 
   const performanceTargets = perfRaw?.data?.targets || [];
   const performanceRewards = perfRaw?.data?.rewards || {};
@@ -1623,6 +1637,12 @@ export default function Sales() {
       followUpDate: toStr(values.followUpDate),
       followUpTime: values.followUpTime,
       displayUnit: values.kitDisplayUnit || values.displayUnit,
+      displayUnitTab: (() => {
+        const du = values.kitDisplayUnit || values.displayUnit;
+        const cfg = configDisplayUnitOptions.find(o => o.value === du);
+        return cfg?.tabMapping || '';
+      })(),
+      packingMaterial: values.packingMaterial || '',
       hotelLogoUrl: hotelLogoUrl || undefined,
       paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
       paymentCollection: (values.paymentCollection || []).filter(e => e.paymentMethod),
@@ -2282,6 +2302,15 @@ export default function Sales() {
       productType: q.productType,
       selectedKit: q.selectedKit,
       kitDisplayUnit: q.kitDisplayUnit || q.displayUnit,
+      displayUnit: q.kitDisplayUnit || q.displayUnit,
+      displayUnitTab: (() => {
+        const du = q.kitDisplayUnit || q.displayUnit;
+        const cfg = configDisplayUnitOptions.find(o => o.value === du);
+        return cfg?.tabMapping || q.displayUnitTab || '';
+      })(),
+      packingMaterial: q.packingMaterial || '',
+      logoRequired: q.logoNeeded || false,
+      logoUrl: q.hotelLogoUrl || '',
       kitSize: q.kitSize,
       // Carry all contact + billing + delivery fields through
       hotelName: q.hotelName || q.clientName,
@@ -4515,7 +4544,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Specifications</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} />
+                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} packingMaterialOptions={configPackingMaterialOptions} />
                 </Card>
               </Col>
 
@@ -4559,7 +4588,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Products & Revised Rates</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} />
+                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} packingMaterialOptions={configPackingMaterialOptions} />
                 </Card>
 
                 {/* Live total summary + Round Value switch */}
@@ -4676,7 +4705,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Quantities</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} />
+                  <ProductFormList fieldName="products" inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} packingMaterialOptions={configPackingMaterialOptions} />
                 </Card>
 
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -5727,6 +5756,7 @@ export default function Sales() {
                                   inventoryItems={inventoryItems}
                                   inventoryItemsData={inventoryItemsRaw}
                                   kits={kits}
+                                  packingMaterialOptions={configPackingMaterialOptions}
                                 />
                               ))}
                               <Space style={{ width: '100%', marginTop: 8 }} direction="vertical">
@@ -5939,7 +5969,7 @@ export default function Sales() {
                         <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
                           <Col xs={12} sm={8}>
                             <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
-                              <SelectWithAdd field="displayUnit" defaultOptions={DISPLAY_UNIT_OPTIONS} placeholder="Select / Add unit" />
+                              <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} />
                             </Form.Item>
                           </Col>
                           <Col xs={12} sm={8}>
@@ -5971,6 +6001,7 @@ export default function Sales() {
                                     inventoryItems={inventoryItems}
                                     inventoryItemsData={inventoryItemsRaw}
                                     kits={kits}
+                                    packingMaterialOptions={configPackingMaterialOptions}
                                   />
                                 ))}
                                 <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: true })} icon={<PlusOutlined />} block
@@ -6018,6 +6049,7 @@ export default function Sales() {
                                     inventoryItems={inventoryItems}
                                     inventoryItemsData={inventoryItemsRaw}
                                     kits={kits}
+                                    packingMaterialOptions={configPackingMaterialOptions}
                                   />
                                 ))}
                                 <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: false })} icon={<PlusOutlined />} block

@@ -71,7 +71,11 @@ export const getFlowStep = (order) => {
 
 // Returns true when the item's physical packaging is frosted/ziplock/pouch —
 // regardless of whether the item also needs sticker printing.
+// Priority order: (1) explicit displayUnitTab from config, (2) logoType field,
+// (3) string-match fallback on display unit / packing material names.
 const hasFrostedPackaging = (item, order) => {
+  // Explicit config-resolved tab wins first
+  if (order.displayUnitTab === 'Ziplock') return true;
   if (item.logoType === 'Frosted Ziplock') return true;
   const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
   if (pm.includes('ziplock') || pm.includes('frosted') || pm.includes('pouch')) return true;
@@ -88,6 +92,9 @@ const isFrostedZiplock = (item, order) => {
 
 // Determine an item's ultimate packaging destination (after sticker step completes).
 const getItemPackagingType = (item, order) => {
+  // Explicit config-resolved tab wins first
+  if (order.displayUnitTab === 'Ziplock') return 'frosted';
+  if (order.displayUnitTab === 'Box') return 'box';
   if (hasFrostedPackaging(item, order)) return 'frosted';
   if (item.logoType === 'Box') return 'box';
   const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
@@ -223,6 +230,8 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             isEmergencyProduct,
             // Non-emergency items of an emergency order are gated until emergency items are done
             isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+            logoRequired: order.logoRequired || false,
+            logoUrl: order.logoUrl || '',
           };
         });
       // Emergency products first within this order
@@ -267,6 +276,8 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           isUrgent: order.isUrgent || false,
           isEmergencyProduct,
           isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+          logoRequired: order.logoRequired || false,
+          logoUrl: order.logoUrl || '',
         });
       });
       // Emergency products first within this order
@@ -320,6 +331,8 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           isUrgent: order.isUrgent || false,
           isEmergencyProduct,
           isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+          logoRequired: order.logoRequired || false,
+          logoUrl: order.logoUrl || '',
         });
       });
       // Emergency products first within this order

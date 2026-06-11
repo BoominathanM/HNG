@@ -15,6 +15,7 @@ import {
   ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, SwapOutlined,
   ExclamationCircleOutlined, AuditOutlined,
   BellOutlined, BarChartOutlined, ContainerOutlined,
+  SettingOutlined, DeleteOutlined, TagOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -41,6 +42,10 @@ import {
   useCreateKitMutation,
   useUpdateKitMutation,
   useDeleteKitMutation,
+  useGetPackingConfigQuery,
+  useCreatePackingConfigMutation,
+  useUpdatePackingConfigMutation,
+  useDeletePackingConfigMutation,
 } from '../../store/api/apiSlice';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
 import PhoneInput from '../../components/common/PhoneInput';
@@ -309,6 +314,55 @@ export default function Inventory() {
   const [historySearch, setHistorySearch] = useState('');
   const [historyActionFilter, setHistoryActionFilter] = useState(null);
   const [historyDateRange, setHistoryDateRange] = useState(null);
+
+  /* ── Packing Material Config ── */
+  const { data: packingConfigData } = useGetPackingConfigQuery();
+  const [createPackingConfig] = useCreatePackingConfigMutation();
+  const [updatePackingConfig] = useUpdatePackingConfigMutation();
+  const [deletePackingConfig] = useDeletePackingConfigMutation();
+  const packingConfigList = useMemo(() => (packingConfigData?.data || []), [packingConfigData]);
+  const displayUnits = useMemo(() => packingConfigList.filter(c => c.type === 'displayUnit'), [packingConfigList]);
+  const packingMaterials = useMemo(() => packingConfigList.filter(c => c.type === 'packingMaterial'), [packingConfigList]);
+  const [packingConfigModal, setPackingConfigModal] = useState(false);
+  const [packingConfigType, setPackingConfigType] = useState('displayUnit');
+  const [editingPackingConfig, setEditingPackingConfig] = useState(null);
+  const [packingConfigForm] = Form.useForm();
+
+  const openPackingConfigModal = (type, item = null) => {
+    if (!requireAccess(item ? 'edit' : 'add')) return;
+    setPackingConfigType(type);
+    setEditingPackingConfig(item);
+    setPackingConfigModal(true);
+    packingConfigForm.resetFields();
+    if (item) packingConfigForm.setFieldsValue({ label: item.label, value: item.value, tabMapping: item.tabMapping });
+  };
+
+  const handleSavePackingConfig = async () => {
+    try {
+      const values = await packingConfigForm.validateFields();
+      if (editingPackingConfig) {
+        await updatePackingConfig({ id: editingPackingConfig._id, type: packingConfigType, ...values }).unwrap();
+        enqueueSnackbar('Updated successfully', { variant: 'success' });
+      } else {
+        await createPackingConfig({ type: packingConfigType, ...values }).unwrap();
+        enqueueSnackbar('Added successfully', { variant: 'success' });
+      }
+      setPackingConfigModal(false);
+      setEditingPackingConfig(null);
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || 'Failed to save', { variant: 'error' });
+    }
+  };
+
+  const handleDeletePackingConfig = async (id) => {
+    if (!requireAccess('delete')) return;
+    try {
+      await deletePackingConfig(id).unwrap();
+      enqueueSnackbar('Deleted', { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Delete failed', { variant: 'error' });
+    }
+  };
 
   /* ── Active tab ── */
   const [activeInvTab, setActiveInvTab] = useState('stock');
@@ -1285,9 +1339,176 @@ export default function Inventory() {
               </div>
             )
           },
+
+          /* ── Tab: Packing Material Configuration ── */
+          {
+            key: 'packing_config',
+            label: <Space><SettingOutlined />Packing Config</Space>,
+            children: (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+                {/* Display Units */}
+                <Card
+                  style={{ borderRadius: 14, border: `1px solid ${borderColor}`, background: cardBg }}
+                  styles={{ body: { padding: '16px 20px' } }}
+                  title={
+                    <Space>
+                      <TagOutlined style={{ color: '#B11E6A' }} />
+                      <Text strong style={{ color: textColor }}>Display Units</Text>
+                      <Tag color="geekblue" style={{ borderRadius: 20 }}>{displayUnits.length}</Tag>
+                    </Space>
+                  }
+                  extra={
+                    <Button
+                      type="primary" size="small" icon={<PlusOutlined />}
+                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                      onClick={() => openPackingConfigModal('displayUnit')}
+                    >
+                      Add Display Unit
+                    </Button>
+                  }
+                >
+                  <Table
+                    size="small"
+                    dataSource={displayUnits.map(d => ({ ...d, key: d._id }))}
+                    pagination={false}
+                    style={{ borderRadius: 10, overflow: 'hidden' }}
+                    columns={[
+                      { title: 'Label', dataIndex: 'label', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
+                      { title: 'Value', dataIndex: 'value', render: v => <Tag style={{ borderRadius: 12 }}>{v}</Tag> },
+                      {
+                        title: 'Operations Tab',
+                        dataIndex: 'tabMapping',
+                        render: v => v
+                          ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
+                          : <Text type="secondary">—</Text>,
+                      },
+                      {
+                        title: 'Action', key: 'action', width: 100,
+                        render: (_, row) => (
+                          <Space size={6}>
+                            <Button size="small" icon={<EditOutlined />} onClick={() => openPackingConfigModal('displayUnit', row)} />
+                            <Button
+                              size="small" danger icon={<DeleteOutlined />}
+                              onClick={() => handleDeletePackingConfig(row._id)}
+                            />
+                          </Space>
+                        ),
+                      },
+                    ]}
+                  />
+                  {displayUnits.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                      <Text type="secondary">No display units configured. Click "Add Display Unit" to start.</Text>
+                    </div>
+                  )}
+                </Card>
+
+                {/* Packing Materials */}
+                <Card
+                  style={{ borderRadius: 14, border: `1px solid ${borderColor}`, background: cardBg }}
+                  styles={{ body: { padding: '16px 20px' } }}
+                  title={
+                    <Space>
+                      <ContainerOutlined style={{ color: '#B11E6A' }} />
+                      <Text strong style={{ color: textColor }}>Packing Materials</Text>
+                      <Tag color="magenta" style={{ borderRadius: 20 }}>{packingMaterials.length}</Tag>
+                    </Space>
+                  }
+                  extra={
+                    <Button
+                      type="primary" size="small" icon={<PlusOutlined />}
+                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                      onClick={() => openPackingConfigModal('packingMaterial')}
+                    >
+                      Add Packing Material
+                    </Button>
+                  }
+                >
+                  <Table
+                    size="small"
+                    dataSource={packingMaterials.map(p => ({ ...p, key: p._id }))}
+                    pagination={false}
+                    style={{ borderRadius: 10, overflow: 'hidden' }}
+                    columns={[
+                      { title: 'Label', dataIndex: 'label', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
+                      { title: 'Value', dataIndex: 'value', render: v => <Tag style={{ borderRadius: 12 }}>{v}</Tag> },
+                      {
+                        title: 'Operations Tab',
+                        dataIndex: 'tabMapping',
+                        render: v => v
+                          ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
+                          : <Text type="secondary">—</Text>,
+                      },
+                      {
+                        title: 'Action', key: 'action', width: 100,
+                        render: (_, row) => (
+                          <Space size={6}>
+                            <Button size="small" icon={<EditOutlined />} onClick={() => openPackingConfigModal('packingMaterial', row)} />
+                            <Button
+                              size="small" danger icon={<DeleteOutlined />}
+                              onClick={() => handleDeletePackingConfig(row._id)}
+                            />
+                          </Space>
+                        ),
+                      },
+                    ]}
+                  />
+                  {packingMaterials.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                      <Text type="secondary">No packing materials configured. Click "Add Packing Material" to start.</Text>
+                    </div>
+                  )}
+                </Card>
+
+              </div>
+            ),
+          },
         ])}
         activeKey={activeKeyFor(activeInvTab)}
       />
+
+      {/* ═══════════════════════════════════════
+          PACKING CONFIG ADD / EDIT MODAL
+      ═══════════════════════════════════════ */}
+      <Modal
+        open={packingConfigModal}
+        title={
+          <Space>
+            <SettingOutlined style={{ color: '#B11E6A' }} />
+            <span style={{ fontWeight: 700 }}>
+              {editingPackingConfig ? 'Edit' : 'Add'} {packingConfigType === 'displayUnit' ? 'Display Unit' : 'Packing Material'}
+            </span>
+          </Space>
+        }
+        onCancel={() => { setPackingConfigModal(false); setEditingPackingConfig(null); }}
+        onOk={handleSavePackingConfig}
+        okText={editingPackingConfig ? 'Update' : 'Add'}
+        width={420}
+        okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
+      >
+        <Form form={packingConfigForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item label="Label" name="label" rules={[{ required: true, message: 'Label is required' }]}>
+            <Input placeholder="e.g. Ziplock Pouch" />
+          </Form.Item>
+          <Form.Item label="Value" name="value" rules={[{ required: true, message: 'Value is required' }]}>
+            <Input placeholder="e.g. ZIPLOCK_POUCH" />
+          </Form.Item>
+          <Form.Item
+            label="Operations Tab Mapping"
+            name="tabMapping"
+            tooltip={packingConfigType === 'displayUnit'
+              ? 'Which Operations tab orders using this display unit appear in'
+              : 'Which Operations tab orders using this packing material appear in'}
+          >
+            <Select allowClear placeholder="Select tab (optional)">
+              <Option value="Sticker">Sticker</Option>
+              <Option value="Box">Box</Option>
+              <Option value="Ziplock">Ziplock (Frosted)</Option>
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
 
       {/* ═══════════════════════════════════════
           KIT ADD / EDIT MODAL
