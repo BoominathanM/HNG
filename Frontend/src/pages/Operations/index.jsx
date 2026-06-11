@@ -523,10 +523,11 @@ export default function Operations() {
         dataIndex: 'product',
         render: (value, record) => {
           if (record.isKitParent) {
+            const count = record.children?.length || 0;
             return (
               <Space size={4}>
                 <Tag color="blue" style={{ fontWeight: 600, margin: 0 }}>Kit</Tag>
-                <Text type="secondary" style={{ fontSize: 12 }}>{value}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{count} Product{count !== 1 ? 's' : ''}</Text>
               </Space>
             );
           }
@@ -555,7 +556,7 @@ export default function Operations() {
         title: label === 'Box' ? 'Size / PVK' : 'Size',
         dataIndex: 'size',
         render: (value, record) => {
-          if (record.isKitParent) return <Text type="secondary">—</Text>;
+          if (record.isKitChild) return value ? <Text type="secondary" style={{ fontSize: 11 }}>{value}</Text> : <Text type="secondary">—</Text>;
           return value ? <Tag color="geekblue">{value}</Tag> : '—';
         },
       },
@@ -578,7 +579,7 @@ export default function Operations() {
         title: 'Sticker Printing',
         dataIndex: 'stickerPrinting',
         render: (val, record) => {
-          if (record.isKitParent) return <Text type="secondary">—</Text>;
+          if (record.isKitChild) return <Text type="secondary">—</Text>;
           return <Tag color={val === 'Yes' ? 'blue' : 'default'}>{val || '—'}</Tag>;
         },
       },
@@ -596,7 +597,7 @@ export default function Operations() {
         key: 'design',
         width: 90,
         render: (_, record) => {
-          if (record.isKitParent || record.isEmergencyGated) return <Text type="secondary">—</Text>;
+          if (record.isKitChild || record.isEmergencyGated) return <Text type="secondary">—</Text>;
           const sr = findStickerReq(record);
           const url = sr?.designFileUrl;
           if (!url) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
@@ -637,8 +638,8 @@ export default function Operations() {
         key: 'actions',
         width: 320,
         render: (_, record) => {
-          if (record.isKitParent) {
-            return <Text type="secondary" style={{ fontSize: 12 }}>↓ Expand to manage products</Text>;
+          if (record.isKitChild) {
+            return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
           }
           if (record.isEmergencyGated) {
             return (
@@ -926,9 +927,11 @@ export default function Operations() {
       return matchSearch && matchStatus;
     });
 
-    // For Box/Frosted tabs group products from the same order under one kit parent row
+    // For Box/Frosted tabs: group only true kit orders (kitDisplayUnit set) under one
+    // shared parent row. Non-kit orders with multiple products stay as individual rows.
     let tableSource = activeRows;
     if (type !== 'Sticker') {
+      const typeKey = type === 'Box' ? 'box' : 'frosted';
       const orderMap = new Map();
       activeRows.forEach((row) => {
         if (!orderMap.has(row.orderId)) orderMap.set(row.orderId, []);
@@ -936,12 +939,21 @@ export default function Operations() {
       });
       tableSource = [];
       orderMap.forEach((group, orderId) => {
-        if (group.length === 1) {
-          tableSource.push(group[0]);
+        const order = apiOrders.find((o) => o.id === orderId);
+        const isKitOrder = !!(order?.kitDisplayUnit);
+        if (!isKitOrder || group.length === 1) {
+          // Non-kit or single-product: each item shown individually.
+          // For kit orders, use the kit-level size so all items reflect the kit size.
+          group.forEach((row) => {
+            const rowToShow = (isKitOrder && order?.kitSize) ? { ...row, size: order.kitSize } : row;
+            tableSource.push(rowToShow);
+          });
         } else {
+          // Kit order with multiple products: one shared parent row with kit-level actions.
+          // Key suffix must end in -box/-frosted so findStickerReq detects the right SR type.
           const first = group[0];
           tableSource.push({
-            key: `${orderId}-kit`,
+            key: `${orderId}-kit-${typeKey}`,
             orderId,
             orderCategory: first.orderCategory,
             hotelLogo: first.hotelLogo,
@@ -951,11 +963,12 @@ export default function Operations() {
             isEmergencyProduct: group.some((r) => r.isEmergencyProduct),
             isEmergencyGated: group.every((r) => r.isEmergencyGated),
             qty: group.reduce((sum, r) => sum + Number(r.qty || 0), 0),
-            product: `${group.length} Products`,
-            size: null,
-            stickerPrinting: null,
+            product: 'Kit',
+            size: order?.kitSize || null,
+            stickerPrinting: first.stickerPrinting,
+            packagingType: first.packagingType,
             isKitParent: true,
-            children: group,
+            children: group.map((r) => ({ ...r, isKitChild: true })),
           });
         }
       });
