@@ -20,6 +20,7 @@ import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetPendingRequestsQuery,
   useApproveFinancialRequestMutation,
+  useBatchApproveRequestsMutation,
   useRejectFinancialRequestMutation,
   useUpdateFinancialQuotationMutation,
   useRequestQuotationModificationMutation,
@@ -49,6 +50,7 @@ export default function Financial() {
   // RTK Query data
   const { data: pendingReqData } = useGetPendingRequestsQuery();
   const [approveReq] = useApproveFinancialRequestMutation();
+  const [batchApproveReqs] = useBatchApproveRequestsMutation();
   const [rejectReq] = useRejectFinancialRequestMutation();
   const [updateQuotation] = useUpdateFinancialQuotationMutation();
   const [requestModification] = useRequestQuotationModificationMutation();
@@ -74,6 +76,8 @@ export default function Financial() {
     quotation_file_url: r.quotationFileUrl || null,
     quotation_file: r.quotationFileUrl ? r.quotationFileUrl.split('/').pop() : null,
     finance_note: r.financeNote || '',
+    batchId: r.batchId || null,
+    requestType: r.requestType || 'individual',
   })), [pendingReqData]);
 
   const purchaseOrders = useMemo(() => raisedRequests
@@ -489,12 +493,22 @@ export default function Financial() {
                       },
                       {
                         title: 'Item & Supplier', key: 'item_sup', width: 190,
-                        render: (_, r) => (
-                          <Space direction="vertical" size={1}>
-                            <Text strong>{r.item}</Text>
-                            <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{r.supplier}</Text>
-                          </Space>
-                        )
+                        render: (_, r) => {
+                          const batchSize = r.batchId ? raisedRequests.filter(req => req.batchId === r.batchId).length : 0;
+                          return (
+                            <Space direction="vertical" size={1}>
+                              <Space size={4} align="center">
+                                <Text strong>{r.item}</Text>
+                                {batchSize > 1 && (
+                                  <Tag color="blue" style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
+                                    Bulk ×{batchSize}
+                                  </Tag>
+                                )}
+                              </Space>
+                              <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{r.supplier}</Text>
+                            </Space>
+                          );
+                        }
                       },
                       {
                         title: 'Qty', key: 'qty', width: 80, align: 'center',
@@ -567,21 +581,38 @@ export default function Financial() {
                                 <Button size="small" icon={<FileTextOutlined />} onClick={() => setViewQuotationFile(r)}
                                   style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>File</Button>
                               )}
-                              {r.status === 'Pending' && (
-                                <>
-                                  <Button size="small" type="primary" icon={<CheckCircleOutlined />}
-                                    onClick={async () => {
-                                      try { await approveReq(r.key).unwrap(); enqueueSnackbar('Approved', { variant: 'success' }); }
-                                      catch { enqueueSnackbar('Approval failed', { variant: 'error' }); }
-                                    }}
-                                    style={{ background: '#52c41a', border: 'none' }}>Approve</Button>
-                                  <Button size="small" danger icon={<CloseCircleOutlined />}
-                                    onClick={async () => {
-                                      try { await rejectReq({ id: r.key }).unwrap(); enqueueSnackbar('Rejected', { variant: 'warning' }); }
-                                      catch { enqueueSnackbar('Rejection failed', { variant: 'error' }); }
-                                    }}>Reject</Button>
-                                </>
-                              )}
+                              {r.status === 'Pending' && (() => {
+                                const batchPendingCount = r.batchId
+                                  ? raisedRequests.filter(req => req.batchId === r.batchId && req.status === 'Pending').length
+                                  : 0;
+                                return (
+                                  <>
+                                    <Button size="small" type="primary" icon={<CheckCircleOutlined />}
+                                      onClick={async () => {
+                                        try { await approveReq(r.key).unwrap(); enqueueSnackbar('Approved', { variant: 'success' }); }
+                                        catch { enqueueSnackbar('Approval failed', { variant: 'error' }); }
+                                      }}
+                                      style={{ background: '#52c41a', border: 'none' }}>Approve</Button>
+                                    {batchPendingCount > 1 && (
+                                      <Button size="small" type="primary" icon={<CheckCircleOutlined />}
+                                        onClick={async () => {
+                                          try {
+                                            await batchApproveReqs(r.batchId).unwrap();
+                                            enqueueSnackbar(`All ${batchPendingCount} items in this batch approved`, { variant: 'success' });
+                                          } catch { enqueueSnackbar('Batch approval failed', { variant: 'error' }); }
+                                        }}
+                                        style={{ background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 600 }}>
+                                        Approve All ({batchPendingCount})
+                                      </Button>
+                                    )}
+                                    <Button size="small" danger icon={<CloseCircleOutlined />}
+                                      onClick={async () => {
+                                        try { await rejectReq({ id: r.key }).unwrap(); enqueueSnackbar('Rejected', { variant: 'warning' }); }
+                                        catch { enqueueSnackbar('Rejection failed', { variant: 'error' }); }
+                                      }}>Reject</Button>
+                                  </>
+                                );
+                              })()}
                               {noteCount > 0 && (
                                 <Button size="small" icon={<WhatsAppOutlined />}
                                   style={{ borderColor: '#25D366', color: '#25D366' }}

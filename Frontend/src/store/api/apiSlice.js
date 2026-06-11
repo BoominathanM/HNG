@@ -379,7 +379,11 @@ export const apiSlice = createApi({
     }),
     approveFinancialRequest: builder.mutation({
       query: (id) => ({ url: `/financial/requests/${id}/approve`, method: 'patch' }),
-      invalidatesTags: ['Financial', 'Purchase'],
+      invalidatesTags: ['Financial', 'Purchase', 'PurchaseOrders'],
+    }),
+    batchApproveRequests: builder.mutation({
+      query: (batchId) => ({ url: `/financial/requests/batch/${batchId}/approve`, method: 'patch' }),
+      invalidatesTags: ['Financial', 'Purchase', 'PurchaseOrders'],
     }),
     rejectFinancialRequest: builder.mutation({
       query: ({ id, reason }) => ({ url: `/financial/requests/${id}/reject`, method: 'patch', data: { reason } }),
@@ -1039,6 +1043,7 @@ export const {
   // Financial
   useGetPendingRequestsQuery,
   useApproveFinancialRequestMutation,
+  useBatchApproveRequestsMutation,
   useRejectFinancialRequestMutation,
   useUpdateFinancialQuotationMutation,
   useRequestQuotationModificationMutation,

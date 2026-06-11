@@ -10,6 +10,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popover,
   Progress,
   Row,
   Select,
@@ -730,6 +731,47 @@ export default function OperationDetail() {
             style={{ width: 150 }}
             options={vendors}
           />
+        );
+      },
+    },
+    {
+      title: 'Design',
+      key: 'design',
+      width: 90,
+      render: (_, record) => {
+        const name = (record.product || record.itemName || record.name || '').toLowerCase();
+        const sr = stickerRequestMap[name];
+        const url = sr?.designFileUrl;
+        if (!url) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
+        const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+        if (isImage) {
+          return (
+            <Popover
+              content={
+                <div style={{ textAlign: 'center' }}>
+                  <img src={url} alt="design" style={{ maxWidth: 300, maxHeight: 300, borderRadius: 8, objectFit: 'contain' }} />
+                  <div style={{ marginTop: 8 }}>
+                    <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1890ff' }}>Open full size ↗</a>
+                  </div>
+                </div>
+              }
+              title="Uploaded Design"
+              trigger="click"
+              placement="left"
+            >
+              <img
+                src={url}
+                alt="design"
+                style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid #e0d0e8', cursor: 'pointer' }}
+              />
+            </Popover>
+          );
+        }
+        return (
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+            <EyeOutlined style={{ fontSize: 12 }} /> View
+          </a>
         );
       },
     },

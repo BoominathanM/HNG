@@ -12,6 +12,7 @@ import {
   Form,
   Input,
   Modal,
+  Popover,
   Progress,
   Row,
   Select,
@@ -66,6 +67,7 @@ import {
   useGetVendorsQuery,
   useGetUsersQuery,
   useGetCompanySettingsQuery,
+  useGetPackingConfigQuery,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -146,6 +148,13 @@ export default function Operations() {
     u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock'].includes(u.role)
   ), [usersData]);
 
+  // Packing config: resolve packingMaterial → Operations tab mapping
+  const { data: packingConfigRaw } = useGetPackingConfigQuery();
+  const packingMaterialTabMap = useMemo(() => {
+    const entries = (packingConfigRaw?.data || []).filter(c => c.type === 'packingMaterial');
+    return Object.fromEntries(entries.map(c => [c.value, c.tabMapping || '']));
+  }, [packingConfigRaw]);
+
   // Company settings: automation vendor per type
   const { data: companyData } = useGetCompanySettingsQuery();
   const automationVendors = useMemo(() => {
@@ -196,7 +205,11 @@ export default function Operations() {
       const sds = (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []);
       return sds.some((sd) => (sd.products || []).some((ep) => ep.product) || !!sd.product);
     })(),
-    items: o.items || [], readiness: o.readiness || {},
+    items: (o.items || []).map(item => ({
+      ...item,
+      packingMaterialTab: packingMaterialTabMap[item.packingMaterial] || item.packingMaterialTab || '',
+    })),
+    readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || '',
     paymentProofs: o.paymentProofs || [],
     // Kit display fields — fall back to the populated leadId fields for orders created
@@ -206,7 +219,7 @@ export default function Operations() {
     displayUnitTab: o.displayUnitTab || o.leadId?.displayUnitTab || '',
     logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
     logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
-  })), [ordersData]);
+  })), [ordersData, packingMaterialTabMap]);
 
   const [queueSteps, setQueueSteps] = useState({});
   const [dispatchTimes, setDispatchTimes] = useState({}); // orderId → { date, time }
@@ -578,6 +591,47 @@ export default function Operations() {
           return <Tag color={color}>{label}</Tag>;
         },
       }] : []),
+      {
+        title: 'Design',
+        key: 'design',
+        width: 90,
+        render: (_, record) => {
+          if (record.isKitParent || record.isEmergencyGated) return <Text type="secondary">—</Text>;
+          const sr = findStickerReq(record);
+          const url = sr?.designFileUrl;
+          if (!url) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+          if (isImage) {
+            return (
+              <Popover
+                content={
+                  <div style={{ textAlign: 'center' }}>
+                    <img src={url} alt="design" style={{ maxWidth: 300, maxHeight: 300, borderRadius: 8, objectFit: 'contain' }} />
+                    <div style={{ marginTop: 8 }}>
+                      <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1890ff' }}>Open full size ↗</a>
+                    </div>
+                  </div>
+                }
+                title="Uploaded Design"
+                trigger="click"
+                placement="left"
+              >
+                <img
+                  src={url}
+                  alt="design"
+                  style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid #e0d0e8', cursor: 'pointer' }}
+                />
+              </Popover>
+            );
+          }
+          return (
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <EyeOutlined style={{ fontSize: 12 }} /> View
+            </a>
+          );
+        },
+      },
       {
         title: 'Actions',
         key: 'actions',

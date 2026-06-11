@@ -99,7 +99,7 @@ export default function Purchase() {
 
   const inventoryItems = useMemo(() => (itemsData?.data || []).map((i) => ({
     key: i._id, code: i.itemCode, name: i.itemName,
-    category: i.category, unit: i.unit, current: i.currentStock,
+    category: i.category, unit: i.unit, unitValue: i.unitValue || 0, current: i.currentStock,
     min: i.minStock, max: i.minStock * 10,
     price: `₹${i.purchasePrice}/${i.unit}`,
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
@@ -119,13 +119,14 @@ export default function Purchase() {
       payment_terms: r.paymentTerms, date: r.createdAt?.slice(0, 10),
       status: r.status, notes: r.notes || [], financeNote: r.financeNote || '',
       requestType: r.requestType || 'individual', category: r.category || r.itemId?.category || 'Other',
+      batchId: r.batchId || null,
     }));
     if (mapped.length > 0) dispatch(setRaisedRequests(mapped));
   }, [requestsData]);
 
   useEffect(() => {
     const mapped = (purchaseOrdersData?.data || []).map((o) => ({
-      key: o._id, requestKey: o.requestId,
+      key: o._id, requestKey: o.requestId?._id?.toString() || o.requestId?.toString() || null,
       item: o.itemId?.itemName || o.itemName,
       supplier: o.vendorId?.name || '—',
       qty: o.qty, unit: o.unit, amount: o.amount,
@@ -1213,8 +1214,8 @@ export default function Purchase() {
                         columns={[
                           { title: 'Item Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
                           { title: 'Category', dataIndex: 'category', key: 'category' },
-                          { title: 'Current Stock', dataIndex: 'current', key: 'current', render: (v, r) => <Text style={{ color: v <= r.min ? '#ff4d4f' : 'inherit' }}>{v} {r.unit}</Text> },
-                          { title: 'Min. Required', dataIndex: 'min', key: 'min', render: (v, r) => `${v} ${r.unit}` },
+                          { title: 'Stock Count', dataIndex: 'current', key: 'current', render: (v, r) => <Text style={{ color: v <= r.min ? '#ff4d4f' : 'inherit' }}>{v}{r.unitValue ? <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>({r.unitValue} {r.unit}/pc)</Text> : null}</Text> },
+                          { title: 'Min. Required', dataIndex: 'min', key: 'min', render: (v) => `${v}` },
                           {
                             title: 'Supplier', key: 'supplier',
                             render: (_, r) => {
@@ -1448,7 +1449,21 @@ export default function Purchase() {
                         const bulkTableColumns = [
                           {
                             title: 'Item', dataIndex: 'item', key: 'item', width: 180,
-                            render: v => <Text strong>{v}</Text>
+                            render: (v, r) => {
+                              const batchSize = r.batchId ? bulkReqs.filter(req => req.batchId === r.batchId).length : 0;
+                              const batchPending = r.batchId ? bulkReqs.filter(req => req.batchId === r.batchId && req.status === 'Pending').length : 0;
+                              return (
+                                <Space direction="vertical" size={1}>
+                                  <Text strong>{v}</Text>
+                                  {batchSize > 1 && (
+                                    <Tag color={batchPending === 0 ? 'success' : batchPending < batchSize ? 'warning' : 'processing'}
+                                      style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
+                                      Batch: {batchSize - batchPending}/{batchSize} approved
+                                    </Tag>
+                                  )}
+                                </Space>
+                              );
+                            }
                           },
                           {
                             title: 'Supplier', dataIndex: 'supplier', key: 'supplier', width: 140,
@@ -2905,11 +2920,12 @@ export default function Purchase() {
               </div>
               <div style={{ display: 'flex', padding: '12px 14px', gap: 0 }}>
                 {[
-                  { label: 'Current Stock', value: `${selectedProduct.current} ${selectedProduct.unit}`, color: selectedProduct.current <= selectedProduct.min ? '#ff4d4f' : '#52c41a' },
-                  { label: 'Min. Required', value: `${selectedProduct.min} ${selectedProduct.unit}`, color: '#fa8c16' },
-                  { label: 'Shortfall', value: selectedProduct.current < selectedProduct.min ? `${selectedProduct.min - selectedProduct.current} ${selectedProduct.unit}` : 'None', color: selectedProduct.current < selectedProduct.min ? '#ff4d4f' : '#52c41a' },
+                  { label: 'Stock Count', value: `${selectedProduct.current}`, color: selectedProduct.current <= selectedProduct.min ? '#ff4d4f' : '#52c41a' },
+                  { label: 'Product Qty', value: selectedProduct.unitValue ? `${selectedProduct.unitValue} ${selectedProduct.unit}` : (selectedProduct.unit || '—'), color: '#1890ff' },
+                  { label: 'Min. Required', value: `${selectedProduct.min}`, color: '#fa8c16' },
+                  { label: 'Shortfall', value: selectedProduct.current < selectedProduct.min ? `${selectedProduct.min - selectedProduct.current}` : 'None', color: selectedProduct.current < selectedProduct.min ? '#ff4d4f' : '#52c41a' },
                 ].map((stat, i) => (
-                  <div key={i} style={{ flex: 1, textAlign: 'center', borderRight: i < 2 ? `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` : 'none', padding: '0 8px' }}>
+                  <div key={i} style={{ flex: 1, textAlign: 'center', borderRight: i < 3 ? `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` : 'none', padding: '0 8px' }}>
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>{stat.label}</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: stat.color }}>{stat.value}</div>
                   </div>
@@ -3063,9 +3079,12 @@ export default function Purchase() {
                 </Space>
                 <Space size={12} style={{ marginTop: 2 }}>
                   <Text style={{ fontSize: 11, color: raiseRequestProduct.current <= raiseRequestProduct.min ? '#ff4d4f' : '#52c41a' }}>
-                    Stock: {raiseRequestProduct.current} {raiseRequestProduct.unit}
+                    Stock Count: {raiseRequestProduct.current}
                   </Text>
-                  <Text style={{ fontSize: 11, color: '#fa8c16' }}>Min: {raiseRequestProduct.min} {raiseRequestProduct.unit}</Text>
+                  {raiseRequestProduct.unitValue ? (
+                    <Text style={{ fontSize: 11, color: '#1890ff' }}>Product Qty: {raiseRequestProduct.unitValue} {raiseRequestProduct.unit}</Text>
+                  ) : null}
+                  <Text style={{ fontSize: 11, color: '#fa8c16' }}>Min: {raiseRequestProduct.min}</Text>
                   <Tag color={raiseRequestProduct.current <= raiseRequestProduct.min ? 'error' : 'success'} style={{ borderRadius: 10, fontSize: 10, margin: 0 }}>
                     {raiseRequestProduct.current <= raiseRequestProduct.min ? 'Low Stock' : 'Healthy'}
                   </Tag>

@@ -8,6 +8,7 @@ router.use(protect);
 
 // Quotation Requests
 router.get('/requests', ctrl.getPendingRequests);
+router.patch('/requests/batch/:batchId/approve', ctrl.batchApproveRequests);
 router.patch('/requests/:id/approve', ctrl.approveRequest);
 router.patch('/requests/:id/reject', ctrl.rejectRequest);
 router.patch('/requests/:id/request-modification', ctrl.requestModification);

@@ -79,6 +79,34 @@ exports.requestModification = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: request, message: 'Quotation sent back for modification' });
 });
 
+exports.batchApproveRequests = asyncHandler(async (req, res, next) => {
+  const { batchId } = req.params;
+  if (!batchId) return next(new AppError('batchId is required', 400));
+  const requests = await PurchaseRequest.find({ batchId, status: 'Pending' });
+  if (requests.length === 0) return res.status(200).json({ success: true, data: [], message: 'No pending requests in this batch' });
+  const results = [];
+  for (const request of requests) {
+    request.status = 'Approved';
+    request.approvedBy = req.user._id;
+    request.approvedAt = Date.now();
+    await request.save({ validateBeforeSave: false });
+    const poCode = await generateCode('PO');
+    const order = await PurchaseOrder.create({
+      poCode,
+      requestId: request._id,
+      vendorId: request.vendorId,
+      itemId: request.itemId,
+      itemName: request.itemName,
+      qty: request.qty,
+      unit: request.unit,
+      paymentTerms: request.paymentTerms,
+      createdBy: req.user._id,
+    });
+    results.push({ request, order });
+  }
+  res.status(200).json({ success: true, data: results, message: `${results.length} request(s) approved` });
+});
+
 exports.updateQuotationDetails = asyncHandler(async (req, res, next) => {
   const request = await PurchaseRequest.findByIdAndUpdate(
     req.params.id,

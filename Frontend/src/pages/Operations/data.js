@@ -76,6 +76,8 @@ export const getFlowStep = (order) => {
 const hasFrostedPackaging = (item, order) => {
   // Explicit config-resolved tab wins first
   if (order.displayUnitTab === 'Ziplock') return true;
+  // Config-resolved packingMaterial tab (set from Inventory Packing Config tabMapping)
+  if (item.packingMaterialTab === 'Ziplock') return true;
   if (item.logoType === 'Frosted Ziplock') return true;
   const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
   if (pm.includes('ziplock') || pm.includes('frosted') || pm.includes('pouch')) return true;
@@ -99,6 +101,9 @@ const getItemPackagingType = (item, order) => {
   // Explicit config-resolved tab wins first
   if (order.displayUnitTab === 'Ziplock') return 'frosted';
   if (order.displayUnitTab === 'Box') return 'box';
+  // Config-resolved packingMaterial tab (set from Inventory Packing Config tabMapping)
+  if (item.packingMaterialTab === 'Ziplock') return 'frosted';
+  if (item.packingMaterialTab === 'Box') return 'box';
   if (hasFrostedPackaging(item, order)) return 'frosted';
   if (item.logoType === 'Box') return 'box';
   const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();

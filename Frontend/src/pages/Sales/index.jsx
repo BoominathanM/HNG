@@ -5384,8 +5384,8 @@ export default function Sales() {
                   >
                     {usePerCardEdit && editingSection !== 'billing' ? (
                       <Row gutter={[24, 12]}>
-                        <Col xs={24} sm={12}><InfoRow label="Bill Type" value={record.billType === 'GST' ? 'GST Bill' : 'Non-GST'} /></Col>
-                        {record.billType === 'GST' && (
+                        {record.leadType !== 'SAMPLE' && <Col xs={24} sm={12}><InfoRow label="Bill Type" value={record.billType === 'GST' ? 'GST Bill' : 'Non-GST'} /></Col>}
+                        {record.leadType !== 'SAMPLE' && record.billType === 'GST' && (
                           <>
                             <Col xs={24} sm={12}><InfoRow label="GSTIN" value={record.gstNumber} /></Col>
                             <Col xs={24} sm={12}><InfoRow label="GST Rate" value={`${record.gstPercent}%`} /></Col>
@@ -6122,7 +6122,7 @@ export default function Sales() {
                     <Space>
                       <div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} />
                       <CarOutlined style={{ color: '#fa8c16' }} />
-                      <span>Delivery & Payment Details</span>
+                      <span>{(record.leadType || watchedLeadType) === 'SAMPLE' ? 'Delivery Details' : 'Delivery & Payment Details'}</span>
                     </Space>
                   }
                   extra={usePerCardEdit && (
@@ -6322,9 +6322,9 @@ export default function Sales() {
                     )}
                   </Form.List>
 
-                  <DeliveryPaymentFields showUpload />
+                  {(watchedLeadType || record.leadType) !== 'SAMPLE' && <DeliveryPaymentFields showUpload />}
 
-                  {watchedLeadType !== 'SAMPLE' && <>
+                  {(watchedLeadType || record.leadType) !== 'SAMPLE' && <>
                   <Divider style={{ margin: '16px 0 10px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
                     <Space><DollarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Payment Collection</span></Space>
                   </Divider>

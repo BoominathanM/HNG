@@ -25,6 +25,7 @@ exports.getRequests = asyncHandler(async (req, res) => {
 
 exports.createBulkRequest = asyncHandler(async (req, res) => {
   const { vendorId, items, paymentTerms } = req.body;
+  const batchId = 'BATCH-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6).toUpperCase();
   const created = [];
   for (const it of items) {
     const code = await generateCode('PR');
@@ -38,6 +39,7 @@ exports.createBulkRequest = asyncHandler(async (req, res) => {
       category: it.category || 'Other',
       paymentTerms,
       requestType: 'bulk',
+      batchId,
       createdBy: req.user._id,
     });
     created.push(req_);

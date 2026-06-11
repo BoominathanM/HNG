@@ -13,6 +13,7 @@ const purchaseRequestSchema = new mongoose.Schema({
   secondReminderDate: Date,
   quotationFileUrl: String,
   requestType: { type: String, enum: ['individual', 'bulk'], default: 'individual' },
+  batchId: { type: String, default: null },
   status: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Modification'], default: 'Pending' },
   financeNote: String,
   notes: [{
