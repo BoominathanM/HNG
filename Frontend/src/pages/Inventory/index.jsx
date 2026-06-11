@@ -568,11 +568,9 @@ export default function Inventory() {
       await submitStockCheck(
         discrepancies.map((item) => ({
           itemId: item.key,
-          physicalCount: item.physicalCount,
-          systemCount: item.systemCount,
-          diff: item.physicalCount - item.systemCount,
-          missingType: item.missingType,
-          missingReason: item.missingReason,
+          actualCount: item.physicalCount,
+          reasonType: item.missingType === 'unknown' ? 'Unknown' : item.missingType === 'known' ? 'Known' : undefined,
+          reason: item.missingReason,
         }))
       ).unwrap();
       unknownItems.forEach((item) => {

@@ -117,7 +117,8 @@ export default function Purchase() {
       key: r._id, item: r.itemId?.itemName || r.itemName,
       supplier: r.vendorId?.name || '—', qty: r.qty, unit: r.unit,
       payment_terms: r.paymentTerms, date: r.createdAt?.slice(0, 10),
-      status: r.status, notes: r.notes || [],
+      status: r.status, notes: r.notes || [], financeNote: r.financeNote || '',
+      requestType: r.requestType || 'individual', category: r.category || r.itemId?.category || 'Other',
     }));
     if (mapped.length > 0) dispatch(setRaisedRequests(mapped));
   }, [requestsData]);
@@ -936,6 +937,7 @@ export default function Purchase() {
           itemName: item.name,
           qty: Number(item.qty) || 0,
           unit: item.unit,
+          category: item.category || 'Other',
         })),
       }).unwrap();
       const created = res?.data || [];
@@ -958,6 +960,18 @@ export default function Purchase() {
       setBulkRaiseFile(null);
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise bulk requests', { variant: 'error' });
+    }
+  };
+
+  // Re-submit revised quotation file after Finance sends back for modification
+  const handleResubmitQuotation = async (requestId, file) => {
+    try {
+      const fd = new FormData();
+      fd.append('quotation', file);
+      await uploadQuotationFile({ id: requestId, formData: fd }).unwrap();
+      enqueueSnackbar('Quotation re-submitted — Finance will review it again.', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Failed to re-submit quotation', { variant: 'error' });
     }
   };
 
@@ -1356,6 +1370,32 @@ export default function Purchase() {
                               // after raising request or after Finance edits and resets to Pending
                               if (req?.status === 'Pending') return <Space>{buildReqWABtn()}{noteBtn}</Space>;
 
+                              // Modification: Finance sent the quotation back — Purchase must re-upload a revised file
+                              if (req?.status === 'Modification') return (
+                                <Space direction="vertical" size={4}>
+                                  {req.financeNote && (
+                                    <Tooltip title={req.financeNote}>
+                                      <Tag color="warning" style={{ fontSize: 11, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                        Finance: {req.financeNote}
+                                      </Tag>
+                                    </Tooltip>
+                                  )}
+                                  <Space size={4}>
+                                    <Upload
+                                      maxCount={1}
+                                      beforeUpload={file => { handleResubmitQuotation(req.key, file); return false; }}
+                                      accept=".pdf,.jpg,.jpeg,.png"
+                                      showUploadList={false}
+                                    >
+                                      <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#fa8c16', color: '#fa8c16', fontWeight: 600 }}>
+                                        Re-Submit Quotation
+                                      </Button>
+                                    </Upload>
+                                    {noteBtn}
+                                  </Space>
+                                </Space>
+                              );
+
                               if (whatsappSentItems.has(r.key)) return (
                                 <Space direction="vertical" size={4}>
                                   {hasReminder && (
@@ -1501,6 +1541,28 @@ export default function Purchase() {
                                   </Button>
                                 );
                               }
+
+                              if (r.status === 'Modification') return (
+                                <Space direction="vertical" size={4}>
+                                  {r.financeNote && (
+                                    <Tooltip title={r.financeNote}>
+                                      <Tag color="warning" style={{ fontSize: 11, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                        Finance: {r.financeNote}
+                                      </Tag>
+                                    </Tooltip>
+                                  )}
+                                  <Upload
+                                    maxCount={1}
+                                    beforeUpload={file => { handleResubmitQuotation(r.key, file); return false; }}
+                                    accept=".pdf,.jpg,.jpeg,.png"
+                                    showUploadList={false}
+                                  >
+                                    <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#fa8c16', color: '#fa8c16', fontWeight: 600 }}>
+                                      Re-Submit
+                                    </Button>
+                                  </Upload>
+                                </Space>
+                              );
 
                               return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
                             }

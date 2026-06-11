@@ -17,7 +17,7 @@ exports.getRequests = asyncHandler(async (req, res) => {
     filter.$or = [{ itemName: re }];
   }
   const requests = await PurchaseRequest.find(filter)
-    .populate('itemId', 'itemName unit currentStock minStock')
+    .populate('itemId', 'itemName unit currentStock minStock category')
     .populate('vendorId', 'name phone')
     .sort('-createdAt');
   res.status(200).json({ success: true, total: requests.length, data: requests });
@@ -35,7 +35,9 @@ exports.createBulkRequest = asyncHandler(async (req, res) => {
       itemName: it.itemName,
       qty: it.qty,
       unit: it.unit,
+      category: it.category || 'Other',
       paymentTerms,
+      requestType: 'bulk',
       createdBy: req.user._id,
     });
     created.push(req_);

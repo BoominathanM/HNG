@@ -335,7 +335,7 @@ export const apiSlice = createApi({
     }),
     submitStockCheck: builder.mutation({
       query: (items) => ({ url: '/inventory/stock-check', method: 'post', data: { items } }),
-      invalidatesTags: ['Inventory'],
+      invalidatesTags: ['Inventory', 'StockApprovals'],
     }),
     // Kits
     getKits: builder.query({
