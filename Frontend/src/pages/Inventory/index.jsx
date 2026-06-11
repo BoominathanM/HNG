@@ -54,12 +54,6 @@ import { emailRules, phoneValidator } from '../../utils/validation';
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const PACKING_MATERIAL_OPTIONS = [
-  { value: 'Plastic Box', label: 'Plastic Box' },
-  { value: 'Paper Box', label: 'Paper Box' },
-  { value: 'Pouch', label: 'Pouch' },
-  { value: 'Wrapper', label: 'Wrapper' },
-];
 
 const MATERIAL_CATEGORY_OPTIONS = [
   { value: 'Eco Friendly', label: 'Eco Friendly' },
@@ -1667,7 +1661,13 @@ export default function Inventory() {
                         </Col>
                         <Col xs={24} sm={8}>
                           <Form.Item {...field} label="Packing Material" name={[field.name, 'packingMaterial']}>
-                            <SelectWithAdd field="packingMaterial" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" />
+                            <Select
+                              allowClear
+                              showSearch
+                              optionFilterProp="label"
+                              placeholder="Select"
+                              options={packingMaterials.map(c => ({ value: c.value, label: c.label }))}
+                            />
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={8}>
@@ -2019,7 +2019,14 @@ export default function Inventory() {
             <Col xs={24} sm={8}><Form.Item label="Discount on Sales Price" name="discount"><Input suffix="%" /></Form.Item></Col>
             <Col xs={24} sm={8}>
               <Form.Item label="Packing Material" name="packingMaterial">
-                <SelectWithAdd field="packingMaterial" mode="multiple" defaultOptions={PACKING_MATERIAL_OPTIONS} placeholder="Select / Add" />
+                <Select
+                  mode="multiple"
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Select"
+                  options={packingMaterials.map(c => ({ value: c.value, label: c.label }))}
+                />
               </Form.Item>
             </Col>
             <Col xs={24} sm={8}>
