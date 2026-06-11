@@ -708,25 +708,43 @@ export default function Settings() {
                           <Form.Item
                             label={editingUser ? 'New Password (leave blank to keep current)' : 'Password'}
                             name="password"
+                            validateTrigger="onChange"
                             rules={editingUser
                               ? [{ min: 6, message: 'Min 6 characters' }]
                               : [{ required: true, min: 6, message: 'Min 6 characters' }]}
                           >
-                            <Input.Password placeholder={editingUser ? 'Leave blank to keep current' : 'Min 6 characters'} style={{ borderRadius: 8, height: 40 }} />
+                            <Input.Password
+                              placeholder={editingUser ? 'Leave blank to keep current' : 'Min 6 characters'}
+                              style={{ borderRadius: 8, height: 40 }}
+                              onChange={() => userForm.validateFields(['confirm']).catch(() => {})}
+                            />
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={12}>
                           <Form.Item
                             label="Confirm Password"
                             name="confirm"
-                            rules={editingUser
-                              ? [({ getFieldValue }) => ({
-                                  validator(_, value) {
-                                    if (!value || !getFieldValue('password') || getFieldValue('password') === value) return Promise.resolve();
+                            validateTrigger="onChange"
+                            dependencies={['password']}
+                            rules={[
+                              ({ getFieldValue }) => ({
+                                validator(_, value) {
+                                  const pwd = getFieldValue('password');
+                                  if (!pwd && !value) {
+                                    return editingUser
+                                      ? Promise.resolve()
+                                      : Promise.reject(new Error('Please confirm your password'));
+                                  }
+                                  if (pwd && !value) {
+                                    return Promise.reject(new Error('Please confirm your password'));
+                                  }
+                                  if (value && pwd !== value) {
                                     return Promise.reject(new Error('Passwords do not match'));
-                                  },
-                                })]
-                              : [{ required: true, message: 'Required' }]}
+                                  }
+                                  return Promise.resolve();
+                                },
+                              }),
+                            ]}
                           >
                             <Input.Password placeholder="Confirm password" style={{ borderRadius: 8, height: 40 }} />
                           </Form.Item>

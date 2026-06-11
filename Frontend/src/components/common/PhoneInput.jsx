@@ -95,7 +95,7 @@ const PhoneInput = ({ value = '', onChange, placeholder = 'Phone number', style,
         disabled={disabled}
         size={size}
         style={{ borderRadius: '0 8px 8px 0', height: 40, flex: 1 }}
-        maxLength={15}
+        maxLength={selected.maxLength || 15}
       />
     </Space.Compact>
   );
