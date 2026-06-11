@@ -1526,12 +1526,9 @@ export default function Inventory() {
             </Col>
             <Col xs={12} sm={8}>
               <Form.Item label="Display Unit" name="displayUnit">
-                <SelectWithAdd field="displayUnit" defaultOptions={[
-                  { value: 'ZIPLOCK_POUCH', label: 'Ziplock Pouch' },
-                  { value: 'STICKY_POUCH', label: 'Sticky Pouch' },
-                  { value: 'TDDC_SLICE_BOX', label: 'TDDC Size Box' },
-                  { value: 'PVK_SIZE_BOX', label: 'PVK Size Box' },
-                ]} placeholder="Select / Add unit" />
+                <Select placeholder="Select unit" allowClear>
+                  {displayUnits.map(d => <Option key={d._id} value={d.value}>{d.label}</Option>)}
+                </Select>
               </Form.Item>
             </Col>
             <Col xs={12} sm={8}>
