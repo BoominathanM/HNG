@@ -3722,7 +3722,7 @@ export default function Sales() {
             <Space wrap>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(o)}>WhatsApp</Button>
               <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} onClick={() => handleDownloadQuotation(o)}>Download Quotation</Button>
-              <Button icon={<EditOutlined />} style={{ borderRadius: 8, color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={() => openOrderEditModal(o)}>Edit Delivery & Payment</Button>
+              <Button icon={<EditOutlined />} style={{ borderRadius: 8, color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={() => openOrderEditModal(o)}>{o.orderCategory !== 'SAMPLE' ? 'Edit Delivery & Payment' : 'Edit Delivery'}</Button>
               <Button
                 icon={<WarningOutlined />}
                 style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
@@ -3781,7 +3781,7 @@ export default function Sales() {
                 )}
               </Card>
             </Col>
-            <Col xs={12} sm={6}>
+            {o.orderCategory !== 'SAMPLE' && <Col xs={12} sm={6}>
               <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CheckOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>Collected</Text></div>
                 <Text strong style={{ fontSize: 14, color: '#52c41a', display: 'block' }}>₹{totalCollected.toLocaleString()}</Text>
@@ -3789,13 +3789,13 @@ export default function Sales() {
                   <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 2 }}>Advance: ₹{(o.advance || 0).toLocaleString()}</Text>
                 )}
               </Card>
-            </Col>
-            <Col xs={12} sm={6}>
+            </Col>}
+            {o.orderCategory !== 'SAMPLE' && <Col xs={12} sm={6}>
               <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CalendarOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>To Collect</Text></div>
                 <Text strong style={{ fontSize: 14, color: toCollect > 0 ? '#fa8c16' : '#52c41a', display: 'block' }}>₹{toCollect.toLocaleString()}</Text>
               </Card>
-            </Col>
+            </Col>}
             <Col xs={12} sm={6}>
               <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CarOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>Expected Delivery</Text></div>
@@ -4003,7 +4003,7 @@ export default function Sales() {
 
               {/* Delivery & Payment */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
+                title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>{o.orderCategory !== 'SAMPLE' ? 'Delivery & Payment' : 'Delivery Details'}</span></Space>}>
                 <DetailDeliveryPayment rec={o} />
               </Card>
 

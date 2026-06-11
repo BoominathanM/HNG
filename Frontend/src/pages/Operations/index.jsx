@@ -508,38 +508,66 @@ export default function Operations() {
       {
         title: 'Product',
         dataIndex: 'product',
-        render: (value, record) => (
-          <Space size={4} direction="vertical" style={{ gap: 2 }}>
-            <Space size={4}>
-              {record.isEmergencyProduct && (
-                <Tooltip title="Emergency / Partial delivery product — process first">
-                  <AlertFilled style={{ color: '#ff4d4f', fontSize: 11 }} />
+        render: (value, record) => {
+          if (record.isKitParent) {
+            return (
+              <Space size={4}>
+                <Tag color="blue" style={{ fontWeight: 600, margin: 0 }}>Kit</Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>{value}</Text>
+              </Space>
+            );
+          }
+          return (
+            <Space size={4} direction="vertical" style={{ gap: 2 }}>
+              <Space size={4}>
+                {record.isEmergencyProduct && (
+                  <Tooltip title="Emergency / Partial delivery product — process first">
+                    <AlertFilled style={{ color: '#ff4d4f', fontSize: 11 }} />
+                  </Tooltip>
+                )}
+                <Text style={record.isEmergencyProduct ? { color: '#ff4d4f', fontWeight: 600 } : {}}>{value}</Text>
+              </Space>
+              {record.isEmergencyGated && (
+                <Tooltip title="Emergency items for this order must be completed first">
+                  <Tag color="orange" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                    After Emergency Items
+                  </Tag>
                 </Tooltip>
               )}
-              <Text style={record.isEmergencyProduct ? { color: '#ff4d4f', fontWeight: 600 } : {}}>{value}</Text>
             </Space>
-            {record.isEmergencyGated && (
-              <Tooltip title="Emergency items for this order must be completed first">
-                <Tag color="orange" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
-                  After Emergency Items
-                </Tag>
-              </Tooltip>
-            )}
-          </Space>
-        ),
+          );
+        },
       },
       {
         title: label === 'Box' ? 'Size / PVK' : 'Size',
         dataIndex: 'size',
-        render: (value) => value ? <Tag color="geekblue">{value}</Tag> : '—',
+        render: (value, record) => {
+          if (record.isKitParent) return <Text type="secondary">—</Text>;
+          return value ? <Tag color="geekblue">{value}</Tag> : '—';
+        },
       },
-      { title: 'Qty', dataIndex: 'qty', render: (value) => (value || 0).toLocaleString() },
+      {
+        title: 'Qty',
+        dataIndex: 'qty',
+        render: (value, record) => {
+          if (record.isKitParent) {
+            return (
+              <Space direction="vertical" size={0}>
+                <Text strong>{(value || 0).toLocaleString()}</Text>
+                <Text type="secondary" style={{ fontSize: 10 }}>total</Text>
+              </Space>
+            );
+          }
+          return (value || 0).toLocaleString();
+        },
+      },
       {
         title: 'Sticker Printing',
         dataIndex: 'stickerPrinting',
-        render: (val) => (
-          <Tag color={val === 'Yes' ? 'blue' : 'default'}>{val || '—'}</Tag>
-        ),
+        render: (val, record) => {
+          if (record.isKitParent) return <Text type="secondary">—</Text>;
+          return <Tag color={val === 'Yes' ? 'blue' : 'default'}>{val || '—'}</Tag>;
+        },
       },
       ...(isStickerTab ? [{
         title: 'After Approval',
@@ -555,6 +583,9 @@ export default function Operations() {
         key: 'actions',
         width: 320,
         render: (_, record) => {
+          if (record.isKitParent) {
+            return <Text type="secondary" style={{ fontSize: 12 }}>↓ Expand to manage products</Text>;
+          }
           if (record.isEmergencyGated) {
             return (
               <Tag
@@ -840,6 +871,42 @@ export default function Operations() {
       const matchStatus = !queueStatusFilter || (r.status || '') === queueStatusFilter;
       return matchSearch && matchStatus;
     });
+
+    // For Box/Frosted tabs group products from the same order under one kit parent row
+    let tableSource = activeRows;
+    if (type !== 'Sticker') {
+      const orderMap = new Map();
+      activeRows.forEach((row) => {
+        if (!orderMap.has(row.orderId)) orderMap.set(row.orderId, []);
+        orderMap.get(row.orderId).push(row);
+      });
+      tableSource = [];
+      orderMap.forEach((group, orderId) => {
+        if (group.length === 1) {
+          tableSource.push(group[0]);
+        } else {
+          const first = group[0];
+          tableSource.push({
+            key: `${orderId}-kit`,
+            orderId,
+            orderCategory: first.orderCategory,
+            hotelLogo: first.hotelLogo,
+            logoRequired: first.logoRequired,
+            logoUrl: first.logoUrl,
+            isUrgent: first.isUrgent,
+            isEmergencyProduct: group.some((r) => r.isEmergencyProduct),
+            isEmergencyGated: group.every((r) => r.isEmergencyGated),
+            qty: group.reduce((sum, r) => sum + Number(r.qty || 0), 0),
+            product: `${group.length} Products`,
+            size: null,
+            stickerPrinting: null,
+            isKitParent: true,
+            children: group,
+          });
+        }
+      });
+    }
+
     return (
       <div>
         {renderQueueSummary(allActive)}
@@ -871,8 +938,9 @@ export default function Operations() {
           </div>
           <div className="table-responsive" style={{ padding: 4 }}>
             <Table
-              dataSource={activeRows}
+              dataSource={tableSource}
               columns={queueColumns(type)}
+              expandable={type !== 'Sticker' ? { defaultExpandAllRows: true } : undefined}
               pagination={type === 'Sticker' ? { pageSize: 5, size: 'small' } : false}
               size="small"
               onRow={(record) =>
