@@ -249,10 +249,9 @@ export default function Operations() {
     const stickerType = item.key?.endsWith('-box') ? 'Box'
       : item.key?.endsWith('-frosted') ? 'Frosted Ziplock'
       : 'Sticker';
+    const pLower = (item.product || '').toLowerCase();
     return stickerRequests.find(
-      (s) => s.orderId?.orderCode === item.orderId && s.stickerType === stickerType && s.product === item.product,
-    ) || stickerRequests.find(
-      (s) => s.orderId?.orderCode === item.orderId && s.stickerType === stickerType,
+      (s) => s.orderId?.orderCode === item.orderId && s.stickerType === stickerType && (s.product || '').toLowerCase() === pLower,
     );
   };
   // Local overrides take priority (immediate post-action feedback);
@@ -626,6 +625,7 @@ export default function Operations() {
                           stickerId = created.data._id;
                         }
                         await uploadStickerDesign({ id: stickerId, files: uploadedFiles[record.key] || [] }).unwrap();
+                        await updateStickerStatus({ id: stickerId, status: 'Waiting for Approval' }).unwrap();
                         advanceStep(record.key, 1);
                         enqueueSnackbar(`Design sent for approval — ${ord?.salesPerson || 'Sales'} & Operations team notified for ${record.orderId}`, { variant: 'info' });
                       } catch (err) {

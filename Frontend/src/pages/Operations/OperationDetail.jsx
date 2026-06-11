@@ -403,7 +403,10 @@ export default function OperationDetail() {
   const stickerRequestMap = useMemo(() => {
     const map = {};
     stickerRequests
-      .filter((sr) => sr.orderId === order?.key || sr.orderId === id)
+      .filter((sr) => {
+        const srOrderId = String(sr.orderId?._id || sr.orderId || '');
+        return srOrderId === String(order?.key || '') || sr.orderId?.orderCode === id;
+      })
       .forEach((sr) => {
         const key = (sr.product || sr.hotelLogo || '').toLowerCase();
         if (key) map[key] = sr;

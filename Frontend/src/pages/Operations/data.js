@@ -84,8 +84,12 @@ const hasFrostedPackaging = (item, order) => {
 };
 
 // Returns true when routing the item to the sticker queue — sticker printing takes priority
-// over packaging type inference (a box item with sticker=YES goes to sticker queue first).
+// over packaging type inference UNLESS the order's packing material is explicitly configured
+// as Box or Ziplock via displayUnitTab, in which case packing material wins.
 const isFrostedZiplock = (item, order) => {
+  // Explicit packing config wins over sticker flag — Ziplock orders go to the Frosted
+  // Ziplock tab directly, even when sticker=YES is also set on the item.
+  if (order.displayUnitTab === 'Ziplock') return true;
   if (item.sticker === 'YES') return false;
   return hasFrostedPackaging(item, order);
 };
@@ -193,6 +197,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const emergencyAllDone = areAllEmergencyItemsDone(order);
       const items = (order.items || []).map((item, idx) => ({ item, idx }))
         .filter(({ item, idx }) => {
+          // Items explicitly routed to Box or Ziplock by packing config belong in those
+          // tabs from the start — they never enter the Sticker tab.
+          if (order.displayUnitTab === 'Box' || order.displayUnitTab === 'Ziplock') return false;
+          // Logo not required → skip the design/sticker stage entirely.
+          if (order.logoRequired === false) return false;
           if (!((item.logoType === 'Sticker' || item.sticker === 'YES') && !isFrostedZiplock(item, order))) return false;
           // Once the item's sticker is printed and it has a box/frosted destination,
           // remove it from the sticker queue — it now lives in the box/frosted tab.
@@ -252,8 +261,12 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const packType = getItemPackagingType(item, order);
         if (packType !== 'box') return;
         const product = item.product || item.itemName;
-        const needsSticker = item.logoType === 'Sticker' || item.sticker === 'YES';
-        if (needsSticker && !isStickerPrinted(order.id, product, idx)) return;
+        // needsSticker is false when Logo Required = No — item bypasses design/sticker step.
+        const needsSticker = (item.logoType === 'Sticker' || item.sticker === 'YES') && order.logoRequired !== false;
+        // When packing material is explicitly Box (displayUnitTab), the item belongs here
+        // from the start — don't gate on sticker printing (sticker step is handled within
+        // this tab's workflow if needed).
+        if (order.displayUnitTab !== 'Box' && needsSticker && !isStickerPrinted(order.id, product, idx)) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
         const isEmergencyProduct = eQty !== undefined && (eQty === null || Number(item.qty) === eQty);
@@ -302,13 +315,17 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // the item.packaging field still carries the correct value and is the reliable signal.
         const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
         const itemHasOwnFrostedPkg = pm.includes('ziplock') || pm.includes('frosted') || pm.includes('pouch');
-        const needsSticker = item.logoType === 'Sticker' && !itemHasOwnFrostedPkg;
+        // needsSticker is false when Logo Required = No — item bypasses design/sticker step.
+        const needsSticker = item.logoType === 'Sticker' && !itemHasOwnFrostedPkg && order.logoRequired !== false;
         // Also gate on an active StickerRequest that hasn't been printed yet — covers the
         // case where sticker=YES was selected alongside frosted packaging (the SR was created
         // in the sticker queue and must be printed before the item moves here).
         const sr = findSR(order.id, product);
         const hasActiveSR = sr && !STICKER_MOVED_ON_STATUSES.has(sr.status);
-        if ((needsSticker || hasActiveSR) && !isStickerPrinted(order.id, product, idx)) return;
+        // When packing material is explicitly Ziplock (displayUnitTab), the item belongs here
+        // from the start — don't gate on sticker printing (sticker step, if needed, is part
+        // of this tab's workflow, and any pending SR should not block display).
+        if (order.displayUnitTab !== 'Ziplock' && (needsSticker || hasActiveSR) && !isStickerPrinted(order.id, product, idx)) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
         const isEmergencyProduct = eQty !== undefined && (eQty === null || Number(item.qty) === eQty);
