@@ -154,6 +154,11 @@ export default function Operations() {
     const entries = (packingConfigRaw?.data || []).filter(c => c.type === 'packingMaterial');
     return Object.fromEntries(entries.map(c => [c.value, c.tabMapping || '']));
   }, [packingConfigRaw]);
+  // Packing config: resolve displayUnit name → Operations tab mapping (for kit routing)
+  const displayUnitTabMap = useMemo(() => {
+    const entries = (packingConfigRaw?.data || []).filter(c => c.type === 'displayUnit');
+    return Object.fromEntries(entries.map(c => [c.value, c.tabMapping || '']));
+  }, [packingConfigRaw]);
 
   // Company settings: automation vendor per type
   const { data: companyData } = useGetCompanySettingsQuery();
@@ -216,10 +221,17 @@ export default function Operations() {
     // before kitDisplayUnit was copied onto the Order document itself.
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
     displayUnit: o.displayUnit || o.kitDisplayUnit || o.leadId?.displayUnit || o.leadId?.kitDisplayUnit || '',
-    displayUnitTab: o.displayUnitTab || o.leadId?.displayUnitTab || '',
+    displayUnitTab: (() => {
+      // Use stored value first; fall back to a live packing-config lookup so orders
+      // saved before displayUnitTab was written still route to the correct tab.
+      const stored = o.displayUnitTab || o.leadId?.displayUnitTab;
+      if (stored) return stored;
+      const du = o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '';
+      return displayUnitTabMap[du] || '';
+    })(),
     logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
     logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
-  })), [ordersData, packingMaterialTabMap]);
+  })), [ordersData, packingMaterialTabMap, displayUnitTabMap]);
 
   const [queueSteps, setQueueSteps] = useState({});
   const [dispatchTimes, setDispatchTimes] = useState({}); // orderId → { date, time }

@@ -4728,13 +4728,23 @@ export default function Sales() {
                                     placeholder="Select product"
                                     allowClear
                                     onChange={(val) => {
-                                      const matched = (Array.isArray(watchedOrderProducts) ? watchedOrderProducts : [])
-                                        .find(p => (p.name || p.kitType) === val);
-                                      if (matched?.qty) {
-                                        orderForm.setFieldValue(['splitDates', name, 'qty'], matched.qty);
+                                      if (val === '__kit__') {
+                                        const kitProds = (Array.isArray(watchedOrderProducts) ? watchedOrderProducts : [])
+                                          .filter(p => p?.isKit || p?.kitType);
+                                        const qtys = kitProds.map(p => Number(p.qty) || 0).filter(q => q > 0);
+                                        if (qtys.length > 0) orderForm.setFieldValue(['splitDates', name, 'qty'], Math.min(...qtys));
+                                      } else {
+                                        const matched = (Array.isArray(watchedOrderProducts) ? watchedOrderProducts : [])
+                                          .find(p => (p.name || p.kitType) === val);
+                                        if (matched?.qty) orderForm.setFieldValue(['splitDates', name, 'qty'], matched.qty);
                                       }
                                     }}
                                   >
+                                    {(Array.isArray(watchedOrderProducts) ? watchedOrderProducts : []).some(p => p?.isKit || p?.kitType) && (
+                                      <Option value="__kit__" style={{ fontWeight: 600, color: '#722ed1' }}>
+                                        Kit (All Products)
+                                      </Option>
+                                    )}
                                     {(Array.isArray(watchedOrderProducts) ? watchedOrderProducts : []).filter(p => p?.name || p?.kitType).map((p, i) => (
                                       <Option key={i} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
                                     ))}
@@ -6281,7 +6291,24 @@ export default function Sales() {
                                       <Row gutter={[8, 0]} align="middle">
                                         <Col xs={24} sm={8}>
                                           <Form.Item {...prodRest} name={[prodName, 'product']} label="Product" style={{ marginBottom: 0 }}>
-                                            <Select size="small" placeholder="Select product" allowClear>
+                                            <Select
+                                              size="small"
+                                              placeholder="Select product"
+                                              allowClear
+                                              onChange={(val) => {
+                                                if (val === '__kit__') {
+                                                  const kitProds = (Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [])
+                                                    .filter(p => p?.isKit || p?.kitType);
+                                                  const qtys = kitProds.map(p => Number(p.qty) || 0).filter(q => q > 0);
+                                                  if (qtys.length > 0) leadForm.setFieldValue(['splitDates', dateName, 'products', prodName, 'qty'], Math.min(...qtys));
+                                                }
+                                              }}
+                                            >
+                                              {(Array.isArray(watchedLeadProducts) ? watchedLeadProducts : []).some(p => p?.isKit || p?.kitType) && (
+                                                <Option value="__kit__" style={{ fontWeight: 600, color: '#722ed1' }}>
+                                                  Kit (All Products)
+                                                </Option>
+                                              )}
                                               {(Array.isArray(watchedLeadProducts) ? watchedLeadProducts : []).filter(p => p?.name || p?.kitType).map((p, pi) => (
                                                 <Option key={pi} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
                                               ))}

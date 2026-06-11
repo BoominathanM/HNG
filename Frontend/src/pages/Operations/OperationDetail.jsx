@@ -350,24 +350,58 @@ export default function OperationDetail() {
 
   // Build map: lowercase productName → { date, qty } from splitDates.
   // qty is the emergency delivery quantity; if not specified, null means all items of that name are emergency.
-  // When qty is present, only the order item whose qty matches is flagged as emergency.
+  // When product is '__kit__', expands to all kit items proportionally by kit count.
   const emergencyProductMap = useMemo(() => {
     const map = {};
+
+    const expandKit = (kitEmergencyQty, sdDate) => {
+      const kitItems = (order?.items || []).filter((it) => it.isKit || it.kitType);
+      if (kitItems.length === 0) return;
+      if (kitEmergencyQty === null) {
+        kitItems.forEach((it) => {
+          const key = (it.product || it.itemName || '').toLowerCase();
+          if (key && !map[key]) map[key] = { date: sdDate, qty: null };
+        });
+        return;
+      }
+      const itemQtys = kitItems.map((it) => Number(it.qty) || 0).filter((q) => q > 0);
+      if (itemQtys.length === 0) return;
+      const totalKits = Math.min(...itemQtys);
+      kitItems.forEach((it) => {
+        const key = (it.product || it.itemName || '').toLowerCase();
+        if (!key || map[key]) return;
+        const itemQty = Number(it.qty) || 0;
+        const pQty = Math.min(Math.round((kitEmergencyQty / totalKits) * itemQty), itemQty);
+        map[key] = { date: sdDate, qty: pQty };
+      });
+    };
+
     (order?.splitDates || []).forEach((sd) => {
       const sdDate = sd.date || null;
       (sd.products || []).forEach((ep) => {
-        const key = ep.product?.toLowerCase();
-        if (key && (!map[key] || (sdDate && sdDate < map[key].date))) {
-          map[key] = { date: sdDate, qty: ep.qty != null ? Number(ep.qty) : null };
+        if (!ep.product) return;
+        if (ep.product === '__kit__') {
+          expandKit(ep.qty != null ? Number(ep.qty) : null, sdDate);
+        } else {
+          const key = ep.product.toLowerCase();
+          if (!map[key] || (sdDate && sdDate < map[key].date)) {
+            map[key] = { date: sdDate, qty: ep.qty != null ? Number(ep.qty) : null };
+          }
         }
       });
-      const key = sd.product?.toLowerCase();
-      if (key && (!map[key] || (sdDate && sdDate < map[key].date))) {
-        map[key] = { date: sdDate, qty: sd.qty != null ? Number(sd.qty) : null };
+      if (sd.product) {
+        if (sd.product === '__kit__') {
+          expandKit(sd.qty != null ? Number(sd.qty) : null, sdDate);
+        } else {
+          const key = sd.product.toLowerCase();
+          if (!map[key] || (sdDate && sdDate < map[key].date)) {
+            map[key] = { date: sdDate, qty: sd.qty != null ? Number(sd.qty) : null };
+          }
+        }
       }
     });
     return map;
-  }, [order?.splitDates]);
+  }, [order?.splitDates, order?.items]);
 
   // Sort items: emergency products first (by emergency date), then regular products
   const sortedOrderItems = useMemo(() => {
