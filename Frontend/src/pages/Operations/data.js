@@ -225,33 +225,45 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           }
           return true;
         })
-        .map(({ item, idx }) => {
+        .flatMap(({ item, idx }) => {
           const packagingType = getItemPackagingType(item, order);
           const productName = item.product || item.itemName;
           const pKey = (productName || '').toLowerCase();
           const eQty = emergencyQtyMap.get(pKey);
-          const isEmergencyProduct = eQty !== undefined && (eQty === null || Number(item.qty) === eQty);
-          return {
-            key: `${order.id}-${idx}-sticker`,
+          const itemQty = Number(item.qty) || 0;
+
+          const makeRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
+            key: `${order.id}-${idx}-sticker${keySuffix}`,
             orderId: order.id,
             orderCategory: order.orderCategory || 'ORDER',
             hotelLogo: order.hotelLogo || order.clientName,
             product: productName,
-            qty: item.qty,
+            qty,
             size: item.size || getDefaultSize(productName),
             status: order.designStatus,
-            sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.7),
+            sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.7),
             verified: order.stockStatus === 'Received',
             note: (order.notifications || [])[0] || '',
             stickerPrinting: 'Yes',
-            packagingType, // where this item moves after sticker approval
+            packagingType,
             isUrgent: order.isUrgent || false,
             isEmergencyProduct,
-            // Non-emergency items of an emergency order are gated until emergency items are done
-            isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+            isEmergencyGated,
             logoRequired: order.logoRequired || false,
             logoUrl: order.logoUrl || '',
-          };
+          });
+
+          if (eQty !== undefined) {
+            if (eQty === null || itemQty <= eQty) {
+              return [makeRow(itemQty, '', true, false)];
+            }
+            // Partial emergency: split into emergency qty + remaining qty
+            return [
+              makeRow(eQty, '-emg', true, false),
+              makeRow(itemQty - eQty, '-rem', false, !emergencyAllDone),
+            ];
+          }
+          return [makeRow(itemQty, '', false, emergencyQtyMap.size > 0 && !emergencyAllDone)];
         });
       // Emergency products first within this order
       return items.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
@@ -280,29 +292,40 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         if (!needsSticker && !order.logoRequired && !hasExplicitBoxTab) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
-        const isEmergencyProduct = eQty !== undefined && (eQty === null || Number(item.qty) === eQty);
-        result.push({
-          key: `${order.id}-${idx}-box`,
+        const itemQty = Number(item.qty) || 0;
+        const boxNote = needsSticker ? 'Sticker approved — now in box manufacturing queue' : 'Box manufacturing';
+
+        const makeBoxRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
+          key: `${order.id}-${idx}-box${keySuffix}`,
           orderId: order.id,
           orderCategory: order.orderCategory || 'ORDER',
           hotelLogo: order.hotelLogo || order.clientName,
           product,
-          qty: item.qty,
+          qty,
           size: item.size,
           status: order.designStatus,
-          sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.65),
+          sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,
-          note: needsSticker
-            ? 'Sticker approved — now in box manufacturing queue'
-            : 'Box manufacturing',
+          note: boxNote,
           stickerPrinting: needsSticker ? 'Yes' : 'No',
           packagingType: 'box',
           isUrgent: order.isUrgent || false,
           isEmergencyProduct,
-          isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+          isEmergencyGated,
           logoRequired: order.logoRequired || false,
           logoUrl: order.logoUrl || '',
         });
+
+        if (eQty !== undefined) {
+          if (eQty === null || itemQty <= eQty) {
+            result.push(makeBoxRow(itemQty, '', true, false));
+          } else {
+            result.push(makeBoxRow(eQty, '-emg', true, false));
+            result.push(makeBoxRow(itemQty - eQty, '-rem', false, !emergencyAllDone));
+          }
+        } else {
+          result.push(makeBoxRow(itemQty, '', false, emergencyQtyMap.size > 0 && !emergencyAllDone));
+        }
       });
       // Emergency products first within this order
       return result.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
@@ -340,29 +363,40 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         if (!needsSticker && !order.logoRequired && !hasExplicitZiplockTab) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
-        const isEmergencyProduct = eQty !== undefined && (eQty === null || Number(item.qty) === eQty);
-        result.push({
-          key: `${order.id}-${idx}-frosted`,
+        const itemQty = Number(item.qty) || 0;
+        const frostedNote = needsSticker ? 'Sticker approved — now in frosted ziplock queue' : 'Dispatch and received updates should be verified by operations';
+
+        const makeFrostedRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
+          key: `${order.id}-${idx}-frosted${keySuffix}`,
           orderId: order.id,
           orderCategory: order.orderCategory || 'ORDER',
           hotelLogo: order.hotelLogo || order.clientName,
           product,
-          qty: item.qty,
+          qty,
           size: item.size,
           status: order.designStatus,
-          sent: order.printingStatus === 'Not Started' ? 0 : Math.round((item.qty || 0) * 0.5),
+          sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
           verified: order.stockStatus === 'Received',
-          note: needsSticker
-            ? 'Sticker approved — now in frosted ziplock queue'
-            : 'Dispatch and received updates should be verified by operations',
+          note: frostedNote,
           stickerPrinting: needsSticker ? 'Yes' : 'No',
           packagingType: 'frosted',
           isUrgent: order.isUrgent || false,
           isEmergencyProduct,
-          isEmergencyGated: emergencyQtyMap.size > 0 && !isEmergencyProduct && !emergencyAllDone,
+          isEmergencyGated,
           logoRequired: order.logoRequired || false,
           logoUrl: order.logoUrl || '',
         });
+
+        if (eQty !== undefined) {
+          if (eQty === null || itemQty <= eQty) {
+            result.push(makeFrostedRow(itemQty, '', true, false));
+          } else {
+            result.push(makeFrostedRow(eQty, '-emg', true, false));
+            result.push(makeFrostedRow(itemQty - eQty, '-rem', false, !emergencyAllDone));
+          }
+        } else {
+          result.push(makeFrostedRow(itemQty, '', false, emergencyQtyMap.size > 0 && !emergencyAllDone));
+        }
       });
       // Emergency products first within this order
       return result.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));

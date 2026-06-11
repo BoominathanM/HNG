@@ -417,23 +417,26 @@ export default function OperationDetail() {
 
   // Annotate every item with isEmergencyProduct / isEmergencyGated flags — mirrors the
   // Sticker/Box queue treatment so Overview shows the same status indicators.
-  // When the splitDate specifies a qty, only the item whose qty matches is flagged; this
-  // prevents the full-order item from being shown as emergency when only a partial qty is urgent.
+  // When the splitDate specifies a partial qty (emergencyQty < itemQty), the item is split
+  // into two rows: an emergency row (qty=emergencyQty) and a remaining row (qty=itemQty-emergencyQty).
   const visibleOrderItems = useMemo(() => {
     const hasEmergency = Object.keys(emergencyProductMap).length > 0;
-    return sortedOrderItems.map((item) => {
+    return sortedOrderItems.flatMap((item) => {
       const name = (item.product || item.itemName || '').toLowerCase();
       const emergencyInfo = emergencyProductMap[name];
-      let isEmergencyProduct = false;
       if (hasEmergency && emergencyInfo) {
-        if (emergencyInfo.qty != null) {
-          isEmergencyProduct = Number(item.qty) === emergencyInfo.qty;
-        } else {
-          isEmergencyProduct = true;
+        const eQty = emergencyInfo.qty;
+        const itemQty = Number(item.qty) || 0;
+        if (eQty != null && itemQty > eQty) {
+          // Partial emergency: split into emergency qty + remaining qty
+          return [
+            { ...item, key: `${item.key}-emg`, qty: eQty, lineTotal: null, isEmergencyProduct: true, isEmergencyGated: false },
+            { ...item, key: `${item.key}-rem`, qty: itemQty - eQty, lineTotal: null, isEmergencyProduct: false, isEmergencyGated: !emergencyPhaseDone },
+          ];
         }
+        return [{ ...item, isEmergencyProduct: true, isEmergencyGated: false }];
       }
-      const isEmergencyGated = hasEmergency && !isEmergencyProduct && !emergencyPhaseDone;
-      return { ...item, isEmergencyProduct, isEmergencyGated };
+      return [{ ...item, isEmergencyProduct: false, isEmergencyGated: hasEmergency && !emergencyPhaseDone }];
     });
   }, [sortedOrderItems, emergencyPhaseDone, emergencyProductMap]);
 
