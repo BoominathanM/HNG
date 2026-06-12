@@ -5,6 +5,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { clearError } from '../../store/slices/authSlice';
 import { useLoginMutation, useGetPublicBrandingQuery } from '../../store/api/apiSlice';
+import { firstAccessiblePath } from '../../utils/access';
 import { enqueueSnackbar } from 'notistack';
 import { motion } from 'framer-motion';
 
@@ -25,9 +26,11 @@ export default function Login() {
 
   const handleSubmit = async (values) => {
     try {
-      await login({ email: values.email, password: values.password }).unwrap();
+      const res = await login({ email: values.email, password: values.password }).unwrap();
       enqueueSnackbar('Signed in successfully', { variant: 'success' });
-      navigate('/', { replace: true });
+      // Land on the first page the user actually has access to, so a user
+      // without Dashboard permission doesn't hit the "Access Restricted" screen.
+      navigate(firstAccessiblePath(res?.data?.user), { replace: true });
     } catch (e) {
       // error also shown via loginError state Alert
       enqueueSnackbar(e?.data || 'Invalid email or password', { variant: 'error' });

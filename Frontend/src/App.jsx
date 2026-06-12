@@ -9,6 +9,7 @@ import AppLayout from './components/layout/AppLayout';
 import { lightTheme, darkTheme } from './styles/theme';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { useGetMeQuery } from './store/api/apiSlice';
+import { canViewModule, firstAccessiblePath } from './utils/access';
 import './styles/global.css';
 
 import Login from './pages/Login';
@@ -69,6 +70,22 @@ function PermissionRoute({ module, children }) {
   return children;
 }
 
+// Index route ("/"). If the user can't read Dashboard but has access to another
+// module, redirect there instead of showing the "Access Restricted" screen — so
+// a refresh on "/" behaves the same as the post-login landing.
+function HomeRoute() {
+  const user = useSelector((s) => s.auth.user);
+  if (canViewModule(user, 'Dashboard')) return <Dashboard />;
+  const dest = firstAccessiblePath(user);
+  if (dest && dest !== '/') return <Navigate to={dest} replace />;
+  // No other accessible module — fall through to the restricted screen.
+  return (
+    <PermissionRoute module="Dashboard">
+      <Dashboard />
+    </PermissionRoute>
+  );
+}
+
 function ThemedApp() {
   const isDark = useSelector((s) => s.theme.isDark);
 
@@ -85,7 +102,7 @@ function ThemedApp() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<PrivateRoute />}>
-              <Route index element={<PermissionRoute module="Dashboard"><Dashboard /></PermissionRoute>} />
+              <Route index element={<HomeRoute />} />
               <Route path="/sales" element={<PermissionRoute module="Sales Team"><Sales /></PermissionRoute>} />
               <Route path="/operations" element={<PermissionRoute module="Operations"><Operations /></PermissionRoute>} />
               <Route path="/operations/:id" element={<PermissionRoute module="Operations"><OperationDetail /></PermissionRoute>} />
