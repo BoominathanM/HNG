@@ -79,7 +79,42 @@ exports.getTask = asyncHandler(async (req, res, next) => {
     })
     .populate('assignedTo', 'fullName role');
   if (!task) return next(new AppError('Task not found', 404));
-  res.status(200).json({ success: true, data: task });
+
+  // Enrich with the product master (Brand, Packing Material, Material Category) for this task's product.
+  const InventoryItem = require('../../models/InventoryItem');
+  const result = task.toObject();
+
+  // Resolve the order line item this task corresponds to (by index first, then by name).
+  let lineItem = null;
+  const items = result.orderId?.items || [];
+  if (result.productIndex !== undefined && result.productIndex !== null && items[result.productIndex]) {
+    lineItem = items[result.productIndex];
+  } else if (result.product) {
+    lineItem = items.find((it) => (it.itemName || '').trim().toLowerCase() === (result.product || '').trim().toLowerCase());
+  }
+
+  // Look up the inventory master by id (preferred), falling back to an exact name match.
+  let inv = null;
+  const fields = 'itemName brand packingMaterial materialCategory category unit defaultSize hsnCode';
+  if (lineItem?.itemId) inv = await InventoryItem.findById(lineItem.itemId).select(fields).lean();
+  if (!inv && result.product) {
+    const escaped = String(result.product).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    inv = await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null }).select(fields).lean();
+  }
+
+  // Merge inventory master with any packaging fields captured on the order line item.
+  result.productDetails = {
+    brand: inv?.brand || lineItem?.material || '',
+    packingMaterial: inv?.packingMaterial || lineItem?.packaging || '',
+    materialCategory: inv?.materialCategory || inv?.category || '',
+    category: inv?.category || '',
+    unit: inv?.unit || lineItem?.unit || '',
+    size: lineItem?.size || inv?.defaultSize || '',
+    hsnCode: inv?.hsnCode || '',
+    source: inv ? 'inventory' : (lineItem ? 'order' : 'none'),
+  };
+
+  res.status(200).json({ success: true, data: result });
 });
 
 exports.createTask = asyncHandler(async (req, res, next) => {

@@ -13,6 +13,7 @@ const { notifyRoles } = require('../../utils/notify');
 // ─── LEADS ───────────────────────────────────────────────────────────────────
 exports.getLeads = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
+  const andConds = [];
   if (req.query.status) {
     filter.status = req.query.status;
   } else {
@@ -30,8 +31,19 @@ exports.getLeads = asyncHandler(async (req, res) => {
   if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
   if (req.query.search) {
     const re = new RegExp(req.query.search, 'i');
-    filter.$or = [{ hotelName: re }, { phone: re }, { locationCity: re }];
+    andConds.push({ $or: [{ hotelName: re }, { phone: re }, { locationCity: re }] });
   }
+  // Visibility scoping: a non-admin sales user only sees leads they created or
+  // that are assigned to them (by assignedTo ref or by salesPerson name).
+  // Super Admin / Admin see every lead. Combined via $and so it never clobbers
+  // the search $or above.
+  if (req.user && req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
+    const visibility = [{ createdBy: req.user._id }, { assignedTo: req.user._id }];
+    const myName = req.user.fullName || req.user.name;
+    if (myName) visibility.push({ salesPerson: myName });
+    andConds.push({ $or: visibility });
+  }
+  if (andConds.length) filter.$and = andConds;
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [leads, total] = await Promise.all([
@@ -130,8 +142,17 @@ exports.getHotelNames = asyncHandler(async (req, res) => {
 // Unified reminders feed: lead follow-ups, order status, and payment-due reminders.
 exports.getReminders = asyncHandler(async (req, res) => {
   const now = new Date();
+  // Same visibility scope as getLeads: non-admins only see follow-ups for leads
+  // they created or that are assigned to them.
+  const leadFilter = { deletedAt: null, followupDate: { $ne: null } };
+  if (req.user && req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
+    const visibility = [{ createdBy: req.user._id }, { assignedTo: req.user._id }];
+    const myName = req.user.fullName || req.user.name;
+    if (myName) visibility.push({ salesPerson: myName });
+    leadFilter.$or = visibility;
+  }
   const [leads, orders] = await Promise.all([
-    Lead.find({ deletedAt: null, followupDate: { $ne: null } })
+    Lead.find(leadFilter)
       .select('hotelName followupDate followupTime status assignedTo leadCode')
       .populate('assignedTo', 'fullName').sort('followupDate').limit(100).lean(),
     Order.find({ deletedAt: null }).select('orderCode clientName status balance total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection paymentReminderDate expectedDeliveryDate items products').sort('-createdAt').limit(200).lean(),

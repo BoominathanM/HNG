@@ -154,6 +154,7 @@ export default function Settings() {
     department: u.department,
     status: u.status,
     avatar: u.fullName?.[0]?.toUpperCase() || 'U',
+    avatarUrl: u.avatarUrl || null,
     color: '#B11E6A',
     perms: u.permissions
       ? (u.permissions instanceof Map || Array.isArray(u.permissions)
@@ -323,7 +324,9 @@ export default function Settings() {
   };
 
   const editUser = (user) => {
-    setUserProfilePhotoUrl(null);
+    // Load the existing photo so it previews in the form and is preserved on save
+    // (re-sent unchanged) unless the admin uploads a replacement.
+    setUserProfilePhotoUrl(user.avatarUrl || null);
     setEditingUser(user);
     setAddUserOpen(true);
   };
@@ -517,7 +520,7 @@ export default function Settings() {
                         key: 'user',
                         render: (_, user) => (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <Avatar size={36} style={{ background: `linear-gradient(135deg,${user.color},${user.color}99)`, fontSize: 15, fontWeight: 700, flexShrink: 0 }}>{user.avatar}</Avatar>
+                            <Avatar size={36} src={user.avatarUrl || undefined} style={{ background: `linear-gradient(135deg,${user.color},${user.color}99)`, fontSize: 15, fontWeight: 700, flexShrink: 0 }}>{user.avatar}</Avatar>
                             <div>
                               <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{user.name}</Text>
                               <Text style={{ fontSize: 12, color: '#aaa' }}>{user.email}</Text>
@@ -762,20 +765,34 @@ export default function Settings() {
                         </Col>
                         <Col xs={24} sm={12}>
                           <Form.Item label="Profile Photo">
-                            <Upload
-                              showUploadList={false}
-                              customRequest={makeUpload('settings/profiles')}
-                              onChange={(info) => {
-                                if (info.file.status === 'done' && info.file.url) {
-                                  setUserProfilePhotoUrl(info.file.url);
-                                  enqueueSnackbar('Photo uploaded', { variant: 'success' });
-                                }
-                              }}
-                            >
-                              <Button icon={<UploadOutlined />} style={{ borderRadius: 8, width: '100%', height: 40 }}>
-                                {userProfilePhotoUrl ? 'Photo Uploaded ✓' : 'Upload Image'}
-                              </Button>
-                            </Upload>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                              <Avatar
+                                size={40}
+                                src={userProfilePhotoUrl || undefined}
+                                icon={<UserOutlined />}
+                                style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', flexShrink: 0 }}
+                              />
+                              <Upload
+                                showUploadList={false}
+                                accept="image/*"
+                                customRequest={makeUpload('settings/profiles')}
+                                onChange={(info) => {
+                                  // customRequest stores the Cloudinary URL on the file (and its
+                                  // response). Read both so the URL is captured reliably.
+                                  const url = info.file.response?.url || info.file.url;
+                                  if (info.file.status === 'done' && url) {
+                                    setUserProfilePhotoUrl(url);
+                                    enqueueSnackbar('Photo uploaded', { variant: 'success' });
+                                  } else if (info.file.status === 'error') {
+                                    enqueueSnackbar('Photo upload failed', { variant: 'error' });
+                                  }
+                                }}
+                              >
+                                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, flex: 1, height: 40 }}>
+                                  {userProfilePhotoUrl ? 'Change Photo' : 'Upload Image'}
+                                </Button>
+                              </Upload>
+                            </div>
                           </Form.Item>
                         </Col>
                       </Row>

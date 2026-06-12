@@ -335,6 +335,54 @@ export default function TaskDetail() {
             </Card>
           )}
 
+          {/* Product Details (Brand / Packing Material / Material Category) */}
+          {t.productDetails && (
+            t.productDetails.brand || t.productDetails.packingMaterial
+            || t.productDetails.materialCategory || t.productDetails.category
+            || t.productDetails.unit || t.productDetails.size || t.productDetails.hsnCode
+          ) && (
+            <Card
+              title={<Text style={labelStyle}>Product Details</Text>}
+              style={{ ...cardStyle, marginTop: t.orderId ? 16 : 0 }}
+              styles={{ body: { padding: '0 16px 16px' } }}
+            >
+              <Descriptions bordered size="small" column={1} style={{ marginTop: 12, borderRadius: 8 }}>
+                <Descriptions.Item label="Product">
+                  <Text strong>{t.product || t.productDetails.itemName || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Brand">
+                  {t.productDetails.brand
+                    ? <Tag color="#B11E6A">{t.productDetails.brand}</Tag>
+                    : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
+                <Descriptions.Item label="Packing Material">
+                  {t.productDetails.packingMaterial
+                    ? <Tag color="#C94F8A">{t.productDetails.packingMaterial}</Tag>
+                    : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
+                <Descriptions.Item label="Material Category">
+                  {t.productDetails.materialCategory
+                    ? <Tag color="#D85C9E">{t.productDetails.materialCategory}</Tag>
+                    : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
+                {t.productDetails.size && (
+                  <Descriptions.Item label="Size">{t.productDetails.size}</Descriptions.Item>
+                )}
+                {t.productDetails.unit && (
+                  <Descriptions.Item label="Unit">{t.productDetails.unit}</Descriptions.Item>
+                )}
+                {t.productDetails.hsnCode && (
+                  <Descriptions.Item label="HSN Code">{t.productDetails.hsnCode}</Descriptions.Item>
+                )}
+              </Descriptions>
+              {t.productDetails.source === 'order' && (
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
+                  Shown from order line item — product not found in inventory master.
+                </Text>
+              )}
+            </Card>
+          )}
+
           {/* Alerts */}
           <div style={{ marginTop: t.orderId ? 16 : 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
             {t.orderId?.orderCategory !== 'SAMPLE' && t.orderId?.leadId?.leadType !== 'SAMPLE'

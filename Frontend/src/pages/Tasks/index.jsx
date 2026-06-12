@@ -23,6 +23,7 @@ import {
   useUpdateTaskStatusMutation,
   useRequestEmergencyDispatchMutation,
   useDeleteTaskMutation,
+  useGetUsersQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -47,6 +48,13 @@ export default function Tasks() {
   const { data: tasksData, isLoading: tasksLoading } = useGetTasksQuery();
   const { data: suggestedData } = useGetSuggestedTasksQuery();
   const suggestedList = suggestedData?.data || [];
+
+  // Users with a role — populate the "Assign To" dropdown
+  const { data: usersData } = useGetUsersQuery();
+  const assignableUsers = useMemo(
+    () => (usersData?.data || []).filter((u) => u.role && u.fullName),
+    [usersData],
+  );
   const [createTask] = useCreateTaskMutation();
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
@@ -160,12 +168,15 @@ export default function Tasks() {
       const vals = await form.validateFields();
       // Only forward orderId if it's a real Mongo ObjectId (the mock ORD-xxxx codes are not).
       const realOrderId = /^[a-f0-9]{24}$/i.test(vals.orderId || '') ? vals.orderId : undefined;
+      // vals.assignee holds the selected user's _id — resolve to id + display name
+      const assignedUser = assignableUsers.find((u) => u._id === vals.assignee);
       await createTask({
         taskName: vals.title,
         taskType: vals.type,
         priority: vals.priority,
         clientName: vals.client,
-        assigneeName: vals.assignee,
+        assignedTo: assignedUser?._id,
+        assigneeName: assignedUser?.fullName,
         dueDate: vals.due ? vals.due.toISOString() : undefined,
         description: vals.desc || vals.description,
         orderId: realOrderId,
@@ -710,7 +721,17 @@ export default function Tasks() {
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Assign To" name="assignee">
-                <Select>{['Ramesh K', 'Kavitha S', 'Meena D', 'Suresh T'].map((e) => <Option key={e} value={e}>{e}</Option>)}</Select>
+                <Select
+                  placeholder="Select staff"
+                  showSearch
+                  optionFilterProp="label"
+                  allowClear
+                  notFoundContent={assignableUsers.length ? 'No match' : 'No users found'}
+                  options={assignableUsers.map((u) => ({
+                    value: u._id,
+                    label: `${u.fullName} — ${u.role}`,
+                  }))}
+                />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}><Form.Item label="Due Date" name="due"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>

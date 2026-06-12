@@ -315,13 +315,14 @@ export default function Header({ onMobileMenuOpen }) {
         <Dropdown menu={userMenu} placement="bottomRight" trigger={['click']}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '4px 8px', borderRadius: 8 }}>
             <Avatar
+              src={user?.avatarUrl || undefined}
               style={{ background: 'linear-gradient(135deg, #B11E6A, #D85C9E)', fontSize: 16 }}
               icon={<UserOutlined />}
               size={34}
             />
             <div className="user-info-text">
               <Text style={{ color: isDark ? '#fff' : '#1a1a2e', fontSize: 15, fontWeight: 600, display: 'block', lineHeight: 1.2 }}>
-                {user?.name}
+                {user?.fullName || user?.name}
               </Text>
               <Text style={{ color: '#B11E6A', fontSize: 13 }}>{user?.role}</Text>
             </div>
@@ -366,11 +367,12 @@ export default function Header({ onMobileMenuOpen }) {
           />
           <Avatar
             size={72}
+            src={user?.avatarUrl || undefined}
             icon={<UserOutlined />}
             style={{ background: 'rgba(255,255,255,0.25)', border: '3px solid rgba(255,255,255,0.5)', fontSize: 30 }}
           />
           <Title level={4} style={{ color: '#fff', marginTop: 12, marginBottom: 2 }}>
-            {user?.name || 'Admin User'}
+            {user?.fullName || user?.name || 'Admin User'}
           </Title>
           <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 15 }}>
             {user?.role || 'Super Admin'}
@@ -404,7 +406,7 @@ export default function Header({ onMobileMenuOpen }) {
                 </div>
                 <div>
                   <Text style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)', fontSize: 13, display: 'block' }}>Phone</Text>
-                  <Text style={{ color: isDark ? '#fff' : '#1a1a2e', fontSize: 15, fontWeight: 500 }}>{user?.phone || '—'}</Text>
+                  <Text style={{ color: isDark ? '#fff' : '#1a1a2e', fontSize: 15, fontWeight: 500 }}>{user?.mobile || user?.phone || '—'}</Text>
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

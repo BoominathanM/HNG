@@ -246,7 +246,7 @@ export const apiSlice = createApi({
     }),
     confirmDispatch: builder.mutation({
       query: ({ id, formData }) => ({ url: `/dispatch/${id}/confirm`, method: 'post', data: formData }),
-      invalidatesTags: ['Dispatch', 'Leads', 'Orders'],
+      invalidatesTags: ['Dispatch', 'Leads', 'Orders', 'Tasks'],
     }),
     uploadDispatchLR: builder.mutation({
       query: ({ id, formData, ...data }) => ({ url: `/dispatch/${id}/lr`, method: 'patch', data: formData || data }),
@@ -810,7 +810,9 @@ export const apiSlice = createApi({
     }),
     updateUser: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/settings/users/${id}`, method: 'put', data }),
-      invalidatesTags: ['Users'],
+      // Also refresh Auth so editing the logged-in user (e.g. their profile photo)
+      // updates the header/profile drawer without a re-login (getMe refetches).
+      invalidatesTags: ['Users', 'Auth'],
     }),
     deleteUser: builder.mutation({
       query: (id) => ({ url: `/settings/users/${id}`, method: 'delete' }),
