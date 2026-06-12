@@ -8,7 +8,7 @@ import {
   CarOutlined, UserOutlined, InboxOutlined, DollarOutlined,
   BarChartOutlined, SettingOutlined, BellOutlined, CloseOutlined, RightOutlined, LogoutOutlined,
   ShoppingOutlined, BankOutlined, ApiOutlined, MessageOutlined, RobotOutlined, BookOutlined,
-  ContactsOutlined
+  ContactsOutlined, FileProtectOutlined,
 } from '@ant-design/icons';
 import { toggleSidebar } from '../../store/slices/themeSlice';
 import { useLogoutMutation, useGetCompanySettingsQuery, useGetTasksQuery, useGetNotificationsQuery } from '../../store/api/apiSlice';
@@ -42,6 +42,7 @@ const ALL_MENU_ITEMS = [
     children: [
       { key: '/integration/whatsapp', icon: <MessageOutlined />, label: 'WhatsApp', module: 'Integration' },
       { key: '/integration/ai', icon: <RobotOutlined />, label: 'AI Integration', module: 'Integration' },
+      { key: '/integration/gst', icon: <FileProtectOutlined />, label: 'GST Verification', module: 'Integration' },
     ],
   },
   { key: '/settings', icon: <SettingOutlined />, label: 'Settings', module: 'Settings' },

@@ -32,6 +32,8 @@ const companySettingsSchema = new mongoose.Schema({
     email: { type: Boolean, default: false },
   },
   automationVendors: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // GST Verification API key (stored securely in DB, overrides .env fallback)
+  gstApiKey: String,
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

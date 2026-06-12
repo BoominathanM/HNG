@@ -8,6 +8,68 @@ const AppError = require('../../utils/AppError');
 const bcrypt = require('bcryptjs');
 const COUNTRY_CODES = require('./countrycodes');
 
+// ─── GST API helper (uses native fetch — Node 18+) ───────────────────────────
+const callGstApi = async (gstin, apiKey) => {
+  const baseUrl = process.env.GST_API_URL || 'https://gstverify.co.in/api/v1/verify';
+  const url = `${baseUrl}/${gstin}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-API-Key': apiKey,
+        'Accept': 'application/json',
+        'User-Agent': 'HNG-CRM/1.0',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    let body;
+    try { body = await res.json(); } catch { body = {}; }
+    return { statusCode: res.status, body };
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') throw new Error('GST API request timed out after 15 s');
+    throw err;
+  }
+};
+
+// Normalize varied GST API response shapes to a consistent structure.
+// gstverify.co.in (and other services) can return fields in multiple formats:
+//   abbreviated (pradr/lgnm/stj) or readable (legalName/state/principalAddress)
+// pradr itself may be a flat object OR have a nested .addr sub-object.
+const normalizeGstResponse = (body) => {
+  const raw = body?.data || body?.taxpayerInfo || body?.result || body;
+  if (!raw || typeof raw !== 'object') return raw;
+
+  // Resolve address: pradr.addr (nested) → pradr (flat) → principalAddress → address
+  const pradr = raw.pradr;
+  const address = (pradr?.addr && typeof pradr.addr === 'object')
+    ? pradr.addr
+    : (pradr && typeof pradr === 'object' ? pradr : null)
+    || raw.principalAddress
+    || raw.address
+    || {};
+
+  return {
+    gstin:          raw.gstin        || raw.GSTIN,
+    lgnm:           raw.lgnm         || raw.legalName       || raw.legal_name     || raw.LegalName,
+    tradeNam:       raw.tradeNam     || raw.tradeName        || raw.trade_name     || raw.TradeName,
+    sts:            raw.sts          || raw.status           || raw.gstStatus      || raw.Status,
+    ctb:            raw.ctb          || raw.taxpayerType     || raw.taxPayerType   || raw.TaxpayerType,
+    rgdt:           raw.rgdt         || raw.registrationDate || raw.registration_date,
+    stj:            raw.stj          || raw.state            || raw.State,
+    nba:            raw.nba          || raw.natureOfBusiness || [],  // Nature of business activities
+    einvoiceStatus: raw.einvoiceStatus
+                    || (raw.einvoiceEnabled === true  ? 'Yes'
+                      : raw.einvoiceEnabled === false ? 'No'
+                      : undefined),
+    address,   // flat object: bnm/bno/flno/st/loc/dst/stcd/pncd
+    _raw: raw, // full original payload — available for any extra fields
+  };
+};
+
 exports.getCountryCodes = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: COUNTRY_CODES });
 });
@@ -241,4 +303,141 @@ exports.restoreRecord = asyncHandler(async (req, res, next) => {
   // Remove its entry from the archive collection now that it's live again.
   await DeletedRecord.deleteOne({ type, refId: id });
   res.status(200).json({ success: true, message: 'Record restored successfully' });
+});
+
+// ─── GST Integration ─────────────────────────────────────────────────────────
+
+// GET /api/settings/gst-config — returns connection status (never exposes full key).
+// "configured" is true ONLY when the user has explicitly saved a key via the UI (DB).
+// The .env fallback is a server-level override and does not affect the UI status.
+exports.getGstConfig = asyncHandler(async (req, res) => {
+  const settings = await CompanySettings.findOne().select('gstApiKey');
+  const dbKey  = settings?.gstApiKey || '';
+  const envKey = process.env.GST_API_KEY || '';
+  const activeKey = dbKey || envKey;
+  res.status(200).json({
+    success: true,
+    data: {
+      configured:  !!dbKey,                                                          // only DB key counts as "user connected"
+      keyPreview:  dbKey ? `${dbKey.slice(0, 8)}...${dbKey.slice(-4)}` : null,      // mask — never full key
+      source:      dbKey ? 'database' : (envKey ? 'env' : 'none'),
+      hasEnvKey:   !!envKey,                                                         // lets UI hint that a server default exists
+    },
+  });
+});
+
+// GET /api/settings/gst-config/credentials — returns the ACTUAL stored key for the edit flow.
+// Only the DB-saved key is returned; the .env key is a deployment secret and stays server-side.
+exports.getGstCredentials = asyncHandler(async (req, res) => {
+  const settings = await CompanySettings.findOne().select('gstApiKey');
+  res.status(200).json({
+    success: true,
+    data: { apiKey: settings?.gstApiKey || '' },
+  });
+});
+
+// PUT /api/settings/gst-config — save the API key into CompanySettings
+exports.updateGstConfig = asyncHandler(async (req, res, next) => {
+  const { apiKey } = req.body;
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
+    return next(new AppError('A valid API key is required', 400));
+  }
+  const trimmed = apiKey.trim();
+  await CompanySettings.findOneAndUpdate(
+    {},
+    { gstApiKey: trimmed, updatedBy: req.user._id },
+    { upsert: true }
+  );
+  res.status(200).json({
+    success: true,
+    message: 'GST API key saved successfully',
+    data: {
+      configured: true,
+      keyPreview: `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`,
+      source: 'database',
+    },
+  });
+});
+
+// DELETE /api/settings/gst-config — remove saved API key (disconnect)
+exports.deleteGstConfig = asyncHandler(async (req, res) => {
+  await CompanySettings.findOneAndUpdate({}, { $unset: { gstApiKey: '' } });
+  res.status(200).json({
+    success: true,
+    message: 'GST API key removed',
+    data: { configured: false, keyPreview: null, source: 'none' },
+  });
+});
+
+// POST /api/settings/gst-config/test — test the provided (or saved) API key
+exports.testGstConnection = asyncHandler(async (req, res, next) => {
+  const { apiKey: bodyKey } = req.body;
+  const settings = await CompanySettings.findOne().select('gstApiKey');
+  const apiKey = bodyKey?.trim() || settings?.gstApiKey || process.env.GST_API_KEY;
+  if (!apiKey) return next(new AppError('No GST API key provided or configured', 400));
+
+  // Sample GSTIN from gstverify.co.in docs (used for reachability check only)
+  const TEST_GSTIN = '27AAAAA0000A1Z5';
+  try {
+    const result = await callGstApi(TEST_GSTIN, apiKey);
+
+    // Clear auth failure → key is definitely wrong
+    if (result.statusCode === 401 || result.statusCode === 403) {
+      return next(new AppError('Invalid API key — authentication rejected by GST API', 401));
+    }
+
+    // Any other response (200 / 4xx / 5xx) means we reached the server.
+    // A 5xx here usually means the test GSTIN isn't in their DB, not that
+    // the key is wrong — so we still treat it as "connected".
+    const message =
+      result.statusCode === 200
+        ? 'GST API connection successful!'
+        : result.statusCode < 500
+          ? 'GST API is reachable and the API key is valid.'
+          : 'GST API is reachable. Server returned an error for the sample GSTIN — the key is likely valid. Try verifying a real GSTIN.';
+
+    res.status(200).json({
+      success: true,
+      message,
+      statusCode: result.statusCode,
+      data: result.body,
+    });
+  } catch (err) {
+    return next(new AppError(`Unable to reach GST API: ${err.message}`, 502));
+  }
+});
+
+// GET /api/settings/gst/verify/:gstin — proxy GSTIN lookup using stored key
+exports.verifyGstin = asyncHandler(async (req, res, next) => {
+  const { gstin } = req.params;
+  const cleaned = (gstin || '').trim().toUpperCase();
+  if (!cleaned || cleaned.length !== 15) {
+    return next(new AppError('GSTIN must be exactly 15 characters', 400));
+  }
+
+  const settings = await CompanySettings.findOne().select('gstApiKey');
+  const apiKey = settings?.gstApiKey || process.env.GST_API_KEY;
+  if (!apiKey) {
+    return next(new AppError(
+      'GST verification is not configured. Please add your API key in Integration → GST Verification.',
+      503
+    ));
+  }
+
+  try {
+    const result = await callGstApi(cleaned, apiKey);
+    if (result.statusCode === 404) {
+      return next(new AppError('GSTIN not found in GST database', 404));
+    }
+    if (result.statusCode === 401 || result.statusCode === 403) {
+      return next(new AppError('GST API key is invalid or expired', 401));
+    }
+    if (result.statusCode !== 200) {
+      return next(new AppError(`GST API returned status ${result.statusCode}`, result.statusCode));
+    }
+    const normalized = normalizeGstResponse(result.body);
+    res.status(200).json({ success: true, data: normalized, raw: result.body });
+  } catch (err) {
+    return next(new AppError(`GST lookup failed: ${err.message}`, 502));
+  }
 });

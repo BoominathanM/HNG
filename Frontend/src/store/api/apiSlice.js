@@ -31,6 +31,7 @@ export const apiSlice = createApi({
     'Dashboard', 'Kits', 'Options',
     'Reminders', 'Transport', 'Pickups', 'HotelDesigns', 'SuggestedTasks',
     'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
+    'GstConfig',
   ],
   endpoints: (builder) => ({
 
@@ -955,6 +956,30 @@ export const apiSlice = createApi({
     sendWhatsAppMessage: builder.mutation({
       query: (data) => ({ url: '/whatsapp/send', method: 'post', data }),
     }),
+
+    // ── GST Integration ──────────────────────────────────────────────────────
+    getGstConfig: builder.query({
+      query: () => ({ url: '/settings/gst-config' }),
+      providesTags: ['GstConfig'],
+    }),
+    getGstCredentials: builder.query({
+      query: () => ({ url: '/settings/gst-config/credentials' }),
+      providesTags: ['GstConfig'],
+    }),
+    updateGstConfig: builder.mutation({
+      query: (data) => ({ url: '/settings/gst-config', method: 'put', data }),
+      invalidatesTags: ['GstConfig'],
+    }),
+    deleteGstConfig: builder.mutation({
+      query: () => ({ url: '/settings/gst-config', method: 'delete' }),
+      invalidatesTags: ['GstConfig'],
+    }),
+    testGstConnection: builder.mutation({
+      query: (data) => ({ url: '/settings/gst-config/test', method: 'post', data }),
+    }),
+    verifyGstin: builder.query({
+      query: (gstin) => ({ url: `/settings/gst/verify/${encodeURIComponent(gstin)}` }),
+    }),
   }),
 });
 
@@ -1188,4 +1213,13 @@ export const {
   useSaveWhatsAppEventMappingMutation,
   useDeleteWhatsAppEventMappingMutation,
   useSendWhatsAppMessageMutation,
+  // GST Integration
+  useGetGstConfigQuery,
+  useGetGstCredentialsQuery,
+  useLazyGetGstCredentialsQuery,
+  useUpdateGstConfigMutation,
+  useDeleteGstConfigMutation,
+  useTestGstConnectionMutation,
+  useVerifyGstinQuery,
+  useLazyVerifyGstinQuery,
 } = apiSlice;

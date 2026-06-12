@@ -63,6 +63,7 @@ import {
   useGetCompanySettingsQuery,
   useGetPackingConfigQuery,
   useApproveEmergencySalesHeadMutation,
+  useLazyVerifyGstinQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -1189,25 +1190,99 @@ export default function Sales() {
   const watchedLeadPaymentTerms = Form.useWatch('paymentTerms', leadForm);
   const watchedLeadPaymentCollection = Form.useWatch('paymentCollection', leadForm);
 
+  // GST state for order-detail view
   const [gstApiData, setGstApiData] = useState(null);
   const [gstApiLoading, setGstApiLoading] = useState(false);
   const [gstApiError, setGstApiError] = useState(null);
+  // GST state for Add Lead / Edit Lead form
+  const [gstAddApiData, setGstAddApiData] = useState(null);
+  const [gstAddApiLoading, setGstAddApiLoading] = useState(false);
+  const [gstAddApiError, setGstAddApiError] = useState(null);
   const [expandedPartyKeys, setExpandedPartyKeys] = useState([]);
+  const [verifyGstinTrigger] = useLazyVerifyGstinQuery();
 
+  // Fetch GST details for order-detail view (uses backend proxy via gstverify.co.in)
   const fetchGstDetails = async (gstin) => {
     if (!gstin) return;
     setGstApiLoading(true);
     setGstApiData(null);
     setGstApiError(null);
     try {
-      const res = await fetch(`https://api.gst-return-status.app/taxpayerApi/search/${gstin}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      setGstApiData(json.taxpayerInfo || json);
+      const result = await verifyGstinTrigger(gstin.trim().toUpperCase(), false).unwrap();
+      setGstApiData(result.data || result);
     } catch (err) {
-      setGstApiError('Unable to fetch GST details. Please verify GSTIN manually.');
+      const msg = err?.data || err?.error || 'Unable to fetch GST details. Please verify GSTIN manually.';
+      setGstApiError(typeof msg === 'string' ? msg : 'Unable to fetch GST details.');
     } finally {
       setGstApiLoading(false);
+    }
+  };
+
+  // Fetch GST details for Add Lead / Edit Lead form and auto-fill all mappable fields
+  const fetchGstDetailsForLead = async (gstin) => {
+    const cleaned = (gstin || '').trim().toUpperCase();
+    if (!cleaned) { enqueueSnackbar('Please enter a GSTIN first.', { variant: 'warning' }); return; }
+    if (cleaned.length !== 15) { enqueueSnackbar('GSTIN must be exactly 15 characters.', { variant: 'warning' }); return; }
+    setGstAddApiLoading(true);
+    setGstAddApiData(null);
+    setGstAddApiError(null);
+    try {
+      const result = await verifyGstinTrigger(cleaned, false).unwrap();
+      // data = normalized, raw = original full API body
+      const data = result.data || result;
+      const raw  = result.raw || data._raw || {};
+      setGstAddApiData(data);
+
+      if (data) {
+        // Address object — handle both GST abbreviated fields and readable format
+        const addr = data.address || raw.pradr || raw.principalAddress || raw.address || {};
+
+        // Extract each address component trying both formats
+        const building  = addr.bnm   || addr.buildingName || addr.building || '';
+        const door      = addr.bno   || addr.door         || '';
+        const floor     = addr.flno  || addr.floor        || '';
+        const street    = addr.st    || addr.street       || '';
+        const locality  = addr.loc   || addr.location     || addr.area     || '';
+        const district  = addr.dst   || addr.district     || '';
+        const stateName = addr.stcd  || addr.state        || data.stj      || '';
+        const pincode   = addr.pncd  || addr.pincode      ? String(addr.pncd || addr.pincode) : '';
+
+        // Detailed address = everything except state and pincode (they have separate fields)
+        const addrParts = [building, door, floor, street, locality, district].filter(Boolean);
+        const detailedAddress = addrParts.join(', ');
+
+        // City field: district is the best city equivalent; fall back to locality
+        const city = district || locality || '';
+
+        // Location field: locality/area is the most specific sub-city level
+        const location = locality || district || '';
+
+        const fillValues = {};
+
+        // Identity fields
+        if (data.lgnm)                                fillValues.billingName = data.lgnm;
+        // Hotel name: use trade name only if user hasn't entered one yet
+        const existingHotelName = leadForm.getFieldValue('hotelName');
+        if (data.tradeNam && !existingHotelName)      fillValues.hotelName = data.tradeNam;
+
+        // Address fields
+        if (detailedAddress)                          fillValues.detailedAddress = detailedAddress;
+        if (city)                                     fillValues.city = city;
+        if (stateName)                                fillValues.state = stateName;
+        if (pincode)                                  fillValues.pincode = pincode;
+        if (location)                                 fillValues.location = location;
+
+        // Phone / email — NOT part of GST registration data; skip silently
+
+        if (Object.keys(fillValues).length) leadForm.setFieldsValue(fillValues);
+      }
+      enqueueSnackbar('GST verified — all available fields auto-filled!', { variant: 'success' });
+    } catch (err) {
+      const msg = err?.data || err?.error || 'Unable to fetch GST details. Check your API key in Integration → GST Verification.';
+      setGstAddApiError(typeof msg === 'string' ? msg : 'GST lookup failed.');
+      enqueueSnackbar(typeof msg === 'string' ? msg : 'GST lookup failed.', { variant: 'error' });
+    } finally {
+      setGstAddApiLoading(false);
     }
   };
 
@@ -1569,8 +1644,10 @@ export default function Sales() {
   }, [partiesRaw, ordersData]);
 
   useEffect(() => {
-    if (viewMode === 'order-detail' && selectedRecord?.gstNumber) {
-      fetchGstDetails(selectedRecord.gstNumber);
+    const gstin = selectedRecord?.gstNumber;
+    const gstDetailViews = ['order-detail', 'quotation-detail', 'negotiation-detail', 'detail'];
+    if (gstDetailViews.includes(viewMode) && gstin) {
+      fetchGstDetails(gstin);
     } else {
       setGstApiData(null);
       setGstApiError(null);
@@ -1780,6 +1857,8 @@ export default function Sales() {
     if (!requireAccess(lead ? 'edit' : 'add')) return;
     setEditingLead(lead);
     setSelectedRecord(lead);
+    setGstAddApiData(null);
+    setGstAddApiError(null);
     leadForm.resetFields();
     if (lead) {
       leadForm.setFieldsValue(prepareFormValues({ ...lead }));
@@ -3413,6 +3492,84 @@ export default function Sales() {
                   <Text strong style={{ display: 'block', color: '#B11E6A' }}>{q.customerId}</Text>
                 </Card>
               )}
+
+              {/* GST API Details */}
+              {q.gstNumber && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={
+                    <Space>
+                      <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
+                      <BankOutlined style={{ color: '#722ed1' }} />
+                      <span>GST API Details</span>
+                      {!gstApiLoading && (
+                        <Button size="small" type="text" icon={<HistoryOutlined />} style={{ color: '#722ed1' }} onClick={() => fetchGstDetails(q.gstNumber)}>Refresh</Button>
+                      )}
+                    </Space>
+                  }
+                >
+                  {gstApiLoading && (
+                    <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                      <Spin size="small" />
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>Fetching GST details…</Text>
+                    </div>
+                  )}
+                  {gstApiError && !gstApiLoading && (
+                    <div style={{ padding: '10px 12px', background: 'rgba(255,77,79,0.06)', borderRadius: 8, border: '1px solid rgba(255,77,79,0.2)' }}>
+                      <Text style={{ color: '#ff4d4f', fontSize: 12 }}>{gstApiError}</Text>
+                      <div style={{ marginTop: 8 }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>GSTIN on file: </Text>
+                        <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>{q.gstNumber}</Text>
+                      </div>
+                    </div>
+                  )}
+                  {gstApiData && !gstApiLoading && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {[
+                        { label: 'GSTIN', value: gstApiData.gstin || q.gstNumber, mono: true },
+                        { label: 'Legal Name', value: gstApiData.lgnm },
+                        { label: 'Trade Name', value: gstApiData.tradeNam },
+                        { label: 'Status', value: gstApiData.sts, tag: true, color: gstApiData.sts === 'Active' ? 'success' : 'error' },
+                        { label: 'Taxpayer Type', value: gstApiData.ctb || gstApiData.dty },
+                        { label: 'Registration Date', value: gstApiData.rgdt },
+                        { label: 'State', value: gstApiData.stj },
+                        { label: 'e-Invoice', value: gstApiData.einvoiceStatus },
+                      ].filter(f => f.value).map((f, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}` }}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>{f.label}</Text>
+                          {f.tag ? (
+                            <Tag color={f.color} style={{ borderRadius: 12, margin: 0, fontSize: 11 }}>{f.value}</Tag>
+                          ) : (
+                            <Text strong style={{ fontSize: 12, fontFamily: f.mono ? 'monospace' : undefined, color: f.mono ? '#722ed1' : undefined }}>{f.value}</Text>
+                          )}
+                        </div>
+                      ))}
+                      {gstApiData.address && typeof gstApiData.address === 'object' && (
+                        <div style={{ paddingTop: 8, marginTop: 4, borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}` }}>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Registered Address</Text>
+                          <Text style={{ fontSize: 12, lineHeight: 1.6, color: textColor }}>
+                            {[
+                              gstApiData.address.bnm  || gstApiData.address.building,
+                              gstApiData.address.bno  || gstApiData.address.door,
+                              gstApiData.address.flno || gstApiData.address.floor,
+                              gstApiData.address.st   || gstApiData.address.street,
+                              gstApiData.address.loc  || gstApiData.address.location,
+                              gstApiData.address.dst  || gstApiData.address.district,
+                              gstApiData.address.stcd || gstApiData.address.state,
+                              gstApiData.address.pncd || gstApiData.address.pincode,
+                            ].filter(Boolean).join(', ')}
+                          </Text>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!gstApiData && !gstApiLoading && !gstApiError && (
+                    <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>GST details load automatically.<br />Click Refresh to reload.</Text>
+                    </div>
+                  )}
+                </Card>
+              )}
             </Col>
           </Row>
         </motion.div>
@@ -3642,6 +3799,84 @@ export default function Sales() {
                 </div>
                 {n.customerId && <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>Customer: </Text><Text strong style={{ color: '#B11E6A' }}>{n.customerId}</Text></div>}
               </Card>
+
+              {/* GST API Details */}
+              {n.gstNumber && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={
+                    <Space>
+                      <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
+                      <BankOutlined style={{ color: '#722ed1' }} />
+                      <span>GST API Details</span>
+                      {!gstApiLoading && (
+                        <Button size="small" type="text" icon={<HistoryOutlined />} style={{ color: '#722ed1' }} onClick={() => fetchGstDetails(n.gstNumber)}>Refresh</Button>
+                      )}
+                    </Space>
+                  }
+                >
+                  {gstApiLoading && (
+                    <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                      <Spin size="small" />
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>Fetching GST details…</Text>
+                    </div>
+                  )}
+                  {gstApiError && !gstApiLoading && (
+                    <div style={{ padding: '10px 12px', background: 'rgba(255,77,79,0.06)', borderRadius: 8, border: '1px solid rgba(255,77,79,0.2)' }}>
+                      <Text style={{ color: '#ff4d4f', fontSize: 12 }}>{gstApiError}</Text>
+                      <div style={{ marginTop: 8 }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>GSTIN on file: </Text>
+                        <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>{n.gstNumber}</Text>
+                      </div>
+                    </div>
+                  )}
+                  {gstApiData && !gstApiLoading && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {[
+                        { label: 'GSTIN', value: gstApiData.gstin || n.gstNumber, mono: true },
+                        { label: 'Legal Name', value: gstApiData.lgnm },
+                        { label: 'Trade Name', value: gstApiData.tradeNam },
+                        { label: 'Status', value: gstApiData.sts, tag: true, color: gstApiData.sts === 'Active' ? 'success' : 'error' },
+                        { label: 'Taxpayer Type', value: gstApiData.ctb || gstApiData.dty },
+                        { label: 'Registration Date', value: gstApiData.rgdt },
+                        { label: 'State', value: gstApiData.stj },
+                        { label: 'e-Invoice', value: gstApiData.einvoiceStatus },
+                      ].filter(f => f.value).map((f, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}` }}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>{f.label}</Text>
+                          {f.tag ? (
+                            <Tag color={f.color} style={{ borderRadius: 12, margin: 0, fontSize: 11 }}>{f.value}</Tag>
+                          ) : (
+                            <Text strong style={{ fontSize: 12, fontFamily: f.mono ? 'monospace' : undefined, color: f.mono ? '#722ed1' : undefined }}>{f.value}</Text>
+                          )}
+                        </div>
+                      ))}
+                      {gstApiData.address && typeof gstApiData.address === 'object' && (
+                        <div style={{ paddingTop: 8, marginTop: 4, borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}` }}>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Registered Address</Text>
+                          <Text style={{ fontSize: 12, lineHeight: 1.6, color: textColor }}>
+                            {[
+                              gstApiData.address.bnm  || gstApiData.address.building,
+                              gstApiData.address.bno  || gstApiData.address.door,
+                              gstApiData.address.flno || gstApiData.address.floor,
+                              gstApiData.address.st   || gstApiData.address.street,
+                              gstApiData.address.loc  || gstApiData.address.location,
+                              gstApiData.address.dst  || gstApiData.address.district,
+                              gstApiData.address.stcd || gstApiData.address.state,
+                              gstApiData.address.pncd || gstApiData.address.pincode,
+                            ].filter(Boolean).join(', ')}
+                          </Text>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!gstApiData && !gstApiLoading && !gstApiError && (
+                    <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>GST details load automatically.<br />Click Refresh to reload.</Text>
+                    </div>
+                  )}
+                </Card>
+              )}
             </Col>
           </Row>
         </motion.div>
@@ -5448,8 +5683,119 @@ export default function Sales() {
                         )}
                         {watchedLeadType !== 'SAMPLE' && watchedBillType === 'GST' && (
                           <>
-                            <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="GST Number" name="gstNumber">
+                                <Input
+                                  placeholder="GSTIN (e.g. 27AAACG2115R1ZN)"
+                                  maxLength={15}
+                                  style={{ textTransform: 'uppercase' }}
+                                  suffix={
+                                    <Button
+                                      size="small"
+                                      type="link"
+                                      loading={gstAddApiLoading}
+                                      onClick={() => fetchGstDetailsForLead(leadForm.getFieldValue('gstNumber'))}
+                                      style={{ color: '#B11E6A', padding: '0 4px', fontSize: 12 }}
+                                    >
+                                      {gstAddApiLoading ? '' : 'Verify'}
+                                    </Button>
+                                  }
+                                />
+                              </Form.Item>
+                            </Col>
                             <Col xs={24} sm={12}><Form.Item label="GST %" name="gstPercent"><InputNumber style={{ width: '100%' }} placeholder="18" /></Form.Item></Col>
+                            {/* GST verification result shown below the two GST fields */}
+                            {gstAddApiError && !gstAddApiLoading && (
+                              <Col xs={24}>
+                                <div style={{ marginTop: -8, marginBottom: 12, padding: '8px 12px', background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 8 }}>
+                                  <Text style={{ color: '#ff4d4f', fontSize: 12 }}>{gstAddApiError}</Text>
+                                </div>
+                              </Col>
+                            )}
+                            {gstAddApiData && !gstAddApiLoading && (() => {
+                              const addr = gstAddApiData.address || {};
+                              const building = addr.bnm  || addr.building || '';
+                              const door     = addr.bno  || addr.door     || '';
+                              const floor    = addr.flno || addr.floor    || '';
+                              const street   = addr.st   || addr.street   || '';
+                              const locality = addr.loc  || addr.location || '';
+                              const district = addr.dst  || addr.district || '';
+                              const state    = addr.stcd || addr.state    || gstAddApiData.stj || '';
+                              const pincode  = addr.pncd || addr.pincode  ? String(addr.pncd || addr.pincode) : '';
+                              const fullAddr = [building, door, floor, street, locality, district, state, pincode].filter(Boolean).join(', ');
+                              return (
+                                <Col xs={24}>
+                                  <div style={{ marginTop: -8, marginBottom: 12, padding: '14px 16px', background: 'rgba(177,30,106,0.04)', border: '1px solid rgba(177,30,106,0.18)', borderRadius: 10 }}>
+                                    {/* Header */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                                      <Text style={{ color: '#B11E6A', fontWeight: 700, fontSize: 13 }}>GST Verified — Auto-Filled</Text>
+                                      {gstAddApiData.sts && (
+                                        <Tag color={gstAddApiData.sts === 'Active' ? 'success' : 'error'} style={{ borderRadius: 10, margin: 0 }}>
+                                          {gstAddApiData.sts}
+                                        </Tag>
+                                      )}
+                                    </div>
+
+                                    {/* Core GST fields */}
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '5px 20px', marginBottom: 10 }}>
+                                      {[
+                                        { label: 'GSTIN',                          value: gstAddApiData.gstin,         mono: true },
+                                        { label: 'Legal Name → Billing Name',      value: gstAddApiData.lgnm,          filled: true },
+                                        { label: 'Trade Name → Hotel Name',        value: gstAddApiData.tradeNam,      filled: true },
+                                        { label: 'Taxpayer Type',                  value: gstAddApiData.ctb },
+                                        { label: 'Registration Date',              value: gstAddApiData.rgdt },
+                                        { label: 'State → State field',            value: gstAddApiData.stj,           filled: true },
+                                        { label: 'e-Invoice Status',               value: gstAddApiData.einvoiceStatus },
+                                      ].filter(f => f.value).map((f, i) => (
+                                        <div key={i} style={{ borderBottom: '1px solid rgba(177,30,106,0.07)', padding: '4px 0', display: 'flex', flexDirection: 'column' }}>
+                                          <Text type="secondary" style={{ fontSize: 10 }}>{f.label}</Text>
+                                          <Text style={{ fontSize: 12, fontFamily: f.mono ? 'monospace' : undefined, color: f.mono ? '#B11E6A' : f.filled ? '#389e0d' : undefined, fontWeight: f.filled ? 600 : 400 }}>
+                                            {f.value}
+                                          </Text>
+                                        </div>
+                                      ))}
+                                    </div>
+
+                                    {/* Address breakdown */}
+                                    {fullAddr && (
+                                      <div style={{ borderTop: '1px solid rgba(177,30,106,0.1)', paddingTop: 8, marginBottom: 8 }}>
+                                        <Text type="secondary" style={{ fontSize: 10 }}>Registered Address → Detailed Address, City, State, Pincode, Location</Text>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px 20px', marginTop: 4 }}>
+                                          {[
+                                            { label: 'Building',  value: building },
+                                            { label: 'Door/Unit', value: door },
+                                            { label: 'Floor',     value: floor },
+                                            { label: 'Street',    value: street },
+                                            { label: 'Locality → Location field', value: locality, filled: true },
+                                            { label: 'District → City field',     value: district, filled: true },
+                                            { label: 'State',     value: state,    filled: true },
+                                            { label: 'PIN Code → Pincode field',  value: pincode,  filled: true },
+                                          ].filter(f => f.value).map((f, i) => (
+                                            <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid rgba(177,30,106,0.05)' }}>
+                                              <Text type="secondary" style={{ fontSize: 10 }}>{f.label}: </Text>
+                                              <Text style={{ fontSize: 12, color: f.filled ? '#389e0d' : undefined, fontWeight: f.filled ? 600 : 400 }}>
+                                                {f.value}
+                                              </Text>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Summary note */}
+                                    <div style={{ background: 'rgba(56,158,13,0.06)', border: '1px solid rgba(56,158,13,0.2)', borderRadius: 6, padding: '6px 10px' }}>
+                                      <Text style={{ fontSize: 11, color: '#389e0d' }}>
+                                        Auto-filled: Billing Name, Hotel Name (if empty), Detailed Address, City, State, Pincode, Location.
+                                      </Text>
+                                      <br />
+                                      <Text type="secondary" style={{ fontSize: 10 }}>
+                                        Phone &amp; Email are not part of GST registration data — please fill them manually.
+                                      </Text>
+                                    </div>
+                                  </div>
+                                </Col>
+                              );
+                            })()}
                           </>
                         )}
                       </Row>
@@ -5596,6 +5942,84 @@ export default function Sales() {
                   </Card>
                 </Col>
               </Row>
+
+              {/* GST API Details — detail view only, when GSTIN is on the record */}
+              {isDetail && record.gstNumber && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={
+                    <Space>
+                      <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
+                      <BankOutlined style={{ color: '#722ed1' }} />
+                      <span>GST API Details</span>
+                      {!gstApiLoading && (
+                        <Button size="small" type="text" icon={<HistoryOutlined />} style={{ color: '#722ed1' }} onClick={() => fetchGstDetails(record.gstNumber)}>Refresh</Button>
+                      )}
+                    </Space>
+                  }
+                >
+                  {gstApiLoading && (
+                    <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                      <Spin size="small" />
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>Fetching GST details…</Text>
+                    </div>
+                  )}
+                  {gstApiError && !gstApiLoading && (
+                    <div style={{ padding: '10px 12px', background: 'rgba(255,77,79,0.06)', borderRadius: 8, border: '1px solid rgba(255,77,79,0.2)' }}>
+                      <Text style={{ color: '#ff4d4f', fontSize: 12 }}>{gstApiError}</Text>
+                      <div style={{ marginTop: 8 }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>GSTIN on file: </Text>
+                        <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>{record.gstNumber}</Text>
+                      </div>
+                    </div>
+                  )}
+                  {gstApiData && !gstApiLoading && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {[
+                        { label: 'GSTIN', value: gstApiData.gstin || record.gstNumber, mono: true },
+                        { label: 'Legal Name', value: gstApiData.lgnm },
+                        { label: 'Trade Name', value: gstApiData.tradeNam },
+                        { label: 'Status', value: gstApiData.sts, tag: true, color: gstApiData.sts === 'Active' ? 'success' : 'error' },
+                        { label: 'Taxpayer Type', value: gstApiData.ctb || gstApiData.dty },
+                        { label: 'Registration Date', value: gstApiData.rgdt },
+                        { label: 'State', value: gstApiData.stj },
+                        { label: 'e-Invoice', value: gstApiData.einvoiceStatus },
+                      ].filter(f => f.value).map((f, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}` }}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>{f.label}</Text>
+                          {f.tag ? (
+                            <Tag color={f.color} style={{ borderRadius: 12, margin: 0, fontSize: 11 }}>{f.value}</Tag>
+                          ) : (
+                            <Text strong style={{ fontSize: 12, fontFamily: f.mono ? 'monospace' : undefined, color: f.mono ? '#722ed1' : undefined }}>{f.value}</Text>
+                          )}
+                        </div>
+                      ))}
+                      {gstApiData.address && typeof gstApiData.address === 'object' && (
+                        <div style={{ paddingTop: 8, marginTop: 4, borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}` }}>
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Registered Address</Text>
+                          <Text style={{ fontSize: 12, lineHeight: 1.6, color: textColor }}>
+                            {[
+                              gstApiData.address.bnm  || gstApiData.address.building,
+                              gstApiData.address.bno  || gstApiData.address.door,
+                              gstApiData.address.flno || gstApiData.address.floor,
+                              gstApiData.address.st   || gstApiData.address.street,
+                              gstApiData.address.loc  || gstApiData.address.location,
+                              gstApiData.address.dst  || gstApiData.address.district,
+                              gstApiData.address.stcd || gstApiData.address.state,
+                              gstApiData.address.pncd || gstApiData.address.pincode,
+                            ].filter(Boolean).join(', ')}
+                          </Text>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!gstApiData && !gstApiLoading && !gstApiError && (
+                    <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>GST details load automatically.<br />Click Refresh to reload.</Text>
+                    </div>
+                  )}
+                </Card>
+              )}
 
               {/* ── Personalization card — show for both ──────────── */}
               {(isAddLead || isAddCustomer || isDetail) && (

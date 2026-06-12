@@ -34,6 +34,7 @@ import PartiesLedger from './pages/PartiesLedger';
 import VendorsSuppliers from './pages/VendorsSuppliers';
 import WhatsAppIntegration from './pages/Integration/WhatsAppIntegration';
 import AIIntegration from './pages/Integration/AIIntegration';
+import GSTIntegration from './pages/Integration/GSTIntegration';
 
 const { Text } = Typography;
 
@@ -123,6 +124,7 @@ function ThemedApp() {
               <Route path="/notifications" element={<PermissionRoute module="Notifications"><Notifications /></PermissionRoute>} />
               <Route path="/integration/whatsapp" element={<PermissionRoute module="Integration"><WhatsAppIntegration /></PermissionRoute>} />
               <Route path="/integration/ai" element={<PermissionRoute module="Integration"><AIIntegration /></PermissionRoute>} />
+              <Route path="/integration/gst" element={<PermissionRoute module="Integration"><GSTIntegration /></PermissionRoute>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

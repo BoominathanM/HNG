@@ -27,4 +27,12 @@ router.post('/deleted-records/:type/:id/restore', ctrl.restoreRecord);
 router.get('/options', ctrl.getOptions);
 router.post('/options', ctrl.createOption);
 
+// GST Integration
+router.get('/gst-config', ctrl.getGstConfig);
+router.get('/gst-config/credentials', ctrl.getGstCredentials);   // returns actual key for edit flow
+router.put('/gst-config', ctrl.updateGstConfig);
+router.delete('/gst-config', ctrl.deleteGstConfig);
+router.post('/gst-config/test', ctrl.testGstConnection);
+router.get('/gst/verify/:gstin', ctrl.verifyGstin);
+
 module.exports = router;
