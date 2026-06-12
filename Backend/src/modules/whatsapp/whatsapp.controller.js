@@ -214,7 +214,7 @@ exports.getEventMappings = async (req, res, next) => {
 // POST /api/whatsapp/event-mappings  (create or update)
 exports.saveEventMapping = async (req, res, next) => {
   try {
-    const { id, eventId, templateId, isEnabled, variables } = req.body;
+    const { id, eventId, templateId, isEnabled, variables, sendTime } = req.body;
     if (!eventId || !templateId) {
       return res.status(400).json({ success: false, message: 'Event and template are required', data: null });
     }
@@ -234,11 +234,13 @@ exports.saveEventMapping = async (req, res, next) => {
         }))
       : [];
 
+    const cleanSendTime = /^\d{2}:\d{2}$/.test(sendTime || '') ? sendTime : '08:00';
+
     let mapping;
     if (id) {
       mapping = await WhatsAppEventMapping.findByIdAndUpdate(
         id,
-        { eventId, templateId, isEnabled: isEnabled !== false, variables: cleanVars, updatedBy: req.user?._id || null },
+        { eventId, templateId, isEnabled: isEnabled !== false, variables: cleanVars, sendTime: cleanSendTime, updatedBy: req.user?._id || null },
         { new: true, runValidators: true }
       )
         .populate('eventId', 'label key availableFields')
@@ -246,7 +248,7 @@ exports.saveEventMapping = async (req, res, next) => {
         .lean();
     } else {
       const created = await WhatsAppEventMapping.create({
-        eventId, templateId, isEnabled: isEnabled !== false, variables: cleanVars,
+        eventId, templateId, isEnabled: isEnabled !== false, variables: cleanVars, sendTime: cleanSendTime,
         createdBy: req.user?._id || null, updatedBy: req.user?._id || null,
       });
       mapping = await WhatsAppEventMapping.findById(created._id)

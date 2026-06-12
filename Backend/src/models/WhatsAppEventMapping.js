@@ -10,6 +10,7 @@ const whatsAppEventMappingSchema = new mongoose.Schema({
   templateId: { type: mongoose.Schema.Types.ObjectId, ref: 'WhatsAppTemplate', required: true },
   isEnabled:  { type: Boolean, default: true },
   variables:  [variableSchema],
+  sendTime:   { type: String, default: '08:00' },
   createdBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   updatedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });

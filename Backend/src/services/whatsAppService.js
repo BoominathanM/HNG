@@ -384,6 +384,7 @@ const DEFAULT_EVENTS = [
   { key: 'low-stock-alert',   label: 'Low Stock Alert',   description: 'Triggered when inventory falls below minimum',    availableFields: ['productName', 'currentStock', 'minimumStock', 'companyName'] },
   { key: 'dispatch-update',   label: 'Dispatch Update',   description: 'Triggered on dispatch confirmation or LR upload', availableFields: ['orderCode', 'customerName', 'lrNumber', 'trackingUrl', 'companyName'] },
   { key: 'generate-report',   label: 'Generate Report',   description: 'Triggered when a scheduled report is generated',  availableFields: ['reportDate', 'totalOrders', 'totalRevenue', 'companyName'] },
+  { key: 'follow-up-reminder', label: 'Follow-up Reminder', description: 'Sent to the assigned salesperson on the scheduled follow-up date', availableFields: ['salesPersonName', 'customerName', 'followupDate', 'followupTime', 'leadStatus', 'companyName'] },
 ];
 
 const ACCOUNT_VERIFICATION_EVENT = {

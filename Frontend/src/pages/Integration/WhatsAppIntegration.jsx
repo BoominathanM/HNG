@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   Row, Col, Card, Form, Input, Button, Typography, Tabs, Tag, Table,
-  Select, Modal, Space, Tooltip, Spin, Empty, Popconfirm,
+  Select, Modal, Space, Tooltip, Spin, Empty, Popconfirm, TimePicker,
 } from 'antd';
+import dayjs from 'dayjs';
 import { enqueueSnackbar } from 'notistack';
 import {
   ArrowLeftOutlined, SyncOutlined, PlusOutlined,
@@ -55,6 +56,7 @@ export default function WhatsAppIntegration() {
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
   const [editMapping, setEditMapping]     = useState(null);
   const [variableRows, setVariableRows]   = useState([]);
+  const [sendTime, setSendTime]           = useState(dayjs('08:00', 'HH:mm'));
   const [mappingForm] = Form.useForm();
 
   // ── RTK Queries ───────────────────────────────────────────────────────────
@@ -154,12 +156,14 @@ export default function WhatsAppIntegration() {
     setEditMapping(record);
     mappingForm.resetFields();
     if (record) {
-      const eventId   = record.eventId?._id || record.eventId;
+      const eventId    = record.eventId?._id || record.eventId;
       const templateId = record.templateId?._id || record.templateId;
       mappingForm.setFieldsValue({ eventId, templateId, isEnabled: record.isEnabled !== false });
       setVariableRows(Array.isArray(record.variables) ? record.variables : []);
+      setSendTime(record.sendTime ? dayjs(record.sendTime, 'HH:mm') : dayjs('08:00', 'HH:mm'));
     } else {
       setVariableRows([]);
+      setSendTime(dayjs('08:00', 'HH:mm'));
     }
     setMappingModalOpen(true);
   };
@@ -176,12 +180,15 @@ export default function WhatsAppIntegration() {
   const saveMappingModal = async () => {
     try {
       const vals = await mappingForm.validateFields();
+      const selectedEvt = events.find((e) => String(e._id) === String(vals.eventId));
+      const isFollowUp  = selectedEvt?.key === 'follow-up-reminder';
       const payload = {
         ...(editMapping?._id ? { id: editMapping._id } : {}),
-        eventId: vals.eventId,
+        eventId:    vals.eventId,
         templateId: vals.templateId,
-        isEnabled: vals.isEnabled !== false,
-        variables: variableRows.filter((r) => r.templateVariable && r.eventField),
+        isEnabled:  vals.isEnabled !== false,
+        variables:  variableRows.filter((r) => r.templateVariable && r.eventField),
+        ...(isFollowUp ? { sendTime: sendTime?.format('HH:mm') || '08:00' } : {}),
       };
       const res = await saveMapping(payload).unwrap();
       enqueueSnackbar(res.message || 'Mapping saved', { variant: 'success' });
@@ -265,6 +272,18 @@ export default function WhatsAppIntegration() {
       },
     },
     {
+      title: 'Send Time', key: 'sendTime', width: 120,
+      render: (_, r) => {
+        if (r.eventId?.key !== 'follow-up-reminder') return <Text style={{ color: subText }}>—</Text>;
+        const t = r.sendTime || '08:00';
+        const [hh, mm] = t.split(':');
+        const h = parseInt(hh, 10);
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        return <Tag color="blue">{`${String(h12).padStart(2, '0')}:${mm} ${ampm}`}</Tag>;
+      },
+    },
+    {
       title: 'Status', dataIndex: 'isEnabled', key: 'status', width: 100,
       render: (v) => <Tag color={v !== false ? 'success' : 'default'}>{v !== false ? 'Active' : 'Inactive'}</Tag>,
     },
@@ -300,8 +319,9 @@ export default function WhatsAppIntegration() {
   );
 
   // ── Selected event's available fields for variable mapping ────────────────
-  const selectedEventId = mappingForm.getFieldValue('eventId');
-  const selectedEvent   = events.find((e) => String(e._id) === String(selectedEventId));
+  const selectedEventId  = Form.useWatch('eventId', mappingForm);
+  const selectedEvent    = events.find((e) => String(e._id) === String(selectedEventId));
+  const isFollowUpEvent  = selectedEvent?.key === 'follow-up-reminder';
 
   const tabItems = [
     // ── Configuration Tab ──────────────────────────────────────────────────
@@ -655,6 +675,27 @@ export default function WhatsAppIntegration() {
               <Option value={false}>Inactive</Option>
             </Select>
           </Form.Item>
+
+          {isFollowUpEvent && (
+            <Form.Item
+              label={
+                <Space size={4}>
+                  <Text style={{ color: textColor, fontWeight: 500 }}>Daily Send Time</Text>
+                  <Text style={{ color: subText, fontSize: 12 }}>(reminder fires at this time every day)</Text>
+                </Space>
+              }
+            >
+              <TimePicker
+                use12Hours
+                format="hh:mm A"
+                value={sendTime}
+                onChange={(val) => setSendTime(val)}
+                minuteStep={1}
+                style={{ width: '100%', borderColor, borderRadius: 8, height: 40 }}
+                allowClear={false}
+              />
+            </Form.Item>
+          )}
 
           {variableRows.length > 0 && (
             <Form.Item label="Variable Mapping">
