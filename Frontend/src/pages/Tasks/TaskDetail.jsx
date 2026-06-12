@@ -100,7 +100,7 @@ export default function TaskDetail() {
   const cardStyle = { borderRadius: 12, marginBottom: 0 };
 
   return (
-    <div style={{ padding: '0 0 32px' }}>
+    <div className="page-container fade-in">
       <PageBreadcrumb
         items={[{ label: 'Task Management', path: '/tasks' }, { label: t.taskCode }]}
       />
