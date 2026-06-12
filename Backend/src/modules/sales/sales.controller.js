@@ -8,6 +8,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { cloudinary } = require('../../config/cloudinary');
+const { notifyRoles } = require('../../utils/notify');
 
 // ─── LEADS ───────────────────────────────────────────────────────────────────
 exports.getLeads = asyncHandler(async (req, res) => {
@@ -55,6 +56,7 @@ exports.createLead = asyncHandler(async (req, res) => {
     createdBy: req.user._id,
     statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Lead created' }],
   });
+  notifyRoles({ modules: ['Sales Team'], userIds: [lead.assignedTo], type: 'system', title: 'New Lead Created', message: `New lead: ${lead.hotelName} (${lead.leadCode}) — Status: ${initialStatus}`, link: '/sales' }).catch(() => {});
   res.status(201).json({ success: true, data: lead });
 });
 
@@ -94,6 +96,10 @@ exports.updateLeadStatus = asyncHandler(async (req, res, next) => {
     { new: true }
   );
   if (!lead) return next(new AppError('Lead not found', 404));
+  const notableStatuses = ['Negotiation', 'Converted', 'Dispatched', 'Delivered', 'Complaint'];
+  if (notableStatuses.includes(req.body.status)) {
+    notifyRoles({ modules: ['Sales Team'], userIds: [lead.assignedTo], type: 'system', title: 'Lead Status Updated', message: `${lead.hotelName} (${lead.leadCode}) moved to ${req.body.status}`, link: '/sales' }).catch(() => {});
+  }
   res.status(200).json({ success: true, data: lead });
 });
 
@@ -197,6 +203,7 @@ exports.getQuotations = asyncHandler(async (req, res) => {
 exports.createQuotation = asyncHandler(async (req, res) => {
   const quotCode = await generateCode('QT');
   const q = await Quotation.create({ ...req.body, quotCode, createdBy: req.user._id });
+  notifyRoles({ modules: ['Sales Team'], type: 'system', title: 'Quotation Created', message: `Quotation ${q.quotCode} created for ${q.clientName}`, link: '/sales' }).catch(() => {});
   res.status(201).json({ success: true, data: q });
 });
 
@@ -417,6 +424,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
       $push: { statusHistory: { status: 'Converted', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created from negotiation' } },
     });
   }
+  notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} is now In Production`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: order });
 });
 
@@ -443,6 +451,7 @@ exports.createDirectOrder = asyncHandler(async (req, res) => {
     createdBy: req.user._id,
     statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });
+  notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} created directly`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: order });
 });
 
@@ -531,6 +540,7 @@ exports.createComplaint = asyncHandler(async (req, res) => {
     statusHistory: [{ status: req.body.status || 'Open', note: 'Complaint raised', by: req.user._id, byName: req.user.fullName }],
     createdBy: req.user._id,
   });
+  notifyRoles({ modules: ['Sales Team'], type: 'complaint', title: 'New Complaint Raised', message: `Complaint ${complaint.complaintCode}: ${complaint.issue || complaint.description || 'No description'} — ${complaint.clientName || 'N/A'}`, link: '/sales' }).catch(() => {});
   res.status(201).json({ success: true, data: complaint });
 });
 
@@ -549,6 +559,7 @@ exports.updateComplaintStatus = asyncHandler(async (req, res, next) => {
     by: req.user._id, byName: req.user.fullName,
   });
   await complaint.save({ validateBeforeSave: false });
+  notifyRoles({ modules: ['Sales Team'], type: 'complaint', title: `Complaint ${req.body.status}`, message: `${complaint.complaintCode} (${complaint.clientName || 'N/A'}) → ${req.body.status}`, link: '/sales' }).catch(() => {});
   res.status(200).json({ success: true, data: complaint });
 });
 

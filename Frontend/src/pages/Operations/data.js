@@ -102,6 +102,14 @@ const isFrostedZiplock = (item, order) => {
   return hasFrostedPackaging(item, order);
 };
 
+// Returns true when an item requires sticker printing.
+// item.sticker='YES' is explicit intent; item.sticker='NO' overrides any logoType='Sticker'
+// inference (handles orders where inferLogoType fell back to 'Sticker' for items with no
+// keyword in their packing material name but sticker printing was explicitly set to No).
+// When item.sticker is unset (legacy orders without the field), logoType='Sticker' still triggers.
+const itemNeedsSticker = (item) =>
+  item.sticker === 'YES' || (item.sticker !== 'NO' && item.logoType === 'Sticker');
+
 // Determine an item's ultimate packaging destination (after sticker step completes).
 const getItemPackagingType = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
@@ -110,7 +118,7 @@ const getItemPackagingType = (item, order) => {
   if (isKitItem && order.displayUnitTab === 'Box') return 'box';
   // Standalone products with sticker=YES stay in the Sticker tab after printing — they do
   // NOT move on to a Box/Ziplock tab regardless of packingMaterialTab.
-  if (!isKitItem && (item.sticker === 'YES' || item.logoType === 'Sticker')) return 'sticker';
+  if (!isKitItem && itemNeedsSticker(item)) return 'sticker';
   // Standalone products without sticker: their own config-resolved packingMaterial tab.
   if (item.packingMaterialTab === 'Ziplock') return 'frosted';
   if (item.packingMaterialTab === 'Box') return 'box';
@@ -226,16 +234,16 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             // Standalone products with sticker=YES always go to Sticker tab — packingMaterialTab
             // does not bypass sticker for standalone items; they stay in Sticker after printing.
             // Only sticker=NO standalone items with explicit packing config skip sticker entirely.
-            const needsStickerStandalone = item.sticker === 'YES' || item.logoType === 'Sticker';
+            const needsStickerStandalone = itemNeedsSticker(item);
             if (!needsStickerStandalone && (item.packingMaterialTab === 'Box' || item.packingMaterialTab === 'Ziplock')) return false;
           } else {
             // Kit items: sticker=YES still goes through Sticker tab first even if
             // displayUnitTab is Box/Ziplock. Only sticker=NO kit items skip sticker.
             if ((order.displayUnitTab === 'Box' || order.displayUnitTab === 'Ziplock') &&
-                !(item.sticker === 'YES' || item.logoType === 'Sticker')) return false;
+                !itemNeedsSticker(item)) return false;
           }
           // Sticker Printing = Yes → route to Sticker tab regardless of Logo Required or Packing Material.
-          if (!(item.sticker === 'YES' || item.logoType === 'Sticker')) return false;
+          if (!itemNeedsSticker(item)) return false;
           // Once the item's sticker is printed and it has a box/frosted destination,
           // remove it from the sticker queue — it now lives in the box/frosted tab.
           const packagingType = getItemPackagingType(item, order);
@@ -303,11 +311,18 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const emergencyAllDone = areAllEmergencyItemsDone(order);
       const result = [];
       (order.items || []).forEach((item, idx) => {
-        const packType = getItemPackagingType(item, order);
-        if (packType !== 'box') return;
-        const product = item.product || item.itemName;
-        const needsSticker = item.sticker === 'YES' || item.logoType === 'Sticker';
         const isKitItem = !!(item.isKit || item.kitType);
+        const packType = getItemPackagingType(item, order);
+        // Kit items can appear in BOTH Box and Frosted tabs simultaneously:
+        //   - displayUnitTab drives the KIT ASSEMBLY step (e.g. Frosted for a Ziplock kit)
+        //   - packingMaterialTab drives the INDIVIDUAL PRODUCT PACKING step (e.g. Box for paper-box products)
+        // When a kit item has packingMaterialTab='Box' but the display unit routes to Frosted,
+        // include it here for the individual packing step — independent of the kit assembly step.
+        const needsBoxPacking = packType === 'box' ||
+          (isKitItem && item.packingMaterialTab === 'Box' && order.displayUnitTab !== 'Box');
+        if (!needsBoxPacking) return;
+        const product = item.product || item.itemName;
+        const needsSticker = itemNeedsSticker(item);
         // "Belongs in Box" — used for the no-logo exclusion check.
         const hasExplicitBoxTab = (isKitItem && order.displayUnitTab === 'Box') || item.packingMaterialTab === 'Box';
         // "Can bypass sticker gate" — kit items must complete Sticker tab first even when
@@ -366,13 +381,18 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const emergencyAllDone = areAllEmergencyItemsDone(order);
       const result = [];
       (order.items || []).forEach((item, idx) => {
-        // Use the single-source-of-truth destination so a separate product with sticker=YES
-        // (final destination = 'sticker') never leaks into the Frosted tab even if its
-        // packing material is Ziplock — it stays in the Sticker tab.
-        if (getItemPackagingType(item, order) !== 'frosted') return;
-        const product = item.product || item.itemName;
-        const needsSticker = item.sticker === 'YES' || item.logoType === 'Sticker';
         const isKitItem = !!(item.isKit || item.kitType);
+        const packType = getItemPackagingType(item, order);
+        // Kit items can appear in BOTH Box and Frosted tabs simultaneously (dual-step flow).
+        // When a kit item has packingMaterialTab='Ziplock' but the display unit routes to Box,
+        // include it here for the individual packing step — independent of the kit assembly step.
+        // Non-kit items: still use the single-source-of-truth packType so sticker=YES items
+        // never leak into Frosted even if their packing material string contains 'ziplock'.
+        const needsFrostedPacking = packType === 'frosted' ||
+          (isKitItem && item.packingMaterialTab === 'Ziplock' && order.displayUnitTab !== 'Ziplock');
+        if (!needsFrostedPacking) return;
+        const product = item.product || item.itemName;
+        const needsSticker = itemNeedsSticker(item);
         // "Belongs in Frosted" — used for the no-logo exclusion check and active-SR gate.
         const hasExplicitZiplockTab = (isKitItem && order.displayUnitTab === 'Ziplock') || item.packingMaterialTab === 'Ziplock';
         // "Can bypass sticker gate" — kit items must complete Sticker tab first even when

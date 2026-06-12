@@ -62,6 +62,7 @@ import {
   useApproveStickerRequestMutation,
   useGetCompanySettingsQuery,
   useGetPackingConfigQuery,
+  useApproveEmergencySalesHeadMutation,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -1318,6 +1319,8 @@ export default function Sales() {
   const [uploadFilesMutation] = useUploadFilesMutation();
   const { data: stickerData } = useGetStickerRequestsQuery();
   const [approveStickerRequest] = useApproveStickerRequestMutation();
+  const [approveEmergencySalesHead, { isLoading: approvingSales }] = useApproveEmergencySalesHeadMutation();
+  const [emergencySalesApprovalOrder, setEmergencySalesApprovalOrder] = useState(null);
 
   // Reusable Cloudinary upload handler for AntD Upload components.
   const makeCloudinaryRequest = (folder) => async ({ file, onSuccess, onError, onProgress }) => {
@@ -1491,6 +1494,12 @@ export default function Sales() {
         splitDates: o.splitDates || [],
         isEmergency: o.isEmergency || false,
         isUrgent: o.isUrgent || false,
+        emergencyDispatchRequested: o.emergencyDispatchRequested || false,
+        emergencySalesApproved: o.emergencySalesApproved || false,
+        emergencyOpsApproved: o.emergencyOpsApproved || false,
+        emergencyApproved: o.emergencyApproved || false,
+        emergencyTaskId: o.emergencyTaskId ? o.emergencyTaskId.toString() : null,
+        emergencyReason: o.emergencyReason || '',
         orderCategory: (o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (o.orderCategory || 'ORDER'),
       };
     }));
@@ -2161,7 +2170,10 @@ export default function Sales() {
     const hay = `${p?.printing || ''} ${p?.packingMaterial || ''} ${p?.materialCategory || ''} ${p?.logoType || ''} ${kitDisplayUnit}`.toLowerCase();
     if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
     if (hay.includes('box')) return 'Box';
-    if (hay.includes('sticker')) return 'Sticker';
+    // When sticker is explicitly No, don't infer 'Sticker' from keyword matching — the packing
+    // material config tabMapping (resolved in Operations via packingMaterialTab) takes over routing.
+    if (p?.sticker !== 'NO' && hay.includes('sticker')) return 'Sticker';
+    if (p?.sticker === 'NO') return '';
     return p?.logoType || 'Sticker';
   };
 
@@ -2953,6 +2965,25 @@ export default function Sales() {
                 Record Payment
               </Button>
             </Tooltip>
+          )}
+          {r.emergencyDispatchRequested && !r.emergencySalesApproved && (
+            <Tooltip title="Emergency dispatch requested — payment pending. Click to review and approve as Sales Head.">
+              <Button
+                size="small"
+                danger
+                icon={<AlertFilled />}
+                style={{ fontWeight: 600 }}
+                onClick={(e) => { e.stopPropagation(); setEmergencySalesApprovalOrder(r); }}
+              >
+                Approve Emergency
+              </Button>
+            </Tooltip>
+          )}
+          {r.emergencyDispatchRequested && r.emergencySalesApproved && !r.emergencyOpsApproved && (
+            <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>Awaiting Ops Approval</Tag>
+          )}
+          {r.emergencyApproved && (
+            <Tag color="success" style={{ fontSize: 11, margin: 0 }}>Emergency Approved</Tag>
           )}
         </Space>
       ),
@@ -7277,6 +7308,51 @@ export default function Sales() {
           </Form.Item>
           </>}
         </Form>
+      </Modal>
+
+      {/* ── Emergency Dispatch — Sales Head Approval Modal ────────────────── */}
+      <Modal
+        title={<Space><AlertFilled style={{ color: '#f5222d' }} /><span>Approve Emergency Dispatch — Sales Head</span></Space>}
+        open={!!emergencySalesApprovalOrder}
+        onCancel={() => setEmergencySalesApprovalOrder(null)}
+        width={Math.min(560, window.innerWidth - 32)}
+        footer={[
+          <Button key="cancel" onClick={() => setEmergencySalesApprovalOrder(null)}>Cancel</Button>,
+          <Button key="approve" type="primary" danger loading={approvingSales}
+            onClick={async () => {
+              try {
+                await approveEmergencySalesHead(emergencySalesApprovalOrder.emergencyTaskId).unwrap();
+                enqueueSnackbar('Emergency dispatch approved by Sales Head. Ops Head approval is next.', { variant: 'success' });
+                setEmergencySalesApprovalOrder(null);
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || 'Approval failed', { variant: 'error' });
+              }
+            }}>
+            Approve Emergency Dispatch
+          </Button>,
+        ]}
+      >
+        {emergencySalesApprovalOrder && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+            <Alert type="error" showIcon
+              message="Emergency Dispatch — Payment is Pending"
+              description={`This order has been completed but payment has NOT been collected. The production team has requested emergency dispatch to deliver immediately. As Sales Head, your approval is Step 1 of 2 — it authorizes proceeding without full payment and notifies the Operations Head for final approval.${emergencySalesApprovalOrder.emergencyReason ? `\n\nReason: "${emergencySalesApprovalOrder.emergencyReason}"` : ''}`}
+              style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
+            />
+            <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
+              <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{emergencySalesApprovalOrder.oid}</span></Descriptions.Item>
+              <Descriptions.Item label="Client">{emergencySalesApprovalOrder.hotelName}</Descriptions.Item>
+              <Descriptions.Item label="Total Amount">₹{(emergencySalesApprovalOrder.totalAmount || 0).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Payment Status"><Tag color="error">{emergencySalesApprovalOrder.paymentStatus || 'Unpaid'}</Tag></Descriptions.Item>
+              <Descriptions.Item label="Sales Person" span={2}>{emergencySalesApprovalOrder.salesPerson || '—'}</Descriptions.Item>
+            </Descriptions>
+            <Alert type="warning" showIcon
+              message="What happens after your approval?"
+              description="The Operations Head will receive a notification to approve in the Operations page. Only after both approvals can the dispatch proceed."
+              style={{ borderRadius: 8 }}
+            />
+          </div>
+        )}
       </Modal>
 
     </div>

@@ -8,7 +8,8 @@ exports.getNotifications = asyncHandler(async (req, res) => {
   const filter = { userId: req.user._id };
   if (req.query.type) filter.type = req.query.type;
   if (req.query.unread === 'true') filter.isRead = false;
-  const notifications = await Notification.find(filter).sort('-createdAt').limit(50);
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  const notifications = await Notification.find(filter).sort('-createdAt').limit(limit);
   const unreadCount = await Notification.countDocuments({ userId: req.user._id, isRead: false });
   res.status(200).json({ success: true, data: notifications, unreadCount });
 });

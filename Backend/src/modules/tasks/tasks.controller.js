@@ -4,6 +4,7 @@ const DispatchRecord = require('../../models/DispatchRecord');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const { notifyRoles } = require('../../utils/notify');
 
 exports.getTasks = asyncHandler(async (req, res) => {
   const filter = {};
@@ -113,6 +114,7 @@ exports.createTask = asyncHandler(async (req, res, next) => {
 
   const taskCode = await generateCode('TASK');
   const task = await Task.create({ ...req.body, taskCode, createdBy: req.user._id });
+  notifyRoles({ modules: ['Task Management'], userIds: [task.assignedTo], type: 'task', title: 'New Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} for ${task.clientName || 'order'}`, link: '/tasks' }).catch(() => {});
   res.status(201).json({ success: true, data: task });
 });
 
@@ -171,6 +173,15 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
       }
     }
   }
+  if (status === 'Done') {
+    notifyRoles({ modules: ['Task Management'], userIds: [task.assignedTo], type: 'task', title: 'Task Completed', message: `Task ${task.taskCode} (${task.taskName || task.product || 'Task'}) marked as Done`, link: '/tasks' }).catch(() => {});
+  }
+  if (status === 'Emergency') {
+    notifyRoles({ modules: ['Task Management', 'Operations'], userIds: [task.assignedTo], type: 'task', title: 'Emergency Task', message: `Task ${task.taskCode} flagged as Emergency — needs approval`, link: '/tasks' }).catch(() => {});
+  }
+  if (orderForwarded) {
+    notifyRoles({ modules: ['Dispatch Team', 'Operations'], type: 'dispatch', title: 'Order Ready for Dispatch', message: `All tasks complete — order is now Dispatch Ready`, link: '/dispatch' }).catch(() => {});
+  }
   res.status(200).json({ success: true, data: task, orderForwarded });
 });
 
@@ -181,6 +192,101 @@ exports.approveEmergency = asyncHandler(async (req, res, next) => {
     { new: true }
   );
   if (!task) return next(new AppError('Task not found', 404));
+  notifyRoles({ modules: ['Task Management', 'Operations'], userIds: [task.assignedTo], type: 'task', title: 'Emergency Task Approved', message: `Task ${task.taskCode} emergency status approved — proceed immediately`, link: '/tasks' }).catch(() => {});
+  res.status(200).json({ success: true, data: task });
+});
+
+// Request emergency dispatch — flags the task and linked order, notifies Sales + Ops heads
+exports.requestEmergencyDispatch = asyncHandler(async (req, res, next) => {
+  const task = await Task.findById(req.params.id);
+  if (!task) return next(new AppError('Task not found', 404));
+
+  task.emergencyRequested = true;
+  task.emergencyRequestedAt = new Date();
+  task.emergencyReason = req.body.reason || '';
+  task.isEmergency = true;
+  await task.save();
+
+  if (task.orderId) {
+    await Order.findByIdAndUpdate(task.orderId, {
+      $set: { emergencyDispatchRequested: true, emergencyTaskId: task._id, isEmergency: true },
+    });
+  }
+
+  notifyRoles({
+    modules: ['Sales', 'Operations'],
+    type: 'task',
+    title: 'Emergency Dispatch Requested',
+    message: `Task ${task.taskCode} — payment pending. Emergency dispatch needs Sales Head + Ops Head approval.`,
+    link: '/sales',
+  }).catch(() => {});
+
+  res.status(200).json({ success: true, data: task });
+});
+
+// Sales Head approval — step 1 of the two-stage emergency approval chain
+exports.approveEmergencySales = asyncHandler(async (req, res, next) => {
+  const task = await Task.findById(req.params.id);
+  if (!task) return next(new AppError('Task not found', 404));
+  if (!task.emergencyRequested) return next(new AppError('Emergency dispatch not requested for this task', 400));
+
+  task.emergencySalesApproved = true;
+  task.emergencySalesApprovedBy = req.user._id;
+  task.emergencySalesApprovedAt = new Date();
+
+  const bothApproved = task.emergencyOpsApproved;
+  if (bothApproved) {
+    task.emergencyApproved = true;
+    task.emergencyApprovedBy = req.user._id;
+  }
+  await task.save();
+
+  if (task.orderId) {
+    await Order.findByIdAndUpdate(task.orderId, {
+      $set: { emergencySalesApproved: true, ...(bothApproved ? { emergencyApproved: true } : {}) },
+    });
+  }
+
+  notifyRoles({
+    modules: ['Operations'],
+    type: 'task',
+    title: 'Emergency Dispatch — Sales Head Approved',
+    message: `Task ${task.taskCode} emergency dispatch approved by Sales Head. Ops Head approval needed.`,
+    link: '/operations',
+  }).catch(() => {});
+
+  res.status(200).json({ success: true, data: task });
+});
+
+// Ops Head approval — step 2 of the two-stage approval; requires Sales Head approval first
+exports.approveEmergencyOps = asyncHandler(async (req, res, next) => {
+  const task = await Task.findById(req.params.id);
+  if (!task) return next(new AppError('Task not found', 404));
+  if (!task.emergencyRequested) return next(new AppError('Emergency dispatch not requested for this task', 400));
+  if (!task.emergencySalesApproved) return next(new AppError('Sales Head must approve before Operations Head', 400));
+
+  task.emergencyOpsApproved = true;
+  task.emergencyOpsApprovedBy = req.user._id;
+  task.emergencyOpsApprovedAt = new Date();
+  task.emergencyApproved = true;
+  task.emergencyApprovedBy = req.user._id;
+  await task.save();
+
+  if (task.orderId) {
+    await Order.findByIdAndUpdate(task.orderId, {
+      $set: { emergencyOpsApproved: true, emergencyApproved: true },
+    });
+  }
+
+  notifyRoles({
+    modules: ['Task Management', 'Operations', 'Dispatch'],
+    userIds: [task.assignedTo],
+    type: 'task',
+    title: 'Emergency Dispatch Fully Approved',
+    message: `Task ${task.taskCode} — Sales + Ops approved. Emergency dispatch can proceed immediately.`,
+    link: '/tasks',
+  }).catch(() => {});
+
   res.status(200).json({ success: true, data: task });
 });
 

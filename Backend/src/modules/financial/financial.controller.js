@@ -6,6 +6,7 @@ const Expense = require('../../models/Expense');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const { notifyRoles } = require('../../utils/notify');
 
 // ─── QUOTATION REQUESTS ────────────────────────────────────────────────────────
 exports.getPendingRequests = asyncHandler(async (req, res) => {
@@ -52,6 +53,7 @@ exports.approveRequest = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
   });
 
+  notifyRoles({ modules: ['Purchase'], userIds: [request.createdBy], type: 'purchase', title: 'Purchase Request Approved', message: `PR ${request.requestCode} (${request.itemName}) approved — PO ${order.poCode} created`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: { request, order }, message: 'Request approved and PO created' });
 });
 
@@ -61,6 +63,7 @@ exports.rejectRequest = asyncHandler(async (req, res, next) => {
   request.status = 'Rejected';
   request.financeNote = req.body.reason || '';
   await request.save({ validateBeforeSave: false });
+  notifyRoles({ modules: ['Purchase'], userIds: [request.createdBy], type: 'purchase', title: 'Purchase Request Rejected', message: `PR ${request.requestCode} (${request.itemName}) rejected${req.body.reason ? `: ${req.body.reason}` : ''}`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: request });
 });
 
@@ -75,7 +78,7 @@ exports.requestModification = asyncHandler(async (req, res, next) => {
   request.financeNote = note;
   if (note) request.notes.push({ text: note, createdBy: req.user._id });
   await request.save({ validateBeforeSave: false });
-
+  notifyRoles({ modules: ['Purchase'], userIds: [request.createdBy], type: 'purchase', title: 'Quotation Modification Requested', message: `Finance needs changes for PR ${request.requestCode} (${request.itemName})${note ? `: ${note}` : ''}`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: request, message: 'Quotation sent back for modification' });
 });
 
@@ -148,6 +151,7 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
   });
 
+  notifyRoles({ modules: ['Purchase', 'Inventory'], type: 'purchase', title: 'Purchase Order Payment', message: `Payment of ₹${amountPaid?.toLocaleString()} recorded for PO ${order.poCode} (${order.itemName})`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: order });
 });
 
@@ -184,6 +188,7 @@ exports.payExpense = asyncHandler(async (req, res, next) => {
   else if (expense.paidAmount > 0) expense.paymentStatus = 'Partially Paid';
 
   await expense.save({ validateBeforeSave: false });
+  notifyRoles({ modules: ['Financial', 'Expenses'], type: 'purchase', title: 'Expense Payment Recorded', message: `Payment of ₹${amountPaid?.toLocaleString()} recorded for expense ${expense.expenseCode || ''}`, link: '/financial' }).catch(() => {});
   res.status(200).json({ success: true, data: expense });
 });
 

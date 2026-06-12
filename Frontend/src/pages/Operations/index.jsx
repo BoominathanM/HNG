@@ -4,6 +4,7 @@ import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import { useNavigate } from 'react-router-dom';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -68,6 +69,7 @@ import {
   useGetUsersQuery,
   useGetCompanySettingsQuery,
   useGetPackingConfigQuery,
+  useApproveEmergencyOpsHeadMutation,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -85,6 +87,7 @@ import {
 
 const { Text, Title } = Typography;
 const { Option } = Select;
+
 
 const queueStatuses = [
   'Sent',
@@ -121,8 +124,9 @@ export default function Operations() {
   const [activeTab, setActiveTab] = useState('orders');
   const { filterTabs, activeKeyFor } = useTabAccess('Operations');
   const { requireAccess } = usePageAccess('Operations');
-  const [queueSearch, setQueueSearch] = useState('');
-  const [queueStatusFilter, setQueueStatusFilter] = useState(null);
+  const [stickerSearch, setStickerSearch] = useState('');
+  const [boxSearch, setBoxSearch] = useState('');
+  const [frostedSearch, setFrostedSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
 
   // API-backed state — RTK Query
@@ -136,6 +140,8 @@ export default function Operations() {
   const [assignTask] = useAssignTaskMutation();
   const [setOrderEmergency] = useSetOrderEmergencyMutation();
   const [approveStickerRequest] = useApproveStickerRequestMutation();
+  const [approveEmergencyOpsHead, { isLoading: approvingOps }] = useApproveEmergencyOpsHeadMutation();
+  const [emergencyOpsApprovalOrder, setEmergencyOpsApprovalOrder] = useState(null);
 
   const stickerRequests = stickerData?.data || [];
 
@@ -202,6 +208,12 @@ export default function Operations() {
     totalAmount: o.total || 0, advance: o.advancePaid || 0,
     expectedDelivery: o.expectedDeliveryDate || o.leadId?.orderDeliveryDate || null,
     isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
+    emergencyDispatchRequested: o.emergencyDispatchRequested || false,
+    emergencySalesApproved: o.emergencySalesApproved || false,
+    emergencyOpsApproved: o.emergencyOpsApproved || false,
+    emergencyApproved: o.emergencyApproved || false,
+    emergencyTaskId: o.emergencyTaskId ? o.emergencyTaskId.toString() : null,
+    emergencyReason: o.emergencyReason || '',
     // Fall back to linked lead's splitDates so emergency products identified on the lead
     // (before order creation) are still reflected in the Operations queue.
     splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
@@ -487,6 +499,27 @@ export default function Operations() {
               }}
             />
           </Tooltip>
+          {record.emergencyDispatchRequested && record.emergencySalesApproved && !record.emergencyOpsApproved && (
+            <Tooltip title="Sales Head has approved. Click to review and approve as Operations Head.">
+              <Button
+                size="small"
+                danger
+                icon={<AlertFilled />}
+                style={{ fontWeight: 600 }}
+                onClick={(e) => { e.stopPropagation(); setEmergencyOpsApprovalOrder(record); }}
+              >
+                Approve Emergency
+              </Button>
+            </Tooltip>
+          )}
+          {record.emergencyDispatchRequested && !record.emergencySalesApproved && (
+            <Tooltip title="Emergency dispatch requested — awaiting Sales Head approval first">
+              <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>Awaiting Sales</Tag>
+            </Tooltip>
+          )}
+          {record.emergencyApproved && (
+            <Tag color="success" style={{ fontSize: 10, margin: 0 }}>Emergency Approved</Tag>
+          )}
         </Space>
       ),
     },
@@ -609,6 +642,8 @@ export default function Operations() {
         key: 'design',
         width: 90,
         render: (_, record) => {
+          // Kit children (display-unit assembly) share the parent's single upload — show — here.
+          // Individually-packed products are standalone rows (no isKitChild) and keep their own design.
           if (record.isKitChild || record.isEmergencyGated) return <Text type="secondary">—</Text>;
           const sr = findStickerReq(record);
           const url = sr?.designFileUrl;
@@ -650,6 +685,9 @@ export default function Operations() {
         key: 'actions',
         width: 320,
         render: (_, record) => {
+          // Kit children (display-unit assembly) share the parent's single common upload —
+          // no separate action buttons. Individually-packed products are standalone rows
+          // (no isKitChild flag) and render their own full upload/approval flow below.
           if (record.isKitChild) {
             return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
           }
@@ -915,7 +953,7 @@ export default function Operations() {
     }
   };
 
-  const renderQueueCard = (type, rows, label) => {
+  const renderQueueCard = (type, rows, label, search, setSearch) => {
     // Sort priority:
     //   1. Emergency products from urgent orders (process these FIRST)
     //   2. Other items from urgent orders
@@ -933,10 +971,8 @@ export default function Operations() {
       });
     const closedRows = rows.filter((r) => getQueueStep(r) === 6);
     const activeRows = allActive.filter((r) => {
-      const q = queueSearch.toLowerCase();
-      const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.hotelLogo || '').toLowerCase().includes(q) || (r.product || '').toLowerCase().includes(q);
-      const matchStatus = !queueStatusFilter || (r.status || '') === queueStatusFilter;
-      return matchSearch && matchStatus;
+      const q = (search || '').toLowerCase();
+      return !q || (r.orderId || '').toLowerCase().includes(q) || (r.hotelLogo || '').toLowerCase().includes(q) || (r.product || '').toLowerCase().includes(q);
     });
 
     // For Box/Frosted tabs: group only true kit orders (kitDisplayUnit set) under one
@@ -953,15 +989,23 @@ export default function Operations() {
       orderMap.forEach((group, orderId) => {
         const order = apiOrders.find((o) => o.id === orderId);
         const isKitOrder = !!(order?.kitDisplayUnit);
-        if (!isKitOrder || group.length === 1) {
-          // Non-kit or single-product: each item shown individually.
-          // For kit orders, use the kit-level size so all items reflect the kit size.
+        // Group under a kit parent ONLY when items are here for KIT ASSEMBLY — i.e. the
+        // order's display unit matches this tab's packaging type. When products land in this
+        // tab via their own individual packingMaterialTab (not the kit display unit), show
+        // each product as a standalone row with its own upload — no shared parent row.
+        const displayUnitMatchesTab =
+          (typeKey === 'box' && order?.displayUnitTab === 'Box') ||
+          (typeKey === 'frosted' && order?.displayUnitTab === 'Ziplock');
+        const shouldGroupAsKit = isKitOrder && displayUnitMatchesTab;
+        if (!shouldGroupAsKit || group.length === 1) {
+          // Non-kit, single-product, or individual-packing kit items: shown individually.
+          // For kit orders with kit size, apply that size to each row.
           group.forEach((row) => {
             const rowToShow = (isKitOrder && order?.kitSize) ? { ...row, size: order.kitSize } : row;
             tableSource.push(rowToShow);
           });
         } else {
-          // Kit order with multiple products: one shared parent row with kit-level actions.
+          // Kit assembly: one shared parent row (display unit upload) with per-product children.
           // Key suffix must end in -box/-frosted so findStickerReq detects the right SR type.
           const first = group[0];
           tableSource.push({
@@ -1010,10 +1054,7 @@ export default function Operations() {
           styles={{ body: { padding: 0 } }}
         >
           <div style={{ padding: '8px 12px', borderBottom: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order, hotel, product..." allowClear value={queueSearch} onChange={(e) => setQueueSearch(e.target.value)} style={{ width: 230, borderRadius: 8 }} />
-            <Select allowClear placeholder="Queue Status" value={queueStatusFilter} onChange={setQueueStatusFilter} style={{ width: 170, borderRadius: 8 }}>
-              {queueStatuses.map((s) => <Option key={s} value={s}>{s}</Option>)}
-            </Select>
+            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order, hotel, product..." allowClear value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 230, borderRadius: 8 }} />
           </div>
           <div className="table-responsive" style={{ padding: 4 }}>
             <Table
@@ -1211,17 +1252,17 @@ export default function Operations() {
           {
             key: 'sticker',
             label: <Space><TagsOutlined />Sticker Printing</Space>,
-            children: renderQueueCard('Sticker', productionQueues.sticker, 'Sticker Queue'),
+            children: renderQueueCard('Sticker', productionQueues.sticker, 'Sticker Queue', stickerSearch, setStickerSearch),
           },
           {
             key: 'box',
             label: <Space><BoxPlotOutlined />Box</Space>,
-            children: renderQueueCard('Box', productionQueues.box, 'Box Manufacturing Queue'),
+            children: renderQueueCard('Box', productionQueues.box, 'Box Manufacturing Queue', boxSearch, setBoxSearch),
           },
           {
             key: 'frosted',
             label: <Space><InboxOutlined />Frosted Ziplock</Space>,
-            children: renderQueueCard('Frosted Ziplock', productionQueues.frosted, 'Frosted Ziplock Queue'),
+            children: renderQueueCard('Frosted Ziplock', productionQueues.frosted, 'Frosted Ziplock Queue', frostedSearch, setFrostedSearch),
           },
         ])}
         activeKey={activeKeyFor(activeTab)}
@@ -1626,6 +1667,55 @@ export default function Operations() {
             </div>
           )}
         </Space>
+      </Modal>
+
+      {/* ── Emergency Dispatch — Ops Head Approval Modal ──────────────────── */}
+      <Modal
+        title={<Space><AlertFilled style={{ color: '#f5222d' }} /><span>Approve Emergency Dispatch — Operations Head</span></Space>}
+        open={!!emergencyOpsApprovalOrder}
+        onCancel={() => setEmergencyOpsApprovalOrder(null)}
+        width={Math.min(560, window.innerWidth - 32)}
+        footer={[
+          <Button key="cancel" onClick={() => setEmergencyOpsApprovalOrder(null)}>Cancel</Button>,
+          <Button key="approve" type="primary" danger loading={approvingOps}
+            onClick={async () => {
+              try {
+                await approveEmergencyOpsHead(emergencyOpsApprovalOrder.emergencyTaskId).unwrap();
+                enqueueSnackbar('Emergency dispatch fully approved. Dispatch team has been notified.', { variant: 'success' });
+                setEmergencyOpsApprovalOrder(null);
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || 'Approval failed', { variant: 'error' });
+              }
+            }}>
+            Confirm & Approve Emergency Dispatch
+          </Button>,
+        ]}
+      >
+        {emergencyOpsApprovalOrder && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+            <Alert type="error" showIcon
+              message="Emergency Dispatch — Payment Pending — Final Approval Required"
+              description={`This order is complete but payment has NOT been collected. The Sales Head has already approved this emergency dispatch request. As Operations Head, your approval is the final step — it authorizes the dispatch team to proceed with delivery immediately despite the pending payment.${emergencyOpsApprovalOrder.emergencyReason ? `\n\nReason given: "${emergencyOpsApprovalOrder.emergencyReason}"` : ''}`}
+              style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
+            />
+            <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
+              <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{emergencyOpsApprovalOrder.id}</span></Descriptions.Item>
+              <Descriptions.Item label="Client">{emergencyOpsApprovalOrder.clientName}</Descriptions.Item>
+              <Descriptions.Item label="Total Amount">₹{(emergencyOpsApprovalOrder.totalAmount || 0).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Payment Status"><Tag color="error">Pending</Tag></Descriptions.Item>
+            </Descriptions>
+            <Alert type="success" showIcon
+              message="Sales Head Approval: Received ✓"
+              description="The Sales Head has reviewed and approved this emergency dispatch. Your approval completes the authorization."
+              style={{ borderRadius: 8 }}
+            />
+            <Alert type="warning" showIcon
+              message="What happens after your approval?"
+              description="The dispatch team will receive an immediate notification to proceed with delivery. This action cannot be undone."
+              style={{ borderRadius: 8 }}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

@@ -1,18 +1,148 @@
 import React, { useState } from 'react';
-import { Layout, Button, Badge, Avatar, Dropdown, Typography, Space, Drawer, Tag } from 'antd';
+import {
+  Layout, Button, Badge, Avatar, Dropdown, Typography, Space,
+  Drawer, Tag, Popover, List, Spin, Empty, Divider, Tooltip,
+} from 'antd';
 import {
   MenuOutlined, BellOutlined, MoonOutlined, SunOutlined,
   UserOutlined, LogoutOutlined, MailOutlined, PhoneOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined,
+  DollarOutlined, WarningOutlined, CarOutlined, CheckCircleOutlined,
+  ShoppingCartOutlined, ExclamationCircleOutlined, BoxPlotOutlined,
+  CheckOutlined,
 } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { toggleTheme, toggleSidebar } from '../../store/slices/themeSlice';
-import { useLogoutMutation } from '../../store/api/apiSlice';
+import {
+  useLogoutMutation,
+  useGetNotificationsQuery,
+  useMarkNotificationReadMutation,
+  useMarkAllNotificationsReadMutation,
+} from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
 
 const { Header: AntHeader } = Layout;
 const { Text, Title } = Typography;
+
+const TYPE_META = {
+  payment_due:  { icon: <DollarOutlined />,          color: '#6b1240', label: 'Payment' },
+  low_stock:    { icon: <WarningOutlined />,          color: '#C94F8A', label: 'Stock' },
+  dispatch:     { icon: <CarOutlined />,              color: '#8a1652', label: 'Dispatch' },
+  task:         { icon: <CheckCircleOutlined />,      color: '#D85C9E', label: 'Task' },
+  complaint:    { icon: <ExclamationCircleOutlined />,color: '#b85c00', label: 'Complaint' },
+  purchase:     { icon: <ShoppingCartOutlined />,     color: '#1a6b3a', label: 'Purchase' },
+  order:        { icon: <BoxPlotOutlined />,          color: '#1a4f8a', label: 'Order' },
+  system:       { icon: <BellOutlined />,             color: '#888',    label: 'System' },
+};
+
+function getMeta(type) {
+  return TYPE_META[type] || TYPE_META.system;
+}
+
+function timeAgo(date) {
+  if (!date) return '';
+  const diff = Date.now() - new Date(date).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function NotificationDropdown({ notifications, loading, isDark, onMarkRead, onMarkAllRead, onViewAll, onClose }) {
+  const bg = isDark ? '#1E1E2E' : '#fff';
+  const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
+  const subColor = isDark ? '#aaa' : '#666';
+  const borderColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.08)';
+
+  return (
+    <div style={{ width: 360, maxHeight: 480, display: 'flex', flexDirection: 'column', background: bg }}>
+      {/* Header */}
+      <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${borderColor}` }}>
+        <Text strong style={{ color: textColor, fontSize: 15 }}>Notifications</Text>
+        <Button
+          type="link"
+          size="small"
+          icon={<CheckOutlined />}
+          style={{ color: '#B11E6A', padding: 0, fontSize: 12 }}
+          onClick={onMarkAllRead}
+        >
+          Mark all read
+        </Button>
+      </div>
+
+      {/* List */}
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
+        ) : notifications.length === 0 ? (
+          <Empty description="No notifications" style={{ padding: 32 }} />
+        ) : (
+          <List
+            dataSource={notifications}
+            renderItem={(item) => {
+              const meta = getMeta(item.type);
+              return (
+                <List.Item
+                  style={{
+                    padding: '10px 16px',
+                    cursor: 'pointer',
+                    background: !item.isRead ? (isDark ? `${meta.color}12` : `${meta.color}08`) : 'transparent',
+                    borderLeft: !item.isRead ? `3px solid ${meta.color}` : '3px solid transparent',
+                    transition: 'background 0.2s',
+                  }}
+                  onClick={() => {
+                    if (!item.isRead && item._id) onMarkRead(item._id);
+                    if (item.link) onClose();
+                  }}
+                >
+                  <Space align="start" size={10} style={{ width: '100%' }}>
+                    <div style={{
+                      width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+                      background: `${meta.color}20`, display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', fontSize: 15, color: meta.color,
+                    }}>
+                      {meta.icon}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
+                        <Text strong style={{ color: textColor, fontSize: 13, lineHeight: 1.3 }}>{item.title}</Text>
+                        {!item.isRead && (
+                          <span style={{
+                            width: 8, height: 8, borderRadius: '50%',
+                            background: meta.color, flexShrink: 0, display: 'inline-block',
+                          }} />
+                        )}
+                      </div>
+                      <Text style={{ color: subColor, fontSize: 12, display: 'block', lineHeight: 1.4 }}
+                        ellipsis={{ tooltip: item.message }}>
+                        {item.message}
+                      </Text>
+                      <Text style={{ color: '#aaa', fontSize: 11, marginTop: 2 }}>{timeAgo(item.createdAt)}</Text>
+                    </div>
+                  </Space>
+                </List.Item>
+              );
+            }}
+          />
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: '10px 16px', borderTop: `1px solid ${borderColor}`, textAlign: 'center' }}>
+        <Button
+          type="link"
+          style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}
+          onClick={onViewAll}
+        >
+          View All Notifications
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export default function Header({ onMobileMenuOpen }) {
   const dispatch = useDispatch();
@@ -21,7 +151,18 @@ export default function Header({ onMobileMenuOpen }) {
   const collapsed = useSelector((s) => s.theme.sidebarCollapsed);
   const user = useSelector((s) => s.auth.user);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [logout] = useLogoutMutation();
+
+  const { data: notifData, isLoading: notifLoading } = useGetNotificationsQuery(
+    { limit: 10 },
+    { pollingInterval: 30000, skip: false }
+  );
+  const [markRead] = useMarkNotificationReadMutation();
+  const [markAllRead] = useMarkAllNotificationsReadMutation();
+
+  const notifications = notifData?.data || [];
+  const unreadCount = notifData?.unreadCount || 0;
 
   const handleLogout = async () => {
     try {
@@ -40,6 +181,19 @@ export default function Header({ onMobileMenuOpen }) {
     }
   };
 
+  const handleMarkRead = async (id) => {
+    try { await markRead(id).unwrap(); } catch { /* silent */ }
+  };
+
+  const handleMarkAllRead = async () => {
+    try { await markAllRead().unwrap(); } catch { /* silent */ }
+  };
+
+  const handleViewAll = () => {
+    setNotifOpen(false);
+    navigate('/notifications');
+  };
+
   const userMenu = {
     items: [
       { key: 'profile', icon: <UserOutlined />, label: 'My Profile' },
@@ -48,6 +202,18 @@ export default function Header({ onMobileMenuOpen }) {
     ],
     onClick: handleUserMenu,
   };
+
+  const popoverContent = (
+    <NotificationDropdown
+      notifications={notifications}
+      loading={notifLoading}
+      isDark={isDark}
+      onMarkRead={handleMarkRead}
+      onMarkAllRead={handleMarkAllRead}
+      onViewAll={handleViewAll}
+      onClose={() => setNotifOpen(false)}
+    />
+  );
 
   return (
     <AntHeader style={{
@@ -70,7 +236,6 @@ export default function Header({ onMobileMenuOpen }) {
     }}>
       {/* Left */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {/* Desktop collapse */}
         <Button
           type="text"
           icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
@@ -78,7 +243,6 @@ export default function Header({ onMobileMenuOpen }) {
           style={{ color: '#B11E6A', fontSize: 20 }}
           className="desktop-only"
         />
-        {/* Mobile hamburger */}
         <Button
           type="text"
           icon={<MenuOutlined />}
@@ -106,18 +270,46 @@ export default function Header({ onMobileMenuOpen }) {
         </motion.div>
 
         {/* Notifications */}
-        <Badge count={3} size="small">
-          <Button
-            type="text"
-            shape="circle"
-            icon={<BellOutlined />}
-            style={{
-              color: '#B11E6A',
-              background: 'rgba(177,30,106,0.06)',
-              fontSize: 19,
-            }}
-          />
-        </Badge>
+        <Popover
+          trigger="click"
+          open={notifOpen}
+          onOpenChange={setNotifOpen}
+          placement="bottomRight"
+          arrow={false}
+          content={popoverContent}
+          overlayInnerStyle={{
+            padding: 0,
+            borderRadius: 12,
+            overflow: 'hidden',
+            boxShadow: isDark
+              ? '0 8px 32px rgba(0,0,0,0.6)'
+              : '0 8px 32px rgba(177,30,106,0.15)',
+            border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(177,30,106,0.1)',
+          }}
+          overlayStyle={{ zIndex: 1050 }}
+        >
+          <motion.div whileTap={{ scale: 0.9 }} style={{ display: 'inline-flex' }}>
+            <Badge
+              count={unreadCount}
+              size="small"
+              style={{ background: '#B11E6A' }}
+              overflowCount={99}
+            >
+              <Button
+                type="text"
+                shape="circle"
+                icon={<BellOutlined />}
+                style={{
+                  color: notifOpen ? '#B11E6A' : (isDark ? '#ccc' : '#555'),
+                  background: notifOpen
+                    ? 'rgba(177,30,106,0.12)'
+                    : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.06)'),
+                  fontSize: 19,
+                }}
+              />
+            </Badge>
+          </motion.div>
+        </Popover>
 
         {/* User */}
         <Dropdown menu={userMenu} placement="bottomRight" trigger={['click']}>
@@ -230,9 +422,9 @@ export default function Header({ onMobileMenuOpen }) {
 
         {/* Logout Button */}
         <div style={{ padding: '0 24px 24px', marginTop: 'auto' }}>
-          <Button 
-            danger 
-            block 
+          <Button
+            danger
+            block
             icon={<LogoutOutlined />}
             onClick={() => {
               setProfileOpen(false);

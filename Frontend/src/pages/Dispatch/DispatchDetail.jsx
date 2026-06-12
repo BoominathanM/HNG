@@ -89,8 +89,10 @@ export default function DispatchDetail() {
     // getDispatch populates `orderId` as a nested object — read order context from there,
     // falling back to any denormalized fields on the dispatch root.
     const o = (d.orderId && typeof d.orderId === 'object') ? d.orderId : {};
+    // Sample orders bypass payment — no payment is expected for samples.
+    const isSample = o.orderCategory === 'SAMPLE';
     // Payment is "Confirmed" for dispatch purposes once the order balance is cleared.
-    const paymentConfirmed = (o.balance != null && o.balance <= 0) || o.status === 'Completed' || d.paymentStatus === 'Paid';
+    const paymentConfirmed = isSample || (o.balance != null && o.balance <= 0) || o.status === 'Completed' || d.paymentStatus === 'Paid';
     return {
       key: d._id, id: o.orderCode || d.orderCode || d._id,
       orderObjectId: o._id || d.orderId,
@@ -104,6 +106,7 @@ export default function DispatchDetail() {
       city: d.city || '', state: d.state || '', pincode: d.pincode || '',
       transport: d.transportName || '', status: d.status || '',
       salesPerson: o.assignedTo?.fullName || d.salesPerson || '',
+      isSample,
       // dispatch line items (these carry _id for per-product verification)
       items: (d.items && d.items.length ? d.items : (o.items || [])),
       lrData: d.lrData || null,
@@ -306,7 +309,16 @@ export default function DispatchDetail() {
         )}
       </div>
 
-      {order.payment !== 'Confirmed' && (
+      {order.isSample && (
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+          <Alert type="info" showIcon
+            message="Sample Order — Payment Bypassed"
+            description="This is a sample order. No payment is required before dispatch."
+            style={{ marginBottom: 16, borderRadius: 8 }}
+          />
+        </motion.div>
+      )}
+      {!order.isSample && order.payment !== 'Confirmed' && (
         <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
           <Alert type="error" showIcon
             message="Dispatch Blocked — Payment Not Confirmed"
@@ -365,7 +377,12 @@ export default function DispatchDetail() {
               <div style={{ marginTop: 20, padding: '12px 0', borderTop: `1px solid ${borderColor}` }}>
                 <Text style={{ fontSize: 11, color: '#999', display: 'block', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Dispatch Progress</Text>
                 <Steps size="small" current={dispatched ? 3 : stepIndex(order.status)}
-                  items={[{ title: 'Packing' }, { title: 'Payment' }, { title: 'Verified' }, { title: 'Dispatched' }]}
+                  items={[
+                    { title: 'Packing' },
+                    { title: order.isSample ? 'Payment (N/A)' : 'Payment' },
+                    { title: 'Verified' },
+                    { title: 'Dispatched' },
+                  ]}
                 />
               </div>
             </Card>

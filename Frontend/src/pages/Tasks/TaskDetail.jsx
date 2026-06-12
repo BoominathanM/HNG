@@ -1,7 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Alert, Avatar, Button, Card, Col, Descriptions, Progress, Row, Space, Table, Tag, Typography,
+  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Row, Space, Steps, Table, Tag, Typography,
 } from 'antd';
 import {
   AlertFilled, ArrowLeftOutlined, BellOutlined, CheckCircleOutlined, ClockCircleOutlined,
@@ -14,6 +14,7 @@ import {
   useGetTaskQuery,
   useGetTasksQuery,
   useUpdateTaskStatusMutation,
+  useRequestEmergencyDispatchMutation,
 } from '../../store/api/apiSlice';
 
 const { Text, Title } = Typography;
@@ -36,6 +37,10 @@ export default function TaskDetail() {
   const { data: allTasksData } = useGetTasksQuery();
 
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
+  const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
+
+  const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
+  const [emergencyReason, setEmergencyReason] = useState('');
 
   const t = taskData?.data;
 
@@ -133,10 +138,10 @@ export default function TaskDetail() {
                 Mark Done
               </Button>
             )}
-            {(t.status === 'Pending' || t.status === 'In Progress') && !isSample && (
+            {(t.status === 'Pending' || t.status === 'In Progress' || (t.status === 'Done' && t.paymentStatus !== 'Paid')) && !isSample && (
               <Button danger icon={<ExclamationCircleOutlined />}
-                onClick={() => handleStatus('Emergency')}>
-                Emergency
+                onClick={() => { setEmergencyReason(''); setEmergencyModalOpen(true); }}>
+                {t.emergencyRequested ? 'View Emergency Status' : 'Emergency Dispatch'}
               </Button>
             )}
           </Space>
@@ -348,15 +353,120 @@ export default function TaskDetail() {
               />
             )}
             {t.isEmergency && (
-              <Alert type="error" showIcon icon={<AlertFilled />}
-                message={t.emergencyApproved ? 'Emergency Dispatch Approved' : 'Emergency — Awaiting Approval'}
-                description={t.emergencyApproved ? 'This order has been approved for emergency dispatch.' : 'Awaiting Sales Person + Operation Head dual approval.'}
+              <Alert type={t.emergencyApproved ? 'success' : 'error'} showIcon icon={<AlertFilled />}
+                message={t.emergencyApproved ? 'Emergency Dispatch Approved' : t.emergencyRequested ? 'Emergency Dispatch — Pending Approvals' : 'Emergency — Awaiting Approval'}
+                description={
+                  t.emergencyApproved
+                    ? 'Both Sales Head and Ops Head have approved. Emergency dispatch can proceed immediately.'
+                    : t.emergencyRequested
+                    ? `Sales Head: ${t.emergencySalesApproved ? 'Approved ✓' : 'Pending — go to Sales page'} | Ops Head: ${t.emergencyOpsApproved ? 'Approved ✓' : t.emergencySalesApproved ? 'Pending — go to Operations page' : 'Locked until Sales Head approves'}`
+                    : 'Awaiting Sales Head + Operations Head dual approval.'
+                }
                 style={{ borderRadius: 8 }}
               />
             )}
           </div>
         </Col>
       </Row>
+
+      {/* ── Emergency Dispatch Modal ─────────────────────────────────────── */}
+      <Modal
+        title={<Space><ExclamationCircleOutlined style={{ color: '#f5222d' }} /><span>Emergency Dispatch</span></Space>}
+        open={emergencyModalOpen}
+        onCancel={() => setEmergencyModalOpen(false)}
+        width={Math.min(560, window.innerWidth - 32)}
+        footer={null}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+          <Alert type="warning" showIcon
+            message="Payment Pending — Emergency Dispatch Required"
+            description="This order is complete but payment has not been received. Emergency dispatch allows immediate delivery and requires approval from Sales Head followed by Operations Head."
+            style={{ borderRadius: 8 }}
+          />
+
+          {/* Order summary */}
+          <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
+            <Descriptions.Item label="Task ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{t.taskCode}</span></Descriptions.Item>
+            <Descriptions.Item label="Order">{t.orderId?.orderCode || '—'}</Descriptions.Item>
+            <Descriptions.Item label="Client">{t.orderId?.clientName || t.clientName || '—'}</Descriptions.Item>
+            <Descriptions.Item label="Product">{t.product || '—'}</Descriptions.Item>
+            <Descriptions.Item label="Payment Status"><Tag color="warning">{t.paymentStatus || 'Pending'}</Tag></Descriptions.Item>
+            <Descriptions.Item label="Task Status"><Tag color="processing">{displayStatus}</Tag></Descriptions.Item>
+          </Descriptions>
+
+          {!t.emergencyRequested ? (
+            <>
+              <Divider style={{ margin: '4px 0' }} />
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                After submitting, this request will be sent to the <strong>Sales Head</strong> (via Sales page) and then to the <strong>Operations Head</strong> (via Operations page) for sequential approval.
+              </Typography.Text>
+              <Input.TextArea
+                rows={3}
+                placeholder="Reason for emergency dispatch (required)..."
+                value={emergencyReason}
+                onChange={(e) => setEmergencyReason(e.target.value)}
+                style={{ borderRadius: 8 }}
+              />
+              <Button
+                type="primary" danger
+                loading={requesting}
+                disabled={!emergencyReason.trim()}
+                onClick={async () => {
+                  try {
+                    await requestEmergencyDispatch({ id, reason: emergencyReason }).unwrap();
+                    enqueueSnackbar('Emergency dispatch requested — awaiting Sales Head approval', { variant: 'success' });
+                    setEmergencyModalOpen(false);
+                    setEmergencyReason('');
+                  } catch (err) {
+                    enqueueSnackbar(err?.data?.message || 'Failed to request emergency dispatch', { variant: 'error' });
+                  }
+                }}
+              >
+                Request Emergency Dispatch
+              </Button>
+            </>
+          ) : (
+            <>
+              <Divider style={{ margin: '4px 0' }} />
+              <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>Approval Progress</Typography.Text>
+              {t.emergencyReason && (
+                <Alert type="info" showIcon message={`Reason: ${t.emergencyReason}`} style={{ borderRadius: 8, marginBottom: 4 }} />
+              )}
+              <Steps
+                direction="vertical"
+                size="small"
+                current={t.emergencyApproved ? 2 : t.emergencySalesApproved ? 1 : 0}
+                items={[
+                  {
+                    title: 'Sales Head Approval',
+                    description: t.emergencySalesApproved
+                      ? 'Approved — Sales Head has authorized emergency dispatch'
+                      : 'Pending — Sales Head must approve in the Sales page',
+                    status: t.emergencySalesApproved ? 'finish' : 'process',
+                  },
+                  {
+                    title: 'Operations Head Approval',
+                    description: t.emergencyOpsApproved
+                      ? 'Approved — Ops Head has authorized emergency dispatch'
+                      : t.emergencySalesApproved
+                      ? 'Pending — Ops Head must approve in the Operations page'
+                      : 'Locked — awaiting Sales Head approval first',
+                    status: t.emergencyOpsApproved ? 'finish' : t.emergencySalesApproved ? 'process' : 'wait',
+                  },
+                  {
+                    title: 'Emergency Dispatch Authorized',
+                    description: t.emergencyApproved ? 'Both approvals received — proceed with dispatch immediately' : 'Waiting for both approvals',
+                    status: t.emergencyApproved ? 'finish' : 'wait',
+                  },
+                ]}
+              />
+              {t.emergencyApproved && (
+                <Alert type="success" showIcon message="Emergency dispatch fully approved. Proceed immediately." style={{ borderRadius: 8 }} />
+              )}
+            </>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

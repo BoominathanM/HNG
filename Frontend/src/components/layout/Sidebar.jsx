@@ -11,7 +11,7 @@ import {
   ContactsOutlined
 } from '@ant-design/icons';
 import { toggleSidebar } from '../../store/slices/themeSlice';
-import { useLogoutMutation, useGetCompanySettingsQuery } from '../../store/api/apiSlice';
+import { useLogoutMutation, useGetCompanySettingsQuery, useGetTasksQuery, useGetNotificationsQuery } from '../../store/api/apiSlice';
 
 const { Sider } = Layout;
 const { Text } = Typography;
@@ -22,7 +22,7 @@ const ALL_MENU_ITEMS = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard', module: 'Dashboard' },
   { key: '/sales', icon: <TeamOutlined />, label: 'Sales Team', module: 'Sales Team' },
   { key: '/operations', icon: <ApartmentOutlined />, label: 'Operations', module: 'Operations' },
-  { key: '/tasks', icon: <CheckSquareOutlined />, label: 'Task Management', badge: 5, module: 'Task Management' },
+  { key: '/tasks', icon: <CheckSquareOutlined />, label: 'Task Management', module: 'Task Management' },
   { key: '/dispatch', icon: <CarOutlined />, label: 'Dispatch Team', module: 'Dispatch Team' },
   { key: '/staff', icon: <UserOutlined />, label: 'Staff Management', module: 'Staff Management' },
   { key: '/inventory', icon: <InboxOutlined />, label: 'Inventory', module: 'Inventory' },
@@ -33,7 +33,7 @@ const ALL_MENU_ITEMS = [
   { key: '/financial', icon: <BankOutlined />, label: 'Financial', module: 'Financial' },
   { key: '/expenses', icon: <DollarOutlined />, label: 'Expenses', module: 'Expenses' },
   { key: '/reports', icon: <BarChartOutlined />, label: 'Reports', module: 'Reports' },
-  { key: '/notifications', icon: <BellOutlined />, label: 'Notifications', badge: 3, module: 'Notifications' },
+  { key: '/notifications', icon: <BellOutlined />, label: 'Notifications', module: 'Notifications' },
   {
     key: '/integration',
     icon: <ApiOutlined />,
@@ -58,6 +58,18 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
   const { data: companyData } = useGetCompanySettingsQuery();
   const companyName = companyData?.data?.companyName || 'Heal N Glow';
   const logoSrc = companyData?.data?.logoUrl || DEFAULT_LOGO;
+
+  // Live badge counts
+  const { data: pendingTasksData } = useGetTasksQuery({ status: 'Pending' }, { pollingInterval: 60000 });
+  const { data: notifData } = useGetNotificationsQuery({ limit: 10 }, { pollingInterval: 30000 });
+  const pendingTaskCount = pendingTasksData?.data?.length || 0;
+  const unreadNotifCount = notifData?.unreadCount || 0;
+
+  const getBadge = (key) => {
+    if (key === '/tasks') return pendingTaskCount;
+    if (key === '/notifications') return unreadNotifCount;
+    return 0;
+  };
 
   // Show a sidebar item only when the user has read permission for that module.
   // Matches the deny-by-default logic in PermissionRoute (App.jsx).
@@ -130,6 +142,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
     const hasChildren = !!item.children?.length;
     const isExpanded = expandedKeys.has(item.key);
     const isParentOfActive = item.children?.some((c) => location.pathname === c.key);
+    const badgeCount = getBadge(item.key);
 
     const handleClick = () => {
       if (hasChildren && !collapsed) {
@@ -180,13 +193,13 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
             flexShrink: 0,
           }}>
             {item.icon}
-            {item.badge && (
+            {badgeCount > 0 && (
               <span style={{
                 position: 'absolute', top: -6, right: -8,
                 background: '#ff4d4f', color: '#fff',
                 borderRadius: 99, fontSize: 10, fontWeight: 700,
                 padding: '0 4px', minWidth: 16, textAlign: 'center',
-              }}>{item.badge}</span>
+              }}>{badgeCount > 99 ? '99+' : badgeCount}</span>
             )}
           </span>
 

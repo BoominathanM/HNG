@@ -654,6 +654,18 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/tasks/${id}/approve-emergency`, method: 'patch' }),
       invalidatesTags: ['Tasks'],
     }),
+    requestEmergencyDispatch: builder.mutation({
+      query: ({ id, reason }) => ({ url: `/tasks/${id}/request-emergency`, method: 'patch', data: { reason } }),
+      invalidatesTags: ['Tasks', 'Operations', 'Orders'],
+    }),
+    approveEmergencySalesHead: builder.mutation({
+      query: (id) => ({ url: `/tasks/${id}/approve-emergency/sales`, method: 'patch' }),
+      invalidatesTags: ['Tasks', 'Operations', 'Orders'],
+    }),
+    approveEmergencyOpsHead: builder.mutation({
+      query: (id) => ({ url: `/tasks/${id}/approve-emergency/ops`, method: 'patch' }),
+      invalidatesTags: ['Tasks', 'Operations', 'Orders'],
+    }),
     deleteTask: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}`, method: 'delete' }),
       invalidatesTags: ['Tasks'],
@@ -1106,6 +1118,9 @@ export const {
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useApproveEmergencyMutation,
+  useRequestEmergencyDispatchMutation,
+  useApproveEmergencySalesHeadMutation,
+  useApproveEmergencyOpsHeadMutation,
   useDeleteTaskMutation,
   // Operations
   useGetOperationOrdersQuery,

@@ -4,6 +4,7 @@ const Kit = require('../../models/Kit');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const { notifyRoles } = require('../../utils/notify');
 
 exports.getItems = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
@@ -79,6 +80,7 @@ exports.sellStockRequest = asyncHandler(async (req, res, next) => {
     approvalStatus: 'Pending',
     createdBy: req.user._id,
   });
+  notifyRoles({ modules: ['Inventory'], type: 'low_stock', title: 'Sell Stock Request', message: `Sell ${req.body.qty} ${item.unit || 'units'} of ${item.itemName} — pending approval`, link: '/inventory' }).catch(() => {});
   res.status(201).json({ success: true, data: movement, message: 'Sell request raised — pending approval' });
 });
 
@@ -97,6 +99,7 @@ exports.addStockRequest = asyncHandler(async (req, res, next) => {
     approvalStatus: 'Pending',
     createdBy: req.user._id,
   });
+  notifyRoles({ modules: ['Inventory'], type: 'low_stock', title: 'Add Stock Request', message: `Add ${req.body.qty} ${item.unit || 'units'} of ${item.itemName} — pending approval`, link: '/inventory' }).catch(() => {});
   res.status(201).json({ success: true, data: movement, message: 'Add stock request raised — pending approval' });
 });
 
@@ -128,6 +131,11 @@ exports.approveMovement = asyncHandler(async (req, res, next) => {
   }
   await item.save({ validateBeforeSave: false });
 
+  notifyRoles({ modules: ['Inventory'], userIds: [movement.createdBy], type: 'low_stock', title: 'Stock Movement Approved', message: `${movement.movementType === 'IN' ? '+' : '-'}${movement.qty} ${item.unit || 'units'} of ${item.itemName} approved (current: ${item.currentStock})`, link: '/inventory' }).catch(() => {});
+  if (item.minStock > 0 && item.currentStock < item.minStock) {
+    const isOut = item.currentStock === 0;
+    notifyRoles({ modules: ['Inventory', 'Purchase'], type: 'low_stock', title: isOut ? 'Out of Stock' : 'Low Stock Alert', message: `${item.itemName} — ${item.currentStock}/${item.minStock} ${item.unit || 'units'} remaining`, link: '/inventory' }).catch(() => {});
+  }
   res.status(200).json({ success: true, data: movement, currentStock: item.currentStock });
 });
 
@@ -137,8 +145,9 @@ exports.rejectMovement = asyncHandler(async (req, res, next) => {
     req.params.id,
     { approvalStatus: 'Rejected', approvedBy: req.user._id, approvedAt: Date.now() },
     { new: true }
-  );
+  ).populate('itemId', 'itemName unit');
   if (!movement) return next(new AppError('Movement not found', 404));
+  notifyRoles({ modules: ['Inventory'], userIds: [movement.createdBy], type: 'low_stock', title: 'Stock Movement Rejected', message: `Stock movement for ${movement.itemId?.itemName || 'item'} was rejected`, link: '/inventory' }).catch(() => {});
   res.status(200).json({ success: true, data: movement });
 });
 

@@ -1,8 +1,8 @@
 ﻿import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs, Typography, Space, 
-  Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, 
+  Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs, Typography, Space,
+  Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, Steps,
   DatePicker,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
@@ -21,7 +21,7 @@ import {
   useGetSuggestedTasksQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
-  useApproveEmergencyMutation,
+  useRequestEmergencyDispatchMutation,
   useDeleteTaskMutation,
 } from '../../store/api/apiSlice';
 
@@ -49,7 +49,7 @@ export default function Tasks() {
   const suggestedList = suggestedData?.data || [];
   const [createTask] = useCreateTaskMutation();
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
-  const [approveEmergency] = useApproveEmergencyMutation();
+  const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
   const [deleteTask] = useDeleteTaskMutation();
 
   const taskList = useMemo(() => (tasksData?.data || []).map((t) => ({
@@ -72,6 +72,11 @@ export default function Tasks() {
     status: t.status === 'Done' ? 'Completed' : t.status,
     priority: t.priority || (t.isEmergency ? 'High' : 'Normal'),
     isEmergency: t.isEmergency,
+    emergencyRequested: t.emergencyRequested || false,
+    emergencyReason: t.emergencyReason || '',
+    emergencySalesApproved: t.emergencySalesApproved || false,
+    emergencyOpsApproved: t.emergencyOpsApproved || false,
+    emergencyApproved: t.emergencyApproved || false,
     isSample: t.orderId?.orderCategory === 'SAMPLE' || t.orderId?.leadId?.leadType === 'SAMPLE',
     payment: t.paymentStatus || 'Pending',
     paymentStatus: t.paymentStatus || 'Pending',
@@ -104,7 +109,8 @@ export default function Tasks() {
   const [emergencyDispatchOpen, setEmergencyDispatchOpen] = useState(false);
   const [emergencyTask, setEmergencyTask] = useState(null);
   const [emergencyForm] = Form.useForm();
-  const [approvals, setApprovals] = useState({ sales: false, opHead: false });
+  const [dispatchVerifyOpen, setDispatchVerifyOpen] = useState(false);
+  const [dispatchVerifyData, setDispatchVerifyData] = useState(null);
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -196,20 +202,25 @@ export default function Tasks() {
 
   const openEmergency = (task) => {
     setEmergencyTask(task);
-    setApprovals({ sales: false, opHead: false });
+    emergencyForm.resetFields();
     setEmergencyDispatchOpen(true);
   };
 
-  const handleEmergencySubmit = async () => {
-    if (!approvals.sales || !approvals.opHead) return;
-    const id = emergencyTask?.key || emergencyTask?.id;
-    try {
-      await approveEmergency(id).unwrap();
-      enqueueSnackbar('Emergency dispatch approved and submitted', { variant: 'success' });
-      setEmergencyDispatchOpen(false);
-    } catch (err) {
-      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to submit emergency dispatch', { variant: 'error' });
+  // Dispatch pre-flight: verify all tasks on the same order are done before navigating.
+  const handleDispatchClick = (task) => {
+    if (!task.orderId) {
+      navigate('/dispatch');
+      return;
     }
+    const orderTasks = taskList.filter((t) => t.orderId === task.orderId);
+    const notDone = orderTasks.filter((t) => t.status !== 'Completed');
+    const unassigned = orderTasks.filter((t) => !t.assignee || t.assignee === '—');
+    if (notDone.length > 0 || unassigned.length > 0) {
+      setDispatchVerifyData({ task, orderTasks, notDone, unassigned });
+      setDispatchVerifyOpen(true);
+      return;
+    }
+    navigate('/dispatch');
   };
 
   // ── Inventory-based task suggestions ─────────────────────────────────
@@ -339,9 +350,16 @@ export default function Tasks() {
           {r.status === 'Completed' && (
             <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>Completed</Tag>
           )}
-          {r.status === 'Completed' && (r.isSample || r.paymentStatus === 'Paid') && !r.dispatchStatus && (
+          {r.status === 'Completed' && r.orderStatus === 'Dispatched' && (
+            <Button size="small" disabled icon={<CheckCircleOutlined />}
+              style={{ color: '#52c41a', borderColor: '#52c41a44', background: '#52c41a11', cursor: 'default' }}>
+              Dispatched ✓
+            </Button>
+          )}
+          {r.status === 'Completed' && r.orderStatus !== 'Dispatched' && (r.isSample || r.paymentStatus === 'Paid') && !r.dispatchStatus && (
             <Button size="small" type="primary" icon={<ShoppingOutlined />}
-              style={{ background: '#52c41a', border: 'none' }}>
+              style={{ background: '#52c41a', border: 'none' }}
+              onClick={(e) => { e.stopPropagation(); handleDispatchClick(r); }}>
               Dispatch
             </Button>
           )}
@@ -349,8 +367,8 @@ export default function Tasks() {
             <Space direction="vertical" size={2}>
               <Tag color="warning" style={{ fontSize: 10 }}>Awaiting Payment</Tag>
               <Button size="small" danger icon={<ExclamationCircleOutlined />}
-                onClick={() => openEmergency(r)}>
-                Emergency
+                onClick={(e) => { e.stopPropagation(); openEmergency(r); }}>
+                {r.emergencyRequested ? 'View Emergency' : 'Emergency'}
               </Button>
             </Space>
           )}
@@ -540,11 +558,19 @@ export default function Tasks() {
                                   {task.status === 'Completed' && (
                                     <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Completed</Tag>
                                   )}
-                                  {task.status === 'Completed' && (task.isSample || task.paymentStatus === 'Paid') && !task.dispatchStatus && (
-                                    <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}>Dispatch</Button>
+                                  {task.status === 'Completed' && task.orderStatus === 'Dispatched' && (
+                                    <Button size="small" disabled icon={<CheckCircleOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', background: '#52c41a11', cursor: 'default', width: '100%' }}>
+                                      Dispatched ✓
+                                    </Button>
+                                  )}
+                                  {task.status === 'Completed' && task.orderStatus !== 'Dispatched' && (task.isSample || task.paymentStatus === 'Paid') && !task.dispatchStatus && (
+                                    <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}
+                                      onClick={(e) => { e.stopPropagation(); handleDispatchClick(task); }}>Dispatch</Button>
                                   )}
                                   {task.status === 'Completed' && !task.isSample && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
-                                    <Button size="small" danger icon={<ExclamationCircleOutlined />} onClick={() => openEmergency(task)} style={{ width: '100%' }}>Emergency Dispatch</Button>
+                                    <Button size="small" danger icon={<ExclamationCircleOutlined />} onClick={(e) => { e.stopPropagation(); openEmergency(task); }} style={{ width: '100%' }}>
+                                      {task.emergencyRequested ? 'View Emergency' : 'Emergency Dispatch'}
+                                    </Button>
                                   )}
                                   {task.startTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Started: {new Date(task.startTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
                                   {task.endTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Ended: {new Date(task.endTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
@@ -910,87 +936,193 @@ export default function Tasks() {
         })()}
       </Modal>
 
-      {/* ── Emergency Dispatch Approval Modal ────────────────────────────────── */}
+      {/* ── Dispatch Pre-flight Verification Modal ───────────────────────────── */}
       <Modal
-        title={<Space><ExclamationCircleOutlined style={{ color: '#f5222d' }} /><span>Emergency Dispatch Approval</span></Space>}
+        title={<Space><ExclamationCircleOutlined style={{ color: '#fa8c16' }} /><span>Dispatch Verification</span></Space>}
+        open={dispatchVerifyOpen}
+        onCancel={() => setDispatchVerifyOpen(false)}
+        width={Math.min(620, window.innerWidth - 32)}
+        footer={[
+          <Button key="close" onClick={() => setDispatchVerifyOpen(false)}>Close</Button>,
+        ]}
+      >
+        {dispatchVerifyData && (() => {
+          const { orderTasks, notDone, unassigned } = dispatchVerifyData;
+          const allOk = notDone.length === 0 && unassigned.length === 0;
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              {allOk ? (
+                <Alert type="success" showIcon message="All tasks complete — ready to dispatch." style={{ borderRadius: 8 }} />
+              ) : (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Order Not Ready for Dispatch"
+                  description={`${notDone.length > 0 ? `${notDone.length} task(s) are not yet completed. ` : ''}${unassigned.length > 0 ? `${unassigned.length} task(s) are unassigned. ` : ''}All tasks must be assigned and completed before dispatching.`}
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+
+              {/* Summary row */}
+              <Space wrap>
+                <Tag color={orderTasks.length > 0 ? 'blue' : 'default'}>{orderTasks.length} total task(s)</Tag>
+                <Tag color="success">{orderTasks.filter(t => t.status === 'Completed').length} completed</Tag>
+                {notDone.length > 0 && <Tag color="warning">{notDone.length} pending / in progress</Tag>}
+                {unassigned.length > 0 && <Tag color="error">{unassigned.length} unassigned</Tag>}
+              </Space>
+
+              {/* Pending / In Progress tasks */}
+              {notDone.length > 0 && (
+                <div>
+                  <Text style={{ fontSize: 11, color: '#B11E6A', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, display: 'block', marginBottom: 8 }}>
+                    Incomplete Tasks
+                  </Text>
+                  <Table
+                    size="small"
+                    pagination={false}
+                    dataSource={notDone.map((t) => ({ ...t, key: t.key }))}
+                    style={{ borderRadius: 8, overflow: 'hidden' }}
+                    columns={[
+                      { title: 'Task ID', dataIndex: 'id', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                      { title: 'Type', dataIndex: 'type', render: (v) => <Tag color={typeColor[v]} style={{ fontSize: 11 }}>{v}</Tag> },
+                      { title: 'Product', dataIndex: 'product', render: (v) => v || '—' },
+                      {
+                        title: 'Assigned To', dataIndex: 'assignee',
+                        render: (v) => v && v !== '—'
+                          ? <Space size={4}><Avatar size={16} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>
+                          : <Tag color="error" style={{ fontSize: 10 }}>Unassigned</Tag>,
+                      },
+                      { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={statusColor[v] || 'default'} style={{ fontSize: 11 }}>{v}</Tag> },
+                    ]}
+                  />
+                </div>
+              )}
+
+              {/* Unassigned tasks that are already counted above (only show separately if they're somehow "Completed" but unassigned) */}
+              {unassigned.filter(t => t.status === 'Completed').length > 0 && (
+                <div>
+                  <Text style={{ fontSize: 11, color: '#f5222d', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, display: 'block', marginBottom: 8 }}>
+                    Completed but Unassigned
+                  </Text>
+                  <Table
+                    size="small"
+                    pagination={false}
+                    dataSource={unassigned.filter(t => t.status === 'Completed').map((t) => ({ ...t, key: t.key }))}
+                    style={{ borderRadius: 8, overflow: 'hidden' }}
+                    columns={[
+                      { title: 'Task ID', dataIndex: 'id', render: (v) => <Text strong style={{ color: '#f5222d' }}>{v}</Text> },
+                      { title: 'Type', dataIndex: 'type', render: (v) => <Tag color={typeColor[v]} style={{ fontSize: 11 }}>{v}</Tag> },
+                      { title: 'Product', dataIndex: 'product', render: (v) => v || '—' },
+                      { title: 'Status', dataIndex: 'status', render: (v) => <Tag color="success" style={{ fontSize: 11 }}>{v}</Tag> },
+                    ]}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Emergency Dispatch Modal ──────────────────────────────────────────── */}
+      <Modal
+        title={<Space><ExclamationCircleOutlined style={{ color: '#f5222d' }} /><span>Emergency Dispatch</span></Space>}
         open={emergencyDispatchOpen}
         onCancel={() => setEmergencyDispatchOpen(false)}
         width={Math.min(580, window.innerWidth - 32)}
-        footer={[
-          <Button key="cancel" onClick={() => setEmergencyDispatchOpen(false)}>Cancel</Button>,
-          <Button key="submit" type="primary" danger
-            disabled={!approvals.sales || !approvals.opHead}
-            onClick={handleEmergencySubmit}>
-            Submit Emergency Dispatch
-          </Button>,
-        ]}
+        footer={[<Button key="close" onClick={() => setEmergencyDispatchOpen(false)}>Close</Button>]}
       >
         {emergencyTask && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
-            <Alert type="error" showIcon
-              message="Emergency Dispatch bypasses the payment gate"
-              description="Both Sales Person and Operation Head must approve before proceeding."
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+            <Alert type="warning" showIcon
+              message="Payment Pending — Emergency Dispatch Required"
+              description="This order is complete but payment has not been received. Emergency dispatch allows immediate delivery and requires sequential approval: Sales Head first, then Operations Head."
               style={{ borderRadius: 8 }}
             />
 
-            {/* Order summary — no address, no pricing */}
+            {/* Order summary */}
             <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
-              <Descriptions.Item label="Order ID"><Text strong style={{ color: '#B11E6A' }}>{emergencyTask.orderId}</Text></Descriptions.Item>
+              <Descriptions.Item label="Order ID"><Text strong style={{ color: '#B11E6A' }}>{emergencyTask.order}</Text></Descriptions.Item>
               <Descriptions.Item label="Client">{emergencyTask.client}</Descriptions.Item>
               <Descriptions.Item label="Product">{emergencyTask.product}</Descriptions.Item>
               <Descriptions.Item label="Qty">{(emergencyTask.qty ?? 0).toLocaleString()} units</Descriptions.Item>
               <Descriptions.Item label="Payment Status"><Tag color="warning">{emergencyTask.paymentStatus}</Tag></Descriptions.Item>
-              <Descriptions.Item label="Sales Person">{emergencyTask.salesPerson}</Descriptions.Item>
+              <Descriptions.Item label="Assigned To">{emergencyTask.salesPerson}</Descriptions.Item>
             </Descriptions>
 
-            <Form form={emergencyForm} layout="vertical">
-              <Form.Item label="Reason for Emergency Dispatch" name="reason" rules={[{ required: true }]}>
-                <Input.TextArea rows={3} placeholder="Describe why emergency dispatch is required..." />
-              </Form.Item>
-            </Form>
-
-            <Divider style={{ margin: '0' }} />
-
-            {/* Dual approval */}
-            <div>
-              <Text strong style={{ display: 'block', marginBottom: 12 }}>Approvals Required</Text>
-              <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                <Card size="small" style={{ borderRadius: 8, border: `1px solid ${approvals.sales ? '#52c41a' : '#f0f0f0'}` }} styles={{ body: { padding: '10px 14px' } }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Space>
-                      <Avatar icon={<UserOutlined />} style={{ background: '#1890ff' }} size={28} />
-                      <div>
-                        <Text strong style={{ display: 'block' }}>Sales Person — {emergencyTask.salesPerson}</Text>
-                        <Text style={{ fontSize: 11, color: '#999' }}>Customer relationship & payment accountability</Text>
-                      </div>
-                    </Space>
-                    {approvals.sales
-                      ? <Tag color="success">Approved</Tag>
-                      : <Button size="small" type="primary" style={{ background: '#1890ff', border: 'none' }} onClick={() => setApprovals((p) => ({ ...p, sales: true }))}>Approve</Button>}
-                  </div>
-                </Card>
-
-                <Card size="small" style={{ borderRadius: 8, border: `1px solid ${approvals.opHead ? '#52c41a' : '#f0f0f0'}` }} styles={{ body: { padding: '10px 14px' } }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Space>
-                      <Avatar icon={<UserOutlined />} style={{ background: '#B11E6A' }} size={28} />
-                      <div>
-                        <Text strong style={{ display: 'block' }}>Operation Head</Text>
-                        <Text style={{ fontSize: 11, color: '#999' }}>Operations oversight & dispatch authorization</Text>
-                      </div>
-                    </Space>
-                    {approvals.opHead
-                      ? <Tag color="success">Approved</Tag>
-                      : <Button size="small" type="primary" style={{ background: '#B11E6A', border: 'none' }} onClick={() => setApprovals((p) => ({ ...p, opHead: true }))}>Approve</Button>}
-                  </div>
-                </Card>
-              </Space>
-
-              {(!approvals.sales || !approvals.opHead)
-                ? <Alert type="info" showIcon message="Waiting for both approvals to enable dispatch" style={{ marginTop: 12, borderRadius: 8 }} />
-                : <Alert type="success" showIcon message="Both approvals received — Emergency dispatch can proceed" style={{ marginTop: 12, borderRadius: 8 }} />
-              }
-            </div>
+            {!emergencyTask.emergencyRequested ? (
+              <>
+                <Divider style={{ margin: '4px 0' }} />
+                <Text type="secondary" style={{ fontSize: 13 }}>
+                  After submitting, <strong>Sales Head</strong> must approve in the Sales page, then <strong>Operations Head</strong> approves in the Operations page.
+                </Text>
+                <Form form={emergencyForm} layout="vertical">
+                  <Form.Item label="Reason for Emergency Dispatch" name="reason" rules={[{ required: true, message: 'Please provide a reason' }]}>
+                    <Input.TextArea rows={3} placeholder="Describe why emergency dispatch is required..." />
+                  </Form.Item>
+                </Form>
+                <Button type="primary" danger loading={requesting}
+                  onClick={async () => {
+                    try {
+                      const values = await emergencyForm.validateFields();
+                      await requestEmergencyDispatch({ id: emergencyTask.key, reason: values.reason }).unwrap();
+                      enqueueSnackbar('Emergency dispatch requested — awaiting Sales Head approval', { variant: 'success' });
+                      setEmergencyDispatchOpen(false);
+                      emergencyForm.resetFields();
+                    } catch (err) {
+                      if (err?.data?.message) enqueueSnackbar(err.data.message, { variant: 'error' });
+                    }
+                  }}>
+                  Request Emergency Dispatch
+                </Button>
+              </>
+            ) : (
+              <>
+                <Divider style={{ margin: '4px 0' }} />
+                <Text strong style={{ display: 'block', marginBottom: 4 }}>Approval Progress</Text>
+                {emergencyTask.emergencyReason && (
+                  <Alert type="info" showIcon message={`Reason: ${emergencyTask.emergencyReason}`} style={{ borderRadius: 8 }} />
+                )}
+                <Steps
+                  direction="vertical"
+                  size="small"
+                  current={emergencyTask.emergencyApproved ? 2 : emergencyTask.emergencySalesApproved ? 1 : 0}
+                  items={[
+                    {
+                      title: 'Sales Head Approval',
+                      description: emergencyTask.emergencySalesApproved
+                        ? 'Approved ✓ — Sales Head has authorized emergency dispatch'
+                        : 'Pending — Sales Head must approve in the Sales page',
+                      status: emergencyTask.emergencySalesApproved ? 'finish' : 'process',
+                    },
+                    {
+                      title: 'Operations Head Approval',
+                      description: emergencyTask.emergencyOpsApproved
+                        ? 'Approved ✓ — Ops Head has authorized emergency dispatch'
+                        : emergencyTask.emergencySalesApproved
+                        ? 'Pending — Ops Head must approve in the Operations page'
+                        : 'Locked — awaiting Sales Head approval first',
+                      status: emergencyTask.emergencyOpsApproved ? 'finish' : emergencyTask.emergencySalesApproved ? 'process' : 'wait',
+                    },
+                    {
+                      title: 'Emergency Dispatch Authorized',
+                      description: emergencyTask.emergencyApproved
+                        ? 'Both approvals received — proceed with dispatch immediately'
+                        : 'Waiting for both approvals',
+                      status: emergencyTask.emergencyApproved ? 'finish' : 'wait',
+                    },
+                  ]}
+                />
+                {emergencyTask.emergencyApproved && (
+                  <Alert type="success" showIcon message="Emergency dispatch fully approved. Proceed immediately." style={{ borderRadius: 8 }} />
+                )}
+                {!emergencyTask.emergencyApproved && (
+                  <Alert type="info" showIcon
+                    message={emergencyTask.emergencySalesApproved ? 'Waiting for Operations Head approval in the Operations page' : 'Waiting for Sales Head approval in the Sales page'}
+                    style={{ borderRadius: 8 }}
+                  />
+                )}
+              </>
+            )}
           </div>
         )}
       </Modal>

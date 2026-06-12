@@ -4,6 +4,7 @@ const Task = require('../../models/Task');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const { notifyRoles } = require('../../utils/notify');
 
 // ─── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
 exports.getOrders = asyncHandler(async (req, res) => {
@@ -105,6 +106,7 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
     orderId,
     createdBy: req.user._id,
   });
+  notifyRoles({ modules: ['Task Management'], userIds: [task.assignedTo], type: 'task', title: 'Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} assigned`, link: '/tasks' }).catch(() => {});
   res.status(201).json({ success: true, data: task });
 });
 
@@ -153,6 +155,9 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
     ));
   }
 
+  if (tasks.length > 0) {
+    notifyRoles({ modules: ['Task Management'], type: 'task', title: 'Tasks Assigned', message: `${tasks.length} task(s) assigned for order ${order.orderCode} (${order.clientName})`, link: '/tasks' }).catch(() => {});
+  }
   res.status(201).json({
     success: true,
     total: tasks.length,
@@ -205,6 +210,7 @@ exports.getStickerRequests = asyncHandler(async (req, res) => {
 
 exports.createStickerRequest = asyncHandler(async (req, res) => {
   const sticker = await StickerRequest.create({ ...req.body, createdBy: req.user._id });
+  notifyRoles({ modules: ['Operations', 'Sales Team'], type: 'task', title: 'Sticker/Design Request Created', message: `${sticker.stickerType || 'Sticker'} request for "${sticker.product || 'product'}" pending approval`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: sticker });
 });
 
@@ -258,8 +264,13 @@ exports.approveStickerRequest = asyncHandler(async (req, res, next) => {
     sticker.salesApproved = true; sticker.salesApprovedAt = now; sticker.salesApprovedBy = userId;
     sticker.opsHeadApproved = true; sticker.opsHeadApprovedAt = now; sticker.opsHeadApprovedBy = userId;
   }
-  if (sticker.salesApproved && sticker.opsHeadApproved) sticker.status = 'Approved';
-  else sticker.status = 'Waiting for Approval';
+  if (sticker.salesApproved && sticker.opsHeadApproved) {
+    sticker.status = 'Approved';
+    notifyRoles({ modules: ['Operations', 'Sales Team'], type: 'task', title: 'Sticker/Design Approved', message: `${sticker.stickerType || 'Sticker'} for "${sticker.product || 'product'}" fully approved — ready to print`, link: '/operations' }).catch(() => {});
+  } else {
+    sticker.status = 'Waiting for Approval';
+    notifyRoles({ modules: ['Operations', 'Sales Team'], type: 'task', title: 'Sticker Approval Pending', message: `${sticker.stickerType || 'Sticker'} for "${sticker.product || 'product'}" — waiting for ${!sticker.salesApproved ? 'Sales' : 'Operations'} approval`, link: '/operations' }).catch(() => {});
+  }
   await sticker.save({ validateBeforeSave: false });
   await sticker.populate('salesApprovedBy', 'fullName');
   await sticker.populate('opsHeadApprovedBy', 'fullName');

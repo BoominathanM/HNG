@@ -7,6 +7,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const upload = require('../../config/multer');
+const { notifyRoles } = require('../../utils/notify');
 
 // ─── PURCHASE REQUESTS ────────────────────────────────────────────────────────
 exports.getRequests = asyncHandler(async (req, res) => {
@@ -44,6 +45,7 @@ exports.createBulkRequest = asyncHandler(async (req, res) => {
     });
     created.push(req_);
   }
+  notifyRoles({ modules: ['Purchase', 'Financial'], type: 'purchase', title: 'Bulk Purchase Request', message: `${created.length} item(s) requested in batch — pending Finance approval`, link: '/purchase' }).catch(() => {});
   res.status(201).json({ success: true, data: created });
 });
 
@@ -54,6 +56,7 @@ exports.raiseRequest = asyncHandler(async (req, res) => {
     requestCode: code,
     createdBy: req.user._id,
   });
+  notifyRoles({ modules: ['Purchase', 'Financial'], type: 'purchase', title: 'Purchase Request Raised', message: `PR ${request.requestCode} — ${request.itemName} (${request.qty} ${request.unit || 'units'}) needs Finance approval`, link: '/purchase' }).catch(() => {});
   res.status(201).json({ success: true, data: request });
 });
 
@@ -65,6 +68,7 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
   // Re-uploading after a Finance modification request sends it back for review
   if (request.status === 'Modification') request.status = 'Pending';
   await request.save({ validateBeforeSave: false });
+  notifyRoles({ modules: ['Financial'], userIds: [request.createdBy], type: 'purchase', title: 'Quotation File Uploaded', message: `Quotation uploaded for PR ${request.requestCode} (${request.itemName}) — ready for Finance review`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: request });
 });
 

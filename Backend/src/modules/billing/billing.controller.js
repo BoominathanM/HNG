@@ -6,6 +6,7 @@ const Quotation = require('../../models/Quotation');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const { notifyRoles } = require('../../utils/notify');
 
 // ─── PARTIES ─────────────────────────────────────────────────────────────────
 exports.getParties = asyncHandler(async (req, res) => {
@@ -127,6 +128,7 @@ exports.createInvoice = asyncHandler(async (req, res, next) => {
     await Party.findByIdAndUpdate(req.body.partyId, { runningBalance: newBalance });
   }
 
+  notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: 'Invoice Created', message: `Invoice ${invoice.invoiceNumber} — ₹${invoice.total?.toLocaleString()} created`, link: '/billing' }).catch(() => {});
   res.status(201).json({ success: true, data: invoice });
 });
 
@@ -172,6 +174,7 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
   });
 
+  notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: 'Invoice Converted from Quotation', message: `Invoice ${invoice.invoiceNumber} — ₹${invoice.total?.toLocaleString()} (Balance: ₹${invoice.balanceDue?.toLocaleString()})`, link: '/billing' }).catch(() => {});
   res.status(201).json({ success: true, data: invoice });
 });
 
@@ -216,6 +219,7 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
     await Party.findByIdAndUpdate(pId, { runningBalance: newBalance });
   }
 
+  notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: 'Payment Received', message: `Payment of ₹${netAmount?.toLocaleString()} received — Invoice ${invoice.invoiceNumber} (Balance: ₹${invoice.balanceDue?.toLocaleString()})`, link: '/billing' }).catch(() => {});
   res.status(201).json({ success: true, data: { payment, invoice } });
 });
 
