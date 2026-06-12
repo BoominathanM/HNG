@@ -3824,8 +3824,8 @@ export default function Sales() {
                   <Space>
                     <div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} />
                     <PrinterOutlined style={{ color: '#B11E6A' }} />
-                    <span style={{ fontWeight: 700 }}>Sticker Design Approval</span>
-                    <Tag color="warning" style={{ borderRadius: 12 }}>{orderStickerReqs.length} design{orderStickerReqs.length > 1 ? 's' : ''}</Tag>
+                    <span style={{ fontWeight: 700 }}>Design &amp; Display Unit Approval</span>
+                    <Tag color="warning" style={{ borderRadius: 12 }}>{orderStickerReqs.length} item{orderStickerReqs.length > 1 ? 's' : ''}</Tag>
                   </Space>
                 }
               >
@@ -3848,7 +3848,7 @@ export default function Sales() {
                         <Col flex="auto">
                           <Space wrap size={6}>
                             <Text strong style={{ color: textColor, fontSize: 13 }}>{sr.product || '—'}</Text>
-                            <Tag color={sr.stickerType === 'Box' ? 'green' : sr.stickerType === 'Frosted Ziplock' ? 'orange' : 'blue'} style={{ borderRadius: 10, fontSize: 11 }}>
+                            <Tag color={sr.stickerType === 'Box' ? 'green' : sr.stickerType === 'Frosted Ziplock' ? 'orange' : sr.stickerType === 'Display Unit' ? 'purple' : 'blue'} style={{ borderRadius: 10, fontSize: 11 }}>
                               {sr.stickerType}
                             </Tag>
                             <Tag color={
@@ -3887,8 +3887,8 @@ export default function Sales() {
                                 size="small"
                                 icon={<CheckCircleOutlined />}
                                 style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff', borderRadius: 6 }}
-                                disabled={!sr.designFileUrl}
-                                title={!sr.designFileUrl ? 'Waiting for design upload from Operations team' : 'Approve this design — Sales sign-off'}
+                                disabled={!sr.designFileUrl && sr.stickerType !== 'Display Unit'}
+                                title={(!sr.designFileUrl && sr.stickerType !== 'Display Unit') ? 'Waiting for design upload from Operations team' : 'Approve — Sales sign-off'}
                                 onClick={async () => {
                                   try {
                                     const res = await approveStickerRequest({ id: sr._id, role: 'sales' }).unwrap();

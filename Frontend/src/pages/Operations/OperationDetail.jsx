@@ -21,6 +21,7 @@ import {
   Tag,
   Tooltip,
   Typography,
+  Upload,
 } from 'antd';
 import {
   AlertFilled,
@@ -38,6 +39,7 @@ import {
   PlusOutlined,
   PrinterOutlined,
   TeamOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
@@ -55,6 +57,9 @@ import {
   useGetVendorsQuery,
   useSendToStickerTeamMutation,
   useApproveStickerRequestMutation,
+  useCreateStickerRequestMutation,
+  useUploadStickerDesignMutation,
+  useUpdateStickerStatusMutation,
   useGetTasksQuery,
 } from '../../store/api/apiSlice';
 import {
@@ -154,6 +159,11 @@ export default function OperationDetail() {
   const [saveHotelDesign] = useSaveHotelDesignMutation();
   const [sendToStickerTeam] = useSendToStickerTeamMutation();
   const [approveStickerRequest] = useApproveStickerRequestMutation();
+  const [createStickerRequest] = useCreateStickerRequestMutation();
+  const [uploadStickerDesign] = useUploadStickerDesignMutation();
+  const [updateStickerStatus] = useUpdateStickerStatusMutation();
+  // Kit display-unit packaging approval design file (optional)
+  const [duDesignFile, setDuDesignFile] = useState(null);
 
   const allOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
@@ -448,6 +458,46 @@ export default function OperationDetail() {
       });
     return map;
   }, [stickerRequests, order?.key, id]);
+
+  // Kit display-unit packaging approval (one per kit order, stickerType='Display Unit').
+  // Distinct from the per-product sticker design approval — this is the final sign-off on
+  // the kit's display unit (Box/Ziplock packaging) by both Sales and Operations.
+  const displayUnitSR = useMemo(() => {
+    return stickerRequests.find((sr) => {
+      const srOrderId = String(sr.orderId?._id || sr.orderId || '');
+      const matchOrder = srOrderId === String(order?.key || '') || sr.orderId?.orderCode === id;
+      return matchOrder && sr.stickerType === 'Display Unit';
+    }) || null;
+  }, [stickerRequests, order?.key, id]);
+  const displayUnitApproved = !!(displayUnitSR?.salesApproved && displayUnitSR?.opsHeadApproved);
+
+  // Send the kit's display unit (Box/Ziplock packaging) for dual Sales + Ops approval.
+  // Creates the 'Display Unit' StickerRequest on first send and attaches an optional design file.
+  const sendDisplayUnitForApproval = async () => {
+    if (!order) return;
+    try {
+      let srId = displayUnitSR?._id;
+      if (!srId) {
+        const created = await createStickerRequest({
+          orderId: order.key,
+          hotelLogo: order.hotelLogo || order.clientName,
+          product: order.kitDisplayUnit || 'Kit Display Unit',
+          stickerType: 'Display Unit',
+          quantity: order.qty || 0,
+          stickerSize: order.kitSize || order.size || '',
+        }).unwrap();
+        srId = created.data._id;
+      }
+      if (duDesignFile) {
+        await uploadStickerDesign({ id: srId, files: [duDesignFile] }).unwrap();
+      }
+      await updateStickerStatus({ id: srId, status: 'Waiting for Approval' }).unwrap();
+      setDuDesignFile(null);
+      enqueueSnackbar('Display unit sent for approval — Sales & Operations team notified', { variant: 'info' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send display unit for approval', { variant: 'error' });
+    }
+  };
 
   // Annotate every item with isEmergencyProduct / isEmergencyGated flags — mirrors the
   // Sticker/Box queue treatment so Overview shows the same status indicators.
@@ -1258,6 +1308,124 @@ export default function OperationDetail() {
                   </div>
                 </Card>
 
+                {/* Display Unit Approval — kit orders only. Final dual sign-off (Sales + Ops)
+                    on the kit's display unit / packaging before Kit Packing can be assigned. */}
+                {isKitOrder && (
+                  <Card
+                    title={
+                      <Space wrap>
+                        <ExperimentOutlined style={{ color: '#B11E6A' }} />
+                        <Text strong style={{ color: textColor }}>Display Unit Approval</Text>
+                        {order.kitDisplayUnit && <Tag color="purple">{order.kitDisplayUnit}</Tag>}
+                        {displayUnitApproved ? (
+                          <Tag color="success" icon={<CheckCircleOutlined />}>Approved</Tag>
+                        ) : displayUnitSR && displayUnitSR.status !== 'Pending' ? (
+                          <Tag color="warning">Waiting for Approval</Tag>
+                        ) : (
+                          <Tag color="default">Not Sent</Tag>
+                        )}
+                      </Space>
+                    }
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginBottom: 16 }}
+                  >
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 10, fontSize: 12 }}>
+                      Kit products only — after the product designs are approved, the kit's display unit must be
+                      approved by both Sales and Operations before Kit Packing can begin.
+                    </Text>
+
+                    {/* Stage 1: not sent yet — optional upload + send for approval */}
+                    {(!displayUnitSR || displayUnitSR.status === 'Pending') && (
+                      <Space wrap size={8} style={{ padding: '4px 0' }}>
+                        <Upload
+                          beforeUpload={(file) => { setDuDesignFile(file); return false; }}
+                          fileList={duDesignFile ? [duDesignFile] : []}
+                          onRemove={() => setDuDesignFile(null)}
+                          maxCount={1}
+                          accept="image/*,.pdf"
+                        >
+                          <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
+                            {duDesignFile ? 'Change Design' : 'Upload Display Unit Design (optional)'}
+                          </Button>
+                        </Upload>
+                        <Button
+                          type="primary"
+                          icon={<CheckCircleOutlined />}
+                          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 }}
+                          onClick={sendDisplayUnitForApproval}
+                        >
+                          Send Display Unit for Approval
+                        </Button>
+                      </Space>
+                    )}
+
+                    {/* Stage 2: sent, awaiting full approval */}
+                    {displayUnitSR && displayUnitSR.status !== 'Pending' && !displayUnitApproved && (
+                      <Space direction="vertical" size={10} style={{ width: '100%', padding: '4px 0' }}>
+                        <Space wrap size={8}>
+                          {displayUnitSR.designFileUrl ? (
+                            <Button size="small" icon={<EyeOutlined />} onClick={() => window.open(displayUnitSR.designFileUrl, '_blank')}>
+                              View Design
+                            </Button>
+                          ) : (
+                            <Tag color="default" style={{ fontSize: 11 }}>No design file</Tag>
+                          )}
+                          {displayUnitSR.salesApproved ? (
+                            <Tooltip title={`Sales approved by ${displayUnitSR.salesApprovedBy?.fullName || 'Sales'} on ${displayUnitSR.salesApprovedAt ? new Date(displayUnitSR.salesApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
+                              <Tag color="success" icon={<CheckCircleOutlined />} style={{ cursor: 'default' }}>Sales OK</Tag>
+                            </Tooltip>
+                          ) : (
+                            <Tag color="warning">Awaiting Sales</Tag>
+                          )}
+                          {displayUnitSR.opsHeadApproved ? (
+                            <Tooltip title={`Ops approved by ${displayUnitSR.opsHeadApprovedBy?.fullName || 'Ops'} on ${displayUnitSR.opsHeadApprovedAt ? new Date(displayUnitSR.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
+                              <Tag color="blue" icon={<CheckCircleOutlined />} style={{ cursor: 'default' }}>Ops OK</Tag>
+                            </Tooltip>
+                          ) : (
+                            <Button
+                              size="small"
+                              icon={<CheckCircleOutlined />}
+                              style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
+                              onClick={async () => {
+                                try {
+                                  const res = await approveStickerRequest({ id: displayUnitSR._id, role: 'opsHead' }).unwrap();
+                                  enqueueSnackbar(
+                                    res?.data?.status === 'Approved'
+                                      ? 'Display unit fully approved — Kit Packing can start!'
+                                      : 'Ops approval recorded — awaiting Sales approval',
+                                    { variant: 'success' },
+                                  );
+                                } catch (err) {
+                                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                                }
+                              }}
+                            >
+                              Ops OK
+                            </Button>
+                          )}
+                        </Space>
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                          Sales approves from the Sales order detail · Operations approves here.
+                        </Text>
+                      </Space>
+                    )}
+
+                    {/* Stage 3: fully approved */}
+                    {displayUnitApproved && (
+                      <Space direction="vertical" size={4} style={{ padding: '4px 0' }}>
+                        <Space wrap>
+                          <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                          <Text style={{ color: '#52c41a', fontWeight: 600 }}>Display unit approved by Sales &amp; Operations</Text>
+                        </Space>
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                          Sales: {displayUnitSR.salesApprovedBy?.fullName || '—'} · {displayUnitSR.salesApprovedAt ? new Date(displayUnitSR.salesApprovedAt).toLocaleDateString('en-IN') : '—'}
+                          {'  |  '}
+                          Ops: {displayUnitSR.opsHeadApprovedBy?.fullName || '—'} · {displayUnitSR.opsHeadApprovedAt ? new Date(displayUnitSR.opsHeadApprovedAt).toLocaleDateString('en-IN') : '—'}
+                        </Text>
+                      </Space>
+                    )}
+                  </Card>
+                )}
+
                 {/* Kit Packing Task — shown only for kit orders */}
                 {isKitOrder && (
                   <Card
@@ -1293,12 +1461,31 @@ export default function OperationDetail() {
                       </div>
                     )}
 
-                    {allProductTasksDone && !kitPackingTask && (
+                    {allProductTasksDone && !displayUnitApproved && !kitPackingTask && (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0' }}>
                         <div>
                           <Space>
                             <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
                             <Text style={{ color: '#52c41a', fontWeight: 600 }}>All product tasks completed!</Text>
+                          </Space>
+                          <Text style={{ display: 'block', marginTop: 4, fontSize: 12, color: '#faad14' }}>
+                            Waiting for display unit approval from Sales &amp; Operations before Kit Packing can be assigned.
+                          </Text>
+                        </div>
+                        <Tooltip title="Get the display unit approved by both Sales and Operations first">
+                          <Button type="primary" disabled icon={<TeamOutlined />} style={{ borderRadius: 8 }}>
+                            Assign Kit Packing Task
+                          </Button>
+                        </Tooltip>
+                      </div>
+                    )}
+
+                    {allProductTasksDone && displayUnitApproved && !kitPackingTask && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0' }}>
+                        <div>
+                          <Space>
+                            <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                            <Text style={{ color: '#52c41a', fontWeight: 600 }}>All product tasks completed &amp; display unit approved!</Text>
                           </Space>
                           <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
                             Assign the Kit Packing task to begin the final packaging step.
