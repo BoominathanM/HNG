@@ -51,3 +51,8 @@ exports.deleteNotification = asyncHandler(async (req, res, next) => {
   if (!n) return next(new AppError('Notification not found', 404));
   res.status(200).json({ success: true });
 });
+
+exports.deleteAllNotifications = asyncHandler(async (req, res) => {
+  await Notification.deleteMany({ userId: req.user._id });
+  res.status(200).json({ success: true });
+});

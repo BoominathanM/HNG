@@ -11,6 +11,7 @@ router.get('/payment-alerts', ctrl.getPaymentAlerts);
 router.post('/', ctrl.createNotification);
 router.patch('/mark-all-read', ctrl.markAllRead);
 router.patch('/:id/read', ctrl.markRead);
+router.delete('/all', ctrl.deleteAllNotifications);
 router.delete('/:id', ctrl.deleteNotification);
 
 module.exports = router;

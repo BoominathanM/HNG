@@ -780,6 +780,10 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/notifications/${id}`, method: 'delete' }),
       invalidatesTags: ['Notifications'],
     }),
+    deleteAllNotifications: builder.mutation({
+      query: () => ({ url: '/notifications/all', method: 'delete' }),
+      invalidatesTags: ['Notifications'],
+    }),
 
     // ── Settings ─────────────────────────────────────────────────────────────
     getCountryCodes: builder.query({
@@ -1167,6 +1171,7 @@ export const {
   useGetStockAlertsQuery,
   useGetPaymentAlertsQuery,
   useDeleteNotificationMutation,
+  useDeleteAllNotificationsMutation,
   // Settings
   useGetCountryCodesQuery,
   useGetCompanySettingsQuery,

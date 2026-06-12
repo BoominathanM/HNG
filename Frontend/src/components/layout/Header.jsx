@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Layout, Button, Badge, Avatar, Dropdown, Typography, Space,
-  Drawer, Tag, Popover, List, Spin, Empty, Divider, Tooltip,
+  Drawer, Tag, Popover, List, Spin, Empty, Tooltip,
 } from 'antd';
 import {
   MenuOutlined, BellOutlined, MoonOutlined, SunOutlined,
@@ -9,7 +9,7 @@ import {
   MenuFoldOutlined, MenuUnfoldOutlined,
   DollarOutlined, WarningOutlined, CarOutlined, CheckCircleOutlined,
   ShoppingCartOutlined, ExclamationCircleOutlined, BoxPlotOutlined,
-  CheckOutlined,
+  CheckOutlined, DeleteOutlined, ClearOutlined,
 } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
@@ -19,6 +19,8 @@ import {
   useGetNotificationsQuery,
   useMarkNotificationReadMutation,
   useMarkAllNotificationsReadMutation,
+  useDeleteNotificationMutation,
+  useDeleteAllNotificationsMutation,
 } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
 
@@ -51,30 +53,46 @@ function timeAgo(date) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function NotificationDropdown({ notifications, loading, isDark, onMarkRead, onMarkAllRead, onViewAll, onClose }) {
+function NotificationDropdown({ notifications, loading, isDark, onMarkRead, onMarkAllRead, onDeleteOne, onDeleteAll, onViewAll, onClose }) {
   const bg = isDark ? '#1E1E2E' : '#fff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const subColor = isDark ? '#aaa' : '#666';
   const borderColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.08)';
+  const hoverBg = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(177,30,106,0.04)';
 
   return (
-    <div style={{ width: 360, maxHeight: 480, display: 'flex', flexDirection: 'column', background: bg }}>
+    <div style={{ width: 440, maxHeight: 500, display: 'flex', flexDirection: 'column', background: bg, overflowX: 'hidden' }}>
       {/* Header */}
-      <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${borderColor}` }}>
+      <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${borderColor}`, flexShrink: 0 }}>
         <Text strong style={{ color: textColor, fontSize: 15 }}>Notifications</Text>
-        <Button
-          type="link"
-          size="small"
-          icon={<CheckOutlined />}
-          style={{ color: '#B11E6A', padding: 0, fontSize: 12 }}
-          onClick={onMarkAllRead}
-        >
-          Mark all read
-        </Button>
+        <Space size={4}>
+          <Tooltip title="Mark all as read">
+            <Button
+              type="text"
+              size="small"
+              icon={<CheckOutlined />}
+              style={{ color: '#B11E6A', fontSize: 12, display: 'flex', alignItems: 'center', gap: 3 }}
+              onClick={onMarkAllRead}
+            >
+              Mark all read
+            </Button>
+          </Tooltip>
+          <Tooltip title="Delete all notifications">
+            <Button
+              type="text"
+              size="small"
+              icon={<ClearOutlined />}
+              style={{ color: '#cf1322', fontSize: 12, display: 'flex', alignItems: 'center', gap: 3 }}
+              onClick={onDeleteAll}
+            >
+              Clear all
+            </Button>
+          </Tooltip>
+        </Space>
       </div>
 
       {/* List */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
         ) : notifications.length === 0 ? (
@@ -88,17 +106,14 @@ function NotificationDropdown({ notifications, loading, isDark, onMarkRead, onMa
                 <List.Item
                   style={{
                     padding: '10px 16px',
-                    cursor: 'pointer',
                     background: !item.isRead ? (isDark ? `${meta.color}12` : `${meta.color}08`) : 'transparent',
                     borderLeft: !item.isRead ? `3px solid ${meta.color}` : '3px solid transparent',
                     transition: 'background 0.2s',
+                    alignItems: 'flex-start',
                   }}
-                  onClick={() => {
-                    if (!item.isRead && item._id) onMarkRead(item._id);
-                    if (item.link) onClose();
-                  }}
+                  className="notif-item"
                 >
-                  <Space align="start" size={10} style={{ width: '100%' }}>
+                  <Space align="start" size={10} style={{ width: '100%', flex: 1, minWidth: 0 }}>
                     <div style={{
                       width: 34, height: 34, borderRadius: 8, flexShrink: 0,
                       background: `${meta.color}20`, display: 'flex', alignItems: 'center',
@@ -123,6 +138,29 @@ function NotificationDropdown({ notifications, loading, isDark, onMarkRead, onMa
                       <Text style={{ color: '#aaa', fontSize: 11, marginTop: 2 }}>{timeAgo(item.createdAt)}</Text>
                     </div>
                   </Space>
+                  {/* Per-item action buttons */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginLeft: 8, flexShrink: 0 }}>
+                    {!item.isRead && (
+                      <Tooltip title="Mark as read">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<CheckOutlined />}
+                          style={{ color: '#B11E6A', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                          onClick={(e) => { e.stopPropagation(); onMarkRead(item._id); }}
+                        />
+                      </Tooltip>
+                    )}
+                    <Tooltip title="Delete">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        style={{ color: '#cf1322', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                        onClick={(e) => { e.stopPropagation(); onDeleteOne(item._id); }}
+                      />
+                    </Tooltip>
+                  </div>
                 </List.Item>
               );
             }}
@@ -131,7 +169,7 @@ function NotificationDropdown({ notifications, loading, isDark, onMarkRead, onMa
       </div>
 
       {/* Footer */}
-      <div style={{ padding: '10px 16px', borderTop: `1px solid ${borderColor}`, textAlign: 'center' }}>
+      <div style={{ padding: '10px 16px', borderTop: `1px solid ${borderColor}`, textAlign: 'center', flexShrink: 0 }}>
         <Button
           type="link"
           style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}
@@ -160,6 +198,8 @@ export default function Header({ onMobileMenuOpen }) {
   );
   const [markRead] = useMarkNotificationReadMutation();
   const [markAllRead] = useMarkAllNotificationsReadMutation();
+  const [deleteOne] = useDeleteNotificationMutation();
+  const [deleteAll] = useDeleteAllNotificationsMutation();
 
   const notifications = notifData?.data || [];
   const unreadCount = notifData?.unreadCount || 0;
@@ -189,6 +229,14 @@ export default function Header({ onMobileMenuOpen }) {
     try { await markAllRead().unwrap(); } catch { /* silent */ }
   };
 
+  const handleDeleteOne = async (id) => {
+    try { await deleteOne(id).unwrap(); } catch { /* silent */ }
+  };
+
+  const handleDeleteAll = async () => {
+    try { await deleteAll().unwrap(); } catch { /* silent */ }
+  };
+
   const handleViewAll = () => {
     setNotifOpen(false);
     navigate('/notifications');
@@ -210,6 +258,8 @@ export default function Header({ onMobileMenuOpen }) {
       isDark={isDark}
       onMarkRead={handleMarkRead}
       onMarkAllRead={handleMarkAllRead}
+      onDeleteOne={handleDeleteOne}
+      onDeleteAll={handleDeleteAll}
       onViewAll={handleViewAll}
       onClose={() => setNotifOpen(false)}
     />
