@@ -281,6 +281,18 @@ function prepareFormValues(data) {
   }
 
   if (processed.products) processed.products = normalizeProducts(processed.products);
+  // Convert legacy single-kit format → multi-kit format
+  if (processed.selectedKit && !processed.selectedKits) {
+    processed.selectedKits = [processed.selectedKit];
+  }
+  if (!processed.kitOrders && processed.selectedKits?.length > 0) {
+    processed.kitOrders = processed.selectedKits.map(kitId => ({
+      kitId,
+      displayUnit: processed.kitDisplayUnit || '',
+      size: processed.kitSize || '',
+      overallQty: undefined,
+    }));
+  }
 
   return processed;
 }
@@ -1180,6 +1192,9 @@ export default function Sales() {
   const watchedHotelType = Form.useWatch('hotelType', leadForm);
   const watchedLeadType = Form.useWatch('leadType', leadForm);
   const watchedProductType = Form.useWatch('productType', leadForm);
+  const watchedSelectedKits = Form.useWatch('selectedKits', leadForm) || [];
+  const watchedSingleKit = Form.useWatch('selectedKit', leadForm);
+  const watchedKitOrders = Form.useWatch('kitOrders', leadForm) || [];
   const watchedPriority = Form.useWatch('priority', leadForm);
   const watchedStatus = Form.useWatch('status', leadForm);
   const watchedSoftwareInterest = Form.useWatch('interestedInSoftware', leadForm);
@@ -1337,41 +1352,54 @@ export default function Sales() {
     }));
   }, [itemsRaw]);
 
-  // When a kit is picked in the "Products adding" card, auto-fill its products
-  // into the kit product list and set the kit-level display unit & size.
-  const applyKitToForm = (kitId) => {
-    const kit = kits.find((k) => k._id === kitId);
-    if (!kit) return;
-    const existing = leadForm.getFieldValue('products') || [];
-    const nonKit = existing.filter((p) => p && !(p.isKit || p.kitType));
-    // One row per kit product. Marked isKit so they render in the kit card
-    // (which carries the shared Display Unit & Size header). The product field
-    // shown in the kit card is `kitType`, so we put the product name there.
-    // Fall back to inventory item specs when the kit definition has them empty.
-    const kitRows = (kit.products || []).map((p) => {
-      const invItem = inventoryItemsRaw.find((i) => i.itemName === p.productName);
-      return {
-        isKit: true,
-        kitType: p.productName,
-        name: p.productName,
-        qty: p.qty,
-        rate: p.rate || invItem?.sellingPrice || 0,
-        unit: p.unit || invItem?.unit,
-        kitName: kit.kitName,
-        packingMaterial: p.packingMaterial || invItem?.packingMaterial || '',
-        materialCategory: p.materialCategory || invItem?.materialCategory || '',
-        brand: p.brand || invItem?.brand || '',
-        gst: p.gstPercent || Number(String(p.gst || '').replace('%', '')) || invItem?.gstPercent || 0,
+  // When kits are selected in the "Products adding" card, auto-fill all their products
+  // and build per-kit order configs (display unit, size, overall qty).
+  const applyKitsToForm = (kitIds) => {
+    const allKitRows = [];
+    const existingKitOrders = leadForm.getFieldValue('kitOrders') || [];
+    const newKitOrders = kitIds.map(kitId => {
+      const kit = kits.find(k => k._id === kitId);
+      const existing = existingKitOrders.find(o => o.kitId === kitId);
+      return existing || {
+        kitId,
+        displayUnit: kit?.displayUnit || '',
+        size: kit?.size || '',
+        overallQty: undefined,
       };
     });
-    const pt = leadForm.getFieldValue('productType') || [];
-    const nextPt = Array.isArray(pt) ? Array.from(new Set([...pt, 'PERSONALIZED_KIT'])) : ['PERSONALIZED_KIT'];
+
+    kitIds.forEach(kitId => {
+      const kit = kits.find(k => k._id === kitId);
+      if (!kit) return;
+      (kit.products || []).forEach(p => {
+        const invItem = inventoryItemsRaw.find(i => i.itemName === p.productName);
+        allKitRows.push({
+          isKit: true,
+          kitType: p.productName,
+          name: p.productName,
+          qty: p.qty,
+          rate: p.rate || invItem?.sellingPrice || 0,
+          unit: p.unit || invItem?.unit,
+          kitName: kit.kitName,
+          kitId,
+          packingMaterial: p.packingMaterial || invItem?.packingMaterial || '',
+          materialCategory: p.materialCategory || invItem?.materialCategory || '',
+          brand: p.brand || invItem?.brand || '',
+          gst: p.gstPercent || Number(String(p.gst || '').replace('%', '')) || invItem?.gstPercent || 0,
+        });
+      });
+    });
+
+    const existing = leadForm.getFieldValue('products') || [];
+    const nonKit = existing.filter(p => p && !(p.isKit || p.kitType));
+
     leadForm.setFieldsValue({
-      productType: nextPt,
-      selectedKit: kitId,
-      kitDisplayUnit: kit.displayUnit,
-      kitSize: kit.size,
-      products: [...kitRows, ...nonKit],
+      selectedKits: kitIds,
+      selectedKit: kitIds[0] || undefined,
+      kitDisplayUnit: newKitOrders[0]?.displayUnit || undefined,
+      kitSize: newKitOrders[0]?.size || undefined,
+      kitOrders: newKitOrders,
+      products: [...allKitRows, ...nonKit],
     });
   };
 
@@ -1728,6 +1756,10 @@ export default function Sales() {
         const cfg = configDisplayUnitOptions.find(o => o.value === du);
         return cfg?.tabMapping || '';
       })(),
+      selectedKits: values.selectedKits || [],
+      kitSticker: values.kitSticker || undefined,
+      kitLogo: values.kitLogo || undefined,
+      kitOrders: (values.kitOrders || []).map(o => ({ ...o, overallQty: Number(o.overallQty) || undefined })),
       packingMaterial: values.packingMaterial || '',
       hotelLogoUrl: hotelLogoUrl || undefined,
       paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
@@ -1879,7 +1911,7 @@ export default function Sales() {
         status: undefined, quotationNo: undefined, followUpName: undefined, followUpTime: undefined, followUpStep: undefined,
         interestedInSoftware: undefined, previousSoftware: undefined, previousSoftwarePrice: undefined,
         mentionPriority: undefined, notes: undefined,
-        selectedKit: undefined, kitDisplayUnit: undefined, kitSize: undefined,
+        selectedKit: undefined, selectedKits: [], kitDisplayUnit: undefined, kitSize: undefined, kitSticker: undefined, kitLogo: undefined, kitOrders: [],
         specifications: [],
         notesHistory: [],
         hotelLogo: [],
@@ -1954,7 +1986,7 @@ export default function Sales() {
       leadJourney: ['followUpStep'],
       personalization: ['productType', 'displayUnit'],
       delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'paymentProofs', 'paymentCollection'],
-      products: ['products', 'selectedKit', 'kitDisplayUnit', 'kitSize', 'productType'],
+      products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitSize', 'kitSticker', 'kitLogo', 'kitOrders', 'productType'],
     };
     const rawValues = leadForm.getFieldsValue(fieldsBySection[section]);
     const values = { ...rawValues };
@@ -6044,14 +6076,17 @@ export default function Sales() {
                   )}
                 >
                   {usePerCardEdit && editingSection !== 'personalization' ? (() => {
-                    const kitName = record.selectedKit
-                      ? kits.find((k) => k._id === record.selectedKit)?.kitName || record.selectedKit
+                    const effectiveKitIdsView = Array.isArray(record.selectedKits) && record.selectedKits.length > 0
+                      ? record.selectedKits
+                      : (record.selectedKit ? [record.selectedKit] : []);
+                    const kitName = effectiveKitIdsView.length > 0
+                      ? effectiveKitIdsView.map(id => kits.find(k => k._id === id)?.kitName || id).join(', ')
                       : null;
                     const isKitType = Array.isArray(record.productType)
                       ? record.productType.includes('PERSONALIZED_KIT')
                       : record.productType === 'PERSONALIZED_KIT';
                     // Derive kit products: prefer dedicated kitProducts field, fall back to isKit products in
-                    // the products array (set by applyKitToForm), then fall back to the kit definition itself.
+                    // the products array (set by applyKitsToForm), then fall back to the kit definition itself.
                     const kitProductsToShow = (() => {
                       if ((record.kitProducts || []).length > 0) return record.kitProducts;
                       const fromProds = (record.products || []).filter(p => p.isKit || p.kitType);
@@ -6062,8 +6097,8 @@ export default function Sales() {
                         rate: p.rate || 0,
                         gstPercent: p.gst || p.gstPercent || 0,
                       }));
-                      const kitDef = record.selectedKit ? kits.find(k => k._id === record.selectedKit) : null;
-                      return (kitDef?.products || []).map(p => ({
+                      const firstKitDef = effectiveKitIdsView.length > 0 ? kits.find(k => k._id === effectiveKitIdsView[0]) : null;
+                      return (firstKitDef?.products || []).map(p => ({
                         productName: p.productName || '',
                         displayType: '',
                         qty: p.qty,
@@ -6098,6 +6133,16 @@ export default function Sales() {
                               <InfoRow label="Kit Size" value={record.kitSize} />
                             </Col>
                           )}
+                          {record.kitSticker && (
+                            <Col xs={12} sm={6}>
+                              <InfoRow label="Sticker" value={record.kitSticker === 'YES' ? 'Yes' : 'No'} />
+                            </Col>
+                          )}
+                          {record.kitLogo && (
+                            <Col xs={12} sm={6}>
+                              <InfoRow label="Logo" value={record.kitLogo === 'YES' ? 'Yes' : 'No'} />
+                            </Col>
+                          )}
                         </Row>
                         {isKitType && kitProductsToShow.length > 0 && (
                           <div>
@@ -6128,29 +6173,59 @@ export default function Sales() {
                       </div>
                     );
                   })() : (
-                    <Row gutter={16}>
-                      <Col xs={24} sm={12}>
-                        <Form.Item label="Product Selection" name="productType">
-                          <SelectWithAdd
-                            mode="multiple"
-                            defaultOptions={PERSONALIZATION_OPTIONS}
-                            placeholder="Select product types"
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={24} sm={12}>
-                        <Form.Item label="Select Kit" name="selectedKit" tooltip="Pick a kit defined in Inventory → Kit. Its products auto-fill below.">
-                          <Select
-                            allowClear
-                            showSearch
-                            optionFilterProp="label"
-                            placeholder={kitOptions.length ? 'Select a kit to load its products' : 'No kits yet — add in Inventory → Kit'}
-                            options={kitOptions}
-                            onChange={(val) => { if (val) applyKitToForm(val); }}
-                          />
-                        </Form.Item>
-                      </Col>
-                    </Row>
+                    <>
+                      <Row gutter={16}>
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Product Selection" name="productType">
+                            <SelectWithAdd
+                              mode="multiple"
+                              defaultOptions={PERSONALIZATION_OPTIONS}
+                              placeholder="Select product types"
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Select Kit" name="selectedKits" tooltip="Pick kits defined in Inventory → Kit. Their products auto-fill in Order Details below.">
+                            <Select
+                              mode="multiple"
+                              allowClear
+                              showSearch
+                              optionFilterProp="label"
+                              placeholder={kitOptions.length ? 'Select kits to load products' : 'No kits yet — add in Inventory → Kit'}
+                              options={kitOptions}
+                              onChange={(vals) => applyKitsToForm(vals || [])}
+                            />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      {(watchedProductType || []).some(pt => {
+                        const opt = PERSONALIZATION_OPTIONS.find(o => o.value === pt);
+                        return (opt?.label || pt).toLowerCase().includes('kit');
+                      }) && (
+                        <Row gutter={16} style={{ marginTop: 8 }}>
+                          <Col xs={24} sm={6}>
+                            <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
+                              <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} sm={6}>
+                            <Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}>
+                              <Input placeholder="e.g. 2.5cm x 2.5cm" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} sm={6}>
+                            <Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}>
+                              <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} sm={6}>
+                            <Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}>
+                              <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                      )}
+                    </>
                   )}
                 </Card>
               )}
@@ -6166,8 +6241,6 @@ export default function Sales() {
                 const effectiveProductType = watchedProductType ?? record.productType;
                 const hasKit = effectiveProductType?.includes('PERSONALIZED_KIT');
                 const hasSeparate = effectiveProductType?.includes('SEPARATE_PRODUCT');
-                const showKitCard = hasKit || (!hasKit && !hasSeparate);
-                const showSeparateCard = hasSeparate || (!hasKit && !hasSeparate);
 
                 if (isDetail) {
                   return (
@@ -6276,8 +6349,11 @@ export default function Sales() {
                           const allProds = normalizeProducts(record.products || []).filter(Boolean);
                           const kitProds = allProds.filter(p => p.isKit || p.kitType);
                           const sepProds = allProds.filter(p => !p.isKit && !p.kitType);
-                          const kitNameLabel = record.selectedKit
-                            ? kits.find((k) => k._id === record.selectedKit)?.kitName || 'Personalized Kit'
+                          const effectiveViewKitIds = Array.isArray(record.selectedKits) && record.selectedKits.length > 0
+                            ? record.selectedKits
+                            : (record.selectedKit ? [record.selectedKit] : []);
+                          const kitNameLabel = effectiveViewKitIds.length > 0
+                            ? effectiveViewKitIds.map(id => kits.find(k => k._id === id)?.kitName || 'Kit').join(', ')
                             : (kitProds.length > 0 ? 'Personalized Kit' : null);
                           const renderProductCard = (p, i, globalIndex) => (
                             <div key={globalIndex} style={{ border: `1px solid ${isDark ? (p.isKit || p.kitType ? 'rgba(114,46,209,0.3)' : 'rgba(255,255,255,0.08)') : (p.isKit || p.kitType ? 'rgba(114,46,209,0.2)' : 'rgba(177,30,106,0.12)')}`, borderRadius: 12, overflow: 'hidden' }}>
@@ -6367,15 +6443,52 @@ export default function Sales() {
                           );
                           return (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                              {kitNameLabel && kitProds.length > 0 && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.18)' }}>
-                                  <GiftOutlined style={{ color: '#722ed1' }} />
-                                  <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Kit: {kitNameLabel}</Text>
-                                  {(record.kitDisplayUnit || record.displayUnit) && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>{(record.kitDisplayUnit || record.displayUnit || '').replace(/_/g, ' ')}</Tag>}
-                                  {record.kitSize && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{record.kitSize}</Tag>}
-                                </div>
+                              {effectiveViewKitIds.length > 0 ? effectiveViewKitIds.map((kId, kIdx) => {
+                                const kitDef = kits.find(k => k._id === kId);
+                                const kCfg = (record.kitOrders || []).find(o => o.kitId === kId) || {
+                                  displayUnit: record.kitDisplayUnit || record.displayUnit,
+                                  size: record.kitSize,
+                                };
+                                const thisKitProds = kitProds.filter(p => p.kitId === kId || (!p.kitId && kIdx === 0));
+                                const overallQty = Number(kCfg.overallQty) || 0;
+                                return (
+                                  <div key={kId} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.18)' }}>
+                                      <GiftOutlined style={{ color: '#722ed1' }} />
+                                      <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Kit: {kitDef?.kitName || kId}</Text>
+                                      {kCfg.displayUnit && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>{kCfg.displayUnit.replace(/_/g, ' ')}</Tag>}
+                                      {kCfg.size && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{kCfg.size}</Tag>}
+                                      {overallQty > 0 && <Tag color="blue" style={{ borderRadius: 12, fontSize: 11 }}>Qty: {overallQty}</Tag>}
+                                      {kCfg.sticker && <Tag color={kCfg.sticker === 'YES' ? 'cyan' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Sticker: {kCfg.sticker === 'YES' ? 'Yes' : 'No'}</Tag>}
+                                      {kCfg.logo && <Tag color={kCfg.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Logo: {kCfg.logo === 'YES' ? 'Yes' : 'No'}</Tag>}
+                                    </div>
+                                    {thisKitProds.map((p, i) => renderProductCard(p, i, i))}
+                                    {overallQty > 1 && thisKitProds.length > 0 && (
+                                      <div style={{ padding: '10px 14px', background: isDark ? 'rgba(24,144,255,0.08)' : 'rgba(24,144,255,0.04)', borderRadius: 8, border: '1px solid rgba(24,144,255,0.15)' }}>
+                                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#1890ff', display: 'block', marginBottom: 6 }}>TOTAL QUANTITIES ({overallQty} kits)</Text>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                          {thisKitProds.map((p, i) => (
+                                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                                              <Text type="secondary">{p.name || p.kitType || '—'}</Text>
+                                              <Text>{p.qty || 0} × {overallQty} = <Text strong style={{ color: '#1890ff' }}>{(Number(p.qty) || 0) * overallQty}</Text> pcs</Text>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }) : (
+                                kitNameLabel && kitProds.length > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.18)' }}>
+                                    <GiftOutlined style={{ color: '#722ed1' }} />
+                                    <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Kit: {kitNameLabel}</Text>
+                                    {(record.kitDisplayUnit || record.displayUnit) && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>{(record.kitDisplayUnit || record.displayUnit || '').replace(/_/g, ' ')}</Tag>}
+                                    {record.kitSize && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{record.kitSize}</Tag>}
+                                  </div>
+                                )
                               )}
-                              {kitProds.map((p, i) => renderProductCard(p, i, i))}
+                              {effectiveViewKitIds.length === 0 && kitProds.map((p, i) => renderProductCard(p, i, i))}
                               {sepProds.length > 0 && kitProds.length > 0 && (
                                 <div style={{ padding: '6px 14px', background: isDark ? 'rgba(255,255,255,0.04)' : '#f5f5f5', borderRadius: 6 }}>
                                   <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8 }}>SEPARATE PRODUCTS</Text>
@@ -6412,27 +6525,139 @@ export default function Sales() {
                 }
 
                 // EDIT MODE
-                // kitDisplayUnit and kitSize must live OUTSIDE any Form.List so they
-                // register at the top level of the form. Ant Design prefixes every
-                // Form.Item name with the enclosing Form.List path, so placing them
-                // inside Form.List name="products" would register them as
-                // products.kitDisplayUnit / products.kitSize instead of top-level.
+                // Per-kit fields (kitOrders[i].displayUnit/size/overallQty) and the shared
+                // fallback fields (kitDisplayUnit/kitSize) all live OUTSIDE Form.List "products"
+                // so they bind to top-level form paths, not products.* paths.
+                const effectiveKitIds = watchedSelectedKits.length > 0
+                  ? watchedSelectedKits
+                  : (watchedSingleKit ? [watchedSingleKit] : []);
+                const hasAnyKit = hasKit || effectiveKitIds.length > 0;
+                const showFallbackKitCard = !hasAnyKit && !hasSeparate;
+                const showSeparateCard = hasSeparate || (!hasAnyKit && !hasSeparate);
                 return (
                   <>
-                    {showKitCard && (
+                    {/* One Order Details card per selected kit */}
+                    {effectiveKitIds.map((kitId, kitIndex) => {
+                      const kit = kits.find(k => k._id === kitId);
+                      const kitCardName = kit?.kitName || 'Personalized Kit';
+                      return (
+                        <Card
+                          key={kitId}
+                          style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                          title={
+                            <Space>
+                              <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
+                              <ShoppingCartOutlined style={{ color: '#1890ff' }} />
+                              <span>{kitCardName} — Order Details</span>
+                            </Space>
+                          }
+                        >
+                          {/* Hidden kitId so the array stays in sync */}
+                          <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
+                          {/* Per-kit Display Unit, Size, Overall Qty, Sticker, Logo */}
+                          <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
+                            <Col xs={24} sm={5}>
+                              <Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 0 }}>
+                                <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={4}>
+                              <Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 0 }}>
+                                <Input placeholder="e.g. 2.5cm x 2.5cm" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={5}>
+                              <Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}>
+                                <InputNumber min={1} style={{ width: '100%' }} placeholder="Total qty" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={5}>
+                              <Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}>
+                                <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={5}>
+                              <Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
+                                <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                          <Form.List name="products">
+                            {(fields, { add, remove }) => {
+                              const kitFields = fields.filter(f => {
+                                const isKit = leadForm.getFieldValue(['products', f.name, 'isKit']);
+                                const kitType = leadForm.getFieldValue(['products', f.name, 'kitType']);
+                                const fKitId = leadForm.getFieldValue(['products', f.name, 'kitId']);
+                                if (!isKit && !kitType) return false;
+                                if (fKitId) return fKitId === kitId;
+                                return kitIndex === 0; // Untagged kit products go to first kit card
+                              });
+                              return (
+                                <>
+                                  <ProductHeaders />
+                                  {kitFields.map((field, index) => (
+                                    <ProductItem
+                                      key={field.key}
+                                      field={field}
+                                      index={index}
+                                      remove={remove}
+                                      disabled={false}
+                                      fieldName="products"
+                                      showSpecs={isAddLead || isAddCustomer}
+                                      isDark={isDark}
+                                      inventoryItems={inventoryItems}
+                                      inventoryItemsData={inventoryItemsRaw}
+                                      kits={kits}
+                                      packingMaterialOptions={configPackingMaterialOptions}
+                                    />
+                                  ))}
+                                  <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: true, kitId, kitName: kitCardName })} icon={<PlusOutlined />} block
+                                    style={{ borderRadius: 10, height: 45, borderDashOffset: 4, marginTop: 8 }}>
+                                    Add Kit Product
+                                  </Button>
+                                  {/* Qty calculation summary — reactive via watchedKitOrders & watchedLeadProducts */}
+                                  {(() => {
+                                    const overallQty = Number(watchedKitOrders[kitIndex]?.overallQty) || 0;
+                                    const thisKitProds = (watchedLeadProducts || []).filter(p =>
+                                      p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && kitIndex === 0))
+                                    );
+                                    if (!overallQty || overallQty <= 1 || thisKitProds.length === 0) return null;
+                                    return (
+                                      <div style={{ marginTop: 12, padding: '10px 14px', background: isDark ? 'rgba(24,144,255,0.08)' : 'rgba(24,144,255,0.04)', borderRadius: 8, border: '1px solid rgba(24,144,255,0.15)' }}>
+                                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#1890ff', display: 'block', marginBottom: 6 }}>TOTAL QUANTITIES ({overallQty} kits)</Text>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                          {thisKitProds.map((p, i) => (
+                                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                                              <Text type="secondary">{p.name || p.kitType || '—'}</Text>
+                                              <Text>{Number(p.qty) || 0} × {overallQty} = <Text strong style={{ color: '#1890ff' }}>{(Number(p.qty) || 0) * overallQty}</Text> pcs</Text>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+                                </>
+                              );
+                            }}
+                          </Form.List>
+                        </Card>
+                      );
+                    })}
+
+                    {/* Fallback generic kit card — shown when no kits selected and no product type */}
+                    {showFallbackKitCard && (
                       <Card
                         style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                         title={
                           <Space>
                             <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
                             <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                            <span>{hasKit ? 'Personalized Kit — Order Details' : 'Order Details — Products'}</span>
+                            <span>Order Details — Products</span>
                           </Space>
                         }
                       >
-                        {/* Kit-level Display Unit & Size — outside Form.List so they bind to top-level form fields */}
                         <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
-                          <Col xs={12} sm={8}>
+                          <Col xs={24} sm={8}>
                             <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
                               <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} />
                             </Form.Item>

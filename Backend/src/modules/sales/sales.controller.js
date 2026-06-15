@@ -33,15 +33,19 @@ exports.getLeads = asyncHandler(async (req, res) => {
     const re = new RegExp(req.query.search, 'i');
     andConds.push({ $or: [{ hotelName: re }, { phone: re }, { locationCity: re }] });
   }
-  // Visibility scoping: a non-admin sales user only sees leads they created or
-  // that are assigned to them (by assignedTo ref or by salesPerson name).
-  // Super Admin / Admin see every lead. Combined via $and so it never clobbers
-  // the search $or above.
+  // Visibility scoping:
+  // - Admin / Super Admin: all leads
+  // - Manager or Head (role contains 'Manager' or 'Head'): all leads
+  // - Everyone else (Executive, etc.): only leads they created, are assigned to, or are named as salesPerson
   if (req.user && req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
-    const visibility = [{ createdBy: req.user._id }, { assignedTo: req.user._id }];
-    const myName = req.user.fullName || req.user.name;
-    if (myName) visibility.push({ salesPerson: myName });
-    andConds.push({ $or: visibility });
+    const role = req.user.role || '';
+    const isManagerOrHead = /manager|head/i.test(role);
+    if (!isManagerOrHead) {
+      const visibility = [{ createdBy: req.user._id }, { assignedTo: req.user._id }];
+      const myName = req.user.fullName || req.user.name;
+      if (myName) visibility.push({ salesPerson: myName });
+      andConds.push({ $or: visibility });
+    }
   }
   if (andConds.length) filter.$and = andConds;
   const page = parseInt(req.query.page) || 1;

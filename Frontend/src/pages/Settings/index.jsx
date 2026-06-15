@@ -66,6 +66,16 @@ const MODULE_TABS = MODULE_TAB_DEFS;
 
 const VENDOR_ROLES = ['Sticker', 'Box', 'Ziplock'];
 
+const DEPT_ROLES = {
+  Admin: ['Admin'],
+  Sales: ['Sales Executive', 'Sales Manager', 'Sales Head'],
+  Operations: ['Operations Executive', 'Operations Manager', 'Operations Head'],
+  'Task Management': ['Task Management Executive', 'Task Management Manager', 'Task Management Head'],
+  Dispatch: ['Dispatch Executive', 'Dispatch Manager', 'Dispatch Head'],
+  Finance: ['Finance Executive', 'Finance Manager', 'Finance Head'],
+  Vendors: ['Sticker', 'Box', 'Ziplock'],
+};
+
 const ALL_PERMS = { read: true, add: true, edit: true, delete: true };
 const NO_PERMS  = { read: false, add: false, edit: false, delete: false };
 
@@ -133,10 +143,11 @@ export default function Settings() {
   // Roles
   const [roles, setRoles]       = useState(initRoles);
   const [newRole, setNewRole]   = useState('');
+  // Extra custom roles added per-department via the "Add" button in the role dropdown
+  const [customDeptRoles, setCustomDeptRoles] = useState({});
 
-  // Departments
-  const [departments, setDepartments] = useState(['Sales', 'Marketing', 'Operations', 'Dispatch', 'Finance', 'Vendors', 'Admin']);
-  const [newDept, setNewDept]         = useState('');
+  // Departments (fixed list — no user-facing add option)
+  const departments = ['Sales', 'Operations', 'Task Management', 'Dispatch', 'Finance', 'Vendors', 'Admin'];
 
   // Users — RTK Query
   const { data: usersData, isLoading: usersLoading } = useGetUsersQuery();
@@ -302,25 +313,15 @@ export default function Settings() {
 
   const addRole = (e) => {
     e.preventDefault();
-    if (newRole && !roles.some(r => r.role === newRole)) {
-      setRoles([...roles, { 
-        key: Date.now(), 
-        role: newRole, 
-        color: '#B11E6A', 
-        users: 0, 
-        status: 'Active', 
-        perms: buildPerms(['Dashboard']) // Default perms
-      }]);
-      setNewRole('');
+    if (!newRole || !watchedDept) return;
+    const existing = [...(DEPT_ROLES[watchedDept] || []), ...(customDeptRoles[watchedDept] || [])];
+    if (!existing.includes(newRole)) {
+      setCustomDeptRoles(prev => ({
+        ...prev,
+        [watchedDept]: [...(prev[watchedDept] || []), newRole],
+      }));
     }
-  };
-
-  const addDept = (e) => {
-    e.preventDefault();
-    if (newDept && !departments.includes(newDept)) {
-      setDepartments([...departments, newDept]);
-      setNewDept('');
-    }
+    setNewRole('');
   };
 
   const editUser = (user) => {
@@ -596,28 +597,10 @@ export default function Settings() {
                         </Col>
                         <Col xs={24} sm={8}>
                           <Form.Item label="Department" name="department" rules={[{ required: true, message: 'Required' }]}>
-                            <Select 
-                              placeholder="Select Dept" 
+                            <Select
+                              placeholder="Select Dept"
                               style={{ width: '100%', height: 40 }}
-                              dropdownRender={(menu) => (
-                                <div style={{ padding: '4px 0' }}>
-                                  {menu}
-                                  <Divider style={{ margin: '4px 0' }} />
-                                  <div style={{ display: 'flex', gap: 4, padding: '4px 8px' }}>
-                                    <Input
-                                      placeholder="New Dept"
-                                      value={newDept}
-                                      size="small"
-                                      onChange={(e) => setNewDept(e.target.value)}
-                                      onKeyDown={(e) => e.stopPropagation()}
-                                      style={{ flex: 1 }}
-                                    />
-                                    <Button type="text" size="small" icon={<PlusOutlined />} onClick={addDept} style={{ color: '#B11E6A' }}>
-                                      Add
-                                    </Button>
-                                  </div>
-                                </div>
-                              )}
+                              onChange={() => userForm.setFieldValue('role', undefined)}
                             >
                               {departments.map(d => <Option key={d} value={d}>{d}</Option>)}
                             </Select>
@@ -626,7 +609,8 @@ export default function Settings() {
                         <Col xs={24} sm={8}>
                           <Form.Item label="Role" name="role" rules={[{ required: true, message: 'Required' }]}>
                             <Select
-                              placeholder="Select role"
+                              placeholder={watchedDept ? 'Select role' : 'Select department first'}
+                              disabled={!watchedDept}
                               style={{ width: '100%', height: 40 }}
                               dropdownRender={(menu) => (
                                 <div style={{ padding: '4px 0' }}>
@@ -648,16 +632,16 @@ export default function Settings() {
                                 </div>
                               )}
                             >
-                              {(watchedDept === 'Vendors'
-                                ? roles.filter(r => VENDOR_ROLES.includes(r.role))
-                                : roles.filter(r => !VENDOR_ROLES.includes(r.role))
-                              ).map(r => <Option key={r.key} value={r.role}>{r.role}</Option>)}
+                              {[
+                                ...(DEPT_ROLES[watchedDept] || []),
+                                ...(customDeptRoles[watchedDept] || []),
+                              ].map(r => <Option key={r} value={r}>{r}</Option>)}
                             </Select>
                           </Form.Item>
                         </Col>
                       </Row>
 
-                      {(watchedDept === 'Sales' || watchedDept === 'Marketing') && (
+                      {watchedDept === 'Sales' && (
                         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} style={{ background: subBg, padding: 16, borderRadius: 12, marginBottom: 20, border: '1px solid #B11E6A22' }}>
                           <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 12 }}>Performance Targets & Rewards</Text>
                           <Row gutter={16}>

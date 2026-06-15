@@ -464,6 +464,15 @@ export default function Header({ onMobileMenuOpen }) {
                   <UserOutlined style={{ color: '#B11E6A', fontSize: 17 }} />
                 </div>
                 <div>
+                  <Text style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)', fontSize: 13, display: 'block' }}>Department</Text>
+                  <Text style={{ color: isDark ? '#fff' : '#1a1a2e', fontSize: 15, fontWeight: 500 }}>{user?.department || '—'}</Text>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(177,30,106,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <UserOutlined style={{ color: '#B11E6A', fontSize: 17 }} />
+                </div>
+                <div>
                   <Text style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)', fontSize: 13, display: 'block' }}>Role</Text>
                   <Tag color="magenta" style={{ marginTop: 2, fontSize: 14 }}>{user?.role || 'Super Admin'}</Tag>
                 </div>
