@@ -51,6 +51,7 @@ import {
   useGetKitsQuery,
   useGetPartiesQuery,
   useGetPartyOrdersQuery,
+  useCreatePartyMutation,
   useGetOrdersByHotelNameQuery,
   useGetRemindersQuery,
   useGetHotelNamesQuery,
@@ -475,6 +476,20 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   options={inventoryItems}
                   onSelect={handleProductSelect}
                   notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No items in inventory</span>}
+                  optionRender={(option) => {
+                    const stock = option.data.currentStock ?? 0;
+                    const minStock = option.data.minStock ?? 0;
+                    const unit = option.data.unit || '';
+                    const color = stock <= 0 ? '#f5222d' : stock <= minStock ? '#fa8c16' : '#52c41a';
+                    return (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{option.label}</span>
+                        <span style={{ fontSize: 10, color, fontWeight: 600, background: `${color}20`, padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          {stock} {unit}
+                        </span>
+                      </div>
+                    );
+                  }}
                 />
               </Form.Item>
             ) : (
@@ -512,6 +527,20 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       form.setFieldValue([fieldName, name, 'name'], undefined);
                     }}
                     notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No products in this kit</span>}
+                    optionRender={(option) => {
+                      const stock = option.data.currentStock ?? 0;
+                      const minStock = option.data.minStock ?? 0;
+                      const unit = option.data.unit || '';
+                      const color = stock <= 0 ? '#f5222d' : stock <= minStock ? '#fa8c16' : '#52c41a';
+                      return (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{option.label}</span>
+                          <span style={{ fontSize: 10, color, fontWeight: 600, background: `${color}20`, padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                            {stock} {unit}
+                          </span>
+                        </div>
+                      );
+                    }}
                   />
                 </Form.Item>
               </>
@@ -543,6 +572,16 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                     <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
                   </Form.Item>
+                  {invItem && (
+                    <div style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      marginTop: 2,
+                      color: (invItem.currentStock ?? 0) <= 0 ? '#f5222d' : (invItem.currentStock ?? 0) <= (invItem.minStock || 0) ? '#fa8c16' : '#52c41a',
+                    }}>
+                      Avail: {invItem.currentStock ?? 0} {invItem.unit || ''}
+                    </div>
+                  )}
                 </Col>
                 <Col span={6}>
                   <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>RATE ₹</Text>
@@ -1093,6 +1132,21 @@ export default function Sales() {
       paymentTerms: order.paymentTerms,
       paymentReminderDate: order.paymentReminderDate ? dayjs(order.paymentReminderDate) : null,
       paymentCollection: order.paymentCollection || [],
+      editProducts: (order.products || []).filter(Boolean).map(p => ({
+        name: p.name || p.itemName || '',
+        qty: Number(p.qty) || 0,
+        rate: Number(p.rate || p.price) || 0,
+        gst: Number(p.gst || p.gstPercent) || 0,
+      })),
+      hotelName: order.hotelName || order.clientName || '',
+      billingName: order.billingName || order.clientName || '',
+      contactPerson: order.contactPerson || '',
+      phone: order.phone || '',
+      detailedAddress: order.detailedAddress || '',
+      city: order.city || '',
+      state: order.state || '',
+      pincode: order.pincode || '',
+      gstNumber: order.gstNumber || '',
     });
     setOrderEditPaymentProofs(
       (order.paymentProofs || []).map((f, i) => ({
@@ -1128,7 +1182,19 @@ export default function Sales() {
         ? collTotal + uncapturedPaid
         : newAdvance;
 
-      const orderTotal = orderEditTarget.total || orderEditTarget.totalAmount || 0;
+      // Recalculate total from edited products if products were edited
+      const editedProds = (vals.editProducts || []).filter(Boolean).map(p => ({
+        ...p,
+        name: p.name || '',
+        qty: Number(p.qty) || 0,
+        rate: Number(p.rate) || 0,
+        gst: Number(p.gst) || 0,
+      }));
+      const newSubtotal = editedProds.reduce((s, p) => s + p.qty * p.rate, 0);
+      const newGstAmount = editedProds.reduce((s, p) => s + p.qty * p.rate * (p.gst / 100), 0);
+      const computedTotal = Math.round(newSubtotal + newGstAmount);
+      const orderTotal = computedTotal > 0 ? computedTotal : (orderEditTarget.total || orderEditTarget.totalAmount || 0);
+
       const paymentStatus = orderTotal > 0 && newPaidAmount >= orderTotal
         ? 'Paid'
         : newPaidAmount > 0
@@ -1158,6 +1224,16 @@ export default function Sales() {
         paymentCollection: newCollection,
         paymentProofs: mergedProofs,
         paymentStatus,
+        ...(editedProds.length > 0 && { products: editedProds, totalAmount: orderTotal, total: orderTotal, gstAmount: Math.round(newGstAmount) }),
+        hotelName: vals.hotelName || orderEditTarget.hotelName,
+        billingName: vals.billingName || orderEditTarget.billingName,
+        contactPerson: vals.contactPerson || orderEditTarget.contactPerson,
+        phone: vals.phone || orderEditTarget.phone,
+        detailedAddress: vals.detailedAddress || orderEditTarget.detailedAddress,
+        city: vals.city || orderEditTarget.city,
+        state: vals.state || orderEditTarget.state,
+        pincode: vals.pincode || orderEditTarget.pincode,
+        gstNumber: vals.gstNumber || orderEditTarget.gstNumber,
       };
       try {
         const backendPatch = {
@@ -1172,6 +1248,16 @@ export default function Sales() {
           paymentCollection: newCollection,
           paymentProofs: mergedProofs,
           paymentStatus,
+          ...(editedProds.length > 0 && { products: editedProds, total: orderTotal, gstAmount: Math.round(newGstAmount) }),
+          clientName: updated.hotelName,
+          billingName: updated.billingName,
+          contactPerson: updated.contactPerson,
+          clientPhone: updated.phone,
+          detailedAddress: updated.detailedAddress,
+          city: updated.city,
+          state: updated.state,
+          pincode: updated.pincode,
+          gstNumber: updated.gstNumber,
         };
         await updateSalesOrderMutation(backendPatch).unwrap();
         setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
@@ -1352,6 +1438,9 @@ export default function Sales() {
       value: i._id,
       label: nameCount[i.itemName] > 1 ? `${i.itemName} (${i.itemCode || ''})` : i.itemName,
       name: i.itemName,
+      currentStock: i.currentStock ?? 0,
+      minStock: i.minStock ?? 0,
+      unit: i.unit || '',
     }));
   }, [itemsRaw]);
 
@@ -1407,6 +1496,7 @@ export default function Sales() {
   };
 
   const [createLeadMutation] = useCreateLeadMutation();
+  const [createPartyMutation] = useCreatePartyMutation();
   const [updateLeadMutation] = useUpdateLeadMutation();
   const [updateLeadStatusMutation] = useUpdateLeadStatusMutation();
   const [deleteLeadMutation] = useDeleteLeadMutation();
@@ -1965,6 +2055,18 @@ export default function Sales() {
         const payload = { ...buildLeadPayload(values), status: values.status || 'Warm' };
         try {
           await createLeadMutation(payload).unwrap();
+          // Auto-register lead's customer as a Party (upsert — won't duplicate)
+          createPartyMutation({
+            name: payload.hotelName || payload.billingName,
+            phone: payload.phone,
+            type: 'Customer',
+            gstNumber: payload.gstNumber,
+            contactPerson: payload.contactPerson,
+            city: payload.city,
+            state: payload.state,
+            pincode: payload.pincode,
+            street: payload.detailedAddress,
+          }).catch(() => {}); // fire-and-forget, don't block lead save
           enqueueSnackbar('Lead added', { variant: 'success' });
           setEditingLead(null);
           setSelectedRecord(null);
@@ -4638,7 +4740,7 @@ export default function Sales() {
           </Form>
         </Modal>
 
-        {/* ── Order Edit Modal (Delivery Date & Payment) ─────────────────────── */}
+        {/* ── Order Edit Modal (Full: Products + Customer + Delivery + Payment) ── */}
         <Modal
           title={
             <Space>
@@ -4652,15 +4754,110 @@ export default function Sales() {
             <Button key="cancel" onClick={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); setOrderEditPaymentProofs([]); }}>Cancel</Button>,
             <Button key="save" type="primary" style={{ background: '#B11E6A', border: 'none' }} onClick={saveOrderEdit}>Save Changes</Button>,
           ]}
-          width={Math.min(500, window.innerWidth - 32)}
+          width={Math.min(760, window.innerWidth - 32)}
         >
           <Form form={orderEditForm} layout="vertical" style={{ marginTop: 16 }}>
+
+            {/* ── Customer Details ── */}
+            <Divider style={{ margin: '0 0 12px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+              <Space><UserOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Customer Details</span></Space>
+            </Divider>
+            <Row gutter={[12, 0]}>
+              <Col xs={24} sm={12}><Form.Item label="Hotel / Client Name" name="hotelName"><Input placeholder="e.g. Grand Hotel" /></Form.Item></Col>
+              <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Name on invoice" /></Form.Item></Col>
+              <Col xs={24} sm={12}><Form.Item label="Contact Person" name="contactPerson"><Input placeholder="Contact name" /></Form.Item></Col>
+              <Col xs={24} sm={12}><Form.Item label="Phone" name="phone"><Input placeholder="Phone number" /></Form.Item></Col>
+              <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
+              <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
+              <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
+              <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
+              <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Street / detailed address" /></Form.Item></Col>
+            </Row>
+
+            {/* ── Products ── */}
+            <Divider style={{ margin: '4px 0 12px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+              <Space><ShoppingCartOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Products</span></Space>
+            </Divider>
+            <Form.List name="editProducts">
+              {(fields, { add, remove }) => (
+                <>
+                  {fields.map(({ key, name, ...rest }) => (
+                    <div key={key} style={{ background: 'rgba(177,30,106,0.02)', border: '1px solid rgba(177,30,106,0.12)', borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
+                      <Row gutter={[6, 0]} align="middle">
+                        <Col xs={24} sm={8}>
+                          <Form.Item {...rest} name={[name, 'name']} label="Product Name" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Name required' }]}>
+                            <Input size="small" placeholder="Product name" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={8} sm={4}>
+                          <Form.Item {...rest} name={[name, 'qty']} label="Qty" style={{ marginBottom: 0 }}>
+                            <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="0" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={8} sm={4}>
+                          <Form.Item {...rest} name={[name, 'rate']} label="Rate (₹)" style={{ marginBottom: 0 }}>
+                            <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="0" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={8} sm={4}>
+                          <Form.Item {...rest} name={[name, 'gst']} label="GST %" style={{ marginBottom: 0 }}>
+                            <InputNumber size="small" style={{ width: '100%' }} min={0} max={100} placeholder="0" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={20} sm={3}>
+                          <Form.Item noStyle shouldUpdate>
+                            {({ getFieldValue }) => {
+                              const prods = getFieldValue('editProducts') || [];
+                              const p = prods[name] || {};
+                              const amt = Math.round((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100));
+                              return <div style={{ paddingTop: 22, fontSize: 12, color: '#B11E6A', fontWeight: 600, textAlign: 'right' }}>₹{amt.toLocaleString()}</div>;
+                            }}
+                          </Form.Item>
+                        </Col>
+                        <Col xs={4} sm={1} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 2 }}>
+                          <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                        </Col>
+                      </Row>
+                    </div>
+                  ))}
+                  <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ name: '', qty: 1, rate: 0, gst: 0 })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
+                    + Add Product
+                  </Button>
+                  {/* Live total from products */}
+                  <Form.Item noStyle shouldUpdate>
+                    {({ getFieldValue }) => {
+                      const prods = getFieldValue('editProducts') || [];
+                      const subtotal = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
+                      const gstAmt = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
+                      const total = Math.round(subtotal + gstAmt);
+                      if (total === 0) return null;
+                      return (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Subtotal: <strong>₹{Math.round(subtotal).toLocaleString()}</strong></Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{Math.round(gstAmt).toLocaleString()}</strong></Text>
+                          <Text style={{ fontSize: 13, color: '#B11E6A', fontWeight: 700 }}>Total: ₹{total.toLocaleString()}</Text>
+                        </div>
+                      );
+                    }}
+                  </Form.Item>
+                </>
+              )}
+            </Form.List>
+
+            {/* ── Delivery Date ── */}
+            <Divider style={{ margin: '4px 0 12px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+              <Space><CalendarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Delivery & Payment</span></Space>
+            </Divider>
             <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}>
               <DatePicker style={{ width: '100%' }} />
             </Form.Item>
             {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
               <Select onChange={(val) => {
-                const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+                const prods = orderEditForm.getFieldValue('editProducts') || [];
+                const sub = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
+                const gst = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
+                const computedTot = Math.round(sub + gst);
+                const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                 let suggestedAdvance = 0;
                 if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
                 else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') suggestedAdvance = Math.round(orderTotal * 0.5);
@@ -4670,10 +4867,14 @@ export default function Sales() {
                 {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
               </Select>
             </Form.Item>}
-            {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+            {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms || prev.editProducts !== cur.editProducts}>
               {({ getFieldValue }) => {
                 const pt = getFieldValue('paymentTerms');
-                const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+                const prods = getFieldValue('editProducts') || [];
+                const sub = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
+                const gst = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
+                const computedTot = Math.round(sub + gst);
+                const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                 let adviceText = '';
                 if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
                 else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
@@ -7973,7 +8174,7 @@ export default function Sales() {
         </Form>
       </Modal>
 
-      {/* ── Order Edit Modal (Delivery Date & Payment) ─────────────────────── */}
+      {/* ── Order Edit Modal (Full: Products + Customer + Delivery + Payment) ── */}
       <Modal
         title={
           <Space>
@@ -7987,15 +8188,109 @@ export default function Sales() {
           <Button key="cancel" onClick={() => { setOrderEditModalOpen(false); orderEditForm.resetFields(); setOrderEditPaymentProofs([]); }}>Cancel</Button>,
           <Button key="save" type="primary" style={{ background: '#B11E6A', border: 'none' }} onClick={saveOrderEdit}>Save Changes</Button>,
         ]}
-        width={Math.min(500, window.innerWidth - 32)}
+        width={Math.min(760, window.innerWidth - 32)}
       >
         <Form form={orderEditForm} layout="vertical" style={{ marginTop: 16 }}>
+
+          {/* ── Customer Details ── */}
+          <Divider style={{ margin: '0 0 12px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+            <Space><UserOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Customer Details</span></Space>
+          </Divider>
+          <Row gutter={[12, 0]}>
+            <Col xs={24} sm={12}><Form.Item label="Hotel / Client Name" name="hotelName"><Input placeholder="e.g. Grand Hotel" /></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Name on invoice" /></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="Contact Person" name="contactPerson"><Input placeholder="Contact name" /></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="Phone" name="phone"><Input placeholder="Phone number" /></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
+            <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
+            <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Street / detailed address" /></Form.Item></Col>
+          </Row>
+
+          {/* ── Products ── */}
+          <Divider style={{ margin: '4px 0 12px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+            <Space><ShoppingCartOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Products</span></Space>
+          </Divider>
+          <Form.List name="editProducts">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map(({ key, name, ...rest }) => (
+                  <div key={key} style={{ background: 'rgba(177,30,106,0.02)', border: '1px solid rgba(177,30,106,0.12)', borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
+                    <Row gutter={[6, 0]} align="middle">
+                      <Col xs={24} sm={8}>
+                        <Form.Item {...rest} name={[name, 'name']} label="Product Name" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Name required' }]}>
+                          <Input size="small" placeholder="Product name" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8} sm={4}>
+                        <Form.Item {...rest} name={[name, 'qty']} label="Qty" style={{ marginBottom: 0 }}>
+                          <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="0" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8} sm={4}>
+                        <Form.Item {...rest} name={[name, 'rate']} label="Rate (₹)" style={{ marginBottom: 0 }}>
+                          <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="0" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8} sm={4}>
+                        <Form.Item {...rest} name={[name, 'gst']} label="GST %" style={{ marginBottom: 0 }}>
+                          <InputNumber size="small" style={{ width: '100%' }} min={0} max={100} placeholder="0" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={20} sm={3}>
+                        <Form.Item noStyle shouldUpdate>
+                          {({ getFieldValue }) => {
+                            const prods = getFieldValue('editProducts') || [];
+                            const p = prods[name] || {};
+                            const amt = Math.round((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100));
+                            return <div style={{ paddingTop: 22, fontSize: 12, color: '#B11E6A', fontWeight: 600, textAlign: 'right' }}>₹{amt.toLocaleString()}</div>;
+                          }}
+                        </Form.Item>
+                      </Col>
+                      <Col xs={4} sm={1} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 2 }}>
+                        <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                      </Col>
+                    </Row>
+                  </div>
+                ))}
+                <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ name: '', qty: 1, rate: 0, gst: 0 })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
+                  + Add Product
+                </Button>
+                <Form.Item noStyle shouldUpdate>
+                  {({ getFieldValue }) => {
+                    const prods = getFieldValue('editProducts') || [];
+                    const subtotal = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
+                    const gstAmt = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
+                    const total = Math.round(subtotal + gstAmt);
+                    if (total === 0) return null;
+                    return (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>Subtotal: <strong>₹{Math.round(subtotal).toLocaleString()}</strong></Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{Math.round(gstAmt).toLocaleString()}</strong></Text>
+                        <Text style={{ fontSize: 13, color: '#B11E6A', fontWeight: 700 }}>Total: ₹{total.toLocaleString()}</Text>
+                      </div>
+                    );
+                  }}
+                </Form.Item>
+              </>
+            )}
+          </Form.List>
+
+          {/* ── Delivery Date ── */}
+          <Divider style={{ margin: '4px 0 12px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
+            <Space><CalendarOutlined style={{ color: '#B11E6A' }} /><span style={{ color: '#B11E6A', fontWeight: 600 }}>Delivery & Payment</span></Space>
+          </Divider>
           <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
             <Select onChange={(val) => {
-              const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+              const prods = orderEditForm.getFieldValue('editProducts') || [];
+              const sub = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
+              const gst = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
+              const computedTot = Math.round(sub + gst);
+              const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
               let suggestedAdvance = 0;
               if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
               else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') suggestedAdvance = Math.round(orderTotal * 0.5);
@@ -8005,10 +8300,14 @@ export default function Sales() {
               {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
             </Select>
           </Form.Item>}
-          {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms}>
+          {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms || prev.editProducts !== cur.editProducts}>
             {({ getFieldValue }) => {
               const pt = getFieldValue('paymentTerms');
-              const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+              const prods = getFieldValue('editProducts') || [];
+              const sub = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
+              const gst = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
+              const computedTot = Math.round(sub + gst);
+              const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
               let adviceText = '';
               if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
               else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;

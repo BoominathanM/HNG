@@ -853,6 +853,10 @@ export const apiSlice = createApi({
     }),
 
     // ── Parties & Ledger ─────────────────────────────────────────────────────
+    createParty: builder.mutation({
+      query: (data) => ({ url: '/parties', method: 'post', data }),
+      invalidatesTags: ['Parties'],
+    }),
     getParties: builder.query({
       query: (params) => ({ url: '/parties', params }),
       providesTags: ['Parties'],
@@ -1191,6 +1195,7 @@ export const {
   useGetPartiesQuery,
   useGetPartyLedgerQuery,
   useGetPartyOrdersQuery,
+  useCreatePartyMutation,
   useDeletePartyMutation,
   useGetCustomersLedgerQuery,
   useGetVendorsLedgerQuery,

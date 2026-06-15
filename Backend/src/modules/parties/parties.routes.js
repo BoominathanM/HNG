@@ -5,6 +5,7 @@ const { protect } = require('../../middleware/auth');
 
 router.use(protect);
 
+router.post('/', ctrl.createParty);
 router.get('/', ctrl.getParties);
 router.get('/customers-ledger', ctrl.getCustomersLedger);
 router.get('/vendors-ledger', ctrl.getVendorsLedger);

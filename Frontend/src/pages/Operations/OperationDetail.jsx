@@ -19,6 +19,7 @@ import {
   Table,
   Tabs,
   Tag,
+  TimePicker,
   Tooltip,
   Typography,
   Upload,
@@ -41,6 +42,7 @@ import {
   TeamOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
@@ -286,6 +288,8 @@ export default function OperationDetail() {
       clientName: order?.hotelName || order?.clientName,
       subTasks: cleanSubTasks,
       status: 'Pending',
+      taskStartTime: vals.taskStartTime ? vals.taskStartTime.format('HH:mm') : undefined,
+      taskEndTime: vals.taskEndTime ? vals.taskEndTime.format('HH:mm') : undefined,
     };
     try {
       await assignTask(payload).unwrap();
@@ -1723,6 +1727,26 @@ export default function OperationDetail() {
                     <Option key={emp.key} value={emp.name}>{emp.name}</Option>
                   ))}
                 </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item
+                label={
+                  <Space size={4}>
+                    <span>Task Start Time</span>
+                    <Tooltip title="Set the time when this task should begin. Helps schedule the employee's workload and ensures timely production tracking.">
+                      <span style={{ color: '#B11E6A', cursor: 'help', fontSize: 13 }}>ⓘ</span>
+                    </Tooltip>
+                  </Space>
+                }
+                name="taskStartTime"
+              >
+                <TimePicker format="HH:mm" style={{ width: '100%' }} placeholder="Select start time" minuteStep={5} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="Task End Time" name="taskEndTime">
+                <TimePicker format="HH:mm" style={{ width: '100%' }} placeholder="Select end time" minuteStep={5} />
               </Form.Item>
             </Col>
           </Row>

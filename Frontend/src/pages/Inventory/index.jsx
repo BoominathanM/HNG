@@ -1980,7 +1980,7 @@ export default function Inventory() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item label="Value" name="value" tooltip="Quantity / weight / volume of a single product unit (e.g. 10 gram per soap)">
+              <Form.Item label="Product Spec" name="value" tooltip="Quantity / weight / volume of a single product unit (e.g. 10 gram per soap)">
                 <Input placeholder="e.g. 10" addonAfter={<Form.Item name="unit" noStyle><Select style={{ width: 80 }} placeholder="Unit"><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option><Option value="ml">ml</Option><Option value="gram">gram</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>
