@@ -95,6 +95,7 @@ const leadSchema = new mongoose.Schema({
   selectedKit: String,
   selectedKits: [String],
   kitOrders: [mongoose.Schema.Types.Mixed],
+  kitInsideItems: [String],
   kitProducts: [kitProductSchema],
   logoNeeded: { type: Boolean, default: false },
   logoProducts: String,

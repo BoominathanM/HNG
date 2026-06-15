@@ -6293,7 +6293,8 @@ export default function Sales() {
                       }
                     >
                       {editingSection === 'products' ? (
-                        /* ── Inline product edit ── */
+                        <>
+                        {/* ── Inline product edit ── */}
                         <Form.List name="products">
                           {(fields, { add, remove }) => (
                             <>
@@ -6341,6 +6342,67 @@ export default function Sales() {
                             </>
                           )}
                         </Form.List>
+                        {/* kitInsideItems edit in detail view */}
+                        {(() => {
+                          const ptArr = Array.isArray(record.productType) ? record.productType : (record.productType ? [record.productType] : []);
+                          const ptKitIds = ptArr.filter(pt => kits.some(k => k._id === pt));
+                          const hasSepInPt = ptArr.includes('SEPARATE_PRODUCT');
+                          const activeKitIds = ptKitIds.length > 0 ? ptKitIds : (record.selectedKits || []);
+                          if (activeKitIds.length === 0 && !hasSepInPt) return null;
+                          const kitDropOptions = activeKitIds.map(id => ({ value: id, label: kits.find(k => k._id === id)?.kitName || id }));
+                          const sepProds = hasSepInPt ? (record.products || []).filter(p => p && !p.isKit && !p.kitType && p.name) : [];
+                          const sepDropOptions = sepProds.map((p, i) => ({ value: `sep_${i}_${p.name}`, label: p.name }));
+                          const allDropOptions = [...kitDropOptions, ...sepDropOptions];
+                          const cardTitle = activeKitIds.length > 0
+                            ? activeKitIds.map(id => kits.find(k => k._id === id)?.kitName || id).join(' & ')
+                            : 'Separate Product';
+                          return (
+                            <div style={{ marginTop: 16, padding: '14px 16px', background: 'rgba(114,46,209,0.04)', borderRadius: 12, border: '1px solid rgba(114,46,209,0.14)' }}>
+                              <Text strong style={{ fontSize: 12, color: '#722ed1', display: 'block', marginBottom: 10 }}>
+                                {cardTitle} — Kit Packaging
+                              </Text>
+                              <Form.Item name="kitInsideItems" label="Included in Kit Packaging" style={{ marginBottom: 12 }}
+                                tooltip="Select which kits / products are packed inside. Unselected items ship separately.">
+                                <Select mode="multiple" allowClear showSearch optionFilterProp="label"
+                                  placeholder="Select kits and products to include inside this kit"
+                                  options={allDropOptions} />
+                              </Form.Item>
+                              <Form.Item noStyle shouldUpdate>
+                                {({ getFieldValue }) => {
+                                  const selected = getFieldValue('kitInsideItems') || [];
+                                  const insideItems = allDropOptions.filter(o => selected.includes(o.value));
+                                  const separateItems = allDropOptions.filter(o => !selected.includes(o.value));
+                                  return (
+                                    <Row gutter={12}>
+                                      <Col xs={24} sm={12}>
+                                        <div style={{ padding: '10px 14px', background: 'rgba(82,196,26,0.06)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)' }}>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#52c41a', letterSpacing: 0.6, display: 'block', marginBottom: 6 }}>INSIDE ({insideItems.length})</Text>
+                                          {insideItems.length === 0
+                                            ? <Text type="secondary" style={{ fontSize: 12 }}>None selected</Text>
+                                            : <Space wrap size={4}>{insideItems.map((o, i) => {
+                                                const kitObj = kits.find(k => k._id === o.value);
+                                                return <Tag key={i} color="green" style={{ borderRadius: 10, fontSize: 11 }}>{o.label}{kitObj?.displayUnit ? ` · ${kitObj.displayUnit}` : ''}{kitObj?.packingMaterial ? ` · ${kitObj.packingMaterial}` : ''}</Tag>;
+                                              })}</Space>
+                                          }
+                                        </div>
+                                      </Col>
+                                      <Col xs={24} sm={12}>
+                                        <div style={{ padding: '10px 14px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.2)' }}>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#fa8c16', letterSpacing: 0.6, display: 'block', marginBottom: 6 }}>SEPARATE ({separateItems.length})</Text>
+                                          {separateItems.length === 0
+                                            ? <Text type="secondary" style={{ fontSize: 12 }}>None</Text>
+                                            : <Space wrap size={4}>{separateItems.map((o, i) => <Tag key={i} color="orange" style={{ borderRadius: 10, fontSize: 11 }}>{o.label}</Tag>)}</Space>
+                                          }
+                                        </div>
+                                      </Col>
+                                    </Row>
+                                  );
+                                }}
+                              </Form.Item>
+                            </div>
+                          );
+                        })()}
+                        </>
                       ) : (
                       <>
                         {/* Personalization badge */}
