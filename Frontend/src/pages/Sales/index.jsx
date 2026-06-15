@@ -537,19 +537,21 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
 
           {/* Qty, Rate, GST & Sticker/Printing */}
           <Col flex="auto">
-              <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY / RATE / GST</Text>
               <Row gutter={8}>
                 <Col span={5}>
+                  <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY</Text>
                   <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                     <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
                   </Form.Item>
                 </Col>
                 <Col span={6}>
+                  <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>RATE ₹</Text>
                   <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                     <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={isItemDisabled} size="small" />
                   </Form.Item>
                 </Col>
                 <Col span={6}>
+                  <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>GST %</Text>
                   <Form.Item
                     {...rest}
                     name={[name, 'gst']}
@@ -575,6 +577,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   </Form.Item>
                 </Col>
                 <Col span={7}>
+                  <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>STICKER</Text>
                   <Form.Item {...rest} name={[name, 'sticker']} style={{ marginBottom: 0 }}>
                     <Select size="small" placeholder="Sticker/Printing" disabled={isItemDisabled}>
                       <Option value="YES">Yes</Option>
@@ -1760,6 +1763,7 @@ export default function Sales() {
       kitSticker: values.kitSticker || undefined,
       kitLogo: values.kitLogo || undefined,
       kitOrders: (values.kitOrders || []).map(o => ({ ...o, overallQty: Number(o.overallQty) || undefined })),
+      kitInsideItems: values.kitInsideItems || [],
       packingMaterial: values.packingMaterial || '',
       hotelLogoUrl: hotelLogoUrl || undefined,
       paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
@@ -1911,7 +1915,7 @@ export default function Sales() {
         status: undefined, quotationNo: undefined, followUpName: undefined, followUpTime: undefined, followUpStep: undefined,
         interestedInSoftware: undefined, previousSoftware: undefined, previousSoftwarePrice: undefined,
         mentionPriority: undefined, notes: undefined,
-        selectedKit: undefined, selectedKits: [], kitDisplayUnit: undefined, kitSize: undefined, kitSticker: undefined, kitLogo: undefined, kitOrders: [],
+        selectedKit: undefined, selectedKits: [], kitDisplayUnit: undefined, kitSize: undefined, kitSticker: undefined, kitLogo: undefined, kitOrders: [], kitInsideItems: [],
         specifications: [],
         notesHistory: [],
         hotelLogo: [],
@@ -1986,7 +1990,7 @@ export default function Sales() {
       leadJourney: ['followUpStep'],
       personalization: ['productType', 'displayUnit'],
       delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'paymentProofs', 'paymentCollection'],
-      products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitSize', 'kitSticker', 'kitLogo', 'kitOrders', 'productType'],
+      products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitSize', 'kitSticker', 'kitLogo', 'kitOrders', 'productType', 'kitInsideItems'],
     };
     const rawValues = leadForm.getFieldsValue(fieldsBySection[section]);
     const values = { ...rawValues };
@@ -6143,6 +6147,19 @@ export default function Sales() {
                               <InfoRow label="Logo" value={record.kitLogo === 'YES' ? 'Yes' : 'No'} />
                             </Col>
                           )}
+                          {Array.isArray(record.kitInsideItems) && record.kitInsideItems.length > 0 && (
+                            <Col xs={24}>
+                              <div style={{ marginTop: 10 }}>
+                                <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#52c41a', display: 'block', marginBottom: 6 }}>INSIDE PACKAGING</Text>
+                                <Space wrap size={4}>
+                                  {record.kitInsideItems.map((item, i) => {
+                                    const kit = kits.find(k => k._id === item);
+                                    return <Tag key={i} color="green" style={{ borderRadius: 10, fontSize: 11 }}>{kit ? kit.kitName : item}</Tag>;
+                                  })}
+                                </Space>
+                              </div>
+                            </Col>
+                          )}
                         </Row>
                         {isKitType && kitProductsToShow.length > 0 && (
                           <div>
@@ -7028,6 +7045,106 @@ export default function Sales() {
                       </div>
                     )}
                   </Form.List>
+
+                  {/* ── Product Selection Kit Configuration card ─────────── */}
+                  {(() => {
+                    const ptArr = Array.isArray(watchedProductType) ? watchedProductType : (watchedProductType ? [watchedProductType] : []);
+                    const ptKitIds = ptArr.filter(pt => kits.some(k => k._id === pt));
+                    const hasSepInPt = ptArr.includes('SEPARATE_PRODUCT');
+                    const activeKitIds = ptKitIds.length > 0 ? ptKitIds : watchedSelectedKits;
+                    if (activeKitIds.length === 0 && !hasSepInPt) return null;
+
+                    const cardTitle = activeKitIds.length > 0
+                      ? activeKitIds.map(id => kits.find(k => k._id === id)?.kitName || id).join(' & ')
+                      : 'Separate Product';
+
+                    // Build dropdown options: selected kits + separate (non-kit) products
+                    const kitDropOptions = activeKitIds.map(id => ({
+                      value: id,
+                      label: kits.find(k => k._id === id)?.kitName || id,
+                    }));
+                    const sepProds = hasSepInPt
+                      ? (watchedLeadProducts || []).filter(p => p && !p.isKit && !p.kitType && (p.name || p.kitType))
+                      : [];
+                    const sepDropOptions = sepProds.map((p, i) => ({
+                      value: `sep_${i}_${p.name || ''}`,
+                      label: p.name || `Product ${i + 1}`,
+                    }));
+                    const allDropOptions = [...kitDropOptions, ...sepDropOptions];
+
+                    return (
+                      <Card
+                        style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                        title={
+                          <Space>
+                            <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
+                            <GiftOutlined style={{ color: '#722ed1' }} />
+                            <span style={{ color: '#722ed1' }}>{cardTitle}</span>
+                          </Space>
+                        }
+                      >
+                        <Form.Item
+                          name="kitInsideItems"
+                          label={<Text strong style={{ fontSize: 13 }}>Included in Kit Packaging</Text>}
+                          tooltip="Select which kits / products are packed inside this kit. Unselected items ship separately."
+                          style={{ marginBottom: allDropOptions.length > 0 ? 14 : 0 }}
+                        >
+                          <Select
+                            mode="multiple"
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            placeholder="Select kits and products to include inside this kit"
+                            options={allDropOptions}
+                          />
+                        </Form.Item>
+                        {/* Inside / Separate summary */}
+                        <Form.Item noStyle shouldUpdate>
+                          {({ getFieldValue }) => {
+                            const selected = getFieldValue('kitInsideItems') || [];
+                            const insideItems = allDropOptions.filter(o => selected.includes(o.value));
+                            const separateItems = allDropOptions.filter(o => !selected.includes(o.value));
+                            if (allDropOptions.length === 0) return null;
+                            return (
+                              <Row gutter={12}>
+                                <Col xs={24} sm={12}>
+                                  <div style={{ padding: '10px 14px', background: 'rgba(82,196,26,0.06)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)' }}>
+                                    <Text style={{ fontSize: 11, fontWeight: 700, color: '#52c41a', letterSpacing: 0.6, display: 'block', marginBottom: 6 }}>
+                                      INSIDE PACKAGING ({insideItems.length})
+                                    </Text>
+                                    {insideItems.length === 0
+                                      ? <Text type="secondary" style={{ fontSize: 12 }}>None selected</Text>
+                                      : <Space wrap size={4}>{insideItems.map((o, i) => {
+                                          const kitObj = kits.find(k => k._id === o.value);
+                                          const du = kitObj?.displayUnit || '';
+                                          const pm = kitObj?.packingMaterial || '';
+                                          return (
+                                            <Tag key={i} color="green" style={{ borderRadius: 10, fontSize: 11 }}>
+                                              {o.label}{du ? ` · ${du}` : ''}{pm ? ` · ${pm}` : ''}
+                                            </Tag>
+                                          );
+                                        })}</Space>
+                                    }
+                                  </div>
+                                </Col>
+                                <Col xs={24} sm={12}>
+                                  <div style={{ padding: '10px 14px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.2)' }}>
+                                    <Text style={{ fontSize: 11, fontWeight: 700, color: '#fa8c16', letterSpacing: 0.6, display: 'block', marginBottom: 6 }}>
+                                      SEPARATE ({separateItems.length})
+                                    </Text>
+                                    {separateItems.length === 0
+                                      ? <Text type="secondary" style={{ fontSize: 12 }}>None</Text>
+                                      : <Space wrap size={4}>{separateItems.map((o, i) => <Tag key={i} color="orange" style={{ borderRadius: 10, fontSize: 11 }}>{o.label}</Tag>)}</Space>
+                                    }
+                                  </div>
+                                </Col>
+                              </Row>
+                            );
+                          }}
+                        </Form.Item>
+                      </Card>
+                    );
+                  })()}
 
                   {(watchedLeadType || record.leadType) !== 'SAMPLE' && <DeliveryPaymentFields showUpload />}
 
