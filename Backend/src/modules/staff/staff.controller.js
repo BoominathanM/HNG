@@ -7,8 +7,14 @@ const generateCode = require('../../utils/codeGenerator');
 const upload = require('../../config/multer');
 
 exports.getStaff = asyncHandler(async (req, res) => {
-  const staff = await Staff.find({ deletedAt: null }).sort('fullName');
-  res.status(200).json({ success: true, total: staff.length, data: staff });
+  const filter = { deletedAt: null };
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [staff, total] = await Promise.all([
+    Staff.find(filter).sort('fullName').skip((page - 1) * limit).limit(limit),
+    Staff.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: staff });
 });
 
 exports.getStaffMember = asyncHandler(async (req, res, next) => {

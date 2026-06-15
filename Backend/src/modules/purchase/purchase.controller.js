@@ -17,11 +17,18 @@ exports.getRequests = asyncHandler(async (req, res) => {
     const re = new RegExp(req.query.search, 'i');
     filter.$or = [{ itemName: re }];
   }
-  const requests = await PurchaseRequest.find(filter)
-    .populate('itemId', 'itemName unit currentStock minStock category')
-    .populate('vendorId', 'name phone')
-    .sort('-createdAt');
-  res.status(200).json({ success: true, total: requests.length, data: requests });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [requests, total] = await Promise.all([
+    PurchaseRequest.find(filter)
+      .populate('itemId', 'itemName unit currentStock minStock category')
+      .populate('vendorId', 'name phone')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    PurchaseRequest.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: requests });
 });
 
 exports.createBulkRequest = asyncHandler(async (req, res) => {
@@ -84,12 +91,20 @@ exports.addNote = asyncHandler(async (req, res, next) => {
 exports.getPurchaseOrders = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
-  const orders = await PurchaseOrder.find(filter)
-    .populate('vendorId', 'name phone')
-    .populate('itemId', 'itemName unit')
-    .populate('requestId')
-    .sort('-createdAt');
-  res.status(200).json({ success: true, data: orders });
+  if (req.query.dispatchStatus) filter.dispatchStatus = req.query.dispatchStatus;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [orders, total] = await Promise.all([
+    PurchaseOrder.find(filter)
+      .populate('vendorId', 'name phone')
+      .populate('itemId', 'itemName unit')
+      .populate('requestId')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    PurchaseOrder.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: orders });
 });
 
 // ─── RECEIVE ORDER ────────────────────────────────────────────────────────────

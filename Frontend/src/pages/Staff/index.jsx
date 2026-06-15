@@ -49,7 +49,7 @@ function StaffList({ isDark }) {
   const [addOpen, setAddOpen] = useState(false);
   const [form] = Form.useForm();
 
-  const { data: staffData, isLoading: staffLoading } = useGetStaffQuery();
+  const { data: staffData, isLoading: staffLoading } = useGetStaffQuery({ limit: 500 });
   const [createStaff] = useCreateStaffMutation();
 
   const staffList = (staffData?.data || []).map((s) => ({
@@ -181,7 +181,7 @@ function StaffList({ isDark }) {
           <Table
             dataSource={filteredStaff}
             columns={columns}
-            pagination={{ pageSize: 10, size: 'small' }}
+            pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
             size="small"
             loading={staffLoading}
           />

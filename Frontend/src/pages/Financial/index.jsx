@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'; // useEffect intentionally removed — data from RTK Query
+﻿import React, { useState, useMemo } from 'react'; // useEffect intentionally removed â€” data from RTK Query
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Typography, Space, Select, Tabs, Statistic, Divider, 
@@ -48,18 +48,18 @@ export default function Financial() {
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
   // RTK Query data
-  const { data: pendingReqData } = useGetPendingRequestsQuery();
+  const { data: pendingReqData } = useGetPendingRequestsQuery({ page: reqPage, limit: reqPageSize, ...(purchaseReqStatusFilter ? { status: purchaseReqStatusFilter } : {}) });
   const [approveReq] = useApproveFinancialRequestMutation();
   const [batchApproveReqs] = useBatchApproveRequestsMutation();
   const [rejectReq] = useRejectFinancialRequestMutation();
   const [updateQuotation] = useUpdateFinancialQuotationMutation();
   const [requestModification] = useRequestQuotationModificationMutation();
   const [payOrder] = usePayPurchaseOrderMutation();
-  const { data: expensePaymentsData } = useGetExpensePaymentsQuery();
+  const { data: expensePaymentsData } = useGetExpensePaymentsQuery({ page: expPage, limit: expPageSize, ...(expStatusFilter ? { status: expStatusFilter } : {}) });
   const [payExpense] = usePayExpenseMutation();
-  const { data: pickupExpData } = useGetPickupExpensesQuery();
+  const { data: pickupExpData } = useGetPickupExpensesQuery({ page: pickupPage, limit: pickupPageSize, ...(pickupPayFilter ? { paymentStatus: pickupPayFilter } : {}) });
   const [payPickup] = usePayPickupExpenseMutation();
-  const { data: localPurchaseExpData } = useGetLocalPurchaseExpensesQuery();
+  const { data: localPurchaseExpData } = useGetLocalPurchaseExpensesQuery({ page: localExpPage, limit: localExpPageSize, ...(localExpPayFilter ? { paymentStatus: localExpPayFilter } : {}) });
   const [payLocalPurchase] = usePayLocalPurchaseExpenseMutation();
   const [addPurchaseNote] = useAddPurchaseNoteMutation();
 
@@ -67,7 +67,7 @@ export default function Financial() {
     ...r,
     key: r._id,
     item: r.itemId?.itemName || r.itemName,
-    supplier: r.vendorId?.name || '—',
+    supplier: r.vendorId?.name || 'â€”',
     qty: r.qty,
     unit: r.unit,
     payment_terms: r.paymentTerms,
@@ -92,9 +92,9 @@ export default function Financial() {
         supplier: r.supplier,
         unit: r.unit,
         vendor: r.vendorId || null,
-        // Normalize backend (camelCase) → field names the table/Details modal read
-        bill_no: o.billNo || o.poCode || '—',
-        inv_no: o.invNo || '—',
+        // Normalize backend (camelCase) â†’ field names the table/Details modal read
+        bill_no: o.billNo || o.poCode || 'â€”',
+        inv_no: o.invNo || 'â€”',
         status: o.paymentStatus || 'Unpaid',
         payment_terms: o.paymentTerms || r.payment_terms,
         date: (o.createdAt || r.createdAt)?.slice(0, 10),
@@ -110,15 +110,15 @@ export default function Financial() {
   const [selectedForPayment, setSelectedForPayment] = useState(null);
   const [paymentForm] = Form.useForm();
 
-  /* ── Notes: Quotation Requests table (uses Redux raisedRequests.notes) ── */
+  /* â”€â”€ Notes: Quotation Requests table (uses Redux raisedRequests.notes) â”€â”€ */
   const [openReqNotes, setOpenReqNotes] = useState(null);
   const [reqNoteInput, setReqNoteInput] = useState('');
 
-  /* ── Notes: Purchase Payments table (Redux purchaseOrders.notes) ── */
+  /* â”€â”€ Notes: Purchase Payments table (Redux purchaseOrders.notes) â”€â”€ */
   const [openOrderNotes, setOpenOrderNotes] = useState(null);
   const [orderNoteInput, setOrderNoteInput] = useState({});
 
-  /* ── Edit Quotation modal (Finance can edit & resend) ── */
+  /* â”€â”€ Edit Quotation modal (Finance can edit & resend) â”€â”€ */
   const [showEditReqModal, setShowEditReqModal] = useState(false);
   const [editReqTarget, setEditReqTarget] = useState(null);
   const [editReqForm] = Form.useForm();
@@ -137,7 +137,7 @@ export default function Financial() {
     setOrderNoteInput(prev => ({ ...prev, [orderKey]: '' }));
   };
 
-  /* Finance sends a quotation back to Purchase for corrections → status becomes "Modification" */
+  /* Finance sends a quotation back to Purchase for corrections â†’ status becomes "Modification" */
   const handleReRequest = async (key) => {
     const text = reqNoteInput.trim();
     if (!text) {
@@ -157,16 +157,16 @@ export default function Financial() {
 
   const [proofData] = useState({});
 
-  // ── Reimbursement Expense tab — from RTK Query ──
+  // â”€â”€ Reimbursement Expense tab â€” from RTK Query â”€â”€
   const reimbursementExpenses = useMemo(() => (pickupExpData?.data || []).map((r) => ({
     key: r._id,
-    orderId: r.orderId?.orderCode || '—',
+    orderId: r.orderId?.orderCode || 'â€”',
     date: r.createdAt?.slice(0, 10),
-    supplier: '—',
-    item: '—',
+    supplier: 'â€”',
+    item: 'â€”',
     amount: r.pickupAmount || 0,
-    pickupEmpId: r.pickupEmpId?.staffCode || '—',
-    pickupEmpName: r.pickupEmpId?.fullName || '—',
+    pickupEmpId: r.pickupEmpId?.staffCode || 'â€”',
+    pickupEmpName: r.pickupEmpId?.fullName || 'â€”',
     gPayNumber: r.pickupGPayNumber,
     paymentStatus: r.paymentStatus || 'Unpaid',
     paymentProof: r.paymentProofUrl,
@@ -178,7 +178,7 @@ export default function Financial() {
   const [reimbPayTarget, setReimbPayTarget] = useState(null);
   const [reimbPayForm] = Form.useForm();
 
-  // ── Local Purchase Expense sub-tab — from RTK Query ──
+  // â”€â”€ Local Purchase Expense sub-tab â€” from RTK Query â”€â”€
   const localPurchaseExpenses = useMemo(() => (localPurchaseExpData?.data || []).map((lp) => ({
     key: lp._id,
     date: lp.createdAt?.slice(0, 10),
@@ -236,15 +236,23 @@ export default function Financial() {
     reimbPayForm.resetFields();
   };
 
-  // ── Filter state ──
+  // â”€â”€ Filter state â”€â”€
   const [purchaseReqSearch, setPurchaseReqSearch] = useState('');
   const [purchaseReqStatusFilter, setPurchaseReqStatusFilter] = useState(null);
+  const [reqPage, setReqPage] = useState(1);
+  const [reqPageSize, setReqPageSize] = useState(10);
   const [expSearch, setExpSearch] = useState('');
   const [expStatusFilter, setExpStatusFilter] = useState(null);
+  const [expPage, setExpPage] = useState(1);
+  const [expPageSize, setExpPageSize] = useState(10);
   const [pickupSearch, setPickupSearch] = useState('');
   const [pickupPayFilter, setPickupPayFilter] = useState(null);
+  const [pickupPage, setPickupPage] = useState(1);
+  const [pickupPageSize, setPickupPageSize] = useState(10);
   const [localExpSearch, setLocalExpSearch] = useState('');
   const [localExpPayFilter, setLocalExpPayFilter] = useState(null);
+  const [localExpPage, setLocalExpPage] = useState(1);
+  const [localExpPageSize, setLocalExpPageSize] = useState(10);
 
   const [partiesSearch, setPartiesSearch] = useState('');
   const [viewPartyLedger, setViewPartyLedger] = useState(null);
@@ -252,7 +260,7 @@ export default function Financial() {
   const [partyLedgerData, setPartyLedgerData] = useState([]);
   const suppliersData = {};
 
-  // ── Expense Payments — from RTK Query ──
+  // â”€â”€ Expense Payments â€” from RTK Query â”€â”€
   const expenseRequests = useMemo(() => (expensePaymentsData?.data || []).map((e) => ({
     key: e._id, date: e.expenseDate?.slice(0, 10),
     category: e.category, customCategory: e.customCategory, desc: e.description,
@@ -288,7 +296,7 @@ export default function Financial() {
       } else {
         await payOrder({ id: selectedForPayment.key, formData: fd }).unwrap();
       }
-      enqueueSnackbar(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`, { variant: 'success' });
+      enqueueSnackbar(`Payment of â‚¹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`, { variant: 'success' });
     } catch {
       enqueueSnackbar('Payment failed', { variant: 'error' });
     }
@@ -308,7 +316,7 @@ export default function Financial() {
     { label: 'Pending Approvals', value: pendingRequests, color: '#B11E6A', icon: <ClockCircleOutlined /> },
     { label: 'Unpaid Orders', value: purchaseOrders.filter(r => r.status === 'Unpaid').length, color: '#1890ff', icon: <ShopOutlined /> },
     { label: 'Unpaid Expenses', value: expenseRequests.filter(r => r.status === 'Unpaid').length, color: '#fa8c16', icon: <WalletOutlined /> },
-    { label: 'Total Paid (MTD)', value: `₹${purchaseOrders.filter(r => r.status === 'Paid').reduce((s, r) => s + (r.amount || 0), 0).toLocaleString()}`, color: '#52c41a', icon: <ArrowUpOutlined /> },
+    { label: 'Total Paid (MTD)', value: `â‚¹${purchaseOrders.filter(r => r.status === 'Paid').reduce((s, r) => s + (r.amount || 0), 0).toLocaleString()}`, color: '#52c41a', icon: <ArrowUpOutlined /> },
   ];
 
 
@@ -318,20 +326,20 @@ export default function Financial() {
     {
       title: 'Category', key: 'category', width: 160,
       render: (_, r) => {
-        const label = r.category === 'Other' && r.customCategory ? r.customCategory : (r.category || '—');
+        const label = r.category === 'Other' && r.customCategory ? r.customCategory : (r.category || 'â€”');
         const meta = EXPENSE_CATEGORY_META[r.category] || { color: '#722ed1' };
         return <Tag color={meta.color} style={{ borderRadius: 10, padding: '0 10px', fontSize: 12 }}>{label}</Tag>;
       }
     },
     { title: 'Description', dataIndex: 'desc', key: 'desc', render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 120, align: 'right', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{v.toLocaleString()}</Text> },
+    { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 120, align: 'right', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>â‚¹{v.toLocaleString()}</Text> },
     {
       title: 'Status', key: 'status', width: 140,
       render: (_, r) => (
         <Space direction="vertical" size={2}>
           <Tag color={getStatusColor(r.status)} style={{ fontSize: 12, borderRadius: 8, margin: 0 }}>{r.status || 'Unpaid'}</Tag>
           {r.paid_amount > 0 && r.status !== 'Paid' && (
-            <Text type="secondary" style={{ fontSize: 11 }}>Paid: ₹{r.paid_amount.toLocaleString()} / ₹{r.amount.toLocaleString()}</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>Paid: â‚¹{r.paid_amount.toLocaleString()} / â‚¹{r.amount.toLocaleString()}</Text>
           )}
         </Space>
       )
@@ -382,7 +390,7 @@ export default function Financial() {
               children: (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ marginBottom: 16 }}>
-                    <Title level={5} style={{ margin: 0, color: textColor }}>Quotation Requests — Approve / Reject</Title>
+                    <Title level={5} style={{ margin: 0, color: textColor }}>Quotation Requests â€” Approve / Reject</Title>
                     <Text type="secondary">Review quotation requests raised by the procurement team and approve or reject them</Text>
                   </div>
                   <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -398,7 +406,7 @@ export default function Financial() {
                       allowClear
                       placeholder="Quotation Status"
                       value={purchaseReqStatusFilter}
-                      onChange={setPurchaseReqStatusFilter}
+                      onChange={(val) => { setPurchaseReqStatusFilter(val); setReqPage(1); }}
                       style={{ width: 170, borderRadius: 8 }}
                     >
                       <Option value="Pending">Pending</Option>
@@ -411,13 +419,19 @@ export default function Financial() {
                     size="small"
                     dataSource={raisedRequests.filter((r) => {
                       const q = purchaseReqSearch.toLowerCase();
-                      const matchSearch = !q || (r.item || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q);
-                      const matchStatus = !purchaseReqStatusFilter || r.status === purchaseReqStatusFilter;
-                      return matchSearch && matchStatus;
+                      return !q || (r.item || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q);
                     })}
-                    pagination={{ pageSize: 8 }}
+                    pagination={{
+                      current: reqPage,
+                      pageSize: reqPageSize,
+                      total: pendingReqData?.total || 0,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      onChange: (p, ps) => { setReqPage(p); setReqPageSize(ps); },
+                      size: 'small',
+                    }}
                     rowKey="key"
-                    scroll={{ x: 1400 }}
+                    scroll={{ x: 'max-content' }}
                     locale={{ emptyText: 'No quotation requests yet.' }}
                     expandable={{
                       expandedRowKeys: openReqNotes ? [openReqNotes] : [],
@@ -460,7 +474,7 @@ export default function Financial() {
                               {linkedOrder && (
                                 <Col xs={24} md={12}>
                                   <Text style={{ fontSize: 12, fontWeight: 600, color: '#1890ff', display: 'block', marginBottom: 8 }}>
-                                    <MessageOutlined style={{ marginRight: 4 }} />Order Notes — <Text style={{ fontSize: 11, color: '#888' }}>{linkedOrder.bill_no}</Text>
+                                    <MessageOutlined style={{ marginRight: 4 }} />Order Notes â€” <Text style={{ fontSize: 11, color: '#888' }}>{linkedOrder.bill_no}</Text>
                                   </Text>
                                   {orderNotes.length === 0 && <Text type="secondary" style={{ fontSize: 11 }}>No order notes yet.</Text>}
                                   {orderNotes.map((n, i) => (
@@ -501,7 +515,7 @@ export default function Financial() {
                                 <Text strong>{r.item}</Text>
                                 {batchSize > 1 && (
                                   <Tag color="blue" style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
-                                    Bulk ×{batchSize}
+                                    Bulk Ã—{batchSize}
                                   </Tag>
                                 )}
                               </Space>
@@ -527,7 +541,7 @@ export default function Financial() {
                         title: 'Bill / Inv No', key: 'bill_inv', width: 130,
                         render: (_, r) => {
                           const order = purchaseOrders.find(o => o.requestKey === r.key);
-                          if (!order) return <Text type="secondary">—</Text>;
+                          if (!order) return <Text type="secondary">â€”</Text>;
                           return (
                             <Space direction="vertical" size={1}>
                               <Text strong>{order.bill_no}</Text>
@@ -540,15 +554,15 @@ export default function Financial() {
                         title: 'Amount', key: 'order_amount', width: 100, align: 'right',
                         render: (_, r) => {
                           const order = purchaseOrders.find(o => o.requestKey === r.key);
-                          if (!order) return <Text type="secondary">—</Text>;
-                          return <Text strong style={{ color: '#B11E6A' }}>₹{order.amount?.toLocaleString()}</Text>;
+                          if (!order) return <Text type="secondary">â€”</Text>;
+                          return <Text strong style={{ color: '#B11E6A' }}>â‚¹{order.amount?.toLocaleString()}</Text>;
                         }
                       },
                       {
                         title: 'Pay Status', key: 'payment_status', width: 110, align: 'center',
                         render: (_, r) => {
                           const order = purchaseOrders.find(o => o.requestKey === r.key);
-                          if (!order) return <Text type="secondary">—</Text>;
+                          if (!order) return <Text type="secondary">â€”</Text>;
                           return <Tag color={getStatusColor(order.status)} style={{ borderRadius: 10, margin: 0 }}>{order.status}</Tag>;
                         }
                       },
@@ -659,7 +673,7 @@ export default function Financial() {
                       allowClear
                       placeholder="Payment Status"
                       value={expStatusFilter}
-                      onChange={setExpStatusFilter}
+                      onChange={(val) => { setExpStatusFilter(val); setExpPage(1); }}
                       style={{ width: 160, borderRadius: 8 }}
                     >
                       <Option value="Unpaid">Unpaid</Option>
@@ -671,13 +685,19 @@ export default function Financial() {
                     size="small"
                     dataSource={expenseRequests.filter((e) => {
                       const q = expSearch.toLowerCase();
-                      const matchSearch = !q || (e.desc || '').toLowerCase().includes(q) || (e.bill_no || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q);
-                      const matchStatus = !expStatusFilter || e.status === expStatusFilter;
-                      return matchSearch && matchStatus;
+                      return !q || (e.desc || '').toLowerCase().includes(q) || (e.bill_no || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q);
                     })}
                     columns={expenseColumns}
-                    pagination={{ pageSize: 8 }}
-                    scroll={{ x: 860 }}
+                    pagination={{
+                      current: expPage,
+                      pageSize: expPageSize,
+                      total: expensePaymentsData?.total || 0,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      onChange: (p, ps) => { setExpPage(p); setExpPageSize(ps); },
+                      size: 'small',
+                    }}
+                    scroll={{ x: 'max-content' }}
                   />
                 </div>
               )
@@ -698,7 +718,7 @@ export default function Financial() {
                           <div style={{ marginTop: 8 }}>
                             <div style={{ marginBottom: 12 }}>
                               <Title level={5} style={{ margin: 0, color: textColor }}>Pickup Expense Reimbursement</Title>
-                              <Text type="secondary">Pickup employee expenses from dispatch order taken workflow — review and process payments</Text>
+                              <Text type="secondary">Pickup employee expenses from dispatch order taken workflow â€” review and process payments</Text>
                             </div>
                             <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                               <Input
@@ -713,7 +733,7 @@ export default function Financial() {
                                 allowClear
                                 placeholder="Payment Status"
                                 value={pickupPayFilter}
-                                onChange={setPickupPayFilter}
+                                onChange={(val) => { setPickupPayFilter(val); setPickupPage(1); }}
                                 style={{ width: 160, borderRadius: 8 }}
                               >
                                 <Option value="Paid">Paid</Option>
@@ -730,13 +750,19 @@ export default function Financial() {
                                 size="small"
                                 dataSource={reimbursementExpenses.filter((r) => {
                                   const q = pickupSearch.toLowerCase();
-                                  const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
-                                  const matchPay = !pickupPayFilter || (r.paymentStatus || 'Unpaid') === pickupPayFilter;
-                                  return matchSearch && matchPay;
+                                  return !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
                                 })}
                                 rowKey="key"
-                                pagination={{ pageSize: 8 }}
-                                scroll={{ x: 1450 }}
+                                pagination={{
+                                  current: pickupPage,
+                                  pageSize: pickupPageSize,
+                                  total: pickupExpData?.total || 0,
+                                  showSizeChanger: true,
+                                  pageSizeOptions: ['10', '20', '50', '100'],
+                                  onChange: (p, ps) => { setPickupPage(p); setPickupPageSize(ps); },
+                                  size: 'small',
+                                }}
+                                scroll={{ x: 'max-content' }}
                                 columns={[
                                   { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
                                   { title: 'Order ID', dataIndex: 'orderId', key: 'orderId', width: 90, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
@@ -747,7 +773,7 @@ export default function Financial() {
                                     title: 'Payment Source', dataIndex: 'paymentSource', key: 'paymentSource', width: 130, align: 'center',
                                     render: (v, r) => {
                                       const src = v || (r.paidBy === 'Pickup Team' ? 'Pickup Team' : r.paidBy ? 'Finance' : null);
-                                      if (!src) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+                                      if (!src) return <Text type="secondary" style={{ fontSize: 12 }}>â€”</Text>;
                                       return <Tag color={src === 'Finance' ? 'blue' : 'green'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{src}</Tag>;
                                     }
                                   },
@@ -760,7 +786,7 @@ export default function Financial() {
                                       </Space>
                                     )
                                   },
-                                  { title: 'G Pay Number', dataIndex: 'gPayNumber', key: 'gpay', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
+                                  { title: 'G Pay Number', dataIndex: 'gPayNumber', key: 'gpay', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">â€”</Text> },
                                   { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
                                   {
                                     title: 'Uploaded Proof', dataIndex: 'proof', key: 'proof', width: 130,
@@ -789,7 +815,7 @@ export default function Financial() {
                                     title: 'Paid By', dataIndex: 'paidBy', key: 'paidBy', width: 120, align: 'center',
                                     render: v => v
                                       ? <Tag color={v === 'Pickup Team' ? 'green' : 'blue'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{v}</Tag>
-                                      : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                      : <Text type="secondary" style={{ fontSize: 13 }}>â€”</Text>
                                   },
                                   {
                                     title: 'Finance Payment Proof', dataIndex: 'paymentProof', key: 'pay_proof', width: 155,
@@ -828,7 +854,7 @@ export default function Financial() {
                           <div style={{ marginTop: 8 }}>
                             <div style={{ marginBottom: 12 }}>
                               <Title level={5} style={{ margin: 0, color: textColor }}>Local Purchase Payments</Title>
-                              <Text type="secondary">Local purchases from vendors — review and process credit payments, upload proof</Text>
+                              <Text type="secondary">Local purchases from vendors â€” review and process credit payments, upload proof</Text>
                             </div>
                             <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                               <Input
@@ -843,7 +869,7 @@ export default function Financial() {
                                 allowClear
                                 placeholder="Payment Status"
                                 value={localExpPayFilter}
-                                onChange={setLocalExpPayFilter}
+                                onChange={(val) => { setLocalExpPayFilter(val); setLocalExpPage(1); }}
                                 style={{ width: 160, borderRadius: 8 }}
                               >
                                 <Option value="Paid">Paid</Option>
@@ -860,13 +886,19 @@ export default function Financial() {
                                 size="small"
                                 dataSource={localPurchaseExpenses.filter((lp) => {
                                   const q = localExpSearch.toLowerCase();
-                                  const matchSearch = !q || (lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.name || '').toLowerCase().includes(q));
-                                  const matchPay = !localExpPayFilter || lp.paymentStatus === localExpPayFilter;
-                                  return matchSearch && matchPay;
+                                  return !q || (lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.name || '').toLowerCase().includes(q));
                                 })}
                                 rowKey="key"
-                                pagination={{ pageSize: 8 }}
-                                scroll={{ x: 1200 }}
+                                pagination={{
+                                  current: localExpPage,
+                                  pageSize: localExpPageSize,
+                                  total: localPurchaseExpData?.total || 0,
+                                  showSizeChanger: true,
+                                  pageSizeOptions: ['10', '20', '50', '100'],
+                                  onChange: (p, ps) => { setLocalExpPage(p); setLocalExpPageSize(ps); },
+                                  size: 'small',
+                                }}
+                                scroll={{ x: 'max-content' }}
                                 columns={[
                                   { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
                                   { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', width: 145, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
@@ -875,18 +907,18 @@ export default function Financial() {
                                     render: v => v ? <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => window.open('#', '_blank')}>Open</Button> : <Tag color="default" style={{ fontSize: 12 }}>None</Tag>
                                   },
                                   { title: 'Vendor', dataIndex: 'vendorName', key: 'vendorName', width: 155, render: v => <Text style={{ fontWeight: 600, fontSize: 13 }}>{v}</Text> },
-                                  { title: 'Vendor Phone', dataIndex: 'vendorPhone', key: 'vendorPhone', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
+                                  { title: 'Vendor Phone', dataIndex: 'vendorPhone', key: 'vendorPhone', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">â€”</Text> },
                                   {
                                     title: 'Items', key: 'items', width: 185,
                                     render: (_, r) => (r.items || []).map((it, i) => (
-                                      <div key={i}><Text strong style={{ fontSize: 13 }}>{it.name}</Text><Text type="secondary" style={{ fontSize: 12 }}> — {it.qty} {it.unit}</Text></div>
+                                      <div key={i}><Text strong style={{ fontSize: 13 }}>{it.name}</Text><Text type="secondary" style={{ fontSize: 12 }}> â€” {it.qty} {it.unit}</Text></div>
                                     ))
                                   },
-                                  { title: 'Total', dataIndex: 'totalAmount', key: 'totalAmount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{v?.toLocaleString()}</Text> },
+                                  { title: 'Total', dataIndex: 'totalAmount', key: 'totalAmount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>â‚¹{v?.toLocaleString()}</Text> },
                                   { title: 'Payment Type', dataIndex: 'paymentType', key: 'paymentType', width: 115, align: 'center', render: v => <Tag color={v === 'instant' ? 'green' : 'orange'} style={{ borderRadius: 8, fontSize: 13 }}>{v === 'instant' ? 'Instant' : 'Credit'}</Tag> },
                                   {
                                     title: 'GPay Number', dataIndex: 'gPayNumber', key: 'gPayNumber', width: 135,
-                                    render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text>
+                                    render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">â€”</Text>
                                   },
                                   {
                                     title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 125, align: 'center',
@@ -899,7 +931,7 @@ export default function Financial() {
                                   },
                                   {
                                     title: 'Payment Proof', dataIndex: 'paymentProof', key: 'paymentProof', width: 125,
-                                    render: v => v ? <Button size="small" icon={<CheckCircleOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                    render: v => v ? <Button size="small" icon={<CheckCircleOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 13, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button> : <Text type="secondary" style={{ fontSize: 13 }}>â€”</Text>
                                   },
                                   {
                                     title: 'Actions', key: 'actions', fixed: 'right', width: 115,
@@ -1018,9 +1050,9 @@ export default function Financial() {
           <Form form={paymentForm} layout="vertical" onFinish={handleProcessPayment} initialValues={{ amount_paid: selectedForPayment.amount - (selectedForPayment.paid_amount || 0) }}>
             <Descriptions bordered column={1} size="small">
               <Descriptions.Item label="Payee">{selectedForPayment.item || selectedForPayment.desc}</Descriptions.Item>
-              <Descriptions.Item label="Total Amount Due"><Text strong style={{ color: '#B11E6A', fontSize: 18 }}>₹{selectedForPayment.amount.toLocaleString()}</Text></Descriptions.Item>
-              <Descriptions.Item label="Paid Till Now">₹{(selectedForPayment.paid_amount || 0).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Balance Remaining"><Text strong style={{ color: '#fa8c16' }}>₹{(selectedForPayment.amount - (selectedForPayment.paid_amount || 0)).toLocaleString()}</Text></Descriptions.Item>
+              <Descriptions.Item label="Total Amount Due"><Text strong style={{ color: '#B11E6A', fontSize: 18 }}>â‚¹{selectedForPayment.amount.toLocaleString()}</Text></Descriptions.Item>
+              <Descriptions.Item label="Paid Till Now">â‚¹{(selectedForPayment.paid_amount || 0).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Balance Remaining"><Text strong style={{ color: '#fa8c16' }}>â‚¹{(selectedForPayment.amount - (selectedForPayment.paid_amount || 0)).toLocaleString()}</Text></Descriptions.Item>
             </Descriptions>
 
             <Row gutter={12} style={{ marginTop: 20 }}>
@@ -1034,20 +1066,20 @@ export default function Financial() {
                       validator(_, value) {
                         const balance = selectedForPayment.amount - (selectedForPayment.paid_amount || 0);
                         if (!value || value <= 0) return Promise.reject('Amount must be greater than 0');
-                        if (value > balance) return Promise.reject(`Cannot exceed balance ₹${balance.toLocaleString()}`);
+                        if (value > balance) return Promise.reject(`Cannot exceed balance â‚¹${balance.toLocaleString()}`);
                         return Promise.resolve();
                       },
                     }),
                   ]}
                 >
                   <InputNumber
-                    prefix="₹"
+                    prefix="â‚¹"
                     style={{ width: '100%' }}
                     placeholder="0.00"
                     min={1}
                     max={selectedForPayment.amount - (selectedForPayment.paid_amount || 0)}
                     formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                    parser={value => value.replace(/\₹\s?|(,*)/g, '')}
+                    parser={value => value.replace(/\â‚¹\s?|(,*)/g, '')}
                   />
                 </Form.Item>
               </Col>
@@ -1211,18 +1243,18 @@ export default function Financial() {
           const sup = viewRequest.vendor || suppliersData[viewRequest.supplier] || null;
           const bank = sup?.bankDetails || sup?.bank;
           const bankText = bank
-            ? (typeof bank === 'string' ? bank : [bank.bankName, bank.accountNo, bank.ifsc].filter(Boolean).join(' · '))
-            : '—';
+            ? (typeof bank === 'string' ? bank : [bank.bankName, bank.accountNo, bank.ifsc].filter(Boolean).join(' Â· '))
+            : 'â€”';
           return (
             <div style={{ marginTop: 16 }}>
               <Descriptions bordered size="small" column={2}>
-                <Descriptions.Item label="Date">{viewRequest.date || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Date">{viewRequest.date || 'â€”'}</Descriptions.Item>
                 <Descriptions.Item label="Status"><Tag color={getStatusColor(viewRequest.status)}>{viewRequest.status || 'Unpaid'}</Tag></Descriptions.Item>
-                <Descriptions.Item label="Item" span={2}><Text strong>{viewRequest.item || viewRequest.itemName || '—'}</Text></Descriptions.Item>
+                <Descriptions.Item label="Item" span={2}><Text strong>{viewRequest.item || viewRequest.itemName || 'â€”'}</Text></Descriptions.Item>
                 <Descriptions.Item label="Qty">{viewRequest.qty} {viewRequest.unit}</Descriptions.Item>
-                <Descriptions.Item label="Amount"><Text strong style={{ color: '#B11E6A' }}>₹{(viewRequest.amount || 0).toLocaleString()}</Text></Descriptions.Item>
-                <Descriptions.Item label="Bill / PO No">{viewRequest.bill_no || '—'}</Descriptions.Item>
-                <Descriptions.Item label="Invoice No">{viewRequest.inv_no || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Amount"><Text strong style={{ color: '#B11E6A' }}>â‚¹{(viewRequest.amount || 0).toLocaleString()}</Text></Descriptions.Item>
+                <Descriptions.Item label="Bill / PO No">{viewRequest.bill_no || 'â€”'}</Descriptions.Item>
+                <Descriptions.Item label="Invoice No">{viewRequest.inv_no || 'â€”'}</Descriptions.Item>
                 <Descriptions.Item label="Payment Terms" span={2}>{viewRequest.payment_terms || 'N/A'}</Descriptions.Item>
               </Descriptions>
               {viewRequest.supplier && (
@@ -1230,9 +1262,9 @@ export default function Financial() {
                   <Divider orientation="left" style={{ marginTop: 16 }}>Supplier / Vendor Details</Divider>
                   <Descriptions bordered size="small" column={2}>
                     <Descriptions.Item label="Name"><Text strong style={{ color: '#B11E6A' }}>{sup?.name || viewRequest.supplier}</Text></Descriptions.Item>
-                    <Descriptions.Item label="Phone">{sup?.phone || '—'}</Descriptions.Item>
-                    <Descriptions.Item label="Email">{sup?.email || '—'}</Descriptions.Item>
-                    <Descriptions.Item label="Address" span={2}>{sup?.address || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Phone">{sup?.phone || 'â€”'}</Descriptions.Item>
+                    <Descriptions.Item label="Email">{sup?.email || 'â€”'}</Descriptions.Item>
+                    <Descriptions.Item label="Address" span={2}>{sup?.address || 'â€”'}</Descriptions.Item>
                   </Descriptions>
                   <Divider orientation="left" style={{ marginTop: 16 }}>Bank Details</Divider>
                   <Descriptions bordered size="small" column={1}>
@@ -1256,7 +1288,7 @@ export default function Financial() {
         })()}
       </Modal>
 
-      {/* ── Reimbursement Payment Modal ── */}
+      {/* â”€â”€ Reimbursement Payment Modal â”€â”€ */}
       <Modal
         title={<Space><WalletOutlined style={{ color: '#B11E6A' }} /><Text strong>Process Reimbursement Payment</Text></Space>}
         open={showReimbPaymentModal}
@@ -1270,8 +1302,8 @@ export default function Financial() {
             <div style={{ background: isDark ? '#1a1a2e' : '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#e8f4ff'}` }}>
               <Text strong style={{ display: 'block', marginBottom: 4 }}>{reimbPayTarget.item}</Text>
               <Text style={{ color: '#B11E6A' }}>{reimbPayTarget.supplier}</Text>
-              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Order: {reimbPayTarget.orderId} · Pickup: {reimbPayTarget.pickupEmpName} ({reimbPayTarget.pickupEmpId})</Text>
-              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Category: {reimbPayTarget.category} · Amount: &#8377;{reimbPayTarget.amount?.toLocaleString()}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Order: {reimbPayTarget.orderId} Â· Pickup: {reimbPayTarget.pickupEmpName} ({reimbPayTarget.pickupEmpId})</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Category: {reimbPayTarget.category} Â· Amount: &#8377;{reimbPayTarget.amount?.toLocaleString()}</Text>
               {reimbPayTarget.gPayNumber && (
                 <Text style={{ display: 'block', fontSize: 12, color: '#52c41a', marginTop: 4 }}>
                   G Pay: {reimbPayTarget.gPayNumber}
@@ -1304,7 +1336,7 @@ export default function Financial() {
         )}
       </Modal>
 
-      {/* ── Local Purchase Payment Modal ── */}
+      {/* â”€â”€ Local Purchase Payment Modal â”€â”€ */}
       <Modal
         title={<Space><ShoppingOutlined style={{ color: '#B11E6A' }} /><Text strong>Process Local Purchase Payment</Text></Space>}
         open={showLocalPaymentModal}
@@ -1318,10 +1350,10 @@ export default function Financial() {
             <div style={{ background: isDark ? '#1a1a2e' : '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#e8f4ff'}` }}>
               <Text strong style={{ display: 'block', marginBottom: 4 }}>{localPayTarget.invoiceNo}</Text>
               <Text style={{ color: '#B11E6A' }}>{localPayTarget.vendorName}</Text>
-              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Date: {localPayTarget.date} · Payment Type: {localPayTarget.paymentType === 'credit' ? 'Credit' : 'Instant'}</Text>
-              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Total Amount: ₹{localPayTarget.totalAmount?.toLocaleString()}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Date: {localPayTarget.date} Â· Payment Type: {localPayTarget.paymentType === 'credit' ? 'Credit' : 'Instant'}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Total Amount: â‚¹{localPayTarget.totalAmount?.toLocaleString()}</Text>
               {(localPayTarget.items || []).map((item, i) => (
-                <Text key={i} style={{ display: 'block', fontSize: 11, color: '#888' }}>• {item.name} — {item.qty} {item.unit}</Text>
+                <Text key={i} style={{ display: 'block', fontSize: 11, color: '#888' }}>â€¢ {item.name} â€” {item.qty} {item.unit}</Text>
               ))}
               {localPayTarget.gPayNumber && (
                 <Text style={{ display: 'block', fontSize: 12, color: '#52c41a', marginTop: 4 }}>

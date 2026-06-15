@@ -13,11 +13,18 @@ const { notifyMany } = require('../../utils/notify');
 exports.getDispatches = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
-  const dispatches = await DispatchRecord.find(filter)
-    .populate({ path: 'orderId', select: 'orderCode clientName total orderCategory isEmergency leadId', populate: { path: 'leadId', select: 'leadType' } })
-    .populate('pickupEmpId', 'fullName')
-    .sort('-createdAt');
-  res.status(200).json({ success: true, data: dispatches });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [dispatches, total] = await Promise.all([
+    DispatchRecord.find(filter)
+      .populate({ path: 'orderId', select: 'orderCode clientName total orderCategory isEmergency leadId', populate: { path: 'leadId', select: 'leadType' } })
+      .populate('pickupEmpId', 'fullName')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    DispatchRecord.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: dispatches });
 });
 
 // Today's dispatches — orders scheduled for today (by expected delivery / dispatch day), not creation date.

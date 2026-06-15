@@ -16,17 +16,24 @@ exports.getPendingRequests = asyncHandler(async (req, res) => {
     const re = new RegExp(req.query.search, 'i');
     filter.$or = [{ itemName: re }];
   }
-  const requests = await PurchaseRequest.find(filter)
-    .populate('vendorId', 'name phone email address bankDetails')
-    .populate('itemId', 'itemName unit currentStock minStock')
-    .sort('-createdAt');
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [requests, total] = await Promise.all([
+    PurchaseRequest.find(filter)
+      .populate('vendorId', 'name phone email address bankDetails')
+      .populate('itemId', 'itemName unit currentStock minStock')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    PurchaseRequest.countDocuments(filter),
+  ]);
 
   const withOrders = await Promise.all(requests.map(async (r) => {
     const order = await PurchaseOrder.findOne({ requestId: r._id });
     return { ...r.toObject(), linkedOrder: order || null };
   }));
 
-  res.status(200).json({ success: true, data: withOrders });
+  res.status(200).json({ success: true, total, page, data: withOrders });
 });
 
 exports.approveRequest = asyncHandler(async (req, res, next) => {
@@ -159,8 +166,13 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
 exports.getExpensePayments = asyncHandler(async (req, res) => {
   const filter = { expenseSource: 'manual' };
   if (req.query.status) filter.paymentStatus = req.query.status;
-  const expenses = await Expense.find(filter).sort('-createdAt');
-  res.status(200).json({ success: true, data: expenses });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [expenses, total] = await Promise.all([
+    Expense.find(filter).sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    Expense.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: expenses });
 });
 
 exports.payExpense = asyncHandler(async (req, res, next) => {
@@ -194,13 +206,20 @@ exports.payExpense = asyncHandler(async (req, res, next) => {
 
 // ─── REIMBURSEMENT — PICKUP ───────────────────────────────────────────────────
 exports.getPickupExpenses = asyncHandler(async (req, res) => {
-  const filter = {};
+  const filter = { pickupAmount: { $gt: 0 } };
   if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
-  const records = await DispatchRecord.find({ pickupAmount: { $gt: 0 }, ...filter })
-    .populate('orderId', 'orderCode clientName')
-    .populate('pickupEmpId', 'fullName staffCode')
-    .sort('-createdAt');
-  res.status(200).json({ success: true, data: records });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [records, total] = await Promise.all([
+    DispatchRecord.find(filter)
+      .populate('orderId', 'orderCode clientName')
+      .populate('pickupEmpId', 'fullName staffCode')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    DispatchRecord.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: records });
 });
 
 exports.payPickupExpense = asyncHandler(async (req, res, next) => {
@@ -235,8 +254,13 @@ exports.payPickupExpense = asyncHandler(async (req, res, next) => {
 exports.getLocalPurchaseExpenses = asyncHandler(async (req, res) => {
   const filter = { paymentType: 'credit' };
   if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
-  const localPurchases = await LocalPurchase.find(filter).sort('-createdAt');
-  res.status(200).json({ success: true, data: localPurchases });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [localPurchases, total] = await Promise.all([
+    LocalPurchase.find(filter).sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    LocalPurchase.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: localPurchases });
 });
 
 exports.payLocalPurchase = asyncHandler(async (req, res, next) => {

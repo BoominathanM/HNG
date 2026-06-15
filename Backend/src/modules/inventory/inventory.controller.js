@@ -10,8 +10,13 @@ exports.getItems = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.search) filter.itemName = new RegExp(req.query.search, 'i');
   if (req.query.category) filter.category = req.query.category;
-  const items = await InventoryItem.find(filter).sort('itemName');
-  res.status(200).json({ success: true, total: items.length, data: items });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [items, total] = await Promise.all([
+    InventoryItem.find(filter).sort('itemName').skip((page - 1) * limit).limit(limit),
+    InventoryItem.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: items });
 });
 
 exports.getItem = asyncHandler(async (req, res, next) => {
@@ -156,11 +161,13 @@ exports.getStockHistory = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.itemId) filter.itemId = req.query.itemId;
   if (req.query.type) filter.movementType = req.query.type;
-  const movements = await StockMovement.find(filter)
-    .populate('itemId', 'itemName unit')
-    .sort('-createdAt')
-    .limit(100);
-  res.status(200).json({ success: true, data: movements });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [movements, total] = await Promise.all([
+    StockMovement.find(filter).populate('itemId', 'itemName unit').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    StockMovement.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: movements });
 });
 
 // ─── KITS ──────────────────────────────────────────────────────────────────

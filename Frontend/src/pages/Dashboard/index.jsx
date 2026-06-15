@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Row, Col, Card, Typography, Tag, Table, Progress, Timeline, Select, Spin } from 'antd';
-import { ShoppingCartOutlined, DollarOutlined, CarOutlined, UserOutlined, WarningOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { ShoppingCartOutlined, DollarOutlined, CarOutlined, UserOutlined, WarningOutlined, CheckCircleOutlined, ClockCircleOutlined, FileTextOutlined, AlertOutlined } from '@ant-design/icons';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 import { motion } from 'framer-motion';
 import StatCard from '../../components/common/StatCard';
@@ -52,6 +52,8 @@ export default function Dashboard() {
     { title: "Today's Tasks", value: kpis.todaysTasks ?? '—', icon: <ClockCircleOutlined />, color: '#8a1652', change: 4 },
     { title: 'Pending Tasks', value: kpis.pendingTasks ?? '—', icon: <WarningOutlined />, color: '#C94F8A', change: -2 },
     { title: 'Completed Tasks', value: kpis.completedTasks ?? '—', icon: <CheckCircleOutlined />, color: '#D85C9E', change: 6 },
+    { title: 'Pending Invoices', value: kpis.pendingInvoices ?? '—', icon: <FileTextOutlined />, color: '#fa541c', change: undefined },
+    { title: 'Low Stock Items', value: kpis.lowStockItems ?? '—', icon: <AlertOutlined />, color: '#fa8c16', change: undefined },
   ];
 
   const orderColumns = [
@@ -78,9 +80,9 @@ export default function Dashboard() {
         />
       </div>
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      <Row gutter={[16, 16]} className="stat-cards-row" style={{ marginBottom: 24 }}>
         {statCards.map((s, i) => (
-          <Col xs={12} sm={12} md={8} lg={4} xl={4} style={{ flex: '1 1 18%', maxWidth: '20%' }} key={s.title}>
+          <Col xs={12} sm={8} md={6} lg={4} xl={4} key={s.title}>
             <motion.div {...fadeIn(i * 0.08)}><StatCard {...s} /></motion.div>
           </Col>
         ))}

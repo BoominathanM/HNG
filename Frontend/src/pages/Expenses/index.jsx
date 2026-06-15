@@ -340,7 +340,7 @@ export default function Expenses() {
                       dataSource={applyExpFilter(allExpenses)}
                       columns={makeExpenseColumns(true)}
                       size="small"
-                      pagination={{ pageSize: 8 }}
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
                       style={{ padding: 4 }}
                     />
                   ),
@@ -353,7 +353,7 @@ export default function Expenses() {
                       dataSource={applyExpFilter(expenses)}
                       columns={columns}
                       size="small"
-                      pagination={{ pageSize: 8 }}
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
                       style={{ padding: 4 }}
                     />
                   ),
@@ -366,7 +366,7 @@ export default function Expenses() {
                       dataSource={applyExpFilter(purchaseExpenses)}
                       columns={makeExpenseColumns(false)}
                       size="small"
-                      pagination={{ pageSize: 8 }}
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
                       style={{ padding: 4 }}
                     />
                   ),

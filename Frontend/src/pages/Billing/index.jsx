@@ -33,6 +33,8 @@ import {
   useUpdateInvoiceGstMutation,
   useGetBillingPartyLedgerQuery,
   useGetCompanySettingsQuery,
+  useGetSalesOrdersQuery,
+  useUpdateSalesOrderMutation,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -59,18 +61,25 @@ export default function Billing() {
   const sectionBg = isDark ? '#16161e' : '#fafafa';
   const inputBg = isDark ? '#1a1a2a' : '#fff';
 
+  // Pagination state must come before the query that uses them
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState(null);
+  const [invoicesPage, setInvoicesPage] = useState(1);
+  const [invoicesPageSize, setInvoicesPageSize] = useState(10);
+
   // Data — RTK Query
-  const { data: invoicesData } = useGetInvoicesQuery();
+  const { data: invoicesData } = useGetInvoicesQuery({ page: invoicesPage, limit: invoicesPageSize, ...(invoiceStatusFilter ? { status: invoiceStatusFilter } : {}) });
   const { data: quotationsData } = useGetQuotationsInProcessQuery();
   const { data: partiesData } = useGetBillingPartiesQuery();
   const { data: invItemsData } = useGetItemsQuery();
   const { data: companySettingsData } = useGetCompanySettingsQuery();
+  const { data: salesOrdersRaw } = useGetSalesOrdersQuery({ limit: 200 });
   const invoiceSettings = companySettingsData?.data || {};
   const [createInvoiceMutation] = useCreateInvoiceMutation();
   const [recordPaymentMutation] = useRecordPaymentMutation();
   const [convertQuotationMutation] = useConvertQuotationToInvoiceMutation();
   const [createBillingPartyMutation] = useCreateBillingPartyMutation();
   const [updateInvoiceGstMutation] = useUpdateInvoiceGstMutation();
+  const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
 
   const invoiceList = useMemo(() => (invoicesData?.data || []).map((inv) => {
     const halfGst = Math.round((inv.gstAmount || 0) / 2);
@@ -129,6 +138,7 @@ export default function Billing() {
     const halfGst = Math.round((q.gstAmount || 0) / 2);
     return {
       key: q._id,
+      docType: 'Quotation',
       quot: q.quotCode,
       client: q.clientName || '—',
       order: q.orderId?.orderCode || '—',
@@ -143,12 +153,10 @@ export default function Billing() {
       type: q.type,
       status: q.status,
       note: q.note || '',
-      // DocumentTemplate summary fields
       taxableAmount: q.amount || 0,
       cgst: halfGst,
       sgst: halfGst,
       forwardingCharge: 0,
-      // DocumentTemplate customer block
       customer: {
         name: q.clientName || '—',
         mobile: '',
@@ -201,6 +209,67 @@ export default function Billing() {
     initials: i.itemName?.[0]?.toUpperCase() || 'I',
     color: '#B11E6A',
   })), [invItemsData]);
+
+  const salesOrdersList = useMemo(() => (salesOrdersRaw?.data || []).map((o) => {
+    const rawItems = (o.items || []).map(i => ({
+      name: i.itemName || i.name || '',
+      qty: Number(i.qty) || 0,
+      unit: i.unit || 'PCS',
+      rate: Number(i.price || i.rate) || 0,
+      gst: Number(i.gst) || 0,
+    }));
+    const subtotal = Math.round(rawItems.reduce((s, i) => s + i.qty * i.rate, 0));
+    const gstFromItems = Math.round(rawItems.reduce((s, i) => s + i.qty * i.rate * i.gst / 100, 0));
+    const effectiveGst = gstFromItems > 0 ? gstFromItems : (Number(o.gstAmount) || 0);
+    const total = subtotal > 0 ? subtotal + effectiveGst : (Number(o.total) || 0);
+    const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+    const paid = Number(o.paidAmount) || collTotal || Number(o.advancePaid) || Number(o.advancePaidAmount) || 0;
+    const balance = Math.max(0, total - paid);
+    const halfGst = Math.round(effectiveGst / 2);
+    const status = total > 0
+      ? (paid >= total ? 'Paid' : paid > 0 ? 'Partially Paid' : 'Unpaid')
+      : (o.paymentStatus || 'Unpaid');
+    const taxAmt = rawItems.map(i => {
+      const ta = Math.round(i.qty * i.rate * i.gst / 100);
+      return { name: i.name, qty: i.qty, unit: i.unit, rate: i.rate, taxRate: i.gst, taxAmt: ta, amount: i.qty * i.rate + ta };
+    });
+    return {
+      key: o._id,
+      docType: 'Order',
+      // Use 'quot' so the shared column (dataIndex: 'quot') renders the order code
+      quot: o.orderCode,
+      inv: o.orderCode,
+      client: o.clientName || o.clientPartyId?.name || '—',
+      order: '',
+      orderCategory: o.orderCategory || 'ORDER',
+      isEmergency: o.isEmergency || false,
+      date: o.createdAt ? dayjs(o.createdAt).format('DD/MM/YYYY') : '—',
+      amount: subtotal,
+      gst: effectiveGst,
+      total,
+      // Use 'advance' so the shared "Advance" column shows the paid amount for orders
+      advance: paid,
+      balance,
+      type: o.billType === 'NON_GST' ? 'Non-GST' : (o.type || 'GST'),
+      status,
+      taxableAmount: subtotal,
+      cgst: halfGst,
+      sgst: halfGst,
+      forwardingCharge: 0,
+      customer: {
+        name: o.billingName || o.clientName || '—',
+        address: o.detailedAddress || '',
+        city: [o.city, o.state, o.pincode].filter(Boolean).join(', '),
+        mobile: o.clientPhone || o.phone || '',
+        gstin: o.gstNumber || '',
+        pan: '',
+        placeOfSupply: o.state || 'Tamil Nadu',
+      },
+      items: taxAmt,
+      paymentCollection: o.paymentCollection || [],
+    };
+  }), [salesOrdersRaw]);
+
   const [activeTab, setActiveTab] = useState('order-in-process');
   const { filterTabs, activeKeyFor } = useTabAccess('Billing');
   const { requireAccess } = usePageAccess('Billing');
@@ -267,7 +336,6 @@ export default function Billing() {
   const [quotStatusFilter, setQuotStatusFilter] = useState('all');
   const [quotSearch, setQuotSearch] = useState('');
   const [invoiceSearch, setInvoiceSearch] = useState('');
-  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState(null);
   const [ledgerSearch, setLedgerSearch] = useState('');
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState(null);
   const [payNote, setPayNote] = useState('');
@@ -467,21 +535,37 @@ export default function Billing() {
   const handleSavePayment = async () => {
     if (!recordPayInv?.key) { enqueueSnackbar('No invoice selected', { variant: 'error' }); return; }
     try {
-      await recordPaymentMutation({
-        id: recordPayInv.key,
-        amount: Number(payAmount) || 0,
-        discount: Number(payDiscount) || 0,
-        paymentMode: payMode === 'Net Banking' ? 'Bank Transfer' : (payMode || 'Cash'),
-        note: payNote || '',
-        ...(payBankAccount ? { bankAccount: payBankAccount } : {}),
-        ...(payUpiRef ? { upiReference: payUpiRef } : {}),
-        ...(payCardLast4 ? { cardLast4: payCardLast4 } : {}),
-        ...(payTransactionRef ? { transactionRef: payTransactionRef } : {}),
-        ...(payChequeNo ? { chequeNumber: payChequeNo } : {}),
-        ...(payChequeBank ? { chequeBank: payChequeBank } : {}),
-        ...(payChequeDate ? { chequeDate: payChequeDate.format ? payChequeDate.format('YYYY-MM-DD') : payChequeDate } : {}),
-        ...(payParty?.key ? { partyId: payParty.key } : {}),
-      }).unwrap();
+      if (recordPayInv.docType === 'Order') {
+        const net = (Number(payAmount) || 0) - (Number(payDiscount) || 0);
+        const existing = recordPayInv.paymentCollection || [];
+        const newPaid = existing.reduce((s, e) => s + Number(e.paidAmount || 0), 0) + net;
+        const newBalance = Math.max(0, (recordPayInv.total || 0) - newPaid);
+        await updateSalesOrderMutation({
+          id: recordPayInv.key,
+          paidAmount: newPaid,
+          balance: newBalance,
+          paymentCollection: [
+            ...existing,
+            { paidAmount: net, paymentMode: payMode || 'Cash', note: payNote || '', date: new Date().toISOString() },
+          ],
+        }).unwrap();
+      } else {
+        await recordPaymentMutation({
+          id: recordPayInv.key,
+          amount: Number(payAmount) || 0,
+          discount: Number(payDiscount) || 0,
+          paymentMode: payMode === 'Net Banking' ? 'Bank Transfer' : (payMode || 'Cash'),
+          note: payNote || '',
+          ...(payBankAccount ? { bankAccount: payBankAccount } : {}),
+          ...(payUpiRef ? { upiReference: payUpiRef } : {}),
+          ...(payCardLast4 ? { cardLast4: payCardLast4 } : {}),
+          ...(payTransactionRef ? { transactionRef: payTransactionRef } : {}),
+          ...(payChequeNo ? { chequeNumber: payChequeNo } : {}),
+          ...(payChequeBank ? { chequeBank: payChequeBank } : {}),
+          ...(payChequeDate ? { chequeDate: payChequeDate.format ? payChequeDate.format('YYYY-MM-DD') : payChequeDate } : {}),
+          ...(payParty?.key ? { partyId: payParty.key } : {}),
+        }).unwrap();
+      }
       enqueueSnackbar(`Payment of ₹${(payAmount || 0).toLocaleString()} recorded successfully`, { variant: 'success' });
       setRecordPayOpen(false);
     } catch (err) {
@@ -649,7 +733,19 @@ export default function Billing() {
   ];
 
   const makeQuotationColumns = (tabType) => [
-    { title: 'Quotation #', dataIndex: 'quot', width: 120, fixed: 'left', render: (v) => <Text strong style={{ color: '#7c3aed', fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Reference #', dataIndex: 'quot', width: 150, fixed: 'left',
+      render: (v, r) => (
+        <Space direction="vertical" size={2}>
+          <Text strong style={{ color: r.docType === 'Order' ? '#B11E6A' : '#7c3aed', fontSize: 13 }}>{v}</Text>
+          <Tag style={{ fontSize: 10, borderRadius: 20, padding: '0 6px', lineHeight: '16px',
+            background: r.docType === 'Order' ? '#B11E6A15' : '#7c3aed15',
+            color: r.docType === 'Order' ? '#B11E6A' : '#7c3aed',
+            border: `1px solid ${r.docType === 'Order' ? '#B11E6A44' : '#7c3aed44'}` }}
+          >{r.docType === 'Order' ? 'Order' : 'Quotation'}</Tag>
+        </Space>
+      ),
+    },
     { title: 'Date', dataIndex: 'date', width: 155, render: (v) => <Text style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{v}</Text> },
     { title: 'Client', dataIndex: 'client', width: 165, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
@@ -667,44 +763,60 @@ export default function Billing() {
       ),
     },
     { title: 'Type', dataIndex: 'type', width: 90, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, background: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44' }}>{v}</Tag> },
-    { title: 'Total', dataIndex: 'total', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Advance', dataIndex: 'advance', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600, color: '#8a1652' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Balance', dataIndex: 'balance', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600, color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{v.toLocaleString()}</Text> },
-    { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${quotStatusColor[v]}22`, color: quotStatusColor[v], border: `1px solid ${quotStatusColor[v]}44` }}>{v}</Tag> },
+    { title: 'Total', dataIndex: 'total', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600 }}>₹{(v || 0).toLocaleString()}</Text> },
+    { title: 'Paid', dataIndex: 'advance', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600, color: '#8a1652' }}>₹{(v || 0).toLocaleString()}</Text> },
+    { title: 'Balance', dataIndex: 'balance', width: 115, render: (v) => <Text style={{ fontSize: 13, fontWeight: 600, color: v > 0 ? '#B11E6A' : '#52c41a' }}>₹{(v || 0).toLocaleString()}</Text> },
+    { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${quotStatusColor[v] || '#aaa'}22`, color: quotStatusColor[v] || '#888', border: `1px solid ${quotStatusColor[v] || '#aaa'}44` }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions',
       width: tabType === 'in-process' ? 420 : 190,
       fixed: 'right',
-      render: (_, r) => (
-        <Space size={4} wrap>
-          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType('quotation'); setViewModal(true); }} /></Tooltip>
-          <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar('Quotation shared on WhatsApp', { variant: 'success' })} /></Tooltip>
-          <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
-          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('quotation', r)} /></Tooltip>
-          {tabType === 'in-process' && (
-            <Button
-              size="small"
-              type="primary"
-              icon={<FileDoneOutlined />}
-              style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontSize: 12 }}
-              onClick={() => openConvertModal(r)}
-            >
-              Convert to Invoice
-            </Button>
-          )}
-          {tabType === 'in-process' && (r.status === 'Paid' || r.status === 'Partially Paid') && (
-            <Button size="small" icon={<BellOutlined />} style={{ color: '#fa8c16', borderColor: '#fa8c1644', fontSize: 12 }} onClick={() => { setReminderQuot(r); setReminderDate(null); setReminderTime(null); setReminderMode('WhatsApp'); setReminderOpen(true); }}>
-              Set Reminder
-            </Button>
-          )}
-          {tabType === 'in-process' && r.status === 'Paid' && (
-            <>
-              <Button size="small" icon={<EyeOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff44', fontSize: 12 }} onClick={() => { setProofQuot(r); setProofOpen(true); }}>View Proof</Button>
-              <Button size="small" icon={<SafetyCertificateOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', fontSize: 12 }} onClick={() => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); }}>Verify</Button>
-            </>
-          )}
-        </Space>
-      ),
+      render: (_, r) => {
+        const isOrder = r.docType === 'Order';
+        const docType = isOrder ? 'invoice' : 'quotation';
+        return (
+          <Space size={4} wrap>
+            <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType(docType); setViewModal(true); }} /></Tooltip>
+            <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar(isOrder ? 'Invoice shared on WhatsApp' : 'Quotation shared on WhatsApp', { variant: 'success' })} /></Tooltip>
+            <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
+            <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
+            {/* Order-specific actions */}
+            {isOrder && r.balance > 0 && (
+              <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>
+                Record Manually
+              </Button>
+            )}
+            {isOrder && r.balance > 0 && (
+              <Button size="small" icon={<CalendarOutlined />} style={{ color: '#fa8c16', fontSize: 12 }} onClick={() => enqueueSnackbar('Reminder sent to client', { variant: 'success' })}>
+                Reminder
+              </Button>
+            )}
+            {/* Quotation-specific actions */}
+            {tabType === 'in-process' && !isOrder && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<FileDoneOutlined />}
+                style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontSize: 12 }}
+                onClick={() => openConvertModal(r)}
+              >
+                Convert to Invoice
+              </Button>
+            )}
+            {tabType === 'in-process' && !isOrder && (r.status === 'Paid' || r.status === 'Partially Paid') && (
+              <Button size="small" icon={<BellOutlined />} style={{ color: '#fa8c16', borderColor: '#fa8c1644', fontSize: 12 }} onClick={() => { setReminderQuot(r); setReminderDate(null); setReminderTime(null); setReminderMode('WhatsApp'); setReminderOpen(true); }}>
+                Set Reminder
+              </Button>
+            )}
+            {tabType === 'in-process' && !isOrder && r.status === 'Paid' && (
+              <>
+                <Button size="small" icon={<EyeOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff44', fontSize: 12 }} onClick={() => { setProofQuot(r); setProofOpen(true); }}>View Proof</Button>
+                <Button size="small" icon={<SafetyCertificateOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', fontSize: 12 }} onClick={() => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); }}>Verify</Button>
+              </>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -752,26 +864,23 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(124,58,237,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ padding: '10px 16px 8px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderBottom: `1px solid ${borderColor}` }}>
-                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search quotation, client..." allowClear value={quotSearch} onChange={(e) => setQuotSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
-                  <Select
-                    value={quotStatusFilter}
-                    onChange={setQuotStatusFilter}
-                    size="small"
-                    style={{ width: 180 }}
-                  >
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search reference, client..." allowClear value={quotSearch} onChange={(e) => setQuotSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                  <Select value={quotStatusFilter} onChange={setQuotStatusFilter} size="small" style={{ width: 180 }}>
                     <Option value="all">All</Option>
                     <Option value="Paid">Paid</Option>
                     <Option value="Partially Paid">Partially Paid</Option>
+                    <Option value="Unpaid">Unpaid</Option>
                   </Select>
                 </div>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
-                    dataSource={quotationList
-                      .filter(q => ['Paid', 'Partially Paid'].includes(q.status))
-                      .filter(q => quotStatusFilter === 'all' || q.status === quotStatusFilter)
-                      .filter(q => !quotSearch || (q.quot || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.client || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.order || '').toLowerCase().includes(quotSearch.toLowerCase()))}
+                    dataSource={[
+                      ...quotationList.filter(q => ['Paid', 'Partially Paid'].includes(q.status)),
+                      ...salesOrdersList,
+                    ].filter(r => quotStatusFilter === 'all' || r.status === quotStatusFilter)
+                      .filter(r => !quotSearch || (r.quot || '').toLowerCase().includes(quotSearch.toLowerCase()) || (r.client || '').toLowerCase().includes(quotSearch.toLowerCase()) || (r.order || '').toLowerCase().includes(quotSearch.toLowerCase()))}
                     columns={makeQuotationColumns('in-process')}
-                    pagination={{ pageSize: 8, size: 'small' }}
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"
                     scroll={{ x: 'max-content' }}
                     style={{ fontSize: 13 }}
@@ -787,7 +896,7 @@ export default function Billing() {
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ padding: '10px 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', borderBottom: `1px solid ${borderColor}` }}>
                   <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client, order..." allowClear value={invoiceSearch} onChange={(e) => setInvoiceSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
-                  <Select allowClear placeholder="Status" value={invoiceStatusFilter} onChange={setInvoiceStatusFilter} style={{ width: 170, borderRadius: 8 }}>
+                  <Select allowClear placeholder="Status" value={invoiceStatusFilter} onChange={(val) => { setInvoiceStatusFilter(val); setInvoicesPage(1); }} style={{ width: 170, borderRadius: 8 }}>
                     <Option value="Paid">Paid</Option>
                     <Option value="Pending">Pending</Option>
                     <Option value="Partially Paid">Partially Paid</Option>
@@ -798,12 +907,18 @@ export default function Billing() {
                   <Table
                     dataSource={invoiceList.filter((inv) => {
                       const q = invoiceSearch.toLowerCase();
-                      const matchSearch = !q || (inv.inv || '').toLowerCase().includes(q) || (inv.client || '').toLowerCase().includes(q) || (inv.order || '').toLowerCase().includes(q);
-                      const matchStatus = !invoiceStatusFilter || inv.status === invoiceStatusFilter;
-                      return matchSearch && matchStatus;
+                      return !q || (inv.inv || '').toLowerCase().includes(q) || (inv.client || '').toLowerCase().includes(q) || (inv.order || '').toLowerCase().includes(q);
                     })}
                     columns={columns}
-                    pagination={{ pageSize: 8, size: 'small' }}
+                    pagination={{
+                      current: invoicesPage,
+                      pageSize: invoicesPageSize,
+                      total: invoicesData?.total || 0,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      onChange: (p, ps) => { setInvoicesPage(p); setInvoicesPageSize(ps); },
+                      size: 'small',
+                    }}
                     size="small"
                     scroll={{ x: 'max-content' }}
                     style={{ fontSize: 13 }}

@@ -25,10 +25,24 @@ exports.getParties = asyncHandler(async (req, res) => {
     const re = new RegExp(req.query.search, 'i');
     filter.$or = [{ name: re }, { phone: re }];
   }
-  const parties = await Party.find(filter).sort('name').lean();
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [parties, total] = await Promise.all([
+    Party.find(filter).sort('name').skip((page - 1) * limit).limit(limit).lean(),
+    Party.countDocuments(filter),
+  ]);
 
-  // Load all orders once and group by partyId + clientName for O(n) lookup
-  const allOrders = await Order.find({ deletedAt: null })
+  const partyIds = parties.map((p) => p._id);
+  const partyNames = parties.map((p) => (p.name || '').toLowerCase().trim()).filter(Boolean);
+
+  // Load only orders relevant to this page's parties
+  const allOrders = await Order.find({
+    deletedAt: null,
+    $or: [
+      { clientPartyId: { $in: partyIds } },
+      { clientName: { $in: partyNames.map((n) => new RegExp(`^${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) } },
+    ],
+  })
     .select('clientPartyId clientName total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection items products')
     .lean();
 
@@ -103,7 +117,7 @@ exports.getParties = asyncHandler(async (req, res) => {
     });
   }
 
-  res.status(200).json({ success: true, total: parties.length, data: withTotals });
+  res.status(200).json({ success: true, total, page, data: withTotals });
 });
 
 exports.getPartyLedger = asyncHandler(async (req, res, next) => {

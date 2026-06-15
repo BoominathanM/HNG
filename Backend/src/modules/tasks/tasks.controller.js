@@ -11,15 +11,22 @@ exports.getTasks = asyncHandler(async (req, res) => {
   if (req.query.status) filter.status = req.query.status;
   if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
   if (req.query.orderId) filter.orderId = req.query.orderId;
-  const tasks = await Task.find(filter)
-    .populate({
-      path: 'orderId',
-      select: 'orderCode clientName orderCategory leadId items status expectedDeliveryDate',
-      populate: { path: 'leadId', select: 'leadType' },
-    })
-    .populate('assignedTo', 'fullName role')
-    .sort('-createdAt');
-  res.status(200).json({ success: true, data: tasks });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [tasks, total] = await Promise.all([
+    Task.find(filter)
+      .populate({
+        path: 'orderId',
+        select: 'orderCode clientName orderCategory leadId items status expectedDeliveryDate',
+        populate: { path: 'leadId', select: 'leadType' },
+      })
+      .populate('assignedTo', 'fullName role')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    Task.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: tasks });
 });
 
 // Suggested Tasks: orders ready (or partially ready) for production but not yet fully tasked.

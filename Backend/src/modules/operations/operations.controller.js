@@ -10,12 +10,19 @@ const { notifyRoles } = require('../../utils/notify');
 exports.getOrders = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.status) filter.status = req.query.status;
-  const orders = await Order.find(filter)
-    .populate('assignedTo', 'fullName')
-    .populate('items.itemId', 'sellingPrice hsnCode discountPercent packingMaterial materialCategory brand currentStock defaultSize')
-    .populate('leadId', 'paymentProofs orderDeliveryDate hotelLogoUrl logoNeeded splitDates isEmergency isUrgent kitDisplayUnit displayUnit leadType')
-    .sort('-createdAt');
-  res.status(200).json({ success: true, data: orders });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [orders, total] = await Promise.all([
+    Order.find(filter)
+      .populate('assignedTo', 'fullName')
+      .populate('items.itemId', 'sellingPrice hsnCode discountPercent packingMaterial materialCategory brand currentStock defaultSize')
+      .populate('leadId', 'paymentProofs orderDeliveryDate hotelLogoUrl logoNeeded splitDates isEmergency isUrgent kitDisplayUnit displayUnit leadType')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    Order.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: orders });
 });
 
 exports.getTodaysOrders = asyncHandler(async (req, res) => {

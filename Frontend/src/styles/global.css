@@ -661,11 +661,372 @@ body.dark-mode {
 }
 
 /* =============================================
+   STAT ICON BOX — RESPONSIVE
+   ============================================= */
+
+@media (max-width: 480px) {
+  .stat-icon-box {
+    width: 36px !important;
+    height: 36px !important;
+    font-size: 16px !important;
+    border-radius: 8px !important;
+  }
+}
+
+/* =============================================
    PROGRESS LABELS — COMPACT ON MOBILE
    ============================================= */
 
 @media (max-width: 576px) {
   .ant-progress-text {
     font-size: 11px !important;
+  }
+}
+
+/* =============================================
+   FONT SIZE — SCALE DOWN ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  html { font-size: 15px; }
+}
+
+@media (max-width: 480px) {
+  html { font-size: 14px; }
+}
+
+/* =============================================
+   TABLET — 768px–992px BREAKPOINTS
+   ============================================= */
+
+@media (max-width: 992px) {
+  .page-container { padding: 20px; }
+
+  /* Sidebar collapses at lg breakpoint — ensure content fills */
+  .ant-layout-sider-collapsed + .ant-layout {
+    width: 100% !important;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Stat cards: 2 per row on mobile */
+  .ant-row .ant-col[class*="ant-col-xs-12"] {
+    min-width: 0;
+  }
+}
+
+/* =============================================
+   NOTIFICATION DROPDOWN — RESPONSIVE WIDTH
+   ============================================= */
+
+/* Target the notification popover inner content */
+.ant-popover-inner {
+  max-width: calc(100vw - 16px) !important;
+  overflow: hidden;
+}
+
+@media (max-width: 480px) {
+  .ant-popover-inner > div {
+    width: calc(100vw - 16px) !important;
+  }
+}
+
+/* =============================================
+   PAGE TOOLBAR / FILTER ROWS — RESPONSIVE WRAP
+   ============================================= */
+
+/* Ensure all Ant Space with wrap always wraps properly */
+.ant-space-wrap {
+  flex-wrap: wrap !important;
+  row-gap: 8px !important;
+}
+
+/* On mobile, toolbar filter inputs/selects use available space */
+@media (max-width: 640px) {
+  .ant-space-wrap > .ant-space-item {
+    flex-shrink: 1;
+  }
+  .ant-space-wrap .ant-input-affix-wrapper {
+    min-width: 0 !important;
+    flex: 1 1 120px !important;
+  }
+  .ant-space-wrap .ant-picker-range {
+    flex: 1 1 150px !important;
+    min-width: 0 !important;
+  }
+}
+
+/* Toolbar divs using flexbox directly */
+.resp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 576px) {
+  .resp-toolbar .ant-input,
+  .resp-toolbar .ant-input-affix-wrapper {
+    flex: 1 1 130px;
+    min-width: 0 !important;
+  }
+  .resp-toolbar .ant-select {
+    min-width: 100px !important;
+  }
+  .resp-toolbar .ant-picker {
+    flex: 1 1 140px;
+    min-width: 0 !important;
+  }
+}
+
+/* =============================================
+   PAGE HEADER — BREADCRUMB + CONTROLS ROW
+   ============================================= */
+
+@media (max-width: 640px) {
+  /* Page header rows that use justifyContent space-between */
+  div[style*="justifyContent: space-between"],
+  div[style*="justify-content: space-between"] {
+    flex-wrap: wrap !important;
+    row-gap: 8px;
+  }
+}
+
+/* =============================================
+   TABLES — ENSURE HORIZONTAL SCROLL
+   ============================================= */
+
+.ant-table-content {
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ant-table-container {
+  overflow-x: auto;
+}
+
+/* Remove minimum width constraints on small screens */
+@media (max-width: 576px) {
+  .ant-table table {
+    min-width: 0;
+  }
+}
+
+/* =============================================
+   MODALS — CONTENT OVERFLOW HANDLING
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-modal-body {
+    overflow-x: hidden;
+  }
+  /* Form inside modal: full-width cols */
+  .ant-modal-body .ant-form .ant-row > .ant-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+}
+
+/* =============================================
+   STAT CARDS ROW — RESPONSIVE GRID
+   ============================================= */
+
+@media (max-width: 576px) {
+  /* Dashboard stat cards: force 2-per-row */
+  .stat-cards-row .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+}
+
+@media (max-width: 360px) {
+  /* Tiny phones: 1-per-row */
+  .stat-cards-row .ant-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+}
+
+/* =============================================
+   CHARTS — MOBILE LABEL OVERFLOW FIX
+   ============================================= */
+
+@media (max-width: 576px) {
+  .recharts-responsive-container {
+    min-height: 160px !important;
+    overflow: hidden;
+  }
+  .recharts-cartesian-axis-tick text {
+    font-size: 10px !important;
+  }
+}
+
+/* =============================================
+   TABS — EXTRA CONTENT WRAP ON SMALL SCREENS
+   ============================================= */
+
+@media (max-width: 768px) {
+  .ant-tabs-extra-content {
+    flex-wrap: wrap !important;
+    row-gap: 6px;
+  }
+  /* Allow tab bar to scroll horizontally if many tabs */
+  .ant-tabs-nav-wrap {
+    overflow-x: auto;
+  }
+  .ant-tabs-nav-list {
+    flex-shrink: 0;
+  }
+}
+
+/* =============================================
+   CARDS — HEADER ACTION WRAP ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-card-head-wrapper {
+    flex-wrap: wrap !important;
+    row-gap: 8px;
+  }
+  .ant-card-extra {
+    margin-left: 0 !important;
+    width: 100%;
+  }
+  .ant-card-extra > * {
+    flex-wrap: wrap;
+  }
+}
+
+/* =============================================
+   INPUT NUMBER — FULL WIDTH ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-input-number {
+    width: 100% !important;
+  }
+  /* Inline input rows in forms */
+  .ant-form-item .ant-input-group {
+    flex-wrap: wrap;
+  }
+}
+
+/* =============================================
+   SPACE — PREVENT OVERFLOW IN SMALL CONTAINERS
+   ============================================= */
+
+.ant-space {
+  max-width: 100%;
+}
+
+.ant-space-item {
+  min-width: 0;
+}
+
+/* =============================================
+   DESCRIPTIONS — RESPONSIVE COLUMN LAYOUT
+   ============================================= */
+
+@media (max-width: 768px) {
+  /* Force 1-column layout for descriptions on tablet */
+  .ant-descriptions-item {
+    display: block;
+  }
+}
+
+/* =============================================
+   DRAWER — PREVENT CONTENT OVERFLOW
+   ============================================= */
+
+.ant-drawer-body {
+  overflow-x: hidden;
+}
+
+@media (max-width: 576px) {
+  .ant-drawer-content-wrapper {
+    width: min(480px, 100vw) !important;
+  }
+}
+
+/* =============================================
+   LOGIN PAGE — FULL RESPONSIVE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .login-card {
+    margin: 16px !important;
+    padding: 24px 20px !important;
+  }
+}
+
+/* =============================================
+   POPOVER — MAX WIDTH ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-popover {
+    max-width: calc(100vw - 16px) !important;
+  }
+  .ant-popover-inner-content {
+    max-width: calc(100vw - 32px) !important;
+    overflow-x: hidden;
+  }
+}
+
+/* =============================================
+   UPLOAD — MOBILE BUTTON WRAP
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-upload-list {
+    flex-wrap: wrap;
+  }
+  .ant-upload-list-item {
+    max-width: 100%;
+  }
+}
+
+/* =============================================
+   TIMELINE — COMPACT ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-timeline-item-content {
+    font-size: 12px !important;
+  }
+}
+
+/* =============================================
+   STATISTIC — COMPACT ON MOBILE
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-statistic-title {
+    font-size: 11px !important;
+  }
+  .ant-statistic-content-value {
+    font-size: 20px !important;
+  }
+}
+
+/* =============================================
+   FORM GRID — RESPONSIVE INSIDE MODALS/DRAWERS
+   ============================================= */
+
+@media (max-width: 576px) {
+  .ant-modal-body .ant-col-12,
+  .ant-drawer-body .ant-col-12 {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+  .ant-modal-body .ant-col-8,
+  .ant-drawer-body .ant-col-8 {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+  .ant-modal-body .ant-col-6,
+  .ant-drawer-body .ant-col-6 {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
   }
 }

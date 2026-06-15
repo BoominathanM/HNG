@@ -72,8 +72,8 @@ export default function Purchase() {
   // ── Data from RTK Query ─────────────────────────────────────────────────
   const { data: vendorData } = useGetVendorsQuery({ type: 'raw_material' });
   const { data: itemsData } = useGetItemsQuery();
-  const { data: requestsData } = useGetRequestsQuery();
-  const { data: purchaseOrdersData } = useGetPurchaseOrdersQuery();
+  const { data: requestsData } = useGetRequestsQuery({ limit: 500 });
+  const { data: purchaseOrdersData } = useGetPurchaseOrdersQuery({ limit: 500 });
   const { data: localPurchasesData } = useGetLocalPurchasesQuery();
 
   const [raiseRequestMutation] = useRaiseRequestMutation();
@@ -1070,7 +1070,7 @@ export default function Purchase() {
                             dataSource={newProductRequests}
                             pagination={false}
                             rowKey="key"
-                            scroll={{ x: 900 }}
+                            scroll={{ x: 'max-content' }}
                             columns={[
                               { title: 'Product Name', dataIndex: 'productName', key: 'productName', width: 180, render: v => <Text strong style={{ color: '#d46b08', fontSize: 13 }}>{v}</Text> },
                               { title: 'Qty (from Sales)', dataIndex: 'qty', key: 'qty', render: (v) => v || '—' },
@@ -1137,9 +1137,9 @@ export default function Purchase() {
                           const matchStatus = !stockReqStatusFilter || (linkedReq?.status || '') === stockReqStatusFilter;
                           return matchSearch && matchStatus;
                         })}
-                        pagination={{ pageSize: 5 }}
+                        pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
                         rowKey="key"
-                        scroll={{ x: 1200 }}
+                        scroll={{ x: 'max-content' }}
                         expandable={{
                           expandedRowKeys: openInvNotes ? [openInvNotes] : [],
                           onExpand: () => {},
@@ -1615,7 +1615,7 @@ export default function Purchase() {
                                   dataSource={items}
                                   rowKey="key"
                                   pagination={false}
-                                  scroll={{ x: 1100 }}
+                                  scroll={{ x: 'max-content' }}
                                   columns={bulkTableColumns}
                                   style={{
                                     border: `1px solid ${isDark ? '#2a2d40' : '#f0d4e4'}`,
@@ -1666,8 +1666,8 @@ export default function Purchase() {
                           return matchSearch && matchDelivery && matchPay;
                         })}
                         rowKey="key"
-                        pagination={{ pageSize: 8 }}
-                        scroll={{ x: 1400 }}
+                        pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                        scroll={{ x: 'max-content' }}
                         locale={{ emptyText: 'No dispatch tracking orders yet.' }}
                         columns={[
                           { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
@@ -1820,7 +1820,7 @@ export default function Purchase() {
                               dataSource={missingOrders}
                               rowKey="key"
                               pagination={false}
-                              scroll={{ x: 1200 }}
+                              scroll={{ x: 'max-content' }}
                               style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid #fa8c1633' }}
                               expandable={{
                                 expandedRowRender: (record) => (
@@ -2062,8 +2062,8 @@ export default function Purchase() {
                               return matchSearch && matchPay;
                             })}
                             rowKey="key"
-                            pagination={{ pageSize: 8 }}
-                            scroll={{ x: 1200 }}
+                            pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                            scroll={{ x: 'max-content' }}
                             onRow={r => ({ onClick: () => setLocalPurchaseDetailView(r), style: { cursor: 'pointer' } })}
                             columns={[
                               { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
@@ -2167,7 +2167,7 @@ export default function Purchase() {
                           return matchSearch && matchPaid;
                         })}
                         rowKey="key"
-                        scroll={{ x: 1400 }}
+                        scroll={{ x: 'max-content' }}
                         expandable={{
                           expandedRowRender: (record) => (
                             <div style={{ padding: '12px 16px', background: isDark ? '#16192a' : '#fafcff', borderRadius: 8, margin: '4px 0' }}>
@@ -2374,7 +2374,7 @@ export default function Purchase() {
                             size="small"
                             rowKey="name"
                             dataSource={quotCompareResult.suppliers}
-                            scroll={{ x: 700 }}
+                            scroll={{ x: 'max-content' }}
                             pagination={false}
                             rowClassName={(r) => r.name === quotCompareResult.best.name ? 'ant-table-row-selected' : ''}
                             columns={[
@@ -2498,7 +2498,7 @@ export default function Purchase() {
                 <Text style={{ fontSize: 11, color: '#aaa' }}>Upload invoice — AI will extract vendor, items, and amount</Text>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <Upload
                 maxCount={1}
                 beforeUpload={file => { setLocalPurchaseInvoiceFile(file); return false; }}
@@ -3423,7 +3423,7 @@ export default function Purchase() {
                   <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill order details below</Text>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <Upload
                   maxCount={1}
                   beforeUpload={(file) => { setRequestOrderScannedFile(file); return false; }}
@@ -3586,7 +3586,7 @@ export default function Purchase() {
               <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <Upload
               maxCount={1}
               beforeUpload={(file) => { setSupplierScannedFile(file); return false; }}

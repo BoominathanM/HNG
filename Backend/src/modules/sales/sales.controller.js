@@ -546,8 +546,13 @@ exports.getComplaints = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   if (req.query.orderId) filter.orderId = req.query.orderId;
-  const complaints = await Complaint.find(filter).populate('orderId', 'orderCode clientName').sort('-createdAt');
-  res.status(200).json({ success: true, total: complaints.length, data: complaints });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [complaints, total] = await Promise.all([
+    Complaint.find(filter).populate('orderId', 'orderCode clientName').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    Complaint.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: complaints });
 });
 
 exports.createComplaint = asyncHandler(async (req, res) => {

@@ -60,8 +60,9 @@ function NotificationDropdown({ notifications, loading, isDark, onMarkRead, onMa
   const borderColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.08)';
   const hoverBg = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(177,30,106,0.04)';
 
+  const dropdownWidth = typeof window !== 'undefined' ? Math.min(440, window.innerWidth - 16) : 440;
   return (
-    <div style={{ width: 440, maxHeight: 500, display: 'flex', flexDirection: 'column', background: bg, overflowX: 'hidden' }}>
+    <div style={{ width: dropdownWidth, maxHeight: 500, display: 'flex', flexDirection: 'column', background: bg, overflowX: 'hidden' }}>
       {/* Header */}
       <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${borderColor}`, flexShrink: 0 }}>
         <Text strong style={{ color: textColor, fontSize: 15 }}>Notifications</Text>

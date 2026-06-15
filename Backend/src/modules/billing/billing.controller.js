@@ -16,8 +16,13 @@ exports.getParties = asyncHandler(async (req, res) => {
     const re = new RegExp(req.query.search, 'i');
     filter.$or = [{ name: re }, { phone: re }];
   }
-  const parties = await Party.find(filter).sort('name');
-  res.status(200).json({ success: true, total: parties.length, data: parties });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [parties, total] = await Promise.all([
+    Party.find(filter).sort('name').skip((page - 1) * limit).limit(limit),
+    Party.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: parties });
 });
 
 exports.createParty = asyncHandler(async (req, res) => {

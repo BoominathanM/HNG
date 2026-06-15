@@ -8,8 +8,13 @@ exports.getVendors = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.type) filter.vendorType = req.query.type;
   if (req.query.search) filter.name = new RegExp(req.query.search, 'i');
-  const vendors = await Vendor.find(filter).sort('name');
-  res.status(200).json({ success: true, total: vendors.length, data: vendors });
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [vendors, total] = await Promise.all([
+    Vendor.find(filter).sort('name').skip((page - 1) * limit).limit(limit),
+    Vendor.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: vendors });
 });
 
 exports.getVendor = asyncHandler(async (req, res, next) => {

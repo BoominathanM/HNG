@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -49,7 +49,7 @@ const statusColor = {
 
 // LR parsing handled by AI scan API
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const isToday = (dateStr) => {
   const d = new Date(dateStr);
   const now = new Date();
@@ -69,7 +69,7 @@ const exportCSV = (data, filename) => {
 
 // Pickup expenses loaded from API
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function Dispatch() {
   const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
@@ -82,6 +82,8 @@ export default function Dispatch() {
   const [dispatchSubTab, setDispatchSubTab] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [dispatchStatusFilter, setDispatchStatusFilter] = useState(null);
+  const [dispatchPage, setDispatchPage] = useState(1);
+  const [dispatchPageSize, setDispatchPageSize] = useState(10);
   const [pickupSearch, setPickupSearch] = useState('');
   const [pickupTakenFilter, setPickupTakenFilter] = useState(null);
   const [pickupPayFilter, setPickupPayFilter] = useState(null);
@@ -111,8 +113,8 @@ export default function Dispatch() {
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
-  // ── Dispatch orders — RTK Query ─────────────────────────────────────────
-  const { data: dispatchData } = useGetDispatchesQuery();
+  // â”€â”€ Dispatch orders â€” RTK Query â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const { data: dispatchData } = useGetDispatchesQuery({ page: dispatchPage, limit: dispatchPageSize, ...(dispatchStatusFilter ? { status: dispatchStatusFilter } : {}) });
   const [uploadLR] = useUploadDispatchLRMutation();
   const [confirmDispatch] = useConfirmDispatchMutation();
   const [verifyItem] = useVerifyItemMutation();
@@ -120,28 +122,28 @@ export default function Dispatch() {
   const dispatchOrders = useMemo(() => (dispatchData?.data || []).map((d) => ({
     key: d._id,
     id: d.orderId?.orderCode || d.dispatchCode,
-    client: d.orderId?.clientName || '—',
-    product: d.orderId?.product || '—',
+    client: d.orderId?.clientName || 'â€”',
+    product: d.orderId?.product || 'â€”',
     qty: d.orderId?.qty || 0,
     boxes: 0,
-    weight: '—',
+    weight: 'â€”',
     payment: d.orderId?.paymentTerms || 'Pending',
     status: d.status === 'Dispatched' ? 'Dispatched' : d.status === 'Confirmed' ? 'Ready to Dispatch' : 'Packing',
     orderCategory: (d.orderId?.orderCategory === 'SAMPLE' || d.orderId?.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (d.orderId?.orderCategory || 'ORDER'),
     isEmergency: !!(d.orderId?.isEmergency),
-    transport: d.lrNumber || '—',
+    transport: d.lrNumber || 'â€”',
     lrNumber: d.lrNumber,
     trackingUrl: d.trackingUrl,
     invoiceNumber: d.invoiceNumber,
     createdAt: d.createdAt,
     dispatchedAt: d.dispatchedAt,
     items: d.items || [],
-    contactPerson: d.orderId?.contactPerson || d.orderId?.clientName || '—',
-    phone: d.orderId?.phone || d.orderId?.clientPhone || '—',
-    detailedAddress: d.orderId?.detailedAddress || d.orderId?.address || '—',
-    city: d.orderId?.city || '—',
-    state: d.orderId?.state || '—',
-    pincode: d.orderId?.pincode || '—',
+    contactPerson: d.orderId?.contactPerson || d.orderId?.clientName || 'â€”',
+    phone: d.orderId?.phone || d.orderId?.clientPhone || 'â€”',
+    detailedAddress: d.orderId?.detailedAddress || d.orderId?.address || 'â€”',
+    city: d.orderId?.city || 'â€”',
+    state: d.orderId?.state || 'â€”',
+    pincode: d.orderId?.pincode || 'â€”',
   })), [dispatchData]);
 
   // Transport records (real Transport collection, created on LR upload).
@@ -150,7 +152,7 @@ export default function Dispatch() {
   const transportData = useMemo(() => {
     const fromApi = (transportRaw?.data || []).map((t) => ({
       key: t._id, lrNumber: t.lrNumber, orderId: t.orderCode, client: t.clientName,
-      transport: t.transportCompany || t.lrNumber || '—',
+      transport: t.transportCompany || t.lrNumber || 'â€”',
       boxes: t.boxes, weight: t.weight, freight: t.freight,
       trackingUrl: t.trackingUrl,
       dispatchDate: (t.dispatchedAt || '').slice(0, 10),
@@ -166,15 +168,15 @@ export default function Dispatch() {
     }));
   }, [transportRaw, dispatchOrders]);
 
-  // ── Pickup reimbursements — RTK Query ─────────────────────────────────────
+  // â”€â”€ Pickup reimbursements â€” RTK Query â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { data: pickupExpData } = useGetPickupExpensesQuery();
   const apiReimbExpenses = useMemo(() => (pickupExpData?.data || []).map((r) => ({
-    key: r._id, orderId: r.orderId?.orderCode || '—',
+    key: r._id, orderId: r.orderId?.orderCode || 'â€”',
     date: r.createdAt?.slice(0, 10),
-    supplier: '—', item: '—',
+    supplier: 'â€”', item: 'â€”',
     amount: r.pickupAmount || 0,
-    pickupEmpId: r.pickupEmpId?.staffCode || '—',
-    pickupEmpName: r.pickupEmpId?.fullName || '—',
+    pickupEmpId: r.pickupEmpId?.staffCode || 'â€”',
+    pickupEmpName: r.pickupEmpId?.fullName || 'â€”',
     gPayNumber: r.pickupGPayNumber,
     paymentStatus: r.paymentStatus,
     paymentProof: r.paymentProofUrl,
@@ -182,7 +184,7 @@ export default function Dispatch() {
     paidBy: r.paidBy,
   })), [pickupExpData]);
 
-  // ── Pick Up Order tab state ────────────────────────────────────────────────
+  // â”€â”€ Pick Up Order tab state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { data: pickupOrdersRaw } = useGetPickupOrdersQuery();
   const [updatePickupOrder] = useUpdatePickupOrderMutation();
   const [pickupOrders, setPickupOrders] = useState([]);
@@ -193,10 +195,10 @@ export default function Dispatch() {
     if (pickupOrdersRaw?.data) {
       setPickupOrders(pickupOrdersRaw.data.map((p) => ({
         key: p._id,
-        orderId: p.orderCode || '—',
-        client: p.clientName || '—',
-        destination: p.destination || '—',
-        pickupPerson: p.pickupPersonName || p.pickupEmpId?.fullName || '—',
+        orderId: p.orderCode || 'â€”',
+        client: p.clientName || 'â€”',
+        destination: p.destination || 'â€”',
+        pickupPerson: p.pickupPersonName || p.pickupEmpId?.fullName || 'â€”',
         taken: p.taken,
         amount: p.amount || 0,
         paymentBy: p.paymentBy || '',
@@ -205,12 +207,12 @@ export default function Dispatch() {
     }
   }, [pickupOrdersRaw]);
 
-  // ── Proof data (base64) — shared via hng_proofs localStorage cross-page ──
+  // â”€â”€ Proof data (base64) â€” shared via hng_proofs localStorage cross-page â”€â”€
   const [proofData, setProofData] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hng_proofs') || '{}'); } catch { return {}; }
   });
 
-  // ── Taken Status / Payment By modal state ────────────────────────────────
+  // â”€â”€ Taken Status / Payment By modal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [pickupStatusMap, setPickupStatusMap] = useState({});
   const [pickupPayByMap, setPickupPayByMap] = useState({});
   const [showPickupPayModal, setShowPickupPayModal] = useState(false);
@@ -219,13 +221,13 @@ export default function Dispatch() {
   const [showReceivedModal, setShowReceivedModal] = useState(false);
   const [receivedTarget, setReceivedTarget] = useState(null);
 
-  // reimbExpenses comes from RTK Query (apiReimbExpenses) — local state used for UI-only overrides
+  // reimbExpenses comes from RTK Query (apiReimbExpenses) â€” local state used for UI-only overrides
   const [reimbExpenses, setReimbExpenses] = useState([]);
   useEffect(() => {
     if (apiReimbExpenses.length > 0) setReimbExpenses(apiReimbExpenses);
   }, [apiReimbExpenses]);
 
-  // ── Pickup Status / Payment handlers ──────────────────────────────────────
+  // â”€â”€ Pickup Status / Payment handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handlePickupStatusChange = (record, status) => {
     if (!requireAccess('edit')) return;
     setPickupStatusMap(prev => ({ ...prev, [record.key]: status }));
@@ -254,13 +256,13 @@ export default function Dispatch() {
 
     const newExpense = {
       key: expenseKey,
-      orderId: pickupPayTarget.orderId || pickupPayTarget.id || '—',
+      orderId: pickupPayTarget.orderId || pickupPayTarget.id || 'â€”',
       date: new Date().toISOString().slice(0, 10),
-      supplier: pickupPayTarget.supplier || '—',
-      item: pickupPayTarget.item || '—',
+      supplier: pickupPayTarget.supplier || 'â€”',
+      item: pickupPayTarget.item || 'â€”',
       amount: amt,
-      pickupEmpId: pickupPayTarget.pickupEmpId || '—',
-      pickupEmpName: pickupPayTarget.pickupEmpName || '—',
+      pickupEmpId: pickupPayTarget.pickupEmpId || 'â€”',
+      pickupEmpName: pickupPayTarget.pickupEmpName || 'â€”',
       category: 'PICKUP',
       gPayNumber: gPayNum,
       proof: proofUrl,
@@ -307,7 +309,7 @@ export default function Dispatch() {
     localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedOrders));
 
     enqueueSnackbar(payBy === 'pickup_team'
-      ? 'Payment proof uploaded — visible to Finance team as Paid.'
+      ? 'Payment proof uploaded â€” visible to Finance team as Paid.'
       : 'Sent to Finance team with GPay number and proof.', { variant: 'success' });
     setShowPickupPayModal(false);
     setPickupPayTarget(null);
@@ -320,12 +322,12 @@ export default function Dispatch() {
       : o);
     setPickupOrders(updatedOrders);
     localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedOrders));
-    enqueueSnackbar(`Order ${receivedTarget?.orderId} marked as Pickup Dropped — received order process started.`, { variant: 'success' });
+    enqueueSnackbar(`Order ${receivedTarget?.orderId} marked as Pickup Dropped â€” received order process started.`, { variant: 'success' });
     setShowReceivedModal(false);
     setReceivedTarget(null);
   };
 
-  // ── Handlers ───────────────────────────────────────────────────────────────
+  // â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const openPrintModal = (order) => {
     setSelectedPrintOrder(order);
     printForm.setFieldsValue({
@@ -362,11 +364,11 @@ export default function Dispatch() {
   .barcode { font-family: monospace; font-size: 10px; letter-spacing: 4px; color: #333; margin-top: 4px; }
 </style></head><body>
 <div class="label">
-  <div class="badge">HEAL N GLOW — DISPATCH LABEL</div>
+  <div class="badge">HEAL N GLOW â€” DISPATCH LABEL</div>
   <div class="section-title">From</div>
   <div class="name">${HNG.name}</div>
   <div class="line">${HNG.address}</div>
-  <div class="line">${HNG.city}, ${HNG.state} — ${HNG.pincode}</div>
+  <div class="line">${HNG.city}, ${HNG.state} â€” ${HNG.pincode}</div>
   <div class="line">Ph: ${HNG.phone}</div>
   <div class="line">GSTIN: ${HNG.gstin}</div>
   <hr/>
@@ -374,7 +376,7 @@ export default function Dispatch() {
   <div class="name">${vals.toName || ''}</div>
   <div class="line">Attn: ${vals.toContact || ''}</div>
   <div class="line">${vals.toAddress || ''}</div>
-  <div class="line">${vals.toCity || ''}, ${vals.toState || ''} — ${vals.toPincode || ''}</div>
+  <div class="line">${vals.toCity || ''}, ${vals.toState || ''} â€” ${vals.toPincode || ''}</div>
   <div class="line">Ph: ${vals.toPhone || ''}</div>
   <div class="order-ref">
     Order Ref: <b>${vals.orderRef || ''}</b> &nbsp;|&nbsp; Boxes: <b>${vals.boxCount || ''}</b> &nbsp;|&nbsp; Weight: <b>${vals.weight || ''}</b>
@@ -412,10 +414,10 @@ export default function Dispatch() {
     });
   };
 
-  // ── Product verify expanded row ────────────────────────────────────────────
+  // â”€â”€ Product verify expanded row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const renderProductPanel = (record) => {
     const state = productVerify[record.id] || {};
-    const products = (record.items || []).map((it, idx) => ({ key: idx, name: it.itemName || it.name || '—', qty: it.qtyDispatched || it.qtyOrdered || 0, boxes: 0 }));
+    const products = (record.items || []).map((it, idx) => ({ key: idx, name: it.itemName || it.name || 'â€”', qty: it.qtyDispatched || it.qtyOrdered || 0, boxes: 0 }));
     const verified = state.verifiedProducts || new Set();
 
     return (
@@ -427,7 +429,7 @@ export default function Dispatch() {
           <Tag color={state.dispatchType === 'Partial Dispatch' ? 'orange' : 'blue'} style={{ borderRadius: 12 }}>
             {state.dispatchType || 'Full Dispatch'}
           </Tag>
-          <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>— Product Details</Text>
+          <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>â€” Product Details</Text>
         </div>
 
         <Table
@@ -438,7 +440,7 @@ export default function Dispatch() {
           columns={[
             { title: 'Product', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
             { title: 'Qty', dataIndex: 'qty', render: (v) => v.toLocaleString() },
-            { title: 'Rate (₹)', dataIndex: 'rate', render: (v) => `₹${v}` },
+            { title: 'Rate (â‚¹)', dataIndex: 'rate', render: (v) => `â‚¹${v}` },
             { title: 'Boxes', dataIndex: 'boxes', render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space> },
             {
               title: 'Status', key: 'status',
@@ -473,7 +475,7 @@ export default function Dispatch() {
     );
   };
 
-  // ── Columns ────────────────────────────────────────────────────────────────
+  // â”€â”€ Columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const buildColumns = (showTodayActions = false) => [
     {
       title: 'Order', dataIndex: 'id', width: 120,
@@ -490,9 +492,9 @@ export default function Dispatch() {
       ),
     },
     { title: 'Client', dataIndex: 'client', width: 150, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Destination', dataIndex: 'destination', width: 120, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+    { title: 'Destination', dataIndex: 'destination', width: 120, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v || 'â€”'}</Text> },
     { title: 'Location', dataIndex: 'address', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Created Date', dataIndex: 'createdAt', width: 160, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</Text> },
+    { title: 'Created Date', dataIndex: 'createdAt', width: 160, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'â€”'}</Text> },
     { title: 'Sales Person', dataIndex: 'salesPerson', width: 115, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Product', dataIndex: 'product', width: 145, responsive: ['md'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
@@ -559,8 +561,7 @@ export default function Dispatch() {
   const filteredOrders = dispatchOrders.filter((o) => {
     const s = !searchText || o.id.toLowerCase().includes(searchText.toLowerCase()) || o.client.toLowerCase().includes(searchText.toLowerCase()) || o.address.toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
     const p = paymentFilter === 'All' || o.payment === paymentFilter;
-    const st = !dispatchStatusFilter || o.status === dispatchStatusFilter;
-    return s && p && st;
+    return s && p;
   });
 
   // Today's Orders = scheduled for today (dispatch day / expected delivery), not creation date.
@@ -576,7 +577,7 @@ export default function Dispatch() {
     rowExpandable: () => true,
   };
 
-  // ── Filters row ───────────────────────────────────────────────────────────
+  // â”€â”€ Filters row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const filtersRow = (
     <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
       <Input
@@ -594,7 +595,7 @@ export default function Dispatch() {
           <Option value="Confirmed">Confirmed</Option>
           <Option value="Pending">Pending</Option>
         </Select>
-        <Select allowClear placeholder="Status" value={dispatchStatusFilter} onChange={setDispatchStatusFilter} style={{ width: 180, borderRadius: 8 }}>
+        <Select allowClear placeholder="Status" value={dispatchStatusFilter} onChange={(val) => { setDispatchStatusFilter(val); setDispatchPage(1); }} style={{ width: 180, borderRadius: 8 }}>
           <Option value="Ready to Dispatch">Ready to Dispatch</Option>
           <Option value="Payment Pending">Payment Pending</Option>
           <Option value="Dispatched">Dispatched</Option>
@@ -604,7 +605,7 @@ export default function Dispatch() {
     </div>
   );
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
     <div className="page-container fade-in">
       <PageBreadcrumb title="Dispatch Team" items={[{ label: 'Dispatch Team' }]} />
@@ -658,9 +659,17 @@ export default function Dispatch() {
                               columns={buildColumns(false)}
                               expandable={expandable}
                               rowKey="key"
-                              pagination={{ pageSize: 8, size: 'small' }}
+                              pagination={{
+                                current: dispatchPage,
+                                pageSize: dispatchPageSize,
+                                total: dispatchData?.total || 0,
+                                showSizeChanger: true,
+                                pageSizeOptions: ['10', '20', '50', '100'],
+                                onChange: (p, ps) => { setDispatchPage(p); setDispatchPageSize(ps); },
+                                size: 'small',
+                              }}
                               size="small"
-                              scroll={{ x: 1400 }}
+                              scroll={{ x: 'max-content' }}
                               onRow={(record) => ({
                                 onClick: () => navigate(`/dispatch/${record.key}`),
                                 style: { cursor: 'pointer' },
@@ -711,9 +720,9 @@ export default function Dispatch() {
                                 columns={buildColumns(true)}
                                 expandable={expandable}
                                 rowKey="key"
-                                pagination={{ pageSize: 8, size: 'small' }}
+                                pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                                 size="small"
-                                scroll={{ x: 1400 }}
+                                scroll={{ x: 'max-content' }}
                                 onRow={(record) => ({
                                   onClick: () => navigate(`/dispatch/${record.key}`),
                                   style: { cursor: 'pointer' },
@@ -784,8 +793,8 @@ export default function Dispatch() {
                                 return matchSearch && matchTaken && matchPay;
                               })}
                               rowKey="key"
-                              pagination={{ pageSize: 8, size: 'small' }}
-                              scroll={{ x: 1650 }}
+                              pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                              scroll={{ x: 'max-content' }}
                               columns={[
                                 { title: 'Date', dataIndex: 'date', width: 95 },
                                 { title: 'Order ID', dataIndex: 'orderId', width: 95, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
@@ -795,12 +804,12 @@ export default function Dispatch() {
                                   title: 'Pickup Employee', key: 'emp', width: 155,
                                   render: (_, r) => (
                                     <div>
-                                      <Text strong style={{ fontSize: 13 }}>{r.pickupEmpName || '—'}</Text>
+                                      <Text strong style={{ fontSize: 13 }}>{r.pickupEmpName || 'â€”'}</Text>
                                       <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>{r.pickupEmpId}</Text>
                                     </div>
                                   )
                                 },
-                                { title: 'LR Number', dataIndex: 'lrNumber', width: 115, render: v => v ? <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> : <Text type="secondary">—</Text> },
+                                { title: 'LR Number', dataIndex: 'lrNumber', width: 115, render: v => v ? <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> : <Text type="secondary">â€”</Text> },
                                 {
                                   title: 'Taken Status', key: 'taken', width: 165,
                                   render: (_, r) => {
@@ -827,7 +836,7 @@ export default function Dispatch() {
                                   render: (_, r) => {
                                     const currentStatus = pickupStatusMap[r.key] ?? r.takenStatus ?? undefined;
                                     const currentPayBy = pickupPayByMap[r.key] ?? r.paymentBy ?? undefined;
-                                    if (currentStatus !== 'taken') return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+                                    if (currentStatus !== 'taken') return <Text type="secondary" style={{ fontSize: 12 }}>â€”</Text>;
                                     if (currentPayBy) {
                                       return (
                                         <Tag
@@ -872,7 +881,7 @@ export default function Dispatch() {
                                   title: 'Payment Status', key: 'payStatus', width: 130, align: 'center',
                                   render: (_, r) => {
                                     const status = r.paymentStatus;
-                                    if (!status) return <Tag style={{ borderRadius: 8, fontSize: 12 }}>—</Tag>;
+                                    if (!status) return <Tag style={{ borderRadius: 8, fontSize: 12 }}>â€”</Tag>;
                                     return (
                                       <div>
                                         <Tag
@@ -915,7 +924,7 @@ export default function Dispatch() {
                         <div>
                           <div style={{ marginBottom: 12 }}>
                             <Text strong style={{ color: textColor }}>Reimbursement Claims</Text>
-                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Pickup expenses — payment status from Finance team</Text>
+                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Pickup expenses â€” payment status from Finance team</Text>
                           </div>
                           <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                             <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order, supplier, item..." allowClear value={reimbSearch} onChange={(e) => setReimbSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
@@ -939,8 +948,8 @@ export default function Dispatch() {
                                 return matchSearch && matchPay;
                               })}
                               rowKey="key"
-                              pagination={{ pageSize: 8, size: 'small' }}
-                              scroll={{ x: 1450 }}
+                              pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                              scroll={{ x: 'max-content' }}
                               columns={[
                                 { title: 'Date', dataIndex: 'date', width: 95 },
                                 { title: 'Order ID', dataIndex: 'orderId', width: 95, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
@@ -959,13 +968,13 @@ export default function Dispatch() {
                                   title: 'Payment Source', dataIndex: 'paymentSource', width: 130, align: 'center',
                                   render: (v, r) => {
                                     const src = v || (r.paidBy === 'Pickup Team' ? 'Pickup Team' : r.paidBy ? 'Finance' : null);
-                                    if (!src) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+                                    if (!src) return <Text type="secondary" style={{ fontSize: 12 }}>â€”</Text>;
                                     return <Tag color={src === 'Finance' ? 'blue' : 'green'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{src}</Tag>;
                                   }
                                 },
                                 {
                                   title: 'G Pay', dataIndex: 'gPayNumber', width: 125,
-                                  render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text>
+                                  render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">â€”</Text>
                                 },
                                 {
                                   title: 'Amount', dataIndex: 'amount', width: 95, align: 'right',
@@ -1000,7 +1009,7 @@ export default function Dispatch() {
                                   title: 'Paid By', key: 'paidBy', width: 115,
                                   render: (_, r) => r.paidBy
                                     ? <Tag color={r.paidBy === 'Pickup Team' ? 'green' : 'blue'} style={{ borderRadius: 8, fontSize: 12 }}>{r.paidBy}</Tag>
-                                    : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+                                    : <Text type="secondary" style={{ fontSize: 13 }}>â€”</Text>
                                 },
                                 {
                                   title: 'Finance Payment Proof', dataIndex: 'paymentProof', width: 155,
@@ -1068,9 +1077,9 @@ export default function Dispatch() {
                         return matchSearch && matchStatus;
                       })}
                       columns={transportColumns}
-                      pagination={{ pageSize: 8, size: 'small' }}
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                       size="small"
-                      scroll={{ x: 1000 }}
+                      scroll={{ x: 'max-content' }}
                     />
                   </div>
                 </Card>
@@ -1081,12 +1090,12 @@ export default function Dispatch() {
         activeKey={activeKeyFor(activeTab)}
       />
 
-      {/* ── Pickup Payment Modal ─────────────────────────────────────────────── */}
+      {/* â”€â”€ Pickup Payment Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <Modal
         title={
           <Space>
             <WalletOutlined style={{ color: '#B11E6A' }} />
-            <span>{pickupPayTarget?.payBy === 'finance' ? 'Send to Finance — GPay & Proof' : 'Pickup Team Payment — Upload Proof'}</span>
+            <span>{pickupPayTarget?.payBy === 'finance' ? 'Send to Finance â€” GPay & Proof' : 'Pickup Team Payment â€” Upload Proof'}</span>
           </Space>
         }
         open={showPickupPayModal}
@@ -1099,23 +1108,23 @@ export default function Dispatch() {
         {pickupPayTarget && (
           <Form form={pickupPayForm} layout="vertical" onFinish={handlePickupPaySubmit}>
             <div style={{ background: '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: '1px solid #e8f4ff' }}>
-              <Text strong style={{ display: 'block' }}>{pickupPayTarget.item || '—'}</Text>
-              <Text style={{ color: '#B11E6A' }}>{pickupPayTarget.supplier || '—'}</Text>
+              <Text strong style={{ display: 'block' }}>{pickupPayTarget.item || 'â€”'}</Text>
+              <Text style={{ color: '#B11E6A' }}>{pickupPayTarget.supplier || 'â€”'}</Text>
               <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>
-                Order: {pickupPayTarget.orderId || pickupPayTarget.id || '—'} &nbsp;·&nbsp; Pickup: {pickupPayTarget.pickupEmpName || '—'}
+                Order: {pickupPayTarget.orderId || pickupPayTarget.id || 'â€”'} &nbsp;Â·&nbsp; Pickup: {pickupPayTarget.pickupEmpName || 'â€”'}
               </Text>
               <Tag color={pickupPayTarget.payBy === 'finance' ? 'blue' : 'green'} style={{ marginTop: 6, borderRadius: 8 }}>
                 {pickupPayTarget.payBy === 'finance' ? 'Payment by Finance' : 'Payment by Pickup Team'}
               </Tag>
             </div>
 
-            <Form.Item label="Expense Amount (₹)" name="amount" rules={[{ required: true, message: 'Enter expense amount' }]}>
+            <Form.Item label="Expense Amount (â‚¹)" name="amount" rules={[{ required: true, message: 'Enter expense amount' }]}>
               <InputNumber
-                prefix="₹"
+                prefix="â‚¹"
                 style={{ width: '100%' }}
                 min={0}
                 formatter={v => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                parser={v => v.replace(/₹\s?|(,*)/g, '')}
+                parser={v => v.replace(/â‚¹\s?|(,*)/g, '')}
                 placeholder="0"
               />
             </Form.Item>
@@ -1169,13 +1178,13 @@ export default function Dispatch() {
         )}
       </Modal>
 
-      {/* ── Pickup Dropped — Received Confirmation Modal ──────────────────────── */}
+      {/* â”€â”€ Pickup Dropped â€” Received Confirmation Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <Modal
-        title={<Space><CheckCircleOutlined style={{ color: '#fa8c16' }} /><span>Pickup Dropped — Received Order Process</span></Space>}
+        title={<Space><CheckCircleOutlined style={{ color: '#fa8c16' }} /><span>Pickup Dropped â€” Received Order Process</span></Space>}
         open={showReceivedModal}
         onCancel={() => { setShowReceivedModal(false); setReceivedTarget(null); setPickupStatusMap(prev => { const n = { ...prev }; if (receivedTarget) delete n[receivedTarget.key]; return n; }); }}
         onOk={handlePickupDroppedConfirm}
-        okText="Confirm — Mark as Received"
+        okText="Confirm â€” Mark as Received"
         okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
         centered
         width={440}
@@ -1186,7 +1195,7 @@ export default function Dispatch() {
               type="warning"
               showIcon
               message="Pickup Dropped"
-              description={`Order ${receivedTarget.orderId || '—'} from ${receivedTarget.supplier || '—'} will be marked as Pickup Dropped and the received order process will be initiated.`}
+              description={`Order ${receivedTarget.orderId || 'â€”'} from ${receivedTarget.supplier || 'â€”'} will be marked as Pickup Dropped and the received order process will be initiated.`}
               style={{ borderRadius: 8, marginBottom: 14 }}
             />
             <Text type="secondary" style={{ fontSize: 13 }}>
@@ -1196,9 +1205,9 @@ export default function Dispatch() {
         )}
       </Modal>
 
-      {/* ── Dispatch Label Modal ──────────────────────────────────────────────── */}
+      {/* â”€â”€ Dispatch Label Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <Modal
-        title={<Space><PrinterOutlined style={{ color: '#B11E6A' }} /><span>Hotel Details Printout — {selectedPrintOrder?.id}</span></Space>}
+        title={<Space><PrinterOutlined style={{ color: '#B11E6A' }} /><span>Hotel Details Printout â€” {selectedPrintOrder?.id}</span></Space>}
         open={printModalOpen}
         onCancel={() => setPrintModalOpen(false)}
         width={Math.min(640, window.innerWidth - 32)}
@@ -1227,13 +1236,13 @@ export default function Dispatch() {
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
                       <div id="dispatch-label" style={{ border: '2px solid #333', borderRadius: 6, padding: 20, width: 380, background: '#fff', color: '#111', fontFamily: 'Arial, sans-serif' }}>
                         <div style={{ background: '#B11E6A', color: '#fff', display: 'inline-block', padding: '2px 12px', borderRadius: 12, fontSize: 11, fontWeight: 700, marginBottom: 14, letterSpacing: 1 }}>
-                          HEAL N GLOW — DISPATCH LABEL
+                          HEAL N GLOW â€” DISPATCH LABEL
                         </div>
                         <div style={{ marginBottom: 12 }}>
                           <div style={{ fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', color: '#888', fontWeight: 700, marginBottom: 6 }}>From</div>
                           <div style={{ fontWeight: 700, fontSize: 15 }}>{HNG.name}</div>
                           <div style={{ fontSize: 12, color: '#444' }}>{HNG.address}</div>
-                          <div style={{ fontSize: 12, color: '#444' }}>{HNG.city}, {HNG.state} — {HNG.pincode}</div>
+                          <div style={{ fontSize: 12, color: '#444' }}>{HNG.city}, {HNG.state} â€” {HNG.pincode}</div>
                           <div style={{ fontSize: 12, color: '#444' }}>Ph: {HNG.phone}</div>
                           <div style={{ fontSize: 11, color: '#888' }}>GSTIN: {HNG.gstin}</div>
                         </div>
@@ -1245,7 +1254,7 @@ export default function Dispatch() {
                           <div style={{ fontSize: 12, color: '#444' }}>{printForm.getFieldValue('toAddress') || selectedPrintOrder.detailedAddress}</div>
                           <div style={{ fontSize: 12, color: '#444' }}>
                             {printForm.getFieldValue('toCity') || selectedPrintOrder.city},&nbsp;
-                            {printForm.getFieldValue('toState') || selectedPrintOrder.state}&nbsp;—&nbsp;
+                            {printForm.getFieldValue('toState') || selectedPrintOrder.state}&nbsp;â€”&nbsp;
                             {printForm.getFieldValue('toPincode') || selectedPrintOrder.pincode}
                           </div>
                           <div style={{ fontSize: 12, color: '#444' }}>Ph: {printForm.getFieldValue('toPhone') || selectedPrintOrder.phone}</div>
@@ -1285,11 +1294,11 @@ export default function Dispatch() {
                         <Col xs={24} sm={8}><Form.Item label="Weight" name="weight"><Input suffix="Kg" /></Form.Item></Col>
                       </Row>
                       <Divider style={{ margin: '8px 0' }} />
-                      <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 8 }}>From (HNG — fixed)</Text>
+                      <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 8 }}>From (HNG â€” fixed)</Text>
                       <Descriptions size="small" column={2} style={{ borderRadius: 8 }}>
                         <Descriptions.Item label="Company">{HNG.name}</Descriptions.Item>
                         <Descriptions.Item label="Phone">{HNG.phone}</Descriptions.Item>
-                        <Descriptions.Item label="Address">{HNG.address}, {HNG.city} — {HNG.pincode}</Descriptions.Item>
+                        <Descriptions.Item label="Address">{HNG.address}, {HNG.city} â€” {HNG.pincode}</Descriptions.Item>
                         <Descriptions.Item label="GSTIN">{HNG.gstin}</Descriptions.Item>
                       </Descriptions>
                     </Form>

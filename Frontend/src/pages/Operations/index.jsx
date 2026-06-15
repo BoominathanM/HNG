@@ -130,7 +130,7 @@ export default function Operations() {
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
 
   // API-backed state — RTK Query
-  const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery(undefined, { refetchOnMountOrArgChange: true });
+  const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery({ limit: 500 }, { refetchOnMountOrArgChange: true });
   const { data: stickerData } = useGetStickerRequestsQuery();
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
   const [createStickerRequest] = useCreateStickerRequestMutation();
@@ -1061,7 +1061,7 @@ export default function Operations() {
               dataSource={tableSource}
               columns={queueColumns(type)}
               expandable={type !== 'Sticker' ? { defaultExpandAllRows: true } : undefined}
-              pagination={type === 'Sticker' ? { pageSize: 5, size: 'small' } : false}
+              pagination={type === 'Sticker' ? { showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' } : false}
               size="small"
               onRow={(record) =>
                 record.isEmergencyGated
@@ -1234,7 +1234,7 @@ export default function Operations() {
                     <Table
                       dataSource={filteredOrders}
                       columns={orderColumns}
-                      pagination={{ pageSize: 6, size: 'small' }}
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                       size="small"
                       onRow={(record) => ({
                         onClick: () => navigate(`/operations/${record.id}`),

@@ -150,7 +150,7 @@ export default function Settings() {
   const departments = ['Sales', 'Operations', 'Task Management', 'Dispatch', 'Finance', 'Vendors', 'Admin'];
 
   // Users — RTK Query
-  const { data: usersData, isLoading: usersLoading } = useGetUsersQuery();
+  const { data: usersData, isLoading: usersLoading } = useGetUsersQuery({ limit: 500 });
   const [createUserMutation] = useCreateUserMutation();
   const [updateUserMutation] = useUpdateUserMutation();
   const [deleteUserMutation] = useDeleteUserMutation();
@@ -513,7 +513,7 @@ export default function Settings() {
                     dataSource={users}
                     rowKey="key"
                     size="small"
-                    pagination={false}
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     style={{ borderRadius: 14, overflow: 'hidden' }}
                     columns={[
                       {
@@ -1246,7 +1246,7 @@ export default function Settings() {
                       (!deletedSearch || r.name.toLowerCase().includes(deletedSearch.toLowerCase()) || r.module.toLowerCase().includes(deletedSearch.toLowerCase()))
                     )}
                     rowKey="key"
-                    pagination={{ pageSize: 10 }}
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
                     columns={[
                       {
                         title: 'Module', dataIndex: 'module', width: 160,

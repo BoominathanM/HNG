@@ -135,13 +135,19 @@ exports.uploadLogo = asyncHandler(async (req, res, next) => {
 
 // ─── User Management ────────────────────────────────────────────────────────
 exports.getUsers = asyncHandler(async (req, res) => {
-  const users = await User.find({ deletedAt: null }).sort('-createdAt');
+  const filter = { deletedAt: null };
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [users, total] = await Promise.all([
+    User.find(filter).sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    User.countDocuments(filter),
+  ]);
   const data = users.map((u) => {
     const obj = u.toObject({ flattenMaps: true });
     delete obj.password;
     return obj;
   });
-  res.status(200).json({ success: true, total: data.length, data });
+  res.status(200).json({ success: true, total, page, data });
 });
 
 exports.createUser = asyncHandler(async (req, res, next) => {

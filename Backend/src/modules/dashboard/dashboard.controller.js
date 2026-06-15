@@ -30,6 +30,8 @@ exports.getKPIs = asyncHandler(async (req, res) => {
     activeComplaints,
     pendingTasks,
     completedTasks,
+    pendingInvoices,
+    lowStockItems,
   ] = await Promise.all([
     Order.countDocuments({ ...dateFilter, deletedAt: null }),
     Invoice.aggregate([
@@ -42,6 +44,8 @@ exports.getKPIs = asyncHandler(async (req, res) => {
     Complaint.countDocuments({ status: 'Open' }),
     Task.countDocuments({ status: 'Pending' }),
     Task.countDocuments({ status: 'Done', ...dateFilter }),
+    Invoice.countDocuments({ status: { $in: ['Pending', 'Overdue'] } }),
+    InventoryItem.countDocuments({ $expr: { $lt: ['$currentStock', '$minStock'] }, deletedAt: null }),
   ]);
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -64,6 +68,8 @@ exports.getKPIs = asyncHandler(async (req, res) => {
       todaysTasks: await Task.countDocuments({ createdAt: { $gte: today } }),
       pendingTasks,
       completedTasks,
+      pendingInvoices,
+      lowStockItems,
     },
   });
 });

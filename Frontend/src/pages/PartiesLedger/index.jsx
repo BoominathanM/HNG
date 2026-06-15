@@ -48,7 +48,7 @@ export default function PartiesLedger() {
   const [dateRange, setDateRange] = useState(null);
 
   // RTK Query — load parties
-  const { data: partiesData, isLoading: partiesLoading } = useGetPartiesQuery();
+  const { data: partiesData, isLoading: partiesLoading } = useGetPartiesQuery({ limit: 500 });
   const [deletePartyMutation] = useDeletePartyMutation();
 
   const mapParty = (p) => ({
@@ -347,9 +347,9 @@ export default function PartiesLedger() {
         <Table
           size="small"
           dataSource={ledger}
-          pagination={{ pageSize: 15 }}
+          pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
           locale={{ emptyText: 'No transactions in selected date range.' }}
-          scroll={{ x: 750 }}
+          scroll={{ x: 'max-content' }}
           columns={ledgerColumns}
           summary={(pageData) => {
             const pgDebit = pageData.reduce((s, r) => s + r.debit, 0);
@@ -475,8 +475,8 @@ export default function PartiesLedger() {
         size="small"
         dataSource={parties.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()))}
         rowKey="key"
-        pagination={{ pageSize: 8 }}
-        scroll={{ x: 900 }}
+        pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+        scroll={{ x: 'max-content' }}
         onRow={r => ({ onClick: () => openParty(r), style: { cursor: 'pointer' } })}
         columns={partiesTableColumns(type)}
       />
@@ -553,8 +553,8 @@ export default function PartiesLedger() {
                         (!allSearch || p.name.toLowerCase().includes(allSearch.toLowerCase()))
                       )}
                       rowKey="key"
-                      pagination={{ pageSize: 10 }}
-                      scroll={{ x: 900 }}
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                      scroll={{ x: 'max-content' }}
                       onRow={r => ({ onClick: () => openParty(r), style: { cursor: 'pointer' } })}
                       columns={partiesTableColumns('all')}
                     />

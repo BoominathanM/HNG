@@ -1028,10 +1028,14 @@ export default function Sales() {
   const [searchText, setSearchText] = useState('');
   const [dateRange, setDateRange] = useState(null);
   const [leadStatusFilter, setLeadStatusFilter] = useState(null);
+  const [leadsPage, setLeadsPage] = useState(1);
+  const [leadsPageSize, setLeadsPageSize] = useState(10);
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
   const [quotStatusFilter, setQuotStatusFilter] = useState(null);
   const [reminderTypeFilter, setReminderTypeFilter] = useState(null);
   const [complaintStatusFilter, setComplaintStatusFilter] = useState(null);
+  const [complaintsPage, setComplaintsPage] = useState(1);
+  const [complaintsPageSize, setComplaintsPageSize] = useState(10);
   const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
 
@@ -1068,11 +1072,14 @@ export default function Sales() {
   const [orderEditPaymentProofs, setOrderEditPaymentProofs] = useState([]);
 
   const handleDownloadQuotation = (order) => {
-    const linkedQuot = quotationsData.find(
-      q => q.qid === order.quotationCode || String(q._id) === String(order.quotationId)
-    );
+    // findLinkedQuotation handles both raw ObjectId and populated {_id, quotCode} objects
+    const linkedQuot = findLinkedQuotation(order);
     const src = linkedQuot || order;
-    const products = src.products || [];
+    // quotationId is a populated object when coming from the single-order detail API response
+    const quotCodeFromPopulated = typeof order.quotationId === 'object'
+      ? order.quotationId?.quotCode
+      : null;
+    const products = (src.products?.length ? src.products : order.products) || [];
     const items = products.filter(Boolean).map(p => {
       const qty = Number(p.qty) || 0;
       const rate = Number(p.rate) || 0;
@@ -1082,7 +1089,7 @@ export default function Sales() {
     });
     const data = {
       items,
-      quot: src.qid || src.quotCode || order.quotationCode || order.oid,
+      quot: linkedQuot?.qid || quotCodeFromPopulated || order.quotCode || src.qid || src.quotCode || order.oid,
       date: src.date ? dayjs(src.date).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY'),
       customer: {
         name: src.billingName || src.hotelName || src.clientName || '',
@@ -1390,15 +1397,15 @@ export default function Sales() {
     }
   };
 
-  const { data: leadsRaw } = useGetLeadsQuery();
+  const { data: leadsRaw } = useGetLeadsQuery({ page: leadsPage, limit: leadsPageSize, ...(leadStatusFilter ? { status: leadStatusFilter } : {}) });
   const { data: quotationsRaw } = useGetSalesQuotationsQuery();
   const { data: negotiationsRaw } = useGetNegotiationsQuery();
-  const { data: ordersRaw } = useGetSalesOrdersQuery({ limit: 200 });
+  const { data: ordersRaw } = useGetSalesOrdersQuery({ limit: 500 });
   const { data: singleOrderRaw } = useGetSalesOrderQuery(
     selectedRecord?._id,
     { skip: viewMode !== 'order-detail' || !selectedRecord?._id }
   );
-  const { data: complaintsRaw } = useGetComplaintsQuery();
+  const { data: complaintsRaw } = useGetComplaintsQuery({ page: complaintsPage, limit: complaintsPageSize, ...(complaintStatusFilter ? { status: complaintStatusFilter } : {}) });
   const { data: partiesRaw } = useGetPartiesQuery();
   const { data: remindersRaw } = useGetRemindersQuery();
   const { data: hotelNamesRaw } = useGetHotelNamesQuery();
@@ -1706,26 +1713,34 @@ export default function Sales() {
   useEffect(() => {
     const full = singleOrderRaw?.data;
     if (!full?._id) return;
+    const orderId = full._id;
+    // Persist the quotation code from the populated detail response so the
+    // Download Quotation button can show the correct QT-... code even from the table row.
+    const quotCodeFromDetail = typeof full.quotationId === 'object'
+      ? full.quotationId?.quotCode
+      : null;
     const prods = full.products?.length ? full.products : itemsToProducts(full.items || []);
     const collTotal = (full.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const adv = Number(full.advancePaidAmount ?? full.advancePaid ?? 0);
     const paidFull = Number(full.paidAmount) || 0;
     const paidTotal = paidFull > 0 ? paidFull : (collTotal > 0 ? collTotal : adv);
-    if (paidTotal <= 0) return;
     const subtotalFull = Math.round(calcTotal(prods));
     const gstFromProdsFull = Math.round(calcGstAmount(prods));
     const storedGstFull = Number(full.gstAmount) || 0;
     const effectiveGstFull = gstFromProdsFull > 0 ? gstFromProdsFull : storedGstFull;
     const total = subtotalFull + effectiveGstFull;
-    const newStatus = total > 0 ? (paidTotal >= total ? 'Paid' : 'Partially Paid') : 'Unpaid';
-    const orderId = full._id;
+    const newStatus = paidTotal > 0 && total > 0 ? (paidTotal >= total ? 'Paid' : 'Partially Paid') : undefined;
     const quotCode = full.quotationId?.quotCode || full.quotationCode;
-    setOrdersData(prev => prev.map(o =>
-      (o._id === orderId || o.key === orderId)
-        ? { ...o, paidAmount: paidTotal, paymentStatus: newStatus, balance: Math.max(0, total - paidTotal) }
-        : o
-    ));
-    if (quotCode) {
+    setOrdersData(prev => prev.map(o => {
+      if (o._id !== orderId && o.key !== orderId) return o;
+      return {
+        ...o,
+        ...(quotCodeFromDetail ? { quotCode: quotCodeFromDetail } : {}),
+        ...(paidTotal > 0 ? { paidAmount: paidTotal, balance: Math.max(0, total - paidTotal) } : {}),
+        ...(newStatus ? { paymentStatus: newStatus } : {}),
+      };
+    }));
+    if (quotCode && paidTotal > 0) {
       setQuotationsData(prev => prev.map(q =>
         q.qid === quotCode
           ? { ...q, paidAmount: paidTotal, status: newStatus, balance: Math.max(0, (q.totalAmount || 0) - paidTotal) }
@@ -7884,7 +7899,7 @@ export default function Sales() {
                       allowClear
                       placeholder="Lead Status"
                       value={leadStatusFilter}
-                      onChange={setLeadStatusFilter}
+                      onChange={(val) => { setLeadStatusFilter(val); setLeadsPage(1); }}
                       style={{ width: 200, borderRadius: 8 }}
                     >
                       {['Cold', 'Warm', 'Hot', 'Quotation (Sent)', 'Quotation (Not Sent)', 'Negotiation', 'Need manager help', 'Converted', 'Rejected'].map(s => (
@@ -7898,15 +7913,21 @@ export default function Sales() {
                     />
                   </div>
                   <Table
-                    dataSource={filtered(leadsData)
-                      .filter(r => !leadStatusFilter || r.status === leadStatusFilter)
-                      .filter(r => {
-                        if (!dateRange) return true;
-                        const d = r.createdAt ? r.createdAt.slice(0, 10) : '';
-                        return d >= dateRange[0] && d <= dateRange[1];
-                      })}
+                    dataSource={filtered(leadsData).filter(r => {
+                      if (!dateRange) return true;
+                      const d = r.createdAt ? r.createdAt.slice(0, 10) : '';
+                      return d >= dateRange[0] && d <= dateRange[1];
+                    })}
                     columns={leadColumns}
-                    pagination={{ pageSize: 8, size: 'small' }}
+                    pagination={{
+                      current: leadsPage,
+                      pageSize: leadsPageSize,
+                      total: leadsRaw?.total || 0,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      onChange: (p, ps) => { setLeadsPage(p); setLeadsPageSize(ps); },
+                      size: 'small',
+                    }}
                     size="small"
                     rowKey="key"
                     scroll={{ x: 'max-content' }}
@@ -7968,7 +7989,7 @@ export default function Sales() {
                         )
                       },
                     ]}
-                    pagination={{ pageSize: 10, size: 'small' }}
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"
                     rowKey="id"
                     scroll={{ x: 'max-content' }}
@@ -7998,12 +8019,12 @@ export default function Sales() {
                   </div>
                   <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
                     <SectionDivider title="Current Quotations" />
-                    <Table dataSource={filtered(quotationsData).filter(r => !quotStatusFilter || r.status === quotStatusFilter)} columns={quotationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
+                    <Table dataSource={filtered(quotationsData).filter(r => !quotStatusFilter || r.status === quotStatusFilter)} columns={quotationColumns} pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }} size="small" rowKey="key"
                       scroll={{ x: 'max-content' }} onRow={(record) => ({ onClick: () => openQuotationDetail(record) })} style={{ cursor: 'pointer' }} />
                   </div>
                   <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
                     <SectionDivider title="Negotiations In Progress" />
-                    <Table dataSource={filtered(negotiationsData)} columns={negotiationColumns} pagination={{ pageSize: 5, size: 'small' }} size="small" rowKey="key"
+                    <Table dataSource={filtered(negotiationsData)} columns={negotiationColumns} pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }} size="small" rowKey="key"
                       scroll={{ x: 'max-content' }} onRow={(record) => ({ onClick: () => openNegotiationDetail(record) })} style={{ cursor: 'pointer' }} />
                   </div>
                 </div>
@@ -8030,7 +8051,7 @@ export default function Sales() {
                   <Table
                     dataSource={[...filtered(ordersData).filter(r => !orderStatusFilter || r.status === orderStatusFilter)].sort((a, b) => ((b.isUrgent || b.isEmergency) ? 1 : 0) - ((a.isUrgent || a.isEmergency) ? 1 : 0))}
                     columns={orderColumns}
-                    pagination={{ pageSize: 8, size: 'small' }}
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"
                     rowKey="key"
                     scroll={{ x: 'max-content' }}
@@ -8048,7 +8069,7 @@ export default function Sales() {
                   <Table
                     dataSource={filtered(customersData)}
                     columns={customerColumns}
-                    pagination={{ pageSize: 8, size: 'small' }}
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"
                     rowKey="key"
                     scroll={{ x: 'max-content' }}
@@ -8076,7 +8097,7 @@ export default function Sales() {
                       allowClear
                       placeholder="Complaint Status"
                       value={complaintStatusFilter}
-                      onChange={setComplaintStatusFilter}
+                      onChange={(val) => { setComplaintStatusFilter(val); setComplaintsPage(1); }}
                       style={{ width: 160, borderRadius: 8 }}
                     >
                       <Option value="Open">Open</Option>
@@ -8092,9 +8113,17 @@ export default function Sales() {
                     </Button>
                   </div>
                   <Table
-                    dataSource={filtered(complaintsData).filter(r => !complaintStatusFilter || r.status === complaintStatusFilter)}
+                    dataSource={filtered(complaintsData)}
                     columns={complaintColumns}
-                    pagination={{ pageSize: 8, size: 'small' }}
+                    pagination={{
+                      current: complaintsPage,
+                      pageSize: complaintsPageSize,
+                      total: complaintsRaw?.total || 0,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      onChange: (p, ps) => { setComplaintsPage(p); setComplaintsPageSize(ps); },
+                      size: 'small',
+                    }}
                     size="small"
                     rowKey="key"
                     scroll={{ x: 'max-content' }}

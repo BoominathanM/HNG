@@ -45,7 +45,7 @@ const kanbanCols = [
 export default function Tasks() {
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
-  const { data: tasksData, isLoading: tasksLoading } = useGetTasksQuery();
+  const { data: tasksData, isLoading: tasksLoading } = useGetTasksQuery({ limit: 500 });
   const { data: suggestedData } = useGetSuggestedTasksQuery();
   const suggestedList = suggestedData?.data || [];
 
@@ -487,7 +487,7 @@ export default function Tasks() {
                       <Table
                         dataSource={filtered}
                         columns={columns}
-                        pagination={{ pageSize: 8, size: 'small' }}
+                        pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                         size="small"
                         scroll={{ x: 'max-content' }}
                         onRow={(record) => ({

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
   Row, Col, Card, Form, Input, Button, Typography, Tabs, Tag, Table,
   Select, Modal, Space, Tooltip, Spin, Empty, Popconfirm, TimePicker,
@@ -47,7 +47,7 @@ export default function WhatsAppIntegration() {
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
   const inputBg    = isDark ? '#2a2a3a' : '#fafafa';
 
-  // ── State ─────────────────────────────────────────────────────────────────
+  // â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [editing, setEditing]             = useState(false);
   const [showKey, setShowKey]             = useState(false);
   const [backendUrl, setBackendUrl]       = useState('');
@@ -59,14 +59,14 @@ export default function WhatsAppIntegration() {
   const [sendTime, setSendTime]           = useState(dayjs('08:00', 'HH:mm'));
   const [mappingForm] = Form.useForm();
 
-  // ── RTK Queries ───────────────────────────────────────────────────────────
+  // â”€â”€ RTK Queries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { data: configData, isLoading: configLoading } = useGetWhatsAppConfigQuery();
   const { data: credsData }  = useGetWhatsAppCredentialsQuery(undefined, { skip: !editing });
   const { data: templatesData, isLoading: templatesLoading } = useGetWhatsAppTemplatesQuery({ limit: 5000 });
   const { data: eventsData }  = useGetWhatsAppEventsQuery();
   const { data: mappingsData, isLoading: mappingsLoading } = useGetWhatsAppEventMappingsQuery();
 
-  // ── RTK Mutations ─────────────────────────────────────────────────────────
+  // â”€â”€ RTK Mutations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [saveConfig,           { isLoading: saving }]    = useSaveWhatsAppConfigMutation();
   const [testConnection,       { isLoading: testing }]   = useTestWhatsAppConnectionMutation();
   const [disconnectWA,         { isLoading: disconnecting }] = useDisconnectWhatsAppMutation();
@@ -89,7 +89,7 @@ export default function WhatsAppIntegration() {
     }
   }, [editing, credsData]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
+  // â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleSaveConfig = async () => {
     if (!backendUrl.trim() || !apiKey.trim()) {
       enqueueSnackbar('Backend URL and API key are required', { variant: 'warning' });
@@ -109,11 +109,11 @@ export default function WhatsAppIntegration() {
     const token = editing ? apiKey.trim() : '';
     if (!url) { enqueueSnackbar('Enter a backend URL first', { variant: 'warning' }); return; }
 
-    enqueueSnackbar('Testing connection…', { variant: 'info' });
+    enqueueSnackbar('Testing connectionâ€¦', { variant: 'info' });
     try {
       const res = await testConnection({ backendUrl: url, ...(token ? { apiToken: token } : {}) }).unwrap();
       enqueueSnackbar(
-        `Connection successful — ${res.data?.templateCount ?? 0} template(s) found`,
+        `Connection successful â€” ${res.data?.templateCount ?? 0} template(s) found`,
         { variant: 'success' }
       );
     } catch (err) {
@@ -147,11 +147,11 @@ export default function WhatsAppIntegration() {
       const res = await syncTemplates().unwrap();
       enqueueSnackbar(`${res.data?.synced ?? 0} templates synced successfully`, { variant: 'success' });
     } catch (err) {
-      enqueueSnackbar(err?.data || 'Sync failed — check your configuration', { variant: 'error' });
+      enqueueSnackbar(err?.data || 'Sync failed â€” check your configuration', { variant: 'error' });
     }
   };
 
-  // ── Mapping Modal ─────────────────────────────────────────────────────────
+  // â”€â”€ Mapping Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const openMappingModal = (record = null) => {
     setEditMapping(record);
     mappingForm.resetFields();
@@ -207,7 +207,7 @@ export default function WhatsAppIntegration() {
     }
   };
 
-  // ── Columns ───────────────────────────────────────────────────────────────
+  // â”€â”€ Columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const templateColumns = [
     {
       title: 'Template Name', dataIndex: 'name', key: 'name',
@@ -217,7 +217,7 @@ export default function WhatsAppIntegration() {
       title: 'Components', key: 'components',
       render: (_, r) => {
         const types = Array.isArray(r.components) ? r.components.map((c) => c?.type).filter(Boolean) : [];
-        return <Text style={{ color: textColor, fontSize: 13 }}>{types.length ? types.join(', ') : '—'}</Text>;
+        return <Text style={{ color: textColor, fontSize: 13 }}>{types.length ? types.join(', ') : 'â€”'}</Text>;
       },
     },
     {
@@ -242,25 +242,25 @@ export default function WhatsAppIntegration() {
         const arr = Array.isArray(v) ? v : [];
         return arr.length
           ? arr.map((e) => <Tag key={e} color="processing">{e}</Tag>)
-          : <Text style={{ color: subText }}>—</Text>;
+          : <Text style={{ color: subText }}>â€”</Text>;
       },
     },
     {
       title: 'Last Synced', dataIndex: 'lastSyncedAt', key: 'lastSyncedAt',
-      render: (v) => <Text style={{ color: subText, fontSize: 12 }}>{v ? new Date(v).toLocaleString() : '—'}</Text>,
+      render: (v) => <Text style={{ color: subText, fontSize: 12 }}>{v ? new Date(v).toLocaleString() : 'â€”'}</Text>,
     },
   ];
 
   const mappingColumns = [
     {
       title: 'Event', key: 'event',
-      render: (_, r) => <Text style={{ color: textColor, fontWeight: 500 }}>{r.eventId?.label || '—'}</Text>,
+      render: (_, r) => <Text style={{ color: textColor, fontWeight: 500 }}>{r.eventId?.label || 'â€”'}</Text>,
     },
     {
       title: 'Template', key: 'template',
       render: (_, r) => (
         <Tag style={{ color: PRIMARY, borderColor: PRIMARY_ALPHA(0.4), background: PRIMARY_ALPHA(0.07) }}>
-          {r.templateId?.name || '—'}
+          {r.templateId?.name || 'â€”'}
         </Tag>
       ),
     },
@@ -274,7 +274,7 @@ export default function WhatsAppIntegration() {
     {
       title: 'Send Time', key: 'sendTime', width: 120,
       render: (_, r) => {
-        if (r.eventId?.key !== 'follow-up-reminder') return <Text style={{ color: subText }}>—</Text>;
+        if (r.eventId?.key !== 'follow-up-reminder') return <Text style={{ color: subText }}>â€”</Text>;
         const t = r.sendTime || '08:00';
         const [hh, mm] = t.split(':');
         const h = parseInt(hh, 10);
@@ -318,13 +318,13 @@ export default function WhatsAppIntegration() {
     </Card>
   );
 
-  // ── Selected event's available fields for variable mapping ────────────────
+  // â”€â”€ Selected event's available fields for variable mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const selectedEventId  = Form.useWatch('eventId', mappingForm);
   const selectedEvent    = events.find((e) => String(e._id) === String(selectedEventId));
   const isFollowUpEvent  = selectedEvent?.key === 'follow-up-reminder';
 
   const tabItems = [
-    // ── Configuration Tab ──────────────────────────────────────────────────
+    // â”€â”€ Configuration Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     {
       key: 'config',
       label: <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><SettingFilled /> Configuration</span>,
@@ -357,7 +357,7 @@ export default function WhatsAppIntegration() {
               >
                 <Input
                   type={showKey ? 'text' : 'password'}
-                  value={editing ? apiKey : (isConfigured ? '••••••••••••••••' : '')}
+                  value={editing ? apiKey : (isConfigured ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' : '')}
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder="Enter your API key"
                   suffix={
@@ -429,21 +429,21 @@ export default function WhatsAppIntegration() {
               <Text style={{ color: PRIMARY, fontSize: 13 }}>
                 Last verified: {new Date(config.lastVerifiedAt).toLocaleString()}
                 {config.lastSyncedAt && (
-                  <>  ·  Last sync: {new Date(config.lastSyncedAt).toLocaleString()}  ·  {config.lastSyncCount || 0} template(s)</>
+                  <>  Â·  Last sync: {new Date(config.lastSyncedAt).toLocaleString()}  Â·  {config.lastSyncCount || 0} template(s)</>
                 )}
               </Text>
             </div>
           )}
 
           <div style={{ marginTop: 16, padding: '10px 14px', background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 14 }}>🔒</span>
+            <span style={{ fontSize: 14 }}>ðŸ”’</span>
             <Text style={{ color: subText, fontSize: 13 }}>All sensitive data is encrypted at rest. Disconnect removes all saved config so you can enter new credentials.</Text>
           </div>
         </>
       ),
     },
 
-    // ── Templates Tab ──────────────────────────────────────────────────────
+    // â”€â”€ Templates Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     {
       key: 'templates',
       label: <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><MessageOutlined /> Templates</span>,
@@ -460,7 +460,7 @@ export default function WhatsAppIntegration() {
           {config?.lastSyncedAt && (
             <div style={{ marginBottom: 16, padding: '10px 14px', background: PRIMARY_ALPHA(0.06), border: `1px solid ${PRIMARY_ALPHA(0.18)}`, borderRadius: 8 }}>
               <Text style={{ color: PRIMARY, fontSize: 13 }}>
-                Last synced: {new Date(config.lastSyncedAt).toLocaleString()} · {templates.length} template(s)
+                Last synced: {new Date(config.lastSyncedAt).toLocaleString()} Â· {templates.length} template(s)
               </Text>
             </div>
           )}
@@ -485,9 +485,9 @@ export default function WhatsAppIntegration() {
                 defaultPageSize: 20,
                 pageSizeOptions: ['10', '20', '50', '100'],
                 showSizeChanger: true,
-                showTotal: (total, range) => `${range[0]}–${range[1]} of ${total} templates`,
+                showTotal: (total, range) => `${range[0]}â€“${range[1]} of ${total} templates`,
               }}
-              scroll={{ x: 800 }}
+              scroll={{ x: 'max-content' }}
               style={{ marginTop: 8 }}
             />
           )}
@@ -505,7 +505,7 @@ export default function WhatsAppIntegration() {
       ),
     },
 
-    // ── Event Mapping Tab ──────────────────────────────────────────────────
+    // â”€â”€ Event Mapping Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     {
       key: 'events',
       label: <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><LinkOutlined /> Event Mapping</span>,
@@ -513,7 +513,7 @@ export default function WhatsAppIntegration() {
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <LinkOutlined style={{ color: PRIMARY, fontSize: 18 }} />
-            <Title level={5} style={{ color: PRIMARY, margin: 0 }}>Event → Template Mapping</Title>
+            <Title level={5} style={{ color: PRIMARY, margin: 0 }}>Event â†’ Template Mapping</Title>
           </div>
           <Text style={{ color: subText, display: 'block', marginBottom: 20 }}>
             Map CRM events to WhatsApp templates. When an event fires (e.g. order placed), the mapped template is sent automatically.
@@ -528,7 +528,7 @@ export default function WhatsAppIntegration() {
               columns={mappingColumns}
               dataSource={mappings.map((m) => ({ ...m, key: m._id }))}
               pagination={false}
-              scroll={{ x: 600 }}
+              scroll={{ x: 'max-content' }}
             />
           )}
         </>,
@@ -632,7 +632,7 @@ export default function WhatsAppIntegration() {
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} style={{ color: textColor }} />
       </div>
 
-      {/* ── Mapping Modal ────────────────────────────────────────────────── */}
+      {/* â”€â”€ Mapping Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <Modal
         title={<Text style={{ color: textColor, fontWeight: 600 }}>{editMapping ? 'Edit Event Mapping' : 'Create Event Mapping'}</Text>}
         open={mappingModalOpen}
@@ -712,7 +712,7 @@ export default function WhatsAppIntegration() {
                       prefix={<Text style={{ color: subText, fontSize: 11 }}>TPL</Text>}
                     />
                   </Col>
-                  <Col span={1} style={{ textAlign: 'center', paddingTop: 6 }}>→</Col>
+                  <Col span={1} style={{ textAlign: 'center', paddingTop: 6 }}>â†’</Col>
                   <Col span={13}>
                     <Select
                       style={{ width: '100%' }}
