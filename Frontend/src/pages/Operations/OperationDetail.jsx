@@ -239,6 +239,7 @@ export default function OperationDetail() {
   const [newTaskValue, setNewTaskValue] = useState('');
   const [printingValues, setPrintingValues] = useState({});
   const [printingVendors, setPrintingVendors] = useState({});
+  const [printingStatusValues, setPrintingStatusValues] = useState({});
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignModalRecord, setAssignModalRecord] = useState(null);
   const [printingModalOpen, setPrintingModalOpen] = useState(false);
@@ -787,41 +788,33 @@ export default function OperationDetail() {
       },
     },
     {
-      title: 'Printing',
-      key: 'printing',
-      render: (_, record) => (
-        <Select
-          value={printingValues[record.key]}
-          onChange={(val) => {
-            setPrintingValues((prev) => ({ ...prev, [record.key]: val }));
-            setPrintingVendors((prev) => ({ ...prev, [record.key]: undefined }));
-            setPrintingModalType(val);
-            setPrintingModalOpen(true);
-          }}
-          placeholder="Select"
-          style={{ width: 160 }}
-        >
-          <Option value="sticker_printing">Sticker Printing</Option>
-          <Option value="box">Box</Option>
-          <Option value="frosted_ziplock">Frosted Ziplock</Option>
-        </Select>
-      ),
-    },
-    {
-      title: 'Printing Vendor',
-      key: 'printingVendor',
+      title: 'Printing Status',
+      key: 'printingStatus',
       render: (_, record) => {
-        const printType = printingValues[record.key];
-        const vendors = printType ? (PRINTING_VENDORS[printType] || []) : [];
+        const status = printingStatusValues[record.key];
+        if (status === 'Closed') {
+          return (
+            <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 6, padding: '2px 10px' }}>
+              Closed
+            </Tag>
+          );
+        }
         return (
           <Select
-            value={printingVendors[record.key]}
-            onChange={(val) => setPrintingVendors((prev) => ({ ...prev, [record.key]: val }))}
-            placeholder={printType ? 'Select vendor' : '—'}
-            disabled={!printType}
-            style={{ width: 150 }}
-            options={vendors}
-          />
+            value={status}
+            placeholder="Select status"
+            style={{ width: 140 }}
+            onChange={(val) => {
+              setPrintingStatusValues((prev) => ({ ...prev, [record.key]: val }));
+              if (val === 'Closed') {
+                openAssignModal(record, order);
+              }
+            }}
+          >
+            <Option value="Yet to Receive">Yet to Receive</Option>
+            <Option value="Received">Received</Option>
+            <Option value="Closed">Closed</Option>
+          </Select>
         );
       },
     },

@@ -4,7 +4,7 @@ import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal, Form, Row, Col, Typography,
   Drawer, Steps, Divider, Badge, InputNumber, Tooltip, Checkbox, Slider, Upload, Progress,
   DatePicker, Descriptions, Timeline, AutoComplete, Switch,
-  Spin, Popconfirm,
+  Spin, Popconfirm, Alert,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -5831,28 +5831,28 @@ export default function Sales() {
                     </Col>
 
                     <Col xs={24} sm={8}>
-                      <Form.Item label="No. of Rooms" name="rowsInHotel">
+                      <Form.Item label="No. of Rooms" name="rowsInHotel" rules={[{ required: true, message: 'No. of Rooms is required' }]}>
                         <InputNumber placeholder="50" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="General Occupancy (%)" name="generalOccupancy">
+                      <Form.Item label="General Occupancy (%)" name="generalOccupancy" rules={[{ required: true, message: 'General Occupancy is required' }]}>
                         <InputNumber placeholder="e.g. 75" style={{ width: '100%' }} min={0} max={100} addonAfter="%" />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Billing Name" name="billingName">
+                      <Form.Item label="Billing Name" name="billingName" rules={[{ required: true, message: 'Billing Name is required' }]}>
                         <Input placeholder="e.g. HOTEL BLUESTAR" />
                       </Form.Item>
                     </Col>
 
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Contact Person" name="contactPerson">
+                      <Form.Item label="Contact Person" name="contactPerson" rules={[{ required: true, message: 'Contact Person is required' }]}>
                         <Input placeholder="Reception / Manager" prefix={<UserOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="POC Designation" name="pocDesignation">
+                      <Form.Item label="POC Designation" name="pocDesignation" rules={[{ required: true, message: 'POC Designation is required' }]}>
                         <Input placeholder="GM, Manager" />
                       </Form.Item>
                     </Col>
@@ -5863,24 +5863,24 @@ export default function Sales() {
                     </Col>
 
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Alternative Role" name="alternativeRole">
+                      <Form.Item label="Alternative Role" name="alternativeRole" rules={[{ required: true, message: 'Alternative Role is required' }]}>
                         <SelectWithAdd field="alternativeRole" defaultOptions={ALTERNATIVE_PERSON_OPTIONS} placeholder="Select / Add Role" />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Alternative Name" name="alternativeName">
+                      <Form.Item label="Alternative Name" name="alternativeName" rules={[{ required: true, message: 'Alternative Name is required' }]}>
                         <Input placeholder="Full Name" prefix={<UserOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Alternative Number" name="alternativePhone" rules={[phoneValidator(false)]}>
+                      <Form.Item label="Alternative Number" name="alternativePhone" rules={[{ required: true, message: 'Alternative Number is required' }, phoneValidator(false)]}>
                         <PhoneInput placeholder="Alternative number" />
                       </Form.Item>
                     </Col>
 
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Email" name="email" rules={emailRules(false)}>
-                        <Input placeholder="optional" prefix={<MailOutlined style={{ color: '#ccc' }} />} />
+                      <Form.Item label="Email" name="email" rules={[{ required: true, message: 'Email is required' }, ...emailRules(false)]}>
+                        <Input placeholder="Email address" prefix={<MailOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -5889,7 +5889,7 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Destination" name="destination">
+                      <Form.Item label="Destination" name="destination" rules={[{ required: true, message: 'Destination is required' }]}>
                         <Input placeholder="e.g. Chennai, Delhi" prefix={<EnvironmentOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
@@ -5912,7 +5912,7 @@ export default function Sales() {
                     </Col>
 
                     <Col xs={24} sm={8}>
-                      <Form.Item label="Source" name="source">
+                      <Form.Item label="Source" name="source" rules={[{ required: true, message: 'Source is required' }]}>
                         <SelectWithAdd field="source" defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }]} placeholder="Select source" />
                       </Form.Item>
                     </Col>
@@ -7781,6 +7781,17 @@ export default function Sales() {
               </Col>
             )}
           </Row>
+          {/* Bottom Save Button */}
+          {!isDetail && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24, paddingTop: 16, borderTop: '1px solid rgba(177,30,106,0.15)' }}>
+              <Button type="primary" size="large" icon={editingLead ? <SaveOutlined /> : <PlusOutlined />}
+                style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8, boxShadow: '0 4px 12px rgba(177,30,106,0.3)', minWidth: 160 }}
+                onClick={saveLead}
+              >
+                {editingLead ? 'Update Record' : (isAddLead ? 'Save Lead' : 'Save Customer')}
+              </Button>
+            </div>
+          )}
         </Form>
         {/* Raise Complaint Modal — handled via shared modal at end of file */}
       </motion.div>

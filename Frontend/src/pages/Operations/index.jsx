@@ -438,48 +438,6 @@ export default function Operations() {
       },
     },
     {
-      title: 'Printing Status',
-      key: 'printingStatus',
-      render: (_, record) => {
-        const validStatuses = ['Yet to Receive', 'Received', 'Closed'];
-        const displayVal = printingStatuses[record.id] ?? (validStatuses.includes(record.printingStatus) ? record.printingStatus : undefined);
-        const dt = dispatchTimes[record.id];
-        return (
-          <Space direction="vertical" size={2} onClick={(e) => e.stopPropagation()}>
-            <Select
-              value={displayVal}
-              size="small"
-              style={{ width: 148 }}
-              placeholder="Select"
-              onChange={async (val) => {
-                setPrintingStatuses((prev) => ({ ...prev, [record.id]: val }));
-                try {
-                  await updateOrderStatus({ id: record.key, printingStatus: val }).unwrap();
-                  enqueueSnackbar(`${record.id} status → ${val}`, { variant: 'success' });
-                  if (val === 'Closed') {
-                    enqueueSnackbar('Printing closed — opening task assignment', { variant: 'info' });
-                    navigate(`/operations/${record.id}?assign=1`);
-                  }
-                } catch (err) {
-                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update printing status', { variant: 'error' });
-                }
-              }}
-              options={[
-                { value: 'Yet to Receive', label: <Tag color="orange" style={{ margin: 0 }}>Yet to Receive</Tag> },
-                { value: 'Received', label: <Tag color="blue" style={{ margin: 0 }}>Received</Tag> },
-                { value: 'Closed', label: <Tag color="success" style={{ margin: 0 }}>Closed</Tag> },
-              ]}
-            />
-            {dt && (
-              <Text style={{ fontSize: 10, color: '#888' }}>
-                Dispatched: {dt.date} {dt.time}
-              </Text>
-            )}
-          </Space>
-        );
-      },
-    },
-    {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
