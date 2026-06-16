@@ -357,6 +357,75 @@ Miss. Priya will Contact you
 +91 63741 15883`;
 }
 
+// ─── Product-type helpers (mirrors Inventory dynamic-field system) ────────────
+const _YES_NO = [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
+const _SOAP_SHAPES = [{ value: 'Square', label: 'Square' }, { value: 'Round', label: 'Round' }];
+const _BOTTLE_TYPES = [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }];
+const _BRUSH_TYPES = [{ value: 'Wooden', label: 'Wooden' }, { value: 'Plastic', label: 'Plastic' }];
+const _SIZES_SOAP = ['15', '20', '30'].map(v => ({ value: v, label: `${v}g` }));
+const _SIZES_LIQUID = ['15', '20', '25', '30'].map(v => ({ value: v, label: `${v}ml` }));
+
+const PRODUCT_FIELD_DEFS_LEAD = {
+  soap: [
+    { key: 'shape', label: 'Shape', options: _SOAP_SHAPES },
+    { key: 'size', label: 'Size (g)', options: _SIZES_SOAP },
+    { key: 'fragrance', label: 'Fragrance', options: [] },
+    { key: 'stickerShape', label: 'Sticker Shape', options: _SOAP_SHAPES },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  shampoo: [
+    { key: 'bottleType', label: 'Bottle Type', options: _BOTTLE_TYPES },
+    { key: 'size', label: 'Size (ml)', options: _SIZES_LIQUID },
+    { key: 'fragrance', label: 'Fragrance', options: [] },
+    { key: 'color', label: 'Color', options: [] },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  moisturizer: [
+    { key: 'bottleType', label: 'Bottle Type', options: _BOTTLE_TYPES },
+    { key: 'size', label: 'Size (ml)', options: _SIZES_LIQUID },
+    { key: 'fragrance', label: 'Fragrance', options: [] },
+    { key: 'color', label: 'Color', options: [] },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  shower_gel: [
+    { key: 'bottleType', label: 'Bottle Type', options: _BOTTLE_TYPES },
+    { key: 'size', label: 'Size (ml)', options: _SIZES_LIQUID },
+    { key: 'fragrance', label: 'Fragrance', options: [] },
+    { key: 'color', label: 'Color', options: [] },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  brush: [
+    { key: 'brushType', label: 'Brush Type', options: _BRUSH_TYPES },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  paste: [
+    { key: 'size', label: 'Size (g)', options: _SIZES_SOAP },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  razor: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
+  gel: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
+  vanity_item: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
+  med_kit: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
+  sewing: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
+};
+
+const getLeadProductTypeKey = (name) => {
+  const n = (name || '').toLowerCase().trim();
+  if (n.includes('soap')) return 'soap';
+  if (n.includes('shampoo')) return 'shampoo';
+  if (n.includes('moisturizer') || n.includes('moisturiser')) return 'moisturizer';
+  if (n.includes('shower') && n.includes('gel')) return 'shower_gel';
+  if (n.includes('showergel') || n.includes('shower_gel')) return 'shower_gel';
+  if (n.includes('razor')) return 'razor';
+  if (n.includes('gel')) return 'gel';
+  if (n.includes('brush')) return 'brush';
+  if (n.includes('paste')) return 'paste';
+  if (n.includes('medkit') || n.includes('med kit')) return 'med_kit';
+  if (n.includes('sweing') || n.includes('sewing')) return 'sewing';
+  if (n.includes('vanitykit') || n.includes('vanity kit') || n.includes('vanity')) return 'vanity_item';
+  return null;
+};
+
 // ─── Sub-components ───────────────────────────────────────────────────
 function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], inventoryItemsData = [], kits = [], packingMaterialOptions = PACKING_MATERIAL_OPTIONS }) {
   const { name, key, ...rest } = field;
@@ -407,7 +476,27 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
       .map((v) => ({ value: v, label: v }));
   const packingOptions = React.useMemo(() => toOptionList(invItem?.packingMaterial), [invItem]);
   const materialOptions = React.useMemo(() => toOptionList(invItem?.materialCategory), [invItem]);
-  const brandOptions = React.useMemo(() => toOptionList(invItem?.brand), [invItem]);
+
+  // Product-type key for dynamic fields (mirrors Inventory's add-item modal)
+  const productTypeKey = React.useMemo(() => invItem ? getLeadProductTypeKey(invItem.itemName) : null, [invItem]);
+
+  // Brand options: prefer productAttributes.brand (set in Inventory add-item), fall back to top-level brand
+  const brandOptions = React.useMemo(() => {
+    const attrBrand = invItem?.productAttributes?.brand;
+    if (Array.isArray(attrBrand) && attrBrand.length > 0) {
+      return attrBrand.map(v => ({ value: v, label: v }));
+    }
+    if (typeof attrBrand === 'string' && attrBrand) {
+      return toOptionList(attrBrand);
+    }
+    return toOptionList(invItem?.brand);
+  }, [invItem]);
+
+  // Dynamic fields specific to this product type (excludes brand/packingMaterial/sticker — already shown elsewhere)
+  const dynamicFieldDefs = React.useMemo(() => {
+    if (!productTypeKey) return [];
+    return PRODUCT_FIELD_DEFS_LEAD[productTypeKey] || [];
+  }, [productTypeKey]);
 
   // Pre-fill a spec field only when the inventory item defines a single value; when it offers
   // several, leave it blank so the user picks one from the (now restricted) dropdown.
@@ -423,7 +512,15 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     if (item.gstPercent != null && item.gstPercent > 0) form.setFieldValue([fieldName, name, 'gst'], item.gstPercent);
     applySpec('packingMaterial', item.packingMaterial);
     applySpec('materialCategory', item.materialCategory);
-    applySpec('brand', item.brand);
+    // Use productAttributes.brand (set in Inventory add-item modal) if available
+    const attrBrand = item.productAttributes?.brand;
+    if (Array.isArray(attrBrand) && attrBrand.length === 1) {
+      form.setFieldValue([fieldName, name, 'brand'], attrBrand[0]);
+    } else if (typeof attrBrand === 'string' && attrBrand) {
+      form.setFieldValue([fieldName, name, 'brand'], attrBrand);
+    } else {
+      applySpec('brand', item.brand);
+    }
   };
 
   return (
@@ -521,7 +618,14 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       if (item.gstPercent != null && item.gstPercent > 0) form.setFieldValue([fieldName, name, 'gst'], item.gstPercent);
                       applySpec('packingMaterial', item.packingMaterial);
                       applySpec('materialCategory', item.materialCategory);
-                      applySpec('brand', item.brand);
+                      const attrBrand = item.productAttributes?.brand;
+                      if (Array.isArray(attrBrand) && attrBrand.length === 1) {
+                        form.setFieldValue([fieldName, name, 'brand'], attrBrand[0]);
+                      } else if (typeof attrBrand === 'string' && attrBrand) {
+                        form.setFieldValue([fieldName, name, 'brand'], attrBrand);
+                      } else {
+                        applySpec('brand', item.brand);
+                      }
                     }}
                     onClear={() => {
                       form.setFieldValue([fieldName, name, 'name'], undefined);
@@ -561,6 +665,25 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
               </div>
             )}
           </Col>
+
+          {/* Brand — inline next to product when inventory has brands for this product */}
+          {brandOptions.length > 0 && (
+            <Col flex="none" style={{ width: 140 }}>
+              <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>BRAND</Text>
+              <Form.Item {...rest} name={[name, 'brand']} style={{ marginBottom: 0 }}>
+                <Select
+                  showSearch
+                  allowClear
+                  optionFilterProp="label"
+                  placeholder="Brand"
+                  disabled={isItemDisabled}
+                  size="small"
+                  style={{ width: '100%' }}
+                  options={brandOptions}
+                />
+              </Form.Item>
+            </Col>
+          )}
 
           {/* Display Unit & Size now live once at the kit-card header (see kit card) */}
 
@@ -696,23 +819,59 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 />
               </Form.Item>
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} style={{ marginBottom: 0 }}>
-                <SelectWithAdd
-                  field={brandOptions.length ? undefined : 'brand'}
-                  defaultOptions={brandOptions.length ? brandOptions : []}
-                  placeholder="Select / Add brand"
-                  disabled={isItemDisabled}
-                  size="small"
-                />
-              </Form.Item>
-            </div>
+            {/* Brand shown here only when inventory has no brands (otherwise it's inline in header) */}
+            {brandOptions.length === 0 && (
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} style={{ marginBottom: 0 }}>
+                  <SelectWithAdd
+                    field="brand"
+                    defaultOptions={[]}
+                    placeholder="Select / Add brand"
+                    disabled={isItemDisabled}
+                    size="small"
+                  />
+                </Form.Item>
+              </div>
+            )}
             <div style={{ flex: 1, minWidth: 0 }}>
               <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specs</span>} style={{ marginBottom: 0 }}>
                 <Input placeholder="e.g. Special handle" size="small" disabled={isItemDisabled} />
               </Form.Item>
             </div>
           </div>
+
+          {/* Dynamic product-type fields (size, fragrance, bottleType, etc.) based on selected product */}
+          {dynamicFieldDefs.length > 0 && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+              {dynamicFieldDefs.map((fd) => {
+                const attrVal = invItem?.productAttributes?.[fd.key];
+                const opts = Array.isArray(attrVal) && attrVal.length > 0
+                  ? attrVal.map(v => ({ value: v, label: v }))
+                  : typeof attrVal === 'string' && attrVal
+                    ? [{ value: attrVal, label: attrVal }]
+                    : fd.options || [];
+                return (
+                  <div key={fd.key} style={{ flex: '1 1 120px', minWidth: 100 }}>
+                    <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fd.label}</span>} style={{ marginBottom: 0 }}>
+                      {opts.length > 0 ? (
+                        <Select
+                          allowClear
+                          showSearch
+                          optionFilterProp="label"
+                          placeholder={fd.label}
+                          disabled={isItemDisabled}
+                          size="small"
+                          options={opts}
+                        />
+                      ) : (
+                        <Input placeholder={fd.label} size="small" disabled={isItemDisabled} />
+                      )}
+                    </Form.Item>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {isKit && (() => {
             const kitNameFromRow = form.getFieldValue([fieldName, name, 'kitName']);
@@ -2283,6 +2442,64 @@ export default function Sales() {
       setViewMode('table');
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to convert to Negotiation', { variant: 'error' });
+    }
+  };
+
+  const convertLeadToSample = async (lead) => {
+    if (!requireAccess('add')) return;
+    const validProducts = (lead.products || []).filter(p => p.name);
+    if (!validProducts.length) {
+      enqueueSnackbar('Please add at least one product before converting to Sample', { variant: 'warning' });
+      return;
+    }
+    try {
+      const sampleProducts = validProducts.map(p => ({ ...p, qty: 1, amount: Number(p.rate) || 0 }));
+      const subtotal = Math.round(calcTotal(sampleProducts));
+      const gstAmt = Math.round(calcGstAmount(sampleProducts));
+      const payload = {
+        clientName: lead.hotelName || lead.billingName,
+        clientPartyId: lead.clientPartyId?._id || lead.clientPartyId,
+        hotelName: lead.hotelName,
+        hotelType: lead.hotelType,
+        billingName: lead.billingName,
+        location: lead.location,
+        clientPhone: lead.phone,
+        phone: lead.phone,
+        contactPerson: lead.contactPerson,
+        salesPerson: lead.salesPerson,
+        gstNumber: lead.gstNumber,
+        gstPercent: lead.gstPercent,
+        billType: lead.billType,
+        detailedAddress: lead.detailedAddress,
+        city: lead.city,
+        state: lead.state,
+        pincode: lead.pincode,
+        products: sampleProducts,
+        totalAmount: subtotal,
+        gstAmount: gstAmt,
+        total: subtotal + gstAmt,
+        orderCategory: 'SAMPLE',
+        status: 'In Production',
+        logoRequired: lead.logoRequired,
+        logoUrl: lead.logoUrl,
+        displayUnit: lead.displayUnit,
+        kitDisplayUnit: lead.kitDisplayUnit,
+        displayUnitTab: lead.displayUnitTab,
+        packingMaterial: lead.packingMaterial,
+        selectedKit: lead.selectedKit,
+        kitSize: lead.kitSize,
+        deliveryBy: lead.deliveryBy,
+        transportationBy: lead.transportationBy,
+        forwardingCharge: lead.forwardingCharge,
+        forwardingChargeAmount: lead.forwardingChargeAmount || 0,
+        leadId: lead._id || lead.key,
+      };
+      await createSalesOrderMutation(payload).unwrap();
+      enqueueSnackbar('Sample order created! All products set to qty 1.', { variant: 'success' });
+      setViewMode('table');
+      setActiveTab('orders');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create sample order', { variant: 'error' });
     }
   };
 
@@ -5604,6 +5821,18 @@ export default function Sales() {
                       style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 8 }}
                       onClick={() => convertLeadToNegotiation(record)}
                     >Convert to Negotiation</Button>
+                    <Popconfirm
+                      title="Convert to Sample?"
+                      description="Creates a new sample order with all products at qty 1. The lead stays unchanged."
+                      onConfirm={() => convertLeadToSample(record)}
+                      okText="Create Sample"
+                      cancelText="Cancel"
+                      okButtonProps={{ style: { background: '#722ed1', borderColor: '#722ed1' } }}
+                    >
+                      <Button icon={<ExperimentOutlined />} style={{ borderRadius: 8, color: '#722ed1', borderColor: '#722ed155' }}>
+                        Convert to Sample
+                      </Button>
+                    </Popconfirm>
                   </>
                 )}
               </>
