@@ -51,12 +51,15 @@ exports.createItem = asyncHandler(async (req, res) => {
 });
 
 exports.updateItem = asyncHandler(async (req, res, next) => {
-  const item = await InventoryItem.findOneAndUpdate(
-    { _id: req.params.id, deletedAt: null },
-    req.body,
-    { new: true, runValidators: true }
-  );
+  const item = await InventoryItem.findOne({ _id: req.params.id, deletedAt: null });
   if (!item) return next(new AppError('Item not found', 404));
+  const { productAttributes, ...rest } = req.body;
+  Object.assign(item, rest);
+  if (productAttributes !== undefined) {
+    item.productAttributes = productAttributes;
+    item.markModified('productAttributes');
+  }
+  await item.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, data: item });
 });
 

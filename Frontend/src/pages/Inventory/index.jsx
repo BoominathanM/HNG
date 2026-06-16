@@ -66,35 +66,34 @@ const PASTE_BRANDS = ['Promise', 'Meswak', 'Anchor', 'Colgate'].map(v => ({ valu
 const BRUSH_BRANDS = ['Promise', 'Anchor', 'Pristin'].map(v => ({ value: v, label: v }));
 
 // usePackingConfig: true → options are populated at render time from the packing config state
-// type: 'text' → renders a plain Input instead of a Select
 const PRODUCT_FIELD_DEFS = {
   soap: [
     { key: 'shape', label: 'Shape', field: 'soap_shape', options: SOAP_SHAPES },
     { key: 'size', label: 'Sizes (gram)', field: 'soap_size', options: SIZES_SOAP, mode: 'multiple' },
     { key: 'stickerShape', label: 'Sticker Shape', field: 'soap_stickerShape', options: SOAP_SHAPES },
-    { key: 'fragrance', label: 'Fragrance', field: 'soap_fragrance', type: 'text' },
+    { key: 'fragrance', label: 'Fragrance', field: 'soap_fragrance', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'soap_stickerPrinting', options: YES_NO },
     { key: 'printing', label: 'Printing', field: 'soap_printing', options: YES_NO },
   ],
   shampoo: [
     { key: 'bottleType', label: 'Bottle Type', field: 'shampoo_bottleType', options: BOTTLE_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'shampoo_size', options: SIZES_LIQUID, mode: 'multiple' },
-    { key: 'fragrance', label: 'Fragrance', field: 'shampoo_fragrance', type: 'text' },
-    { key: 'color', label: 'Color', field: 'shampoo_color', type: 'text' },
+    { key: 'fragrance', label: 'Fragrance', field: 'shampoo_fragrance', options: [] },
+    { key: 'color', label: 'Color', field: 'shampoo_color', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'shampoo_stickerPrinting', options: YES_NO },
   ],
   moisturizer: [
     { key: 'bottleType', label: 'Bottle Type', field: 'moisturizer_bottleType', options: BOTTLE_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'moisturizer_size', options: SIZES_LIQUID, mode: 'multiple' },
-    { key: 'fragrance', label: 'Fragrance', field: 'moisturizer_fragrance', type: 'text' },
-    { key: 'color', label: 'Color', field: 'moisturizer_color', type: 'text' },
+    { key: 'fragrance', label: 'Fragrance', field: 'moisturizer_fragrance', options: [] },
+    { key: 'color', label: 'Color', field: 'moisturizer_color', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'moisturizer_stickerPrinting', options: YES_NO },
   ],
   shower_gel: [
     { key: 'bottleType', label: 'Bottle Type', field: 'shower_gel_bottleType', options: BOTTLE_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'shower_gel_size', options: SIZES_LIQUID, mode: 'multiple' },
-    { key: 'fragrance', label: 'Fragrance', field: 'shower_gel_fragrance', type: 'text' },
-    { key: 'color', label: 'Color', field: 'shower_gel_color', type: 'text' },
+    { key: 'fragrance', label: 'Fragrance', field: 'shower_gel_fragrance', options: [] },
+    { key: 'color', label: 'Color', field: 'shower_gel_color', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'shower_gel_stickerPrinting', options: YES_NO },
   ],
   brush: [
@@ -190,7 +189,7 @@ export default function Inventory() {
 
   const [viewBillDetail, setViewBillDetail] = useState(null);
 
-  const { data: invData, isLoading: invLoading } = useGetItemsQuery();
+  const { data: invData, isLoading: invLoading } = useGetItemsQuery({ limit: 1000 });
   const { data: approvalsData } = useGetStockApprovalsQuery();
   const { data: suppliersData } = useGetVendorsQuery({ type: 'raw_material' });
   const [createItemMutation] = useCreateItemMutation();
@@ -608,6 +607,12 @@ export default function Inventory() {
   const handleSaveItem = async () => {
     try {
       const vals = await addItemForm.validateFields();
+      // Strip undefined/null so stale keys from a previously-selected product type
+      // don't overwrite attributes the user never intended to clear.
+      const rawAttrs = vals.productAttrs || {};
+      const cleanAttrs = Object.fromEntries(
+        Object.entries(rawAttrs).filter(([, v]) => v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0))
+      );
       const payload = {
         itemName: vals.name,
         category: vals.category || '',
@@ -617,7 +622,7 @@ export default function Inventory() {
         sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         gstPercent: Number(vals.gstPercent) || 0,
         hsnCode: vals.hsn || '',
-        productAttributes: vals.productAttrs || {},
+        productAttributes: cleanAttrs,
       };
       if (editingItem) {
         await updateItemMutation({ id: editingItem.key, ...payload }).unwrap();
@@ -2052,17 +2057,13 @@ export default function Inventory() {
                 {productFieldDefs.map((fd) => (
                   <Col xs={24} sm={12} key={fd.key}>
                     <Form.Item label={fd.label} name={['productAttrs', fd.key]}>
-                      {fd.type === 'text' ? (
-                        <Input placeholder={`Enter ${fd.label.toLowerCase()}`} />
-                      ) : (
-                        <SelectWithAdd
-                          field={fd.field}
-                          mode={fd.mode}
-                          defaultOptions={fd.usePackingConfig ? packingMaterials.map(c => ({ value: c.value, label: c.label })) : fd.options}
-                          placeholder={`Select / Add ${fd.label.toLowerCase()}`}
-                          allowClear
-                        />
-                      )}
+                      <SelectWithAdd
+                        field={fd.field}
+                        mode={fd.mode}
+                        defaultOptions={fd.usePackingConfig ? packingMaterials.map(c => ({ value: c.value, label: c.label })) : fd.options}
+                        placeholder={`Select / Add ${fd.label.toLowerCase()}`}
+                        allowClear
+                      />
                     </Form.Item>
                   </Col>
                 ))}
