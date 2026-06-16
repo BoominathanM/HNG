@@ -285,6 +285,8 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     packaging: p.packaging || p.packingMaterial || '',
     packingMaterial: p.packingMaterial || p.packaging || '',
     sticker: p.sticker || '',
+    // Carry the printing flag so Operations can route the item (Print tab → packaging tab)
+    printing: p.printing || '',
     size: p.size || '',
     material: p.material || p.materialCategory || '',
     isKit: p.isKit || false,
@@ -321,6 +323,10 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     forwardingCharge: lead.forwardingCharge,
     forwardingChargeAmount: lead.forwardingChargeAmount || 0,
     paymentTerms: lead.paymentTerms,
+    // Emergency / partial-delivery data so it survives lead → negotiation → order
+    splitDates: req.body.splitDates || lead.splitDates || [],
+    isEmergency: !!(req.body.isEmergency) || !!(lead.isEmergency) || !!(lead.splitDates?.length),
+    isUrgent: !!(req.body.isUrgent) || !!(lead.isUrgent) || !!(lead.splitDates?.length),
     createdBy: req.user._id,
   });
   await Lead.findByIdAndUpdate(lead._id, { status: 'Negotiation' });

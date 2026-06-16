@@ -2311,7 +2311,7 @@ export default function Sales() {
     const now = new Date().toISOString();
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
     const fieldsBySection = {
-      hotel: ['hotelName', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
+      hotel: ['hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
       billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber'],
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
       leadJourney: ['followUpStep'],
@@ -2460,6 +2460,10 @@ export default function Sales() {
         deliveryBy: lead.deliveryBy,
         transportationBy: lead.transportationBy,
         paymentTerms: lead.paymentTerms,
+        // Carry emergency / partial-delivery data so it isn't lost on the direct lead→negotiation path
+        splitDates: lead.splitDates || [],
+        isEmergency: !!lead.isEmergency || !!(lead.splitDates?.length),
+        isUrgent: !!lead.isUrgent || !!(lead.splitDates?.length),
       }).unwrap();
       enqueueSnackbar(`${lead.hotelName} converted to Negotiation (${newNeg.nid})`, { variant: 'success' });
       setActiveTab('quotations');

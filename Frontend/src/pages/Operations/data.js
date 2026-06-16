@@ -110,6 +110,15 @@ const isFrostedZiplock = (item, order) => {
 const itemNeedsSticker = (item) =>
   item.sticker === 'YES' || (item.sticker !== 'NO' && item.logoType === 'Sticker');
 
+// Returns true when an item needs a direct printing step (Printing = Yes on the product/kit).
+// Like sticker, a printing item goes through the Sticker/Print tab first, then moves on to its
+// Box/Ziplock packaging tab (or stays in the Print tab if it has no box/ziplock packaging).
+const itemNeedsPrinting = (item) => String(item.printing ?? '').trim().toUpperCase() === 'YES';
+
+// Combined "needs a print step" check (sticker OR printing) — drives Sticker/Print tab membership
+// and the pre-packaging gate for the Box/Frosted tabs.
+const itemNeedsPrintStep = (item) => itemNeedsSticker(item) || itemNeedsPrinting(item);
+
 // Determine an item's ultimate packaging destination (after sticker step completes).
 const getItemPackagingType = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
@@ -231,19 +240,19 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         .filter(({ item, idx }) => {
           const isKitItem = !!(item.isKit || item.kitType);
           if (!isKitItem) {
-            // Standalone products with sticker=YES always go to Sticker tab — packingMaterialTab
-            // does not bypass sticker for standalone items; they stay in Sticker after printing.
-            // Only sticker=NO standalone items with explicit packing config skip sticker entirely.
-            const needsStickerStandalone = itemNeedsSticker(item);
-            if (!needsStickerStandalone && (item.packingMaterialTab === 'Box' || item.packingMaterialTab === 'Ziplock')) return false;
+            // Standalone products that need a print step (Sticker=Yes OR Printing=Yes) go to the
+            // Sticker/Print tab. Items with no print step and an explicit Box/Ziplock packing tab
+            // skip the Print tab entirely.
+            const needsPrintStandalone = itemNeedsPrintStep(item);
+            if (!needsPrintStandalone && (item.packingMaterialTab === 'Box' || item.packingMaterialTab === 'Ziplock')) return false;
           } else {
-            // Kit items: sticker=YES still goes through Sticker tab first even if
-            // displayUnitTab is Box/Ziplock. Only sticker=NO kit items skip sticker.
+            // Kit items: Sticker=Yes / Printing=Yes still goes through the Print tab first even if
+            // displayUnitTab is Box/Ziplock. Only kit items with no print step skip it.
             if ((order.displayUnitTab === 'Box' || order.displayUnitTab === 'Ziplock') &&
-                !itemNeedsSticker(item)) return false;
+                !itemNeedsPrintStep(item)) return false;
           }
-          // Sticker Printing = Yes → route to Sticker tab regardless of Logo Required or Packing Material.
-          if (!itemNeedsSticker(item)) return false;
+          // Sticker=Yes or Printing=Yes → route to the Sticker/Print tab regardless of Logo / Packing Material.
+          if (!itemNeedsPrintStep(item)) return false;
           // Once the item's sticker is printed and it has a box/frosted destination,
           // remove it from the sticker queue — it now lives in the box/frosted tab.
           const packagingType = getItemPackagingType(item, order);
@@ -323,18 +332,20 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         if (!needsBoxPacking) return;
         const product = item.product || item.itemName;
         const needsSticker = itemNeedsSticker(item);
+        // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before box.
+        const needsPrint = itemNeedsPrintStep(item);
         // "Belongs in Box" — used for the no-logo exclusion check.
         const hasExplicitBoxTab = (isKitItem && order.displayUnitTab === 'Box') || item.packingMaterialTab === 'Box';
-        // "Can bypass sticker gate" — kit items must complete Sticker tab first even when
-        // their display unit resolves to Box; only standalone packing-config items bypass.
-        const canBypassBoxSticker = !isKitItem && hasExplicitBoxTab;
-        if (needsSticker && !canBypassBoxSticker && !isStickerPrinted(order.id, product, idx)) return;
-        // Sticker Printing = No, Logo Required = No → no routing to Box tab, unless explicit Box tab.
-        if (!needsSticker && !order.logoRequired && !hasExplicitBoxTab) return;
+        // "Can bypass print gate" — only standalone items that DON'T need a print step show in
+        // Box directly. Items needing Sticker/Printing always clear the Print tab first.
+        const canBypassBoxSticker = !isKitItem && hasExplicitBoxTab && !needsPrint;
+        if (needsPrint && !canBypassBoxSticker && !isStickerPrinted(order.id, product, idx)) return;
+        // No print step, Logo Required = No → no routing to Box tab, unless explicit Box tab.
+        if (!needsPrint && !order.logoRequired && !hasExplicitBoxTab) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
         const itemQty = Number(item.qty) || 0;
-        const boxNote = needsSticker ? 'Sticker approved — now in box manufacturing queue' : 'Box manufacturing';
+        const boxNote = needsPrint ? 'Print approved — now in box manufacturing queue' : 'Box manufacturing';
 
         const makeBoxRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-box${keySuffix}`,
@@ -348,7 +359,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,
           note: boxNote,
-          stickerPrinting: needsSticker ? 'Yes' : 'No',
+          stickerPrinting: needsPrint ? 'Yes' : 'No',
           packagingType: 'box',
           isUrgent: order.isUrgent || false,
           isEmergencyProduct,
@@ -393,25 +404,27 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         if (!needsFrostedPacking) return;
         const product = item.product || item.itemName;
         const needsSticker = itemNeedsSticker(item);
+        // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before frosted.
+        const needsPrint = itemNeedsPrintStep(item);
         // "Belongs in Frosted" — used for the no-logo exclusion check and active-SR gate.
         const hasExplicitZiplockTab = (isKitItem && order.displayUnitTab === 'Ziplock') || item.packingMaterialTab === 'Ziplock';
-        // "Can bypass sticker gate" — kit items must complete Sticker tab first even when
-        // their display unit resolves to Ziplock; only standalone packing-config items bypass.
-        const canBypassZiplockSticker = !isKitItem && item.packingMaterialTab === 'Ziplock';
-        // Gate on an active Sticker-type SR so that sticker=YES items alongside frosted packaging
-        // still wait in the sticker tab until printed (only stickerType='Sticker' to avoid
+        // "Can bypass print gate" — only standalone items that DON'T need a print step show in
+        // Frosted directly. Items needing Sticker/Printing always clear the Print tab first.
+        const canBypassZiplockSticker = !isKitItem && item.packingMaterialTab === 'Ziplock' && !needsPrint;
+        // Gate on an active Sticker-type SR so that print items alongside frosted packaging
+        // still wait in the print tab until printed (only stickerType='Sticker' to avoid
         // false matches from a Frosted Ziplock SR created within this tab).
         const sr = findSR(order.id, product, 'Sticker');
         const hasActiveSR = sr && !STICKER_MOVED_ON_STATUSES.has(sr.status);
-        if (needsSticker && !canBypassZiplockSticker && !isStickerPrinted(order.id, product, idx)) return;
-        // Active SR from the sticker tab blocks display even when sticker is not explicitly set.
-        if (!needsSticker && hasActiveSR && !hasExplicitZiplockTab && !isStickerPrinted(order.id, product, idx)) return;
-        // Sticker Printing = No, Logo Required = No → no routing to Frosted tab, unless explicit Ziplock tab is set.
-        if (!needsSticker && !order.logoRequired && !hasExplicitZiplockTab) return;
+        if (needsPrint && !canBypassZiplockSticker && !isStickerPrinted(order.id, product, idx)) return;
+        // Active SR from the print tab blocks display even when no print step is explicitly set.
+        if (!needsPrint && hasActiveSR && !hasExplicitZiplockTab && !isStickerPrinted(order.id, product, idx)) return;
+        // No print step, Logo Required = No → no routing to Frosted tab, unless explicit Ziplock tab is set.
+        if (!needsPrint && !order.logoRequired && !hasExplicitZiplockTab) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
         const itemQty = Number(item.qty) || 0;
-        const frostedNote = needsSticker ? 'Sticker approved — now in frosted ziplock queue' : 'Dispatch and received updates should be verified by operations';
+        const frostedNote = needsPrint ? 'Print approved — now in frosted ziplock queue' : 'Dispatch and received updates should be verified by operations';
 
         const makeFrostedRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-frosted${keySuffix}`,
@@ -425,7 +438,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
           verified: order.stockStatus === 'Received',
           note: frostedNote,
-          stickerPrinting: needsSticker ? 'Yes' : 'No',
+          stickerPrinting: needsPrint ? 'Yes' : 'No',
           packagingType: 'frosted',
           isUrgent: order.isUrgent || false,
           isEmergencyProduct,

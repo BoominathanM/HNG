@@ -16,7 +16,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
     Order.find(filter)
       .populate('assignedTo', 'fullName')
       .populate('items.itemId', 'sellingPrice hsnCode discountPercent packingMaterial materialCategory brand currentStock defaultSize')
-      .populate('leadId', 'paymentProofs orderDeliveryDate hotelLogoUrl logoNeeded splitDates isEmergency isUrgent kitDisplayUnit displayUnit leadType')
+      .populate('leadId', 'paymentProofs orderDeliveryDate hotelLogoUrl logoNeeded splitDates isEmergency isUrgent kitDisplayUnit displayUnit displayUnitTab kitSize leadType contactPerson gstNumber gstPercent billingName salesPerson location locationCity deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms billType detailedAddress city state pincode')
       .sort('-createdAt')
       .skip((page - 1) * limit)
       .limit(limit),

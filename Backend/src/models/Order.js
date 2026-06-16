@@ -44,6 +44,17 @@ const orderSchema = new mongoose.Schema({
         return s === 'YES' || s === 'NO' ? s : '';
       },
     },
+    // Direct printing flag (separate from sticker). Drives Operations routing: a printing item
+    // goes through the Sticker/Print tab first, then to its Box/Ziplock packaging tab.
+    printing: {
+      type: String,
+      enum: ['YES', 'NO', ''],
+      default: '',
+      set: (v) => {
+        const s = String(v ?? '').trim().toUpperCase();
+        return s === 'YES' || s === 'NO' ? s : '';
+      },
+    },
     size: String,
     packaging: String,
     material: String,
@@ -61,6 +72,18 @@ const orderSchema = new mongoose.Schema({
   // ─── Operations workflow tracking ───
   isUrgent: { type: Boolean, default: false },
   isEmergency: { type: Boolean, default: false },
+  // Emergency dispatch request + dual approval (sales head + ops head). Previously persisted
+  // only via strict:false; made explicit so they reliably round-trip on fetch.
+  emergencyDispatchRequested: { type: Boolean, default: false },
+  emergencySalesApproved: { type: Boolean, default: false },
+  emergencyOpsApproved: { type: Boolean, default: false },
+  emergencyApproved: { type: Boolean, default: false },
+  emergencyTaskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
+  emergencyReason: String,
+  // Delivery routing (copied from the originating lead/negotiation at conversion).
+  deliveryBy: String,
+  transportationBy: String,
+  forwardingCharge: { type: Boolean, default: false },
   deliveryType: { type: String, enum: ['Full', 'Partial', ''], default: '' },
   // Partial-delivery tracking: partial qty processed now, balance as a follow-on entry (same order ID).
   partialQty: { type: Number, default: 0 },
