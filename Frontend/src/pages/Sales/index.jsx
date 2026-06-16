@@ -4,7 +4,7 @@ import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal, Form, Row, Col, Typography,
   Drawer, Steps, Divider, Badge, InputNumber, Tooltip, Checkbox, Slider, Upload, Progress,
   DatePicker, Descriptions, Timeline, AutoComplete, Switch,
-  Spin,
+  Spin, Popconfirm,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -1781,14 +1781,22 @@ export default function Sales() {
 
   useEffect(() => {
     const gstin = selectedRecord?.gstNumber;
+    const storedData = selectedRecord?.gstVerifiedData;
     const gstDetailViews = ['order-detail', 'quotation-detail', 'negotiation-detail', 'detail'];
     if (gstDetailViews.includes(viewMode) && gstin) {
-      fetchGstDetails(gstin);
+      if (storedData) {
+        // Use persisted verified data immediately — no live API call needed
+        setGstApiData(storedData);
+        setGstApiLoading(false);
+        setGstApiError(null);
+      } else {
+        fetchGstDetails(gstin);
+      }
     } else {
       setGstApiData(null);
       setGstApiError(null);
     }
-  }, [viewMode, selectedRecord?.gstNumber]);
+  }, [viewMode, selectedRecord?.gstNumber, selectedRecord?.gstVerifiedData]);
 
   const newLeadDefaults = {
     hotelType: 'OLD', billType: 'GST', forwardingCharge: false,
@@ -1895,6 +1903,7 @@ export default function Sales() {
       priority: Number(values.priority) || 0,
       isPriority: Number(values.priority) > 0,
       priorityNote: values.mentionPriority,
+      gstVerifiedData: gstAddApiData || undefined,
     };
   };
 
@@ -2015,7 +2024,7 @@ export default function Sales() {
         phone: undefined, email: undefined,
         alternativeRole: undefined, alternativeName: undefined, alternativePhone: undefined,
         location: undefined, destination: undefined, source: undefined,
-        gstNumber: undefined, gstPercent: undefined,
+        gstNumber: undefined,
         detailedAddress: undefined, city: undefined, state: undefined, pincode: undefined,
         status: undefined, quotationNo: undefined, followUpName: undefined, followUpTime: undefined, followUpStep: undefined,
         interestedInSoftware: undefined, previousSoftware: undefined, previousSoftwarePrice: undefined,
@@ -2076,6 +2085,7 @@ export default function Sales() {
             phone: payload.phone,
             type: 'Customer',
             gstNumber: payload.gstNumber,
+            gstVerifiedData: gstAddApiData || undefined,
             contactPerson: payload.contactPerson,
             city: payload.city,
             state: payload.state,
@@ -2102,7 +2112,7 @@ export default function Sales() {
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
     const fieldsBySection = {
       hotel: ['hotelName', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
-      billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber', 'gstPercent'],
+      billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber'],
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
       leadJourney: ['followUpStep'],
       personalization: ['productType', 'displayUnit'],
@@ -2196,7 +2206,7 @@ export default function Sales() {
       customerId: null,
       hotelName: lead.hotelName, billingName: lead.billingName, location: lead.location,
       contactPerson: lead.contactPerson, phone: lead.phone,
-      hotelType: lead.hotelType, billType: lead.billType, gstNumber: lead.gstNumber, gstPercent: lead.gstPercent,
+      hotelType: lead.hotelType, billType: lead.billType, gstNumber: lead.gstNumber,
       salesPerson: lead.salesPerson,
       products: (lead.products || []).map(p => ({ ...p })),
       forwardingCharge: lead.forwardingCharge, deliveryBy: lead.deliveryBy, transportationBy: lead.transportationBy,
@@ -2244,7 +2254,6 @@ export default function Sales() {
         salesPerson: lead.salesPerson,
         hotelType: lead.hotelType,
         gstNumber: lead.gstNumber,
-        gstPercent: lead.gstPercent,
         forwardingCharge: lead.forwardingCharge,
         deliveryBy: lead.deliveryBy,
         transportationBy: lead.transportationBy,
@@ -2352,6 +2361,7 @@ export default function Sales() {
           hotelType: values.hotelType || src.hotelType,
           gstNumber: src.gstNumber,
           gstPercent: src.gstPercent,
+          gstVerifiedData: src.gstVerifiedData || undefined,
           // Order details
           specifications: src.specifications || [],
           logoNeeded: src.logoNeeded,
@@ -2465,7 +2475,6 @@ export default function Sales() {
           location: d.locationCity || d.location || d.city,
           destination: d.destination,
           gstNumber: d.gstNumber,
-          gstPercent: d.gstPercent,
           branch: d.branch || branch,
           // Form fields use "alternativeRole/Name/Phone", not "altRole/Name/Number"
           alternativeRole: d.altRole,
@@ -2568,6 +2577,7 @@ export default function Sales() {
       hotelType: q.hotelType,
       gstNumber: q.gstNumber,
       gstPercent: q.gstPercent,
+      gstVerifiedData: q.gstVerifiedData || undefined,
       detailedAddress: q.detailedAddress,
       city: q.city,
       state: q.state,
@@ -2612,6 +2622,61 @@ export default function Sales() {
       enqueueSnackbar('Invoice generated successfully! Order is now pending payment.', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to generate invoice', { variant: 'error' });
+    }
+  };
+
+  const convertOrderToSample = async (order) => {
+    try {
+      const sampleProducts = (order.products || []).filter(Boolean).map(p => ({
+        ...p,
+        qty: 1,
+        amount: Number(p.rate) || 0,
+      }));
+      const subtotal = Math.round(calcTotal(sampleProducts));
+      const gstAmt = Math.round(calcGstAmount(sampleProducts));
+      const payload = {
+        clientName: order.clientName || order.hotelName,
+        clientPartyId: order.clientPartyId?._id || order.clientPartyId,
+        hotelName: order.hotelName,
+        hotelType: order.hotelType,
+        billingName: order.billingName,
+        location: order.location,
+        clientPhone: order.clientPhone || order.phone,
+        phone: order.phone || order.clientPhone,
+        contactPerson: order.contactPerson,
+        salesPerson: order.salesPerson,
+        gstNumber: order.gstNumber,
+        gstPercent: order.gstPercent,
+        billType: order.billType,
+        detailedAddress: order.detailedAddress,
+        city: order.city,
+        state: order.state,
+        pincode: order.pincode,
+        products: sampleProducts,
+        totalAmount: subtotal,
+        gstAmount: gstAmt,
+        total: subtotal + gstAmt,
+        orderCategory: 'SAMPLE',
+        status: 'In Production',
+        logoRequired: order.logoRequired,
+        logoUrl: order.logoUrl,
+        displayUnit: order.displayUnit,
+        kitDisplayUnit: order.kitDisplayUnit,
+        displayUnitTab: order.displayUnitTab,
+        packingMaterial: order.packingMaterial,
+        selectedKit: order.selectedKit,
+        kitSize: order.kitSize,
+        deliveryBy: order.deliveryBy,
+        transportationBy: order.transportationBy,
+        forwardingCharge: order.forwardingCharge,
+        expectedDeliveryDate: order.expectedDeliveryDate,
+      };
+      await createSalesOrderMutation(payload).unwrap();
+      enqueueSnackbar('Sample order created! All products set to qty 1.', { variant: 'success' });
+      setViewMode('table');
+      setActiveTab('orders');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create sample order', { variant: 'error' });
     }
   };
 
@@ -4142,6 +4207,20 @@ export default function Sales() {
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(o)}>WhatsApp</Button>
               <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} onClick={() => handleDownloadQuotation(o)}>Download Quotation</Button>
               <Button icon={<EditOutlined />} style={{ borderRadius: 8, color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={() => openOrderEditModal(o)}>{o.orderCategory !== 'SAMPLE' ? 'Edit Delivery & Payment' : 'Edit Delivery'}</Button>
+              {o.orderCategory !== 'SAMPLE' && (
+                <Popconfirm
+                  title="Convert to Sample?"
+                  description="Creates a new sample order with all products at qty 1. Your original order stays unchanged."
+                  onConfirm={() => convertOrderToSample(o)}
+                  okText="Create Sample"
+                  cancelText="Cancel"
+                  okButtonProps={{ style: { background: '#722ed1', borderColor: '#722ed1' } }}
+                >
+                  <Button icon={<ExperimentOutlined />} style={{ borderRadius: 8, color: '#722ed1', borderColor: '#722ed155' }}>
+                    Convert to Sample
+                  </Button>
+                </Popconfirm>
+              )}
               <Button
                 icon={<WarningOutlined />}
                 style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
@@ -4622,7 +4701,7 @@ export default function Sales() {
               </Card>
 
               {/* GST API Details Card */}
-              {o.billType === 'GST' && o.gstNumber && (
+              {o.gstNumber && (
                 <Card
                   style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={
@@ -4678,7 +4757,7 @@ export default function Sales() {
                   )}
                   {!gstApiData && !gstApiLoading && !gstApiError && (
                     <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                      <Text type="secondary" style={{ fontSize: 12 }}>Click Refresh to load GST details</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>GST details load automatically.<br />Click Refresh to reload.</Text>
                     </div>
                   )}
                 </Card>
@@ -5702,7 +5781,6 @@ export default function Sales() {
                               location: undefined,
                               destination: undefined,
                               gstNumber: undefined,
-                              gstPercent: undefined,
                               branch: undefined,
                               alternativeRole: undefined,
                               alternativeName: undefined,
@@ -5718,16 +5796,6 @@ export default function Sales() {
                         </Select>
                       </Form.Item>
                     </Col>
-                    {watchedHotelType === 'NEW' && (
-                      <Col xs={24} sm={6}>
-                        <Form.Item label="Order / Sample" name="leadType">
-                          <Select placeholder="Select type" allowClear>
-                            <Option value="ORDER">Order</Option>
-                            <Option value="SAMPLE">Sample</Option>
-                          </Select>
-                        </Form.Item>
-                      </Col>
-                    )}
                     <Col xs={24} sm={6}>
                       <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
                         {watchedHotelType === 'NEW' ? (
@@ -5914,10 +5982,7 @@ export default function Sales() {
                       <Row gutter={[24, 12]}>
                         {record.leadType !== 'SAMPLE' && <Col xs={24} sm={12}><InfoRow label="Bill Type" value={record.billType === 'GST' ? 'GST Bill' : 'Non-GST'} /></Col>}
                         {record.leadType !== 'SAMPLE' && record.billType === 'GST' && (
-                          <>
-                            <Col xs={24} sm={12}><InfoRow label="GSTIN" value={record.gstNumber} /></Col>
-                            <Col xs={24} sm={12}><InfoRow label="GST Rate" value={`${record.gstPercent}%`} /></Col>
-                          </>
+                          <Col xs={24} sm={12}><InfoRow label="GSTIN" value={record.gstNumber} /></Col>
                         )}
                         <Col xs={24} sm={12}><InfoRow label="City" value={record.city} /></Col>
                         <Col xs={24} sm={12}><InfoRow label="State" value={record.state} /></Col>
@@ -5955,8 +6020,7 @@ export default function Sales() {
                                 />
                               </Form.Item>
                             </Col>
-                            <Col xs={24} sm={12}><Form.Item label="GST %" name="gstPercent"><InputNumber style={{ width: '100%' }} placeholder="18" /></Form.Item></Col>
-                            {/* GST verification result shown below the two GST fields */}
+                            {/* GST verification result shown below the GST field */}
                             {gstAddApiError && !gstAddApiLoading && (
                               <Col xs={24}>
                                 <div style={{ marginTop: -8, marginBottom: 12, padding: '8px 12px', background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 8 }}>

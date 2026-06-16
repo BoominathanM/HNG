@@ -253,6 +253,8 @@ export default function Operations() {
     () => buildProductionQueues(apiOrders, stickerRequests, queueSteps),
     [apiOrders, stickerRequests, queueSteps],
   );
+  const [orderMgmtInnerTab, setOrderMgmtInnerTab] = useState('order');
+
   const [requestOpen, setRequestOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
@@ -1228,23 +1230,74 @@ export default function Operations() {
                     </Space>
                   }
                   style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                  styles={{ body: { padding: 0 } }}
+                  styles={{ body: { padding: '0 0 8px 0' } }}
                 >
-                  <div className="table-responsive" style={{ padding: 4 }}>
-                    <Table
-                      dataSource={filteredOrders}
-                      columns={orderColumns}
-                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
-                      size="small"
-                      onRow={(record) => ({
-                        onClick: () => navigate(`/operations/${record.id}`),
-                        style: {
-                          cursor: 'pointer',
-                          background: record.hasEmergencyProducts ? '#fff2f0' : (record.isUrgent ? '#fffbe6' : undefined),
-                        },
-                      })}
-                    />
-                  </div>
+                  <Tabs
+                    activeKey={orderMgmtInnerTab}
+                    onChange={setOrderMgmtInnerTab}
+                    size="small"
+                    style={{ padding: '0 12px' }}
+                    items={[
+                      {
+                        key: 'order',
+                        label: (
+                          <Space size={4}>
+                            <ToolOutlined />
+                            Orders
+                            <Tag color="pink" style={{ margin: 0, fontSize: 10, padding: '0 5px', lineHeight: '16px' }}>
+                              {filteredOrders.filter((o) => o.orderCategory !== 'SAMPLE').length}
+                            </Tag>
+                          </Space>
+                        ),
+                        children: (
+                          <div className="table-responsive" style={{ padding: 4 }}>
+                            <Table
+                              dataSource={filteredOrders.filter((o) => o.orderCategory !== 'SAMPLE')}
+                              columns={orderColumns}
+                              pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                              size="small"
+                              onRow={(record) => ({
+                                onClick: () => navigate(`/operations/${record.id}`),
+                                style: {
+                                  cursor: 'pointer',
+                                  background: record.hasEmergencyProducts ? '#fff2f0' : (record.isUrgent ? '#fffbe6' : undefined),
+                                },
+                              })}
+                            />
+                          </div>
+                        ),
+                      },
+                      {
+                        key: 'sample',
+                        label: (
+                          <Space size={4}>
+                            <ExperimentOutlined />
+                            Samples
+                            <Tag color="purple" style={{ margin: 0, fontSize: 10, padding: '0 5px', lineHeight: '16px' }}>
+                              {filteredOrders.filter((o) => o.orderCategory === 'SAMPLE').length}
+                            </Tag>
+                          </Space>
+                        ),
+                        children: (
+                          <div className="table-responsive" style={{ padding: 4 }}>
+                            <Table
+                              dataSource={filteredOrders.filter((o) => o.orderCategory === 'SAMPLE')}
+                              columns={orderColumns}
+                              pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                              size="small"
+                              onRow={(record) => ({
+                                onClick: () => navigate(`/operations/${record.id}`),
+                                style: {
+                                  cursor: 'pointer',
+                                  background: record.hasEmergencyProducts ? '#fff2f0' : (record.isUrgent ? '#fffbe6' : undefined),
+                                },
+                              })}
+                            />
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
                 </Card>
               </Space>
             ),

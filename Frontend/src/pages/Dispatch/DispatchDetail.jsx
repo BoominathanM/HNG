@@ -365,7 +365,9 @@ export default function DispatchDetail() {
                 <Descriptions.Item label="Transport">{order.transport || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Sales Person">{order.salesPerson}</Descriptions.Item>
                 <Descriptions.Item label="Payment">
-                  <Tag color={order.payment === 'Confirmed' ? 'success' : 'error'}>{order.payment}</Tag>
+                  {order.isSample
+                    ? <Tag color="default">N/A (Sample)</Tag>
+                    : <Tag color={order.payment === 'Confirmed' ? 'success' : 'error'}>{order.payment}</Tag>}
                 </Descriptions.Item>
                 <Descriptions.Item label="Status">
                   <Tag style={{ borderRadius: 20, background: `${statusColor[order.status]}22`, color: statusColor[order.status], border: `1px solid ${statusColor[order.status]}44` }}>

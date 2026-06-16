@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Input, Select, Typography,
   Space, Tabs, DatePicker, Spin
@@ -9,7 +9,8 @@ import {
   BookOutlined, ShopOutlined, ArrowUpOutlined,
   WalletOutlined, TeamOutlined,
   PhoneOutlined, MailOutlined, EnvironmentOutlined,
-  FileTextOutlined, PrinterOutlined, DownloadOutlined, DeleteOutlined, UserOutlined
+  FileTextOutlined, PrinterOutlined, DownloadOutlined, DeleteOutlined, UserOutlined,
+  BankOutlined, HistoryOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -21,6 +22,7 @@ import {
   useGetPartiesQuery,
   useGetPartyLedgerQuery,
   useDeletePartyMutation,
+  useLazyVerifyGstinQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -47,6 +49,12 @@ export default function PartiesLedger() {
   const [viewParty, setViewParty] = useState(null);
   const [dateRange, setDateRange] = useState(null);
 
+  // GST verification state for party detail view
+  const [gstPartyData, setGstPartyData] = useState(null);
+  const [gstPartyLoading, setGstPartyLoading] = useState(false);
+  const [gstPartyError, setGstPartyError] = useState(null);
+  const [verifyGstinTrigger] = useLazyVerifyGstinQuery();
+
   // RTK Query — load parties
   const { data: partiesData, isLoading: partiesLoading } = useGetPartiesQuery({ limit: 500 });
   const [deletePartyMutation] = useDeletePartyMutation();
@@ -59,6 +67,7 @@ export default function PartiesLedger() {
     email: '',
     address: [p.street, p.city, p.state, p.pincode].filter(Boolean).join(', '),
     gst: p.gstNumber,
+    gstVerifiedData: p.gstVerifiedData || null,
     pan: p.panNumber,
     contactPerson: p.contactPerson,
     creditPeriod: p.creditPeriod,
@@ -96,6 +105,37 @@ export default function PartiesLedger() {
   const openParty = (party) => {
     setViewParty(party);
   };
+
+  const fetchPartyGstDetails = async (gstin) => {
+    if (!gstin) return;
+    setGstPartyLoading(true);
+    setGstPartyData(null);
+    setGstPartyError(null);
+    try {
+      const result = await verifyGstinTrigger(gstin.trim().toUpperCase(), false).unwrap();
+      setGstPartyData(result.data || result);
+    } catch (err) {
+      const msg = err?.data || err?.error || 'Unable to fetch GST details. Please verify GSTIN manually.';
+      setGstPartyError(typeof msg === 'string' ? msg : 'Unable to fetch GST details.');
+    } finally {
+      setGstPartyLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!viewParty) {
+      setGstPartyData(null);
+      setGstPartyError(null);
+      return;
+    }
+    if (viewParty.gstVerifiedData) {
+      setGstPartyData(viewParty.gstVerifiedData);
+      setGstPartyLoading(false);
+      setGstPartyError(null);
+    } else if (viewParty.gst) {
+      fetchPartyGstDetails(viewParty.gst);
+    }
+  }, [viewParty?.key, viewParty?.gst]);
 
   const allParties = useMemo(() => [...supplierList, ...customerList], [supplierList, customerList]);
 
@@ -328,6 +368,84 @@ export default function PartiesLedger() {
             )}
           </Row>
         </div>
+
+        {/* GST API Details Card */}
+        {viewParty.gst && (
+          <Card
+            style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+            title={
+              <Space>
+                <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
+                <BankOutlined style={{ color: '#722ed1' }} />
+                <span style={{ fontSize: FONT_SIZE }}>GST API Details</span>
+                {!gstPartyLoading && (
+                  <Button size="small" type="text" icon={<HistoryOutlined />} style={{ color: '#722ed1' }} onClick={() => fetchPartyGstDetails(viewParty.gst)}>Refresh</Button>
+                )}
+              </Space>
+            }
+          >
+            {gstPartyLoading && (
+              <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                <Spin size="small" />
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>Fetching GST details…</Text>
+              </div>
+            )}
+            {gstPartyError && !gstPartyLoading && (
+              <div style={{ padding: '10px 12px', background: 'rgba(255,77,79,0.06)', borderRadius: 8, border: '1px solid rgba(255,77,79,0.2)' }}>
+                <Text style={{ color: '#ff4d4f', fontSize: 12 }}>{gstPartyError}</Text>
+                <div style={{ marginTop: 8 }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>GSTIN on file: </Text>
+                  <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>{viewParty.gst}</Text>
+                </div>
+              </div>
+            )}
+            {gstPartyData && !gstPartyLoading && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {[
+                  { label: 'GSTIN', value: gstPartyData.gstin || viewParty.gst, mono: true },
+                  { label: 'Legal Name', value: gstPartyData.lgnm },
+                  { label: 'Trade Name', value: gstPartyData.tradeNam },
+                  { label: 'Status', value: gstPartyData.sts, tag: true, color: gstPartyData.sts === 'Active' ? 'success' : 'error' },
+                  { label: 'Taxpayer Type', value: gstPartyData.ctb || gstPartyData.dty },
+                  { label: 'Registration Date', value: gstPartyData.rgdt },
+                  { label: 'State', value: gstPartyData.stj },
+                  { label: 'e-Invoice', value: gstPartyData.einvoiceStatus },
+                ].filter(f => f.value).map((f, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>{f.label}</Text>
+                    {f.tag ? (
+                      <Tag color={f.color} style={{ borderRadius: 12, margin: 0, fontSize: 11 }}>{f.value}</Tag>
+                    ) : (
+                      <Text strong style={{ fontSize: 12, fontFamily: f.mono ? 'monospace' : undefined, color: f.mono ? '#722ed1' : undefined }}>{f.value}</Text>
+                    )}
+                  </div>
+                ))}
+                {gstPartyData.address && typeof gstPartyData.address === 'object' && (
+                  <div style={{ paddingTop: 8, marginTop: 4, borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}` }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Registered Address</Text>
+                    <Text style={{ fontSize: 12, lineHeight: 1.6, color: textColor }}>
+                      {[
+                        gstPartyData.address.bnm  || gstPartyData.address.building,
+                        gstPartyData.address.bno  || gstPartyData.address.door,
+                        gstPartyData.address.flno || gstPartyData.address.floor,
+                        gstPartyData.address.st   || gstPartyData.address.street,
+                        gstPartyData.address.loc  || gstPartyData.address.location,
+                        gstPartyData.address.dst  || gstPartyData.address.district,
+                        gstPartyData.address.stcd || gstPartyData.address.state,
+                        gstPartyData.address.pncd || gstPartyData.address.pincode,
+                      ].filter(Boolean).join(', ')}
+                    </Text>
+                  </div>
+                )}
+              </div>
+            )}
+            {!gstPartyData && !gstPartyLoading && !gstPartyError && (
+              <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>GST details load automatically.<br />Click Refresh to reload.</Text>
+              </div>
+            )}
+          </Card>
+        )}
 
         <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
           {[

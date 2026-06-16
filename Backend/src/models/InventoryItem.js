@@ -18,6 +18,7 @@ const inventoryItemSchema = new mongoose.Schema({
   packingMaterial: String,
   materialCategory: String,
   brand: String,
+  productAttributes: { type: mongoose.Schema.Types.Mixed, default: {} },
   deletedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });

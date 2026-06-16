@@ -380,7 +380,6 @@ async function upsertPartyByName(clientName, createdBy) {
 exports.convertToOrder = asyncHandler(async (req, res, next) => {
   const negotiation = await Negotiation.findById(req.params.id);
   if (!negotiation) return next(new AppError('Negotiation not found', 404));
-  const orderCode = await generateCode('ORD');
   const clientPartyId = await upsertPartyByName(negotiation.clientName, req.user._id);
 
   // Resolve contact details: negotiation extras (strict:false) → lead fallback
@@ -390,6 +389,8 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     lead = await Lead.findById(negotiation.leadId).lean();
   }
   const resolveField = (...sources) => sources.find(v => v != null && v !== '');
+  const orderCategory = resolveField(lead?.leadType, 'ORDER');
+  const orderCode = await generateCode(orderCategory === 'SAMPLE' ? 'SAM' : 'ORD');
 
   const order = await Order.create({
     orderCode,
@@ -438,7 +439,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     kitDisplayUnit: resolveField(negObj.kitDisplayUnit, lead?.kitDisplayUnit),
     kitSize: resolveField(negObj.kitSize, lead?.kitSize),
     selectedKit: resolveField(negObj.selectedKit, lead?.selectedKit),
-    orderCategory: resolveField(lead?.leadType, 'ORDER'),
+    orderCategory,
     assignedTo: req.user._id,
     createdBy: req.user._id,
     statusHistory: [{ status: 'In Production', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
@@ -465,7 +466,8 @@ exports.getOrdersByHotelName = asyncHandler(async (req, res) => {
 });
 
 exports.createDirectOrder = asyncHandler(async (req, res) => {
-  const orderCode = await generateCode('ORD');
+  const prefix = req.body.orderCategory === 'SAMPLE' ? 'SAM' : 'ORD';
+  const orderCode = await generateCode(prefix);
   const clientPartyId = req.body.clientPartyId || await upsertPartyByName(req.body.clientName, req.user._id);
   const initialStatus = req.body.status || 'In Production';
   const order = await Order.create({

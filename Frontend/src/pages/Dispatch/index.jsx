@@ -119,32 +119,36 @@ export default function Dispatch() {
   const [confirmDispatch] = useConfirmDispatchMutation();
   const [verifyItem] = useVerifyItemMutation();
 
-  const dispatchOrders = useMemo(() => (dispatchData?.data || []).map((d) => ({
-    key: d._id,
-    id: d.orderId?.orderCode || d.dispatchCode,
-    client: d.orderId?.clientName || '—',
-    product: d.orderId?.product || '—',
-    qty: d.orderId?.qty || 0,
-    boxes: 0,
-    weight: '—',
-    payment: d.orderId?.paymentTerms || 'Pending',
-    status: d.status === 'Dispatched' ? 'Dispatched' : d.status === 'Confirmed' ? 'Ready to Dispatch' : 'Packing',
-    orderCategory: (d.orderId?.orderCategory === 'SAMPLE' || d.orderId?.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (d.orderId?.orderCategory || 'ORDER'),
-    isEmergency: !!(d.orderId?.isEmergency),
-    transport: d.lrNumber || '—',
-    lrNumber: d.lrNumber,
-    trackingUrl: d.trackingUrl,
-    invoiceNumber: d.invoiceNumber,
-    createdAt: d.createdAt,
-    dispatchedAt: d.dispatchedAt,
-    items: d.items || [],
-    contactPerson: d.orderId?.contactPerson || d.orderId?.clientName || '—',
-    phone: d.orderId?.phone || d.orderId?.clientPhone || '—',
-    detailedAddress: d.orderId?.detailedAddress || d.orderId?.address || '—',
-    city: d.orderId?.city || '—',
-    state: d.orderId?.state || '—',
-    pincode: d.orderId?.pincode || '—',
-  })), [dispatchData]);
+  const dispatchOrders = useMemo(() => (dispatchData?.data || []).map((d) => {
+    const isSample = d.orderId?.orderCategory === 'SAMPLE' || d.orderId?.leadId?.leadType === 'SAMPLE';
+    return {
+      key: d._id,
+      id: d.orderId?.orderCode || d.dispatchCode,
+      client: d.orderId?.clientName || '—',
+      product: d.orderId?.product || '—',
+      qty: d.orderId?.qty || 0,
+      boxes: 0,
+      weight: '—',
+      payment: isSample ? 'N/A' : (d.orderId?.paymentTerms || 'Pending'),
+      status: d.status === 'Dispatched' ? 'Dispatched' : d.status === 'Confirmed' ? 'Ready to Dispatch' : 'Packing',
+      orderCategory: isSample ? 'SAMPLE' : (d.orderId?.orderCategory || 'ORDER'),
+      isSample,
+      isEmergency: !!(d.orderId?.isEmergency),
+      transport: d.lrNumber || '—',
+      lrNumber: d.lrNumber,
+      trackingUrl: d.trackingUrl,
+      invoiceNumber: d.invoiceNumber,
+      createdAt: d.createdAt,
+      dispatchedAt: d.dispatchedAt,
+      items: d.items || [],
+      contactPerson: d.orderId?.contactPerson || d.orderId?.clientName || '—',
+      phone: d.orderId?.phone || d.orderId?.clientPhone || '—',
+      detailedAddress: d.orderId?.detailedAddress || d.orderId?.address || '—',
+      city: d.orderId?.city || '—',
+      state: d.orderId?.state || '—',
+      pincode: d.orderId?.pincode || '—',
+    };
+  }), [dispatchData]);
 
   // Transport records (real Transport collection, created on LR upload).
   const { data: transportRaw } = useGetTransportsQuery();
@@ -504,11 +508,9 @@ export default function Dispatch() {
     { title: 'Weight', dataIndex: 'weight', width: 90, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
       title: 'Payment', dataIndex: 'payment', width: 115,
-      render: (v) => (
-        <Tag style={{ borderRadius: 20, fontSize: 13, background: v === 'Confirmed' ? '#6b124022' : '#B11E6A22', color: v === 'Confirmed' ? '#6b1240' : '#B11E6A', border: `1px solid ${v === 'Confirmed' ? '#6b124044' : '#B11E6A44'}` }}>
-          {v}
-        </Tag>
-      ),
+      render: (v) => v === 'N/A'
+        ? <Tag color="default" style={{ borderRadius: 20, fontSize: 13, fontWeight: 600 }}>N/A</Tag>
+        : <Tag style={{ borderRadius: 20, fontSize: 13, background: v === 'Confirmed' ? '#6b124022' : '#B11E6A22', color: v === 'Confirmed' ? '#6b1240' : '#B11E6A', border: `1px solid ${v === 'Confirmed' ? '#6b124044' : '#B11E6A44'}` }}>{v}</Tag>,
     },
     { title: 'Transport', dataIndex: 'transport', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {

@@ -5,6 +5,7 @@ const partySchema = new mongoose.Schema({
   phone: String,
   type: { type: String, enum: ['Customer', 'Supplier'], default: 'Customer' },
   gstNumber: String,
+  gstVerifiedData: mongoose.Schema.Types.Mixed,
   panNumber: String,
   openingBalance: { type: Number, default: 0 },
   openingBalDir: { type: String, enum: ['receive', 'pay'], default: 'receive' },

@@ -721,7 +721,7 @@ export default function Billing() {
           <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar('Invoice shared on WhatsApp', { variant: 'success' })} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
-          {r.balance > 0 && (
+          {r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
             <>
               <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
               <Button size="small" icon={<CalendarOutlined />} onClick={() => enqueueSnackbar('Reminder sent to client', { variant: 'success' })} style={{ color: '#fa8c16', fontSize: 12 }}>Reminder</Button>
@@ -781,12 +781,12 @@ export default function Billing() {
             <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
             <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
             {/* Order-specific actions */}
-            {isOrder && r.balance > 0 && (
+            {isOrder && r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
               <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>
                 Record Manually
               </Button>
             )}
-            {isOrder && r.balance > 0 && (
+            {isOrder && r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
               <Button size="small" icon={<CalendarOutlined />} style={{ color: '#fa8c16', fontSize: 12 }} onClick={() => enqueueSnackbar('Reminder sent to client', { variant: 'success' })}>
                 Reminder
               </Button>

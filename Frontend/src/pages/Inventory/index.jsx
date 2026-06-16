@@ -61,6 +61,74 @@ const MATERIAL_CATEGORY_OPTIONS = [
   { value: 'Wooden', label: 'Wooden' },
 ];
 
+// Dynamic attribute field definitions keyed by product type.
+// Each entry is an array of { key, label, field (for SelectWithAdd persistence), options, mode? }
+const PRODUCT_FIELD_DEFS = {
+  soap: [
+    { key: 'shape', label: 'Shape', field: 'soap_shape', options: [{ value: 'Square', label: 'Square' }, { value: 'Round', label: 'Round' }] },
+    { key: 'fragrance', label: 'Fragrance', field: 'soap_fragrance', options: [] },
+    { key: 'stickerShape', label: 'Sticker Shape', field: 'soap_stickerShape', options: [{ value: 'Square', label: 'Square' }, { value: 'Round', label: 'Round' }] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'soap_stickerPrinting', options: [] },
+    { key: 'boxPacking', label: 'Box / Packing', field: 'soap_boxPacking', options: [{ value: 'Box', label: 'Box' }, { value: 'No Box', label: 'No Box' }] },
+  ],
+  shampoo: [
+    { key: 'bottleType', label: 'Bottle Type', field: 'liquid_bottleType', options: [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }] },
+    { key: 'sizes', label: 'Sizes (ml)', field: 'liquid_sizes', options: [{ value: '15', label: '15 ml' }, { value: '20', label: '20 ml' }, { value: '25', label: '25 ml' }, { value: '30', label: '30 ml' }], mode: 'multiple' },
+    { key: 'fragrance', label: 'Fragrance', field: 'liquid_fragrance', options: [] },
+    { key: 'color', label: 'Color', field: 'liquid_color', options: [] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: [] },
+  ],
+  moisturizer: [
+    { key: 'bottleType', label: 'Bottle Type', field: 'liquid_bottleType', options: [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }] },
+    { key: 'sizes', label: 'Sizes (ml)', field: 'liquid_sizes', options: [{ value: '15', label: '15 ml' }, { value: '20', label: '20 ml' }, { value: '25', label: '25 ml' }, { value: '30', label: '30 ml' }], mode: 'multiple' },
+    { key: 'fragrance', label: 'Fragrance', field: 'liquid_fragrance', options: [] },
+    { key: 'color', label: 'Color', field: 'liquid_color', options: [] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: [] },
+  ],
+  shower_gel: [
+    { key: 'bottleType', label: 'Bottle Type', field: 'liquid_bottleType', options: [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }] },
+    { key: 'sizes', label: 'Sizes (ml)', field: 'liquid_sizes', options: [{ value: '15', label: '15 ml' }, { value: '20', label: '20 ml' }, { value: '25', label: '25 ml' }, { value: '30', label: '30 ml' }], mode: 'multiple' },
+    { key: 'fragrance', label: 'Fragrance', field: 'liquid_fragrance', options: [] },
+    { key: 'color', label: 'Color', field: 'liquid_color', options: [] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: [] },
+  ],
+  paste: [
+    { key: 'brand', label: 'Brand', field: 'paste_brand', options: [{ value: 'Promise', label: 'Promise' }, { value: 'meswak', label: 'meswak' }, { value: 'anchor', label: 'anchor' }, { value: 'Colgate', label: 'Colgate' }], mode: 'multiple' },
+    { key: 'gramSize', label: 'Size (gram)', field: 'paste_gramSize', options: [{ value: '10', label: '10 g' }, { value: '20', label: '20 g' }, { value: '50', label: '50 g' }], mode: 'multiple' },
+  ],
+  brush: [
+    { key: 'brushType', label: 'Brush Type', field: 'brush_type', options: [{ value: 'Wooden brush', label: 'Wooden brush' }, { value: 'Plastic brush', label: 'Plastic brush' }] },
+    { key: 'printingBrand', label: 'Printing / Brand', field: 'brush_printingBrand', options: [{ value: 'promise', label: 'promise' }, { value: 'anchor', label: 'anchor' }, { value: 'pristin', label: 'pristin' }], mode: 'multiple' },
+  ],
+  dental_kit: [
+    { key: 'kitProducts', label: 'Kit Products', field: 'dental_kitProducts', options: [{ value: 'Brush', label: 'Brush' }, { value: 'Paste', label: 'Paste' }], mode: 'multiple' },
+    { key: 'packingType', label: 'Packing Material', field: 'dental_packingType', options: [{ value: 'Box', label: 'Box' }, { value: 'Butter paper pouch', label: 'Butter paper pouch' }] },
+    { key: 'sticker', label: 'Sticker', field: 'dental_sticker', options: [] },
+    { key: 'printing', label: 'Printing', field: 'dental_printing', options: [] },
+  ],
+  shaving_kit: [
+    { key: 'razorBrand', label: 'Razor Brand', field: 'shaving_razorBrand', options: [{ value: 'Gillette', label: 'Gillette' }, { value: 'darco', label: 'darco' }, { value: 'glide', label: 'glide' }], mode: 'multiple' },
+    { key: 'gelBrand', label: 'Gel Brand', field: 'shaving_gelBrand', options: [{ value: 'oxylife', label: 'oxylife' }, { value: 'eliven', label: 'eliven' }], mode: 'multiple' },
+  ],
+  vanity_kit: [
+    { key: 'kitContents', label: 'Kit Contents', field: 'vanity_contents', options: [{ value: 'vanitykit', label: 'Vanity Kit' }, { value: 'medkit', label: 'Med Kit' }, { value: 'sweing', label: 'Sewing Kit' }], mode: 'multiple' },
+  ],
+};
+
+const getProductTypeKey = (name) => {
+  const n = (name || '').toLowerCase().trim();
+  if (n.includes('shower gel') || n.includes('showergel')) return 'shower_gel';
+  if (n.includes('shampoo')) return 'shampoo';
+  if (n.includes('moisturizer')) return 'moisturizer';
+  if (n.includes('soap')) return 'soap';
+  if (n.includes('paste')) return 'paste';
+  if (n.includes('brush')) return 'brush';
+  if (n.includes('dental')) return 'dental_kit';
+  if (n.includes('shaving')) return 'shaving_kit';
+  if (n.includes('vanity')) return 'vanity_kit';
+  return null;
+};
+
 
 // Export an array of plain rows to a CSV file. Headers are derived from the
 // scalar (non-object) keys of the rows so it adapts to whatever shape the data has.
@@ -134,6 +202,7 @@ export default function Inventory() {
     packingMaterial: i.packingMaterial,
     materialCategory: i.materialCategory,
     brand: i.brand,
+    productAttributes: i.productAttributes || {},
   })), [invData]);
 
   const dupeInventoryNames = useMemo(() => {
@@ -365,6 +434,11 @@ export default function Inventory() {
   const { filterTabs, activeKeyFor } = useTabAccess('Inventory');
   const { requireAccess } = usePageAccess('Inventory');
 
+  /* ── Dynamic product attribute fields (Add Item modal) ── */
+  const watchedItemName = Form.useWatch('name', addItemForm);
+  const productTypeKey = useMemo(() => getProductTypeKey(watchedItemName), [watchedItemName]);
+  const productFieldDefs = PRODUCT_FIELD_DEFS[productTypeKey] || [];
+
   /* ── Category & Kit expand ── */
   const [expandedCategory, setExpandedCategory] = useState(null);
   const [expandedKit, setExpandedKit] = useState(null);
@@ -520,6 +594,7 @@ export default function Inventory() {
         packingMaterial: Array.isArray(vals.packingMaterial) ? vals.packingMaterial.join(', ') : (vals.packingMaterial || ''),
         materialCategory: Array.isArray(vals.materialCategory) ? vals.materialCategory.join(', ') : (vals.materialCategory || ''),
         brand: Array.isArray(vals.brand) ? vals.brand.join(', ') : (vals.brand || ''),
+        productAttributes: vals.productAttrs || {},
       };
       if (editingItem) {
         await updateItemMutation({ id: editingItem.key, ...payload }).unwrap();
@@ -760,7 +835,7 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
-          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, value: r.unitValue, default_size: r.defaultSize, min: r.min, purchase_price: r.value, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, discount: r.discountPercent, packingMaterial: r.packingMaterial ? r.packingMaterial.split(', ').filter(Boolean) : [], materialCategory: r.materialCategory ? r.materialCategory.split(', ').filter(Boolean) : [], brand: r.brand ? r.brand.split(', ').filter(Boolean) : [] }); setAddItemModal(true); }}>Edit</Button>
+          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, value: r.unitValue, default_size: r.defaultSize, min: r.min, purchase_price: r.value, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, discount: r.discountPercent, packingMaterial: r.packingMaterial ? r.packingMaterial.split(', ').filter(Boolean) : [], materialCategory: r.materialCategory ? r.materialCategory.split(', ').filter(Boolean) : [], brand: r.brand ? r.brand.split(', ').filter(Boolean) : [], productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
         </Space>
@@ -1571,15 +1646,15 @@ export default function Inventory() {
                       <Button type="text" danger size="small" icon={<MinusOutlined />} onClick={() => remove(field.name)} />
                     </div>
 
-                    {/* Product fields — same layout as Add Item */}
+                    {/* Visible: Product Name + Qty only. All detail fields hidden but preserved in form state for the save payload. */}
                     <div style={{ padding: '12px 14px' }}>
-                      <Row gutter={[12, 0]}>
-                        <Col xs={24} sm={12}>
-                          <Form.Item {...field} label="Item Name" name={[field.name, 'productName']} rules={[{ required: true, message: 'Required' }]}>
+                      <Row gutter={[12, 0]} align="bottom">
+                        <Col xs={16} sm={18}>
+                          <Form.Item {...field} label="Product Name" name={[field.name, 'productName']} rules={[{ required: true, message: 'Required' }]}>
                             <Select
                               showSearch
                               optionFilterProp="label"
-                              placeholder="Select Product"
+                              placeholder="Select from inventory"
                               style={{ width: '100%' }}
                               options={inventoryList.map((i) => ({
                                 value: i.key,
@@ -1589,7 +1664,6 @@ export default function Inventory() {
                                 const item = inventoryList.find((i) => i.key === selectedKey);
                                 if (!item) return;
                                 kitForm.setFields([
-                                  { name: ['products', field.name, 'productName'], value: item.key },
                                   { name: ['products', field.name, 'category'], value: item.category || '' },
                                   { name: ['products', field.name, 'unit'], value: item.unit || '' },
                                   { name: ['products', field.name, 'defaultSize'], value: item.defaultSize || '' },
@@ -1606,89 +1680,25 @@ export default function Inventory() {
                             />
                           </Form.Item>
                         </Col>
-                        <Col xs={24} sm={12}>
-                          <Form.Item {...field} label="Category" name={[field.name, 'category']}>
-                            <SelectWithAdd
-                              field="inventoryCategory"
-                              defaultOptions={categories.map((c) => ({ label: c, value: c }))}
-                              placeholder="Select / Add category"
-                            />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Form.Item {...field} label="Unit" name={[field.name, 'unit']}>
-                            <Select placeholder="Select unit">
-                              <Option value="Kg">Kg</Option>
-                              <Option value="Ltr">Ltr</Option>
-                              <Option value="Pcs">Pcs</Option>
-                              <Option value="ml">ml</Option>
-                              <Option value="gram">gram</Option>
-                            </Select>
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Form.Item {...field} label="Default Size" name={[field.name, 'defaultSize']}>
-                            <Input placeholder="e.g. 2.5cm x 2.5cm" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="Qty in Kit" name={[field.name, 'qty']}>
-                            <InputNumber min={1} style={{ width: '100%' }} />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="Purchase Price" name={[field.name, 'purchasePrice']}>
-                            <Input prefix="₹" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="Selling Price" name={[field.name, 'sellingPrice']}>
-                            <Input prefix="₹" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="GST" name={[field.name, 'gst']}>
-                            <Select defaultValue="None">
-                              <Option value="None">None</Option>
-                              <Option value="5%">5%</Option>
-                              <Option value="12%">12%</Option>
-                              <Option value="18%">18%</Option>
-                              <Option value="28%">28%</Option>
-                            </Select>
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="HSN Code" name={[field.name, 'hsnCode']}>
-                            <Input placeholder="Ex: 6704" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="Discount on Sales Price" name={[field.name, 'discountPercent']}>
-                            <Input suffix="%" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="Packing Material" name={[field.name, 'packingMaterial']}>
-                            <Select
-                              allowClear
-                              showSearch
-                              optionFilterProp="label"
-                              placeholder="Select"
-                              options={packingMaterials.map(c => ({ value: c.value, label: c.label }))}
-                            />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="Material Category" name={[field.name, 'materialCategory']}>
-                            <SelectWithAdd field="materialCategory" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={8}>
-                          <Form.Item {...field} label="Brand" name={[field.name, 'brand']}>
-                            <SelectWithAdd field="brand" defaultOptions={[]} placeholder="Select / Add brand" />
+                        <Col xs={8} sm={6}>
+                          <Form.Item {...field} label="Qty" name={[field.name, 'qty']}>
+                            <InputNumber min={1} style={{ width: '100%' }} placeholder="1" />
                           </Form.Item>
                         </Col>
                       </Row>
+
+                      {/* Hidden fields — auto-filled from inventory selection, sent in save payload */}
+                      <Form.Item {...field} name={[field.name, 'category']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'unit']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'defaultSize']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'purchasePrice']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'sellingPrice']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'hsnCode']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'gst']} hidden initialValue="None"><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'discountPercent']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'packingMaterial']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'materialCategory']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'brand']} hidden><Input /></Form.Item>
                     </div>
                   </div>
                 ))}
@@ -2048,6 +2058,30 @@ export default function Inventory() {
               </Form.Item>
             </Col>
           </Row>
+
+          {/* ── Dynamic product-type attributes ── */}
+          {productFieldDefs.length > 0 && (
+            <>
+              <Divider style={{ margin: '4px 0 12px' }}>
+                <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>Product Attributes</Text>
+              </Divider>
+              <Row gutter={16}>
+                {productFieldDefs.map((fd) => (
+                  <Col xs={24} sm={12} key={fd.key}>
+                    <Form.Item label={fd.label} name={['productAttrs', fd.key]}>
+                      <SelectWithAdd
+                        field={fd.field}
+                        mode={fd.mode}
+                        defaultOptions={fd.options}
+                        placeholder={`Select / Add ${fd.label.toLowerCase()}`}
+                        allowClear
+                      />
+                    </Form.Item>
+                  </Col>
+                ))}
+              </Row>
+            </>
+          )}
         </Form>
       </Modal>
 
