@@ -1631,29 +1631,21 @@ export default function Sales() {
   // and build per-kit order configs (display unit, size, overall qty).
   const applyKitsToForm = (kitIds) => {
     const allKitRows = [];
+    const kitPriceById = {};
     const existingKitOrders = leadForm.getFieldValue('kitOrders') || [];
-    const newKitOrders = kitIds.map(kitId => {
-      const kit = kits.find(k => k._id === kitId);
-      const existing = existingKitOrders.find(o => o.kitId === kitId);
-      return existing || {
-        kitId,
-        displayUnit: kit?.displayUnit || '',
-        size: kit?.size || '',
-        overallQty: undefined,
-      };
-    });
 
     kitIds.forEach(kitId => {
       const kit = kits.find(k => k._id === kitId);
       if (!kit) return;
       (kit.products || []).forEach(p => {
         const invItem = inventoryItemsRaw.find(i => i.itemName === p.productName);
+        const rate = p.rate || invItem?.sellingPrice || 0;
         allKitRows.push({
           isKit: true,
           kitType: p.productName,
           name: p.productName,
           qty: p.qty,
-          rate: p.rate || invItem?.sellingPrice || 0,
+          rate,
           unit: p.unit || invItem?.unit,
           kitName: kit.kitName,
           kitId,
@@ -1662,20 +1654,62 @@ export default function Sales() {
           brand: p.brand || invItem?.brand || '',
           gst: p.gstPercent || Number(String(p.gst || '').replace('%', '')) || invItem?.gstPercent || 0,
         });
+        kitPriceById[kitId] = (kitPriceById[kitId] || 0) + (Number(p.qty) || 0) * (Number(rate) || 0);
       });
+    });
+
+    // Per-kit order configs — keep any existing user edits (overallQty, kitPrice override),
+    // otherwise seed kitPrice with the computed sum of the kit's product prices.
+    const newKitOrders = kitIds.map(kitId => {
+      const kit = kits.find(k => k._id === kitId);
+      const existing = existingKitOrders.find(o => o.kitId === kitId);
+      const computedPrice = Math.round(kitPriceById[kitId] || 0);
+      if (existing) {
+        return { ...existing, kitPrice: existing.kitPrice != null ? existing.kitPrice : computedPrice };
+      }
+      return {
+        kitId,
+        displayUnit: kit?.displayUnit || '',
+        size: kit?.size || '',
+        overallQty: undefined,
+        printing: undefined,
+        kitPrice: computedPrice,
+      };
     });
 
     const existing = leadForm.getFieldValue('products') || [];
     const nonKit = existing.filter(p => p && !(p.isKit || p.kitType));
+    const totalKitPrice = Math.round(Object.values(kitPriceById).reduce((s, v) => s + v, 0));
+    const currentTopPrice = leadForm.getFieldValue('kitPrice');
 
     leadForm.setFieldsValue({
       selectedKits: kitIds,
       selectedKit: kitIds[0] || undefined,
       kitDisplayUnit: newKitOrders[0]?.displayUnit || undefined,
       kitSize: newKitOrders[0]?.size || undefined,
+      // Seed the shared kit-price with the summed total (only when not already overridden)
+      kitPrice: (currentTopPrice == null || currentTopPrice === '') ? totalKitPrice : currentTopPrice,
       kitOrders: newKitOrders,
       products: [...allKitRows, ...nonKit],
     });
+  };
+
+  // Sum (qty × rate) of all kit-flagged product rows currently in the lead form.
+  const computeKitPriceSum = () => {
+    const prods = leadForm.getFieldValue('products') || [];
+    return Math.round(
+      prods.filter(p => p && (p.isKit || p.kitType))
+        .reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0)
+    );
+  };
+
+  // Sum (qty × rate) of the product rows belonging to one specific kit card.
+  const computeKitPriceForKit = (kitId, kitIndex) => {
+    const prods = leadForm.getFieldValue('products') || [];
+    return Math.round(
+      prods.filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && kitIndex === 0)))
+        .reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0)
+    );
   };
 
   const [createLeadMutation] = useCreateLeadMutation();
@@ -2291,9 +2325,9 @@ export default function Sales() {
       billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber'],
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
       leadJourney: ['followUpStep'],
-      personalization: ['productType', 'displayUnit'],
+      personalization: ['productType', 'displayUnit', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitPrice', 'kitOrders', 'kitInsideItems', 'products'],
       delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'forwardingChargeAmount', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'creditDueDate', 'paymentProofs', 'paymentCollection'],
-      products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitSize', 'kitSticker', 'kitLogo', 'kitOrders', 'productType', 'kitInsideItems'],
+      products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitPrice', 'kitOrders', 'productType', 'kitInsideItems'],
     };
     const rawValues = leadForm.getFieldsValue(fieldsBySection[section]);
     const values = { ...rawValues };
@@ -2475,6 +2509,8 @@ export default function Sales() {
         state: lead.state,
         pincode: lead.pincode,
         products: sampleProducts,
+        // Operations reads order.items — map products so sample products show there too
+        items: sampleProducts.map(p => mapOrderItem(p, lead.kitDisplayUnit || lead.displayUnit || '')),
         totalAmount: subtotal,
         gstAmount: gstAmt,
         total: subtotal + gstAmt,
@@ -2892,6 +2928,8 @@ export default function Sales() {
         state: order.state,
         pincode: order.pincode,
         products: sampleProducts,
+        // Operations reads order.items — map products so sample products show there too
+        items: sampleProducts.map(p => mapOrderItem(p, order.kitDisplayUnit || order.displayUnit || '')),
         totalAmount: subtotal,
         gstAmount: gstAmt,
         total: subtotal + gstAmt,
@@ -6681,6 +6719,16 @@ export default function Sales() {
                               <InfoRow label="Logo" value={record.kitLogo === 'YES' ? 'Yes' : 'No'} />
                             </Col>
                           )}
+                          {record.kitPrinting && (
+                            <Col xs={12} sm={6}>
+                              <InfoRow label="Printing" value={record.kitPrinting === 'YES' ? 'Yes' : 'No'} />
+                            </Col>
+                          )}
+                          {(record.kitPrice != null && record.kitPrice !== '') && (
+                            <Col xs={12} sm={6}>
+                              <InfoRow label="Kit Price" value={`₹${Number(record.kitPrice).toLocaleString()}`} />
+                            </Col>
+                          )}
                           {Array.isArray(record.kitInsideItems) && record.kitInsideItems.length > 0 && (
                             <Col xs={24}>
                               <div style={{ marginTop: 10 }}>
@@ -6753,6 +6801,7 @@ export default function Sales() {
                         const opt = PERSONALIZATION_OPTIONS.find(o => o.value === pt);
                         return (opt?.label || pt).toLowerCase().includes('kit');
                       }) && (
+                        <>
                         <Row gutter={16} style={{ marginTop: 8 }}>
                           <Col xs={24} sm={6}>
                             <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
@@ -6764,17 +6813,33 @@ export default function Sales() {
                               <Input placeholder="e.g. 2.5cm x 2.5cm" />
                             </Form.Item>
                           </Col>
-                          <Col xs={24} sm={6}>
+                          <Col xs={12} sm={4}>
                             <Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}>
                               <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                             </Form.Item>
                           </Col>
-                          <Col xs={24} sm={6}>
+                          <Col xs={12} sm={4}>
                             <Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}>
                               <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                             </Form.Item>
                           </Col>
+                          <Col xs={12} sm={4}>
+                            <Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}>
+                              <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                            </Form.Item>
+                          </Col>
                         </Row>
+                        <Row gutter={16} style={{ marginTop: 12 }}>
+                          <Col xs={24} sm={10}>
+                            <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }} tooltip="Auto-filled with the sum of the selected kit's product prices. You can edit this value.">
+                              <InputNumber min={0} style={{ width: '100%' }} placeholder="Sum of kit products — editable" formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
+                            </Form.Item>
+                            <Button type="link" size="small" style={{ padding: 0, marginTop: 2, height: 'auto', fontSize: 12 }} onClick={() => leadForm.setFieldValue('kitPrice', computeKitPriceSum())}>
+                              Σ Use sum of kit products (₹{computeKitPriceSum().toLocaleString()})
+                            </Button>
+                          </Col>
+                        </Row>
+                        </>
                       )}
                     </>
                   )}
@@ -7145,7 +7210,9 @@ export default function Sales() {
                   ? watchedSelectedKits
                   : (watchedSingleKit ? [watchedSingleKit] : []);
                 const hasAnyKit = hasKit || effectiveKitIds.length > 0;
-                const showFallbackKitCard = !hasAnyKit && !hasSeparate;
+                // Show the generic kit card whenever a kit is intended but no predefined kit is
+                // selected (so users can still add kit products manually), or when nothing is chosen yet.
+                const showFallbackKitCard = (hasKit && effectiveKitIds.length === 0) || (!hasAnyKit && !hasSeparate);
                 const showSeparateCard = hasSeparate || (!hasAnyKit && !hasSeparate);
                 return (
                   <>
@@ -7193,6 +7260,22 @@ export default function Sales() {
                               <Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
                                 <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                               </Form.Item>
+                            </Col>
+                          </Row>
+                          {/* Per-kit Printing + Kit Price (auto-summed from this kit's products, editable) */}
+                          <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
+                            <Col xs={12} sm={5}>
+                              <Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}>
+                                <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={9}>
+                              <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }} tooltip="Sum of this kit's product prices. You can edit this value.">
+                                <InputNumber min={0} style={{ width: '100%' }} placeholder="Auto-summed — editable" formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
+                              </Form.Item>
+                              <Button type="link" size="small" style={{ padding: 0, marginTop: 2, height: 'auto', fontSize: 12 }} onClick={() => leadForm.setFieldValue(['kitOrders', kitIndex, 'kitPrice'], computeKitPriceForKit(kitId, kitIndex))}>
+                                Σ Use sum of products (₹{computeKitPriceForKit(kitId, kitIndex).toLocaleString()})
+                              </Button>
                             </Col>
                           </Row>
                           <Form.List name="products">

@@ -222,9 +222,11 @@ export default function Operations() {
       const sds = (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []);
       return sds.some((sd) => (sd.products || []).some((ep) => ep.product) || !!sd.product);
     })(),
-    items: (o.items || []).map(item => ({
+    // Fall back to o.products when items is empty (legacy / sample orders that only stored products)
+    items: (o.items?.length ? o.items : (o.products || [])).map(item => ({
       ...item,
-      packingMaterialTab: packingMaterialTabMap[item.packingMaterial] || item.packingMaterialTab || '',
+      itemName: item.itemName || item.name,
+      packingMaterialTab: packingMaterialTabMap[item.packingMaterial || item.packaging] || item.packingMaterialTab || '',
     })),
     readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || '',

@@ -198,7 +198,8 @@ export default function OperationDetail() {
         : null),
     isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
     splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
-    items: (o.items || []).map((it, idx) => ({ ...it, key: it._id ? String(it._id) : String(idx) })),
+    // Fall back to o.products when items is empty (legacy / sample orders that only stored products)
+    items: (o.items?.length ? o.items : (o.products || [])).map((it, idx) => ({ ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx) })),
     readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || o.phone || '',
     contactPerson: o.contactPerson || '',

@@ -156,6 +156,20 @@ const getProductTypeKey = (name) => {
   return null;
 };
 
+// Convert a camelCase / snake_case product-attribute key into a readable label
+// (e.g. "stickerShape" → "Sticker Shape", "bottleType" → "Bottle Type").
+const prettyAttrKey = (k) =>
+  String(k || '')
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, (c) => c.toUpperCase());
+
+// Normalize a productAttributes object into [label, value] entries, skipping empties.
+const attrEntries = (attrs) =>
+  Object.entries(attrs || {}).filter(
+    ([, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0),
+  );
+
 
 // Export an array of plain rows to a CSV file. Headers are derived from the
 // scalar (non-object) keys of the rows so it adapts to whatever shape the data has.
@@ -231,6 +245,14 @@ export default function Inventory() {
     brand: i.brand,
     productAttributes: i.productAttributes || {},
   })), [invData]);
+
+  // Lookup product attributes by item name — used to surface attributes for kit
+  // products (kit rows store a snapshot without attributes, so we resolve them live).
+  const invAttrsByName = useMemo(() => {
+    const map = {};
+    inventoryList.forEach((i) => { if (i.name) map[i.name] = i.productAttributes || {}; });
+    return map;
+  }, [inventoryList]);
 
   const dupeInventoryNames = useMemo(() => {
     const nameCount = {};
@@ -799,11 +821,27 @@ export default function Inventory() {
     </div>
   );
 
+  // Render a productAttributes object as compact key:value tags.
+  const renderAttrTags = (attrs, maxWidth = 240) => {
+    const entries = attrEntries(attrs);
+    if (entries.length === 0) return <Text type="secondary">—</Text>;
+    return (
+      <Space size={4} wrap style={{ maxWidth }}>
+        {entries.map(([k, v]) => (
+          <Tag key={k} style={{ borderRadius: 10, fontSize: 10, background: '#B11E6A10', color: '#B11E6A', border: '1px solid #B11E6A30', margin: 0 }}>
+            <span style={{ opacity: 0.75 }}>{prettyAttrKey(k)}:</span> {Array.isArray(v) ? v.join(', ') : String(v)}
+          </Tag>
+        ))}
+      </Space>
+    );
+  };
+
   const columns = [
     { title: 'Code', dataIndex: 'code', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text> },
     { title: 'Item Name', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
     { title: 'Category', dataIndex: 'category', responsive: ['sm'], render: (v) => <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
     { title: 'Value', key: 'value', responsive: ['lg'], render: (_, r) => r.unitValue ? `${r.unitValue} ${r.unit}` : (r.unit || '—') },
+    { title: 'Product Spec', key: 'productSpec', responsive: ['lg'], render: (_, r) => renderAttrTags(r.productAttributes, 220) },
     {
       title: 'Stock Level', key: 'level',
       render: (_, r) => (
@@ -1432,6 +1470,7 @@ export default function Inventory() {
                                   { title: 'Qty', dataIndex: 'qty', width: 80, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
                                   { title: 'Rate (₹)', key: 'rate', width: 100, render: (_, p) => { const v = p.purchasePrice ?? p.rate; return v != null && v !== 0 ? `₹${Number(v).toLocaleString()}` : '—'; } },
                                   { title: 'Unit', dataIndex: 'unit', width: 80, render: v => v || '—' },
+                                  { title: 'Product Spec', key: 'spec', render: (_, p) => renderAttrTags(p.productAttributes && Object.keys(p.productAttributes).length ? p.productAttributes : invAttrsByName[p.productName], 220) },
                                 ]}
                                 style={{ borderRadius: 10, overflow: 'hidden' }}
                               />
@@ -1796,6 +1835,12 @@ export default function Inventory() {
                   </Tag>
                 </Descriptions.Item>
               </Descriptions>
+              {attrEntries(detailItem.productAttributes).length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <Text strong style={{ color: textColor, display: 'block', marginBottom: 8, fontSize: 13 }}>Product Attributes</Text>
+                  {renderAttrTags(detailItem.productAttributes, '100%')}
+                </div>
+              )}
             </Card>
 
             {/* Suppliers */}
