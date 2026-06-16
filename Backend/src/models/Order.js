@@ -33,7 +33,17 @@ const orderSchema = new mongoose.Schema({
     lineTotal: Number,
     // ─── Operations / packaging fields ───
     logoType: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'None', ''], default: '' },
-    sticker: { type: String, enum: ['YES', 'NO', ''], default: '' },
+    // Normalize legacy/lowercase values (e.g. 'yes'/'no') to the enum BEFORE validation runs,
+    // so converting older quotations/negotiations whose items stored 'yes' doesn't 500.
+    sticker: {
+      type: String,
+      enum: ['YES', 'NO', ''],
+      default: '',
+      set: (v) => {
+        const s = String(v ?? '').trim().toUpperCase();
+        return s === 'YES' || s === 'NO' ? s : '';
+      },
+    },
     size: String,
     packaging: String,
     material: String,

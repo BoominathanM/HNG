@@ -358,56 +358,103 @@ Miss. Priya will Contact you
 }
 
 // ─── Product-type helpers (mirrors Inventory dynamic-field system) ────────────
-const _YES_NO = [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
+// Yes/No values are UPPERCASE to match the Order schema enum (items.sticker: 'YES'|'NO'|'')
+// and the downstream checks in Operations (itemNeedsSticker, inferLogoType, DetailProductCards).
+const _YES_NO = [{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }];
+// Normalize any yes/no-ish value to the canonical enum value ('YES' | 'NO' | '').
+const normYesNo = (v) => {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === 'yes' ? 'YES' : s === 'no' ? 'NO' : '';
+};
 const _SOAP_SHAPES = [{ value: 'Square', label: 'Square' }, { value: 'Round', label: 'Round' }];
 const _BOTTLE_TYPES = [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }];
 const _BRUSH_TYPES = [{ value: 'Wooden', label: 'Wooden' }, { value: 'Plastic', label: 'Plastic' }];
 const _SIZES_SOAP = ['15', '20', '30'].map(v => ({ value: v, label: `${v}g` }));
 const _SIZES_LIQUID = ['15', '20', '25', '30'].map(v => ({ value: v, label: `${v}ml` }));
 
+// Per-product-type attribute fields — kept in sync with Inventory's PRODUCT_FIELD_DEFS so the
+// lead form shows exactly the attributes that inventory collects for each product type. The
+// `options` here are only fallbacks; at render time the dropdowns are populated from the actual
+// values stored on the matching inventory items (see attrOptionsFor in ProductItem).
 const PRODUCT_FIELD_DEFS_LEAD = {
   soap: [
     { key: 'shape', label: 'Shape', options: _SOAP_SHAPES },
-    { key: 'size', label: 'Size (g)', options: _SIZES_SOAP },
-    { key: 'fragrance', label: 'Fragrance', options: [] },
+    { key: 'size', label: 'Sizes (gram)', options: _SIZES_SOAP },
     { key: 'stickerShape', label: 'Sticker Shape', options: _SOAP_SHAPES },
+    { key: 'fragrance', label: 'Fragrance', options: [] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', options: _YES_NO },
     { key: 'printing', label: 'Printing', options: _YES_NO },
   ],
   shampoo: [
     { key: 'bottleType', label: 'Bottle Type', options: _BOTTLE_TYPES },
-    { key: 'size', label: 'Size (ml)', options: _SIZES_LIQUID },
+    { key: 'size', label: 'Sizes (ml)', options: _SIZES_LIQUID },
     { key: 'fragrance', label: 'Fragrance', options: [] },
     { key: 'color', label: 'Color', options: [] },
-    { key: 'printing', label: 'Printing', options: _YES_NO },
+    { key: 'stickerPrinting', label: 'Sticker Printing', options: _YES_NO },
   ],
   moisturizer: [
     { key: 'bottleType', label: 'Bottle Type', options: _BOTTLE_TYPES },
-    { key: 'size', label: 'Size (ml)', options: _SIZES_LIQUID },
+    { key: 'size', label: 'Sizes (ml)', options: _SIZES_LIQUID },
     { key: 'fragrance', label: 'Fragrance', options: [] },
     { key: 'color', label: 'Color', options: [] },
-    { key: 'printing', label: 'Printing', options: _YES_NO },
+    { key: 'stickerPrinting', label: 'Sticker Printing', options: _YES_NO },
   ],
   shower_gel: [
     { key: 'bottleType', label: 'Bottle Type', options: _BOTTLE_TYPES },
-    { key: 'size', label: 'Size (ml)', options: _SIZES_LIQUID },
+    { key: 'size', label: 'Sizes (ml)', options: _SIZES_LIQUID },
     { key: 'fragrance', label: 'Fragrance', options: [] },
     { key: 'color', label: 'Color', options: [] },
-    { key: 'printing', label: 'Printing', options: _YES_NO },
+    { key: 'stickerPrinting', label: 'Sticker Printing', options: _YES_NO },
   ],
   brush: [
     { key: 'brushType', label: 'Brush Type', options: _BRUSH_TYPES },
+    { key: 'brand', label: 'Brand', options: [] },
+    { key: 'packingMaterial', label: 'Packing Material', options: [] },
+    { key: 'sticker', label: 'Sticker', options: _YES_NO },
     { key: 'printing', label: 'Printing', options: _YES_NO },
   ],
   paste: [
-    { key: 'size', label: 'Size (g)', options: _SIZES_SOAP },
+    { key: 'brand', label: 'Brand', options: [] },
+    { key: 'size', label: 'Sizes (gram)', options: _SIZES_SOAP },
+    { key: 'packingMaterial', label: 'Packing Material', options: [] },
+    { key: 'sticker', label: 'Sticker', options: _YES_NO },
     { key: 'printing', label: 'Printing', options: _YES_NO },
   ],
-  razor: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
-  gel: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
-  vanity_item: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
-  med_kit: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
-  sewing: [{ key: 'printing', label: 'Printing', options: _YES_NO }],
+  razor: [
+    { key: 'brand', label: 'Brand', options: [] },
+    { key: 'packingMaterial', label: 'Packing Material', options: [] },
+    { key: 'sticker', label: 'Sticker', options: _YES_NO },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  gel: [
+    { key: 'brand', label: 'Brand', options: [] },
+    { key: 'packingMaterial', label: 'Packing Material', options: [] },
+    { key: 'sticker', label: 'Sticker', options: _YES_NO },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  vanity_item: [
+    { key: 'packingMaterial', label: 'Packing Material', options: [] },
+    { key: 'sticker', label: 'Sticker', options: _YES_NO },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  med_kit: [
+    { key: 'packingMaterial', label: 'Packing Material', options: [] },
+    { key: 'sticker', label: 'Sticker', options: _YES_NO },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
+  sewing: [
+    { key: 'packingMaterial', label: 'Packing Material', options: [] },
+    { key: 'sticker', label: 'Sticker', options: _YES_NO },
+    { key: 'printing', label: 'Printing', options: _YES_NO },
+  ],
 };
+
+// camelCase / snake_case attribute key → readable label (for product types not in the map above).
+const prettyAttrKeyLead = (k) =>
+  String(k || '')
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, (c) => c.toUpperCase());
 
 const getLeadProductTypeKey = (name) => {
   const n = (name || '').toLowerCase().trim();
@@ -474,29 +521,33 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
       .map((s) => s.trim())
       .filter(Boolean)
       .map((v) => ({ value: v, label: v }));
-  const packingOptions = React.useMemo(() => toOptionList(invItem?.packingMaterial), [invItem]);
-  const materialOptions = React.useMemo(() => toOptionList(invItem?.materialCategory), [invItem]);
-
-  // Product-type key for dynamic fields (mirrors Inventory's add-item modal)
+  // Product-type key for dynamic attribute fields (mirrors Inventory's add-item modal)
   const productTypeKey = React.useMemo(() => invItem ? getLeadProductTypeKey(invItem.itemName) : null, [invItem]);
 
-  // Brand options: prefer productAttributes.brand (set in Inventory add-item), fall back to top-level brand
-  const brandOptions = React.useMemo(() => {
-    const attrBrand = invItem?.productAttributes?.brand;
-    if (Array.isArray(attrBrand) && attrBrand.length > 0) {
-      return attrBrand.map(v => ({ value: v, label: v }));
-    }
-    if (typeof attrBrand === 'string' && attrBrand) {
-      return toOptionList(attrBrand);
-    }
-    return toOptionList(invItem?.brand);
-  }, [invItem]);
+  // All inventory items of the same product type as the selected one — used to source the
+  // attribute dropdown options PURELY from inventory (e.g. every Shape any soap item has).
+  const sameTypeItems = React.useMemo(() => {
+    if (productTypeKey) return inventoryItemsData.filter((it) => getLeadProductTypeKey(it.itemName) === productTypeKey);
+    return invItem ? [invItem] : [];
+  }, [productTypeKey, inventoryItemsData, invItem]);
 
-  // Dynamic fields specific to this product type (excludes brand/packingMaterial/sticker — already shown elsewhere)
+  // Union of stored values for an attribute key across same-type inventory items.
+  const attrOptionsFor = (key) => {
+    const vals = new Set();
+    sameTypeItems.forEach((it) => {
+      const v = it.productAttributes?.[key];
+      (Array.isArray(v) ? v : (v != null && v !== '' ? [v] : [])).forEach((x) => vals.add(x));
+    });
+    return [...vals];
+  };
+
+  // Attribute fields to show: the product type's schema, or (for unrecognized types) whatever
+  // attributes the selected inventory item actually stores. Nothing hardcoded/generic.
   const dynamicFieldDefs = React.useMemo(() => {
-    if (!productTypeKey) return [];
-    return PRODUCT_FIELD_DEFS_LEAD[productTypeKey] || [];
-  }, [productTypeKey]);
+    if (productTypeKey && PRODUCT_FIELD_DEFS_LEAD[productTypeKey]) return PRODUCT_FIELD_DEFS_LEAD[productTypeKey];
+    const attrs = invItem?.productAttributes || {};
+    return Object.keys(attrs).map((k) => ({ key: k, label: prettyAttrKeyLead(k), options: [] }));
+  }, [productTypeKey, invItem]);
 
   // Pre-fill a spec field only when the inventory item defines a single value; when it offers
   // several, leave it blank so the user picks one from the (now restricted) dropdown.
@@ -580,7 +631,10 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     const color = stock <= 0 ? '#f5222d' : stock <= minStock ? '#fa8c16' : '#52c41a';
                     return (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{option.label}</span>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {option.label}
+                          {option.data.category ? <span style={{ fontSize: 10, color: '#888', marginLeft: 6 }}>· {option.data.category}</span> : null}
+                        </span>
                         <span style={{ fontSize: 10, color, fontWeight: 600, background: `${color}20`, padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>
                           {stock} {unit}
                         </span>
@@ -638,7 +692,10 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       const color = stock <= 0 ? '#f5222d' : stock <= minStock ? '#fa8c16' : '#52c41a';
                       return (
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{option.label}</span>
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {option.label}
+                          {option.data.category ? <span style={{ fontSize: 10, color: '#888', marginLeft: 6 }}>· {option.data.category}</span> : null}
+                        </span>
                           <span style={{ fontSize: 10, color, fontWeight: 600, background: `${color}20`, padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>
                             {stock} {unit}
                           </span>
@@ -666,31 +723,14 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             )}
           </Col>
 
-          {/* Brand — inline next to product when inventory has brands for this product */}
-          {brandOptions.length > 0 && (
-            <Col flex="none" style={{ width: 140 }}>
-              <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>BRAND</Text>
-              <Form.Item {...rest} name={[name, 'brand']} style={{ marginBottom: 0 }}>
-                <Select
-                  showSearch
-                  allowClear
-                  optionFilterProp="label"
-                  placeholder="Brand"
-                  disabled={isItemDisabled}
-                  size="small"
-                  style={{ width: '100%' }}
-                  options={brandOptions}
-                />
-              </Form.Item>
-            </Col>
-          )}
+          {/* Brand & other specs are now shown only as inventory-driven product attributes below */}
 
           {/* Display Unit & Size now live once at the kit-card header (see kit card) */}
 
           {/* Qty, Rate, GST & Sticker/Printing */}
           <Col flex="auto">
               <Row gutter={8}>
-                <Col span={5}>
+                <Col span={8}>
                   <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY</Text>
                   <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                     <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
@@ -706,13 +746,13 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     </div>
                   )}
                 </Col>
-                <Col span={6}>
+                <Col span={8}>
                   <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>RATE ₹</Text>
                   <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
                     <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={isItemDisabled} size="small" />
                   </Form.Item>
                 </Col>
-                <Col span={6}>
+                <Col span={8}>
                   <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>GST %</Text>
                   <Form.Item
                     {...rest}
@@ -736,15 +776,6 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       disabled={isItemDisabled}
                       size="small"
                     />
-                  </Form.Item>
-                </Col>
-                <Col span={7}>
-                  <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>STICKER</Text>
-                  <Form.Item {...rest} name={[name, 'sticker']} style={{ marginBottom: 0 }}>
-                    <Select size="small" placeholder="Sticker/Printing" disabled={isItemDisabled}>
-                      <Option value="YES">Yes</Option>
-                      <Option value="NO">No</Option>
-                    </Select>
                   </Form.Item>
                 </Col>
               </Row>
@@ -787,69 +818,20 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             {isKit && <Tag color="magenta" style={{ fontSize: 10, borderRadius: 4 }}>KIT MODE</Tag>}
           </div>
 
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'nowrap' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'logo']} label={<span style={{ fontSize: 11 }}>Logo</span>} style={{ marginBottom: 0 }}>
-                <SelectWithAdd defaultOptions={[{ value: 'YES', label: 'YES' }, { value: 'NO', label: 'NO' }]} placeholder="Logo?" disabled={isItemDisabled} size="small" />
-              </Form.Item>
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'packingMaterial']} label={<span style={{ fontSize: 11 }}>Packing Material</span>} style={{ marginBottom: 0 }}>
-                {/* When the selected inventory item defines its own packing materials, show only
-                    those (drop the global `field` fetch); otherwise fall back to global options. */}
-                <Select
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  placeholder="Select"
-                  disabled={isItemDisabled}
-                  size="small"
-                  options={packingOptions.length ? packingOptions : packingMaterialOptions}
-                />
-              </Form.Item>
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'materialCategory']} label={<span style={{ fontSize: 11 }}>Material Category</span>} style={{ marginBottom: 0 }}>
-                <SelectWithAdd
-                  field={materialOptions.length ? undefined : 'materialCategory'}
-                  defaultOptions={materialOptions.length ? materialOptions : MATERIAL_CATEGORY_OPTIONS}
-                  placeholder="Eco / Plastic / Wooden"
-                  disabled={isItemDisabled}
-                  size="small"
-                />
-              </Form.Item>
-            </div>
-            {/* Brand shown here only when inventory has no brands (otherwise it's inline in header) */}
-            {brandOptions.length === 0 && (
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Form.Item {...rest} name={[name, 'brand']} label={<span style={{ fontSize: 11 }}>Brand</span>} style={{ marginBottom: 0 }}>
-                  <SelectWithAdd
-                    field="brand"
-                    defaultOptions={[]}
-                    placeholder="Select / Add brand"
-                    disabled={isItemDisabled}
-                    size="small"
-                  />
-                </Form.Item>
-              </div>
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item {...rest} name={[name, 'otherSpecs']} label={<span style={{ fontSize: 11 }}>Other Specs</span>} style={{ marginBottom: 0 }}>
-                <Input placeholder="e.g. Special handle" size="small" disabled={isItemDisabled} />
-              </Form.Item>
-            </div>
-          </div>
-
-          {/* Dynamic product-type fields (size, fragrance, bottleType, etc.) based on selected product */}
-          {dynamicFieldDefs.length > 0 && (
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+          {/* Product attribute fields — driven entirely by the selected product's inventory
+              attributes (no generic hardcoded fields). Each dropdown's options come from the
+              values stored on matching inventory items. */}
+          {dynamicFieldDefs.length > 0 ? (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {dynamicFieldDefs.map((fd) => {
-                const attrVal = invItem?.productAttributes?.[fd.key];
-                const opts = Array.isArray(attrVal) && attrVal.length > 0
-                  ? attrVal.map(v => ({ value: v, label: v }))
-                  : typeof attrVal === 'string' && attrVal
-                    ? [{ value: attrVal, label: attrVal }]
-                    : fd.options || [];
+                // Yes/No toggle fields (sticker, printing, …) always offer both choices — they're a
+                // per-order decision, not a stored inventory value. Everything else is sourced from
+                // the actual values stored on matching inventory items.
+                const isYesNo = (fd.options || []).length === 2 && fd.options.every((o) => ['yes', 'no'].includes(String(o.value).toLowerCase()));
+                const invOpts = attrOptionsFor(fd.key);
+                const opts = isYesNo
+                  ? fd.options
+                  : (invOpts.length ? invOpts.map((v) => ({ value: v, label: v })) : (fd.options || []));
                 return (
                   <div key={fd.key} style={{ flex: '1 1 120px', minWidth: 100 }}>
                     <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fd.label}</span>} style={{ marginBottom: 0 }}>
@@ -871,6 +853,12 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 );
               })}
             </div>
+          ) : (
+            !isKit && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {invItem ? 'No product attributes configured for this item in Inventory.' : 'Select a product to see its attributes.'}
+              </Text>
+            )
           )}
 
           {isKit && (() => {
@@ -1621,6 +1609,7 @@ export default function Sales() {
       value: i._id,
       label: nameCount[i.itemName] > 1 ? `${i.itemName} (${i.itemCode || ''})` : i.itemName,
       name: i.itemName,
+      category: i.category || '',
       currentStock: i.currentStock ?? 0,
       minStock: i.minStock ?? 0,
       unit: i.unit || '',
@@ -1759,6 +1748,7 @@ export default function Sales() {
   // Helper to normalize backend `items` → frontend `products` (name/qty/rate shape)
   const itemsToProducts = (items = []) =>
     items.map((i) => ({
+      ...i, // preserve all inventory-driven attributes (shape, fragrance, color, bottleType, …)
       name: i.name || i.itemName || '',
       qty: i.qty,
       rate: i.price || i.rate || 0,
@@ -1773,7 +1763,7 @@ export default function Sales() {
       material: i.material || i.materialCategory || '',
       materialCategory: i.materialCategory || i.material || '',
       logo: i.logo,
-      sticker: i.sticker,
+      sticker: normYesNo(i.sticker || i.stickerPrinting),
       brand: i.brand,
       otherSpecs: i.otherSpecs,
       isKit: i.isKit || false,
@@ -2698,7 +2688,13 @@ export default function Sales() {
   const mapOrderItem = (p, kitDisplayUnit = '') => {
     const isKitItem = p.isKit || !!p.kitType;
     const packing = p.packingMaterial || p.packaging || (isKitItem ? kitDisplayUnit : '') || '';
+    // Canonical sticker flag: product types use either `sticker` (brush/paste/…) or
+    // `stickerPrinting` (soap/shampoo/…). Normalize to the Order enum ('YES'|'NO'|'') so
+    // Order validation passes and Operations sticker routing still works (handles legacy
+    // lowercase 'yes'/'no' values too).
+    const sticker = normYesNo(p.sticker || p.stickerPrinting);
     return {
+      ...p, // preserve all inventory-driven attributes (shape, fragrance, color, bottleType, …)
       itemName: p.name || p.kitType || '',
       name: p.name || p.kitType || '',
       itemId: p.itemId || undefined,
@@ -2708,7 +2704,7 @@ export default function Sales() {
       qty: Number(p.qty) || 0,
       gst: Number(p.gst) || 0,
       lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
-      logoType: inferLogoType(p, isKitItem ? kitDisplayUnit : ''),
+      logoType: inferLogoType({ ...p, sticker, packingMaterial: packing }, isKitItem ? kitDisplayUnit : ''),
       size: p.size || p.defaultSize,
       boxes: Number(p.boxes) || 0,
       packaging: packing,
@@ -2718,7 +2714,7 @@ export default function Sales() {
       hsnCode: p.hsnCode || '',
       discountPercent: p.discountPercent,
       logo: p.logo,
-      sticker: p.sticker,
+      sticker,
       brand: p.brand,
       otherSpecs: p.otherSpecs,
       isKit: p.isKit || false,
@@ -3639,19 +3635,29 @@ export default function Sales() {
         {products.map((p, i) => {
           // Normalize: fields may be top-level OR nested under p.specs (legacy)
           const logo            = p.logo            || p.specs?.logo;
-          const sticker         = p.sticker         || p.specs?.sticker;
+          const _stickerRaw     = p.sticker         || p.stickerPrinting || p.specs?.sticker;
+          const sticker         = normYesNo(_stickerRaw) || _stickerRaw; // uppercase yes/no; keep specials (e.g. PRINTING)
           const packingMaterial = p.packingMaterial || p.packaging || p.specs?.packingMaterial;
           const materialCategory= p.materialCategory|| p.material  || p.specs?.materialCategory;
           const brand           = p.brand           || p.specs?.brand;
           const otherSpecs      = p.otherSpecs      || p.specs?.otherSpecs;
           const productName     = p.name || p.itemName || p.kitType || '—';
+          // Inventory-driven product attributes (shape, fragrance, bottleType, …) not already
+          // shown as a dedicated spec above — rendered generically so nothing is hidden.
+          const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','stickerPrinting','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
+          const extraAttrs = Object.entries(p || {}).filter(([k, v]) => {
+            if (SHOWN_ATTR_KEYS.has(k)) return false;
+            if (v == null || v === '') return false;
+            if (Array.isArray(v)) return v.length > 0;
+            return typeof v !== 'object';
+          });
           const isKitItem       = p.isKit || !!p.kitType;
           const kitLabel        = p.kitName || p.kitType || '';
           const unitLabel       = p.unit || (isKitItem ? (kitDisplayUnit || '').replace(/_/g, ' ') : '') || '';
           const sizeLabel       = p.size || (isKitItem ? kitSize || '' : '') || '';
           const gstVal          = Number(p.gst) || 0;
           const lineTotal       = Math.round((p.qty || 0) * (p.rate || 0) * (1 + gstVal / 100));
-          const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel;
+          const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel || extraAttrs.length;
           return (
             <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
               {/* ── Header row ── */}
@@ -3727,6 +3733,12 @@ export default function Sales() {
                         <Text strong style={{ fontSize: 12 }}>{sizeLabel}</Text>
                       </Col>
                     )}
+                    {extraAttrs.map(([k, v]) => (
+                      <Col xs={12} sm={8} key={k}>
+                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>{prettyAttrKeyLead(k)}</Text>
+                        <Text strong style={{ fontSize: 12 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
+                      </Col>
+                    ))}
                     {otherSpecs && (
                       <Col xs={24} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.03)' }}>
                         <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Other Specifications</Text>
