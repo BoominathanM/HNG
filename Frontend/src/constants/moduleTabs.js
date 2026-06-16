@@ -56,7 +56,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'printing_suppliers', label: 'Printing Suppliers' },
   ],
   Billing: [
-    { key: 'order-in-process', label: 'Order in Process' },
+    { key: 'quotation-in-process', label: 'Quotation in Process' },
     { key: 'invoices', label: 'Invoices' },
   ],
   'Parties & Ledger': [

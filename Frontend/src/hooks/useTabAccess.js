@@ -22,7 +22,7 @@ const normalizeMap = (m) =>
  *   - This means the admin configures access by CHECKING what the user may
  *     see; unchecked/unconfigured tabs are hidden once any grant exists.
  *
- * Matching is done by the tab's stable `key` (e.g. 'order-in-process'), which
+ * Matching is done by the tab's stable `key` (e.g. 'quotation-in-process'), which
  * is what Settings stores in tabAccess (see src/constants/moduleTabs.js). This
  * is robust even when a tab's visible label is JSX (icons/badges/counts).
  *

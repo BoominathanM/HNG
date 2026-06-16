@@ -104,6 +104,7 @@ const leadSchema = new mongoose.Schema({
   deliveryBy: String,
   transportationBy: String,
   forwardingCharge: { type: Boolean, default: false },
+  forwardingChargeAmount: { type: Number, default: 0 },
   orderDeliveryDate: Date,
   splitDates: [mongoose.Schema.Types.Mixed],
   paymentTerms: String,

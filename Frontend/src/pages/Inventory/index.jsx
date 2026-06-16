@@ -61,57 +61,89 @@ const MATERIAL_CATEGORY_OPTIONS = [
   { value: 'Wooden', label: 'Wooden' },
 ];
 
+const YES_NO = [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
+const KIT_PACKING = [{ value: 'Box', label: 'Box' }, { value: 'Butter paper pouch', label: 'Butter paper pouch' }];
+
 // Dynamic attribute field definitions keyed by product type.
 // Each entry is an array of { key, label, field (for SelectWithAdd persistence), options, mode? }
 const PRODUCT_FIELD_DEFS = {
   soap: [
     { key: 'shape', label: 'Shape', field: 'soap_shape', options: [{ value: 'Square', label: 'Square' }, { value: 'Round', label: 'Round' }] },
-    { key: 'fragrance', label: 'Fragrance', field: 'soap_fragrance', options: [] },
+    { key: 'sizes', label: 'Sizes (gram)', field: 'soap_sizes', options: [{ value: '15', label: '15 g' }, { value: '20', label: '20 g' }, { value: '30', label: '30 g' }], mode: 'multiple' },
     { key: 'stickerShape', label: 'Sticker Shape', field: 'soap_stickerShape', options: [{ value: 'Square', label: 'Square' }, { value: 'Round', label: 'Round' }] },
-    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'soap_stickerPrinting', options: [] },
-    { key: 'boxPacking', label: 'Box / Packing', field: 'soap_boxPacking', options: [{ value: 'Box', label: 'Box' }, { value: 'No Box', label: 'No Box' }] },
+    { key: 'fragrance', label: 'Fragrance', field: 'soap_fragrance', options: [] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'soap_stickerPrinting', options: YES_NO },
+    { key: 'printing', label: 'Printing', field: 'soap_printing', options: YES_NO },
   ],
   shampoo: [
     { key: 'bottleType', label: 'Bottle Type', field: 'liquid_bottleType', options: [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }] },
     { key: 'sizes', label: 'Sizes (ml)', field: 'liquid_sizes', options: [{ value: '15', label: '15 ml' }, { value: '20', label: '20 ml' }, { value: '25', label: '25 ml' }, { value: '30', label: '30 ml' }], mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'liquid_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'liquid_color', options: [] },
-    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: [] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: YES_NO },
   ],
   moisturizer: [
     { key: 'bottleType', label: 'Bottle Type', field: 'liquid_bottleType', options: [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }] },
     { key: 'sizes', label: 'Sizes (ml)', field: 'liquid_sizes', options: [{ value: '15', label: '15 ml' }, { value: '20', label: '20 ml' }, { value: '25', label: '25 ml' }, { value: '30', label: '30 ml' }], mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'liquid_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'liquid_color', options: [] },
-    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: [] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: YES_NO },
   ],
   shower_gel: [
     { key: 'bottleType', label: 'Bottle Type', field: 'liquid_bottleType', options: [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }] },
     { key: 'sizes', label: 'Sizes (ml)', field: 'liquid_sizes', options: [{ value: '15', label: '15 ml' }, { value: '20', label: '20 ml' }, { value: '25', label: '25 ml' }, { value: '30', label: '30 ml' }], mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'liquid_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'liquid_color', options: [] },
-    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: [] },
+    { key: 'stickerPrinting', label: 'Sticker Printing', field: 'liquid_stickerPrinting', options: YES_NO },
   ],
   paste: [
     { key: 'brand', label: 'Brand', field: 'paste_brand', options: [{ value: 'Promise', label: 'Promise' }, { value: 'meswak', label: 'meswak' }, { value: 'anchor', label: 'anchor' }, { value: 'Colgate', label: 'Colgate' }], mode: 'multiple' },
-    { key: 'gramSize', label: 'Size (gram)', field: 'paste_gramSize', options: [{ value: '10', label: '10 g' }, { value: '20', label: '20 g' }, { value: '50', label: '50 g' }], mode: 'multiple' },
+    { key: 'gramSize', label: 'Size (gram)', field: 'paste_gramSize', options: [{ value: '10', label: '10 g' }], mode: 'multiple' },
   ],
   brush: [
     { key: 'brushType', label: 'Brush Type', field: 'brush_type', options: [{ value: 'Wooden brush', label: 'Wooden brush' }, { value: 'Plastic brush', label: 'Plastic brush' }] },
-    { key: 'printingBrand', label: 'Printing / Brand', field: 'brush_printingBrand', options: [{ value: 'promise', label: 'promise' }, { value: 'anchor', label: 'anchor' }, { value: 'pristin', label: 'pristin' }], mode: 'multiple' },
+    { key: 'printingBrand', label: 'Printing / Brand', field: 'brush_printingBrand', options: [{ value: 'printing', label: 'printing' }, { value: 'promise', label: 'promise' }, { value: 'anchor', label: 'anchor' }, { value: 'pristin', label: 'pristin' }], mode: 'multiple' },
   ],
   dental_kit: [
     { key: 'kitProducts', label: 'Kit Products', field: 'dental_kitProducts', options: [{ value: 'Brush', label: 'Brush' }, { value: 'Paste', label: 'Paste' }], mode: 'multiple' },
-    { key: 'packingType', label: 'Packing Material', field: 'dental_packingType', options: [{ value: 'Box', label: 'Box' }, { value: 'Butter paper pouch', label: 'Butter paper pouch' }] },
-    { key: 'sticker', label: 'Sticker', field: 'dental_sticker', options: [] },
-    { key: 'printing', label: 'Printing', field: 'dental_printing', options: [] },
+    { key: 'packingType', label: 'Packing Material', field: 'dental_packingType', options: KIT_PACKING },
+    { key: 'sticker', label: 'Sticker', field: 'dental_sticker', options: YES_NO },
+    { key: 'printing', label: 'Printing', field: 'dental_printing', options: YES_NO },
   ],
   shaving_kit: [
     { key: 'razorBrand', label: 'Razor Brand', field: 'shaving_razorBrand', options: [{ value: 'Gillette', label: 'Gillette' }, { value: 'darco', label: 'darco' }, { value: 'glide', label: 'glide' }], mode: 'multiple' },
     { key: 'gelBrand', label: 'Gel Brand', field: 'shaving_gelBrand', options: [{ value: 'oxylife', label: 'oxylife' }, { value: 'eliven', label: 'eliven' }], mode: 'multiple' },
+    { key: 'packingType', label: 'Packing Material', field: 'shaving_packingType', options: KIT_PACKING },
+    { key: 'sticker', label: 'Sticker', field: 'shaving_sticker', options: YES_NO },
+    { key: 'printing', label: 'Printing', field: 'shaving_printing', options: YES_NO },
   ],
   vanity_kit: [
     { key: 'kitContents', label: 'Kit Contents', field: 'vanity_contents', options: [{ value: 'vanitykit', label: 'Vanity Kit' }, { value: 'medkit', label: 'Med Kit' }, { value: 'sweing', label: 'Sewing Kit' }], mode: 'multiple' },
+    { key: 'packingType', label: 'Packing Material', field: 'vanity_packingType', options: KIT_PACKING },
+    { key: 'sticker', label: 'Sticker', field: 'vanity_sticker', options: YES_NO },
+    { key: 'printing', label: 'Printing', field: 'vanity_printing', options: YES_NO },
+  ],
+};
+
+// Kit-level attribute fields shown in Add/Edit Kit modal based on kit name
+const KIT_ATTRIBUTE_DEFS = {
+  dental_kit: [
+    { key: 'packingType', label: 'Packing Material', field: 'dental_packingType', options: KIT_PACKING },
+    { key: 'sticker', label: 'Sticker', field: 'dental_sticker', options: YES_NO },
+    { key: 'printing', label: 'Printing', field: 'dental_printing', options: YES_NO },
+  ],
+  shaving_kit: [
+    { key: 'razorBrand', label: 'Razor Brand', field: 'shaving_razorBrand', options: [{ value: 'Gillette', label: 'Gillette' }, { value: 'darco', label: 'darco' }, { value: 'glide', label: 'glide' }], mode: 'multiple' },
+    { key: 'gelBrand', label: 'Gel Brand', field: 'shaving_gelBrand', options: [{ value: 'oxylife', label: 'oxylife' }, { value: 'eliven', label: 'eliven' }], mode: 'multiple' },
+    { key: 'packingType', label: 'Packing Material', field: 'shaving_packingType', options: KIT_PACKING },
+    { key: 'sticker', label: 'Sticker', field: 'shaving_sticker', options: YES_NO },
+    { key: 'printing', label: 'Printing', field: 'shaving_printing', options: YES_NO },
+  ],
+  vanity_kit: [
+    { key: 'kitContents', label: 'Kit Contents', field: 'vanity_contents', options: [{ value: 'vanitykit', label: 'Vanity Kit' }, { value: 'medkit', label: 'Med Kit' }, { value: 'sweing', label: 'Sewing Kit' }], mode: 'multiple' },
+    { key: 'packingType', label: 'Packing Material', field: 'vanity_packingType', options: KIT_PACKING },
+    { key: 'sticker', label: 'Sticker', field: 'vanity_sticker', options: YES_NO },
+    { key: 'printing', label: 'Printing', field: 'vanity_printing', options: YES_NO },
   ],
 };
 
@@ -246,6 +278,7 @@ export default function Inventory() {
     displayUnit: k.displayUnit,
     size: k.size,
     products: k.products || [],
+    kitAttributes: k.kitAttributes || {},
   })), [kitsData]);
   const [kitModal, setKitModal] = useState(false);
   const [editingKit, setEditingKit] = useState(null);
@@ -264,6 +297,7 @@ export default function Inventory() {
         kitName: kit.kitName,
         displayUnit: kit.displayUnit,
         size: kit.size,
+        kitAttrs: kit.kitAttributes || {},
         products: kit.products?.length
           ? kit.products.map(p => ({
               ...p,
@@ -283,6 +317,7 @@ export default function Inventory() {
         kitName: vals.kitName,
         displayUnit: vals.displayUnit || '',
         size: vals.size || '',
+        kitAttributes: vals.kitAttrs || {},
         products: (vals.products || []).filter((p) => p && p.productName).map((p) => {
           const resolvedName = inventoryList.find(i => i.key === p.productName)?.name || p.productName;
           return {
@@ -438,6 +473,11 @@ export default function Inventory() {
   const watchedItemName = Form.useWatch('name', addItemForm);
   const productTypeKey = useMemo(() => getProductTypeKey(watchedItemName), [watchedItemName]);
   const productFieldDefs = PRODUCT_FIELD_DEFS[productTypeKey] || [];
+
+  /* ── Dynamic kit attribute fields (Add/Edit Kit modal) ── */
+  const watchedKitName = Form.useWatch('kitName', kitForm);
+  const kitTypeKey = useMemo(() => getProductTypeKey(watchedKitName), [watchedKitName]);
+  const kitAttrDefs = KIT_ATTRIBUTE_DEFS[kitTypeKey] || [];
 
   /* ── Category & Kit expand ── */
   const [expandedCategory, setExpandedCategory] = useState(null);
@@ -1623,6 +1663,30 @@ export default function Inventory() {
               </Form.Item>
             </Col>
           </Row>
+
+          {/* ── Dynamic kit-level attributes based on kit name ── */}
+          {kitAttrDefs.length > 0 && (
+            <>
+              <Divider style={{ margin: '4px 0 12px' }}>
+                <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>Kit Attributes</Text>
+              </Divider>
+              <Row gutter={16}>
+                {kitAttrDefs.map((fd) => (
+                  <Col xs={24} sm={12} key={fd.key}>
+                    <Form.Item label={fd.label} name={['kitAttrs', fd.key]}>
+                      <SelectWithAdd
+                        field={fd.field}
+                        mode={fd.mode}
+                        defaultOptions={fd.options}
+                        placeholder={`Select / Add ${fd.label.toLowerCase()}`}
+                        allowClear
+                      />
+                    </Form.Item>
+                  </Col>
+                ))}
+              </Row>
+            </>
+          )}
 
           <Divider style={{ margin: '4px 0 12px' }}>Products in this Kit</Divider>
 

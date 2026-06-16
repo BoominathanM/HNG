@@ -80,6 +80,7 @@ const orderSchema = new mongoose.Schema({
   city: String,
   state: String,
   pincode: String,
+  forwardingChargeAmount: { type: Number, default: 0 },
   paymentProofs: [mongoose.Schema.Types.Mixed],
   splitDates: [mongoose.Schema.Types.Mixed],
   deletedAt: Date,

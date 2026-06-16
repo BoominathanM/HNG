@@ -593,7 +593,7 @@ export const apiSlice = createApi({
     }),
     convertQuotationToInvoice: builder.mutation({
       query: (data) => ({ url: '/billing/invoices/convert-quotation', method: 'post', data }),
-      invalidatesTags: ['Invoices', 'BillingParties'],
+      invalidatesTags: ['Invoices', 'BillingParties', 'Quotations'],
     }),
     getQuotationsInProcess: builder.query({
       query: () => ({ url: '/billing/quotations-in-process' }),

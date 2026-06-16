@@ -1,9 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Row, Col, Card, Button, Form, Input, Upload, Typography, Space,
-  Steps, Descriptions, Alert, Tag, DatePicker, Checkbox,
+  Row, Col, Card, Button, Form, Input, InputNumber, Upload, Typography, Space,
+  Steps, Descriptions, Alert, Tag, Checkbox,
   Select, Table, Divider,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
@@ -23,8 +23,10 @@ import {
   useVerifyItemMutation,
   useSaveAsDraftMutation,
   useUploadBoxPhotosMutation,
-  useVerifyInvoiceMutation,
+  useGetInvoicesQuery,
+  useGetCompanySettingsQuery,
 } from '../../store/api/apiSlice';
+import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -56,8 +58,19 @@ export default function DispatchDetail() {
   const [verifyItem] = useVerifyItemMutation();
   const [saveAsDraft] = useSaveAsDraftMutation();
   const [uploadBoxPhotos] = useUploadBoxPhotosMutation();
-  const [verifyInvoice] = useVerifyInvoiceMutation();
-  const [invoiceVerdict, setInvoiceVerdict] = useState(null);
+
+  // Derive orderId from raw dispatch data (before `order` useMemo is computed)
+  const dispatchRaw = dispatchData?.data;
+  const dispatchOrderId = dispatchRaw?.orderId && typeof dispatchRaw.orderId === 'object'
+    ? String(dispatchRaw.orderId._id)
+    : dispatchRaw?.orderId ? String(dispatchRaw.orderId) : null;
+
+  const { data: orderInvoicesData } = useGetInvoicesQuery(
+    { orderId: dispatchOrderId, limit: 5 },
+    { skip: !dispatchOrderId }
+  );
+  const { data: companySettingsData } = useGetCompanySettingsQuery();
+  const invoiceSettings = companySettingsData?.data || {};
 
   const handleBoxPhotoUpload = async (type, file) => {
     try {
@@ -65,6 +78,8 @@ export default function DispatchDetail() {
       fd.append('photos', file);
       fd.append('type', type);
       await uploadBoxPhotos({ id, formData: fd }).unwrap();
+      if (type === 'open') setOpenBoxCount((n) => n + 1);
+      else setCloseBoxCount((n) => n + 1);
       enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo uploaded`, { variant: 'success' });
     } catch {
       enqueueSnackbar('Box photo upload failed', { variant: 'error' });
@@ -72,15 +87,48 @@ export default function DispatchDetail() {
     return false; // prevent antd auto-upload
   };
 
-  const handleVerifyInvoice = async () => {
-    try {
-      const vals = form.getFieldsValue();
-      const res = await verifyInvoice({ id, invoiceNumber: vals.invoiceNumber, invoiceTotal: order?.total }).unwrap();
-      setInvoiceVerdict(res.data);
-      enqueueSnackbar(`Invoice ${res.data.verdict} (${res.data.score})`, { variant: res.data.verdict === 'verified' ? 'success' : res.data.verdict === 'failed' ? 'error' : 'warning' });
-    } catch {
-      enqueueSnackbar('Invoice verification failed', { variant: 'error' });
+  const handlePrintInvoice = () => {
+    const rawInvoices = orderInvoicesData?.data || [];
+    if (rawInvoices.length === 0) {
+      enqueueSnackbar('No invoice found for this order. Please create one from the Billing page.', { variant: 'warning' });
+      return;
     }
+    const inv = rawInvoices[0];
+    const halfGst = Math.round((inv.gstAmount || 0) / 2);
+    const invoiceData = {
+      inv: inv.invoiceNumber,
+      date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
+      type: inv.invoiceType || 'GST',
+      total: inv.total || 0,
+      gst: inv.gstAmount || 0,
+      taxableAmount: inv.subtotal || 0,
+      cgst: halfGst,
+      sgst: halfGst,
+      forwardingCharge: 0,
+      customer: {
+        name: inv.partyId?.name || order?.client || '—',
+        mobile: inv.partyId?.phone || order?.phone || '',
+        gstin: inv.partyId?.gstNumber || '',
+        address: inv.partyId?.address || order?.detailedAddress || '',
+        city: inv.partyId?.city || order?.city || '',
+        pan: inv.partyId?.pan || '',
+        placeOfSupply: inv.partyId?.state || 'Tamil Nadu',
+      },
+      items: (inv.items || []).filter(Boolean).map(i => ({
+        name: i.itemName,
+        unit: i.unit,
+        rate: i.price || 0,
+        qty: i.qty || 0,
+        taxRate: i.taxRate || 0,
+        taxAmt: i.taxAmt || 0,
+        amount: i.lineTotal ?? ((i.price || 0) * (i.qty || 0)),
+      })),
+    };
+    const html = generatePrintHTML('invoice', invoiceData, invoiceSettings);
+    const win = window.open('', '_blank', 'width=900,height=700');
+    win.document.write(html);
+    win.document.close();
+    win.print();
   };
 
   const order = useMemo(() => {
@@ -91,8 +139,10 @@ export default function DispatchDetail() {
     const o = (d.orderId && typeof d.orderId === 'object') ? d.orderId : {};
     // Sample orders bypass payment — no payment is expected for samples.
     const isSample = o.orderCategory === 'SAMPLE';
-    // Payment is "Confirmed" for dispatch purposes once the order balance is cleared.
-    const paymentConfirmed = isSample || (o.balance != null && o.balance <= 0) || o.status === 'Completed' || d.paymentStatus === 'Paid';
+    // Credit orders are dispatched before payment — payment is due after delivery.
+    const isCredit = o.paymentTerms === 'CREDIT_10_30';
+    // Payment is "Confirmed" for dispatch purposes once the order balance is cleared, or credit terms apply.
+    const basePaymentConfirmed = isSample || isCredit || (o.balance != null && o.balance <= 0) || o.status === 'Completed' || d.paymentStatus === 'Paid';
     return {
       key: d._id, id: o.orderCode || d.orderCode || d._id,
       orderObjectId: o._id || d.orderId,
@@ -100,13 +150,19 @@ export default function DispatchDetail() {
       phone: o.clientPhone || d.clientPhone || '', email: o.clientEmail || d.clientEmail || '',
       product: o.product || d.product || '', qty: o.qty || d.qty || 0,
       boxes: d.boxes || 0, weight: d.weight || '',
-      payment: paymentConfirmed ? 'Confirmed' : 'Pending',
+      basePaymentConfirmed,
+      isCredit,
+      creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
+      payment: isCredit ? 'Credit' : (basePaymentConfirmed ? 'Confirmed' : 'Pending'),
       address: o.address || d.address || '', destination: o.destination || d.destination || '',
       detailedAddress: d.detailedAddress || '',
       city: d.city || '', state: d.state || '', pincode: d.pincode || '',
       transport: d.transportName || '', status: d.status || '',
       salesPerson: o.assignedTo?.fullName || d.salesPerson || '',
       isSample,
+      forwardingCharge: o.forwardingCharge || false,
+      forwardingChargeAmount: o.forwardingChargeAmount || 0,
+      total: o.total || 0,
       // dispatch line items (these carry _id for per-product verification)
       items: (d.items && d.items.length ? d.items : (o.items || [])),
       lrData: d.lrData || null,
@@ -117,12 +173,32 @@ export default function DispatchDetail() {
   const [lrForm] = Form.useForm();
   const [trackingForm] = Form.useForm();
 
+  // Forwarding charge — editable at dispatch time; if raised above original, payment is pending.
+  const [localFwdAmount, setLocalFwdAmount] = useState(null); // null = not yet initialised
+  // Initialise once order data arrives
+  useEffect(() => {
+    if (order && localFwdAmount === null) {
+      setLocalFwdAmount(order.forwardingChargeAmount || 0);
+    }
+  }, [order, localFwdAmount]);
+
+  // Effective forwarding amount (may be overridden by dispatcher)
+  const effectiveFwdAmount = localFwdAmount ?? (order?.forwardingChargeAmount || 0);
+  // Payment is pending if base payment isn't confirmed OR if dispatcher raised the forwarding charge.
+  // Credit orders bypass both checks — the full amount (including any forwarding charge) is on credit.
+  const fwdAmountRaised = order && !order.isCredit && effectiveFwdAmount > (order.forwardingChargeAmount || 0);
+  const paymentConfirmed = order?.isCredit || (!fwdAmountRaised && (order?.basePaymentConfirmed || false));
+
   // Dispatch verification state
   const [dispatchType, setDispatchType] = useState(null);
   const [verifiedProducts, setVerifiedProducts] = useState(new Set());
   const [notifyWhatsApp, setNotifyWhatsApp] = useState(true);
   const [notifyAuto, setNotifyAuto] = useState(true);
   const [dispatched, setDispatched] = useState(false);
+
+  // Box photo upload tracking (uploaded immediately via handleBoxPhotoUpload)
+  const [openBoxCount, setOpenBoxCount] = useState(0);
+  const [closeBoxCount, setCloseBoxCount] = useState(0);
 
   // Post-dispatch state (lorry receipt section)
   const [lrFileList, setLrFileList] = useState([]);
@@ -318,11 +394,24 @@ export default function DispatchDetail() {
           />
         </motion.div>
       )}
-      {!order.isSample && order.payment !== 'Confirmed' && (
+      {order.isCredit && (
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+          <Alert type="info" showIcon
+            message="Credit Order — Dispatch Allowed"
+            description={order.creditDueDate
+              ? `Payment due by ${new Date(order.creditDueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}. Ensure payment is collected before the due date.`
+              : 'Credit terms applied. Set a credit due date on the order to track payment.'}
+            style={{ marginBottom: 16, borderRadius: 8 }}
+          />
+        </motion.div>
+      )}
+      {!order.isSample && !order.isCredit && !paymentConfirmed && (
         <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
           <Alert type="error" showIcon
             message="Dispatch Blocked — Payment Not Confirmed"
-            description="This order cannot be dispatched until full payment is received."
+            description={fwdAmountRaised
+              ? `Forwarding charge raised to ₹${effectiveFwdAmount.toLocaleString()} — collect the additional ₹${(effectiveFwdAmount - (order.forwardingChargeAmount || 0)).toLocaleString()} before dispatching.`
+              : 'This order cannot be dispatched until full payment is received.'}
             style={{ marginBottom: 16, borderRadius: 8 }}
           />
         </motion.div>
@@ -367,7 +456,9 @@ export default function DispatchDetail() {
                 <Descriptions.Item label="Payment">
                   {order.isSample
                     ? <Tag color="default">N/A (Sample)</Tag>
-                    : <Tag color={order.payment === 'Confirmed' ? 'success' : 'error'}>{order.payment}</Tag>}
+                    : order.isCredit
+                    ? <Tag color="blue">Credit{order.creditDueDate ? ` — Due ${new Date(order.creditDueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : ''}</Tag>
+                    : <Tag color={paymentConfirmed ? 'success' : 'error'}>{paymentConfirmed ? 'Confirmed' : 'Pending'}</Tag>}
                 </Descriptions.Item>
                 <Descriptions.Item label="Status">
                   <Tag style={{ borderRadius: 20, background: `${statusColor[order.status]}22`, color: statusColor[order.status], border: `1px solid ${statusColor[order.status]}44` }}>
@@ -431,6 +522,40 @@ export default function DispatchDetail() {
                   </Col>
                 </Row>
 
+                {/* Forwarding Charge — shown if applicable on this order */}
+                {order.forwardingCharge && (
+                  <Row gutter={12}>
+                    <Col xs={24} sm={12}>
+                      <Form.Item
+                        label={
+                          <span>
+                            Forwarding Charge (₹)
+                            {fwdAmountRaised && (
+                              <Tag color="error" style={{ marginLeft: 8, fontSize: 10 }}>Payment Pending</Tag>
+                            )}
+                          </span>
+                        }
+                        style={{ marginBottom: 16 }}
+                      >
+                        <InputNumber
+                          min={0}
+                          value={effectiveFwdAmount}
+                          onChange={(v) => setLocalFwdAmount(v ?? 0)}
+                          style={{ width: '100%' }}
+                          prefix="₹"
+                          addonAfter={
+                            order.forwardingChargeAmount > 0 && (
+                              <span style={{ fontSize: 11, color: '#999' }}>
+                                Original: ₹{order.forwardingChargeAmount.toLocaleString()}
+                              </span>
+                            )
+                          }
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                )}
+
                 {/* Product Details table — shows when dispatch type selected */}
                 {dispatchType && (
                   <div style={{ marginBottom: 16, border: `1px solid #B11E6A33`, borderRadius: 10, overflow: 'hidden' }}>
@@ -479,17 +604,25 @@ export default function DispatchDetail() {
                   </div>
                 )}
 
-                {/* Box Photos (multiple, uploaded immediately) */}
+                {/* Box Photos (multiple, uploaded immediately — both are mandatory) */}
                 <Row gutter={12}>
                   <Col xs={24} sm={12}>
-                    <Form.Item label="Open Box Photos">
+                    <Form.Item
+                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Open Box Photos</span>}
+                      validateStatus={openBoxCount === 0 ? 'error' : 'success'}
+                      help={openBoxCount === 0 ? 'At least one open-box photo is required' : `${openBoxCount} photo(s) uploaded`}
+                    >
                       <Upload listType="picture" multiple beforeUpload={(file) => handleBoxPhotoUpload('open', file)} accept="image/*">
                         <Button icon={<CameraOutlined />} block>Open Box</Button>
                       </Upload>
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>
-                    <Form.Item label="Closed Box Photos">
+                    <Form.Item
+                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Closed Box Photos</span>}
+                      validateStatus={closeBoxCount === 0 ? 'error' : 'success'}
+                      help={closeBoxCount === 0 ? 'At least one closed-box photo is required' : `${closeBoxCount} photo(s) uploaded`}
+                    >
                       <Upload listType="picture" multiple beforeUpload={(file) => handleBoxPhotoUpload('close', file)} accept="image/*">
                         <Button icon={<CameraOutlined />} block>Close Box</Button>
                       </Upload>
@@ -497,50 +630,30 @@ export default function DispatchDetail() {
                   </Col>
                 </Row>
 
-                {/* Invoice */}
+                {/* Print Invoice */}
                 <div style={{ background: sectionBg, border: `1px solid #B11E6A22`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                     <FileDoneOutlined style={{ color: '#B11E6A', fontSize: 16 }} />
                     <Text strong style={{ color: textColor, fontSize: 13 }}>Invoice</Text>
+                    {orderInvoicesData?.data?.length > 0 && (
+                      <Tag color="success" style={{ marginLeft: 4, borderRadius: 12, fontSize: 11 }}>
+                        {orderInvoicesData.data[0].invoiceNumber}
+                      </Tag>
+                    )}
                   </div>
-                  <Row gutter={12}>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Invoice Number" name="invoiceNumber" style={{ marginBottom: 8 }}>
-                        <Input placeholder="e.g. INV-2024-001" />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Invoice Date" name="invoiceDate" style={{ marginBottom: 8 }}>
-                        <DatePicker style={{ width: '100%' }} placeholder="Select date" />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24}>
-                      <Form.Item label="Upload Invoice" name="invoiceFile" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList} style={{ marginBottom: 8 }}>
-                        <Upload listType="picture" maxCount={3} customRequest={makeUpload('dispatch/invoices')} accept=".pdf,.jpg,.jpeg,.png">
-                          <Button icon={<UploadOutlined />} block style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
-                            Upload Invoice (PDF / Image)
-                          </Button>
-                        </Upload>
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24}>
-                      <Button icon={<FileDoneOutlined />} onClick={handleVerifyInvoice} style={{ borderColor: '#1677ff', color: '#1677ff' }}>
-                        AI Verify Invoice
-                      </Button>
-                      {invoiceVerdict && (
-                        <div style={{ marginTop: 8 }}>
-                          <Tag color={invoiceVerdict.verdict === 'verified' ? 'success' : invoiceVerdict.verdict === 'failed' ? 'error' : 'warning'}>
-                            {invoiceVerdict.verdict.toUpperCase()} · {invoiceVerdict.score}
-                          </Tag>
-                          <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12 }}>
-                            {invoiceVerdict.checks.map((c, i) => (
-                              <li key={i} style={{ color: c.pass ? '#52c41a' : '#ff4d4f' }}>{c.pass ? '✓' : '✗'} {c.label}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </Col>
-                  </Row>
+                  <Button
+                    icon={<PrinterOutlined />}
+                    block
+                    onClick={handlePrintInvoice}
+                    style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontWeight: 600 }}
+                  >
+                    Print Invoice
+                  </Button>
+                  {!orderInvoicesData?.data?.length && (
+                    <Text style={{ fontSize: 11, color: '#aaa', display: 'block', marginTop: 6 }}>
+                      No invoice linked yet — create one from the Billing page first.
+                    </Text>
+                  )}
                 </div>
 
                 {/* Notify Options */}
@@ -570,8 +683,8 @@ export default function DispatchDetail() {
                 <Button
                   type="primary"
                   icon={<CarOutlined />}
-                  disabled={order.payment !== 'Confirmed' || dispatched || !allProductsVerified}
-                  style={{ background: (order.payment === 'Confirmed' && !dispatched && allProductsVerified) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
+                  disabled={!paymentConfirmed || dispatched || !allProductsVerified || openBoxCount === 0 || closeBoxCount === 0}
+                  style={{ background: (paymentConfirmed && !dispatched && allProductsVerified && openBoxCount > 0 && closeBoxCount > 0) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
                   onClick={handleConfirmDispatch}
                 >
                   {dispatched ? 'Dispatched ✓' : 'Confirm Dispatch'}

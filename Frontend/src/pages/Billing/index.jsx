@@ -136,13 +136,16 @@ export default function Billing() {
 
   const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => {
     const halfGst = Math.round((q.gstAmount || 0) / 2);
+    // leadId is now populated — prefer lead's hotel name over stored clientName
+    const lead = q.leadId && typeof q.leadId === 'object' ? q.leadId : null;
+    const clientDisplay = lead?.hotelName || q.clientName || '—';
     return {
       key: q._id,
       docType: 'Quotation',
       quot: q.quotCode,
-      client: q.clientName || '—',
+      client: clientDisplay,
       order: q.orderId?.orderCode || '—',
-      orderCategory: (q.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : 'ORDER',
+      orderCategory: (lead?.leadType === 'SAMPLE') ? 'SAMPLE' : 'ORDER',
       isEmergency: false,
       date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
       amount: q.amount,
@@ -158,11 +161,11 @@ export default function Billing() {
       sgst: halfGst,
       forwardingCharge: 0,
       customer: {
-        name: q.clientName || '—',
-        mobile: '',
-        gstin: '',
+        name: clientDisplay,
+        mobile: lead?.phone || '',
+        gstin: lead?.gstNumber || '',
         address: '',
-        city: '',
+        city: lead?.locationCity || '',
         pan: '',
         placeOfSupply: 'Tamil Nadu',
       },
@@ -270,7 +273,7 @@ export default function Billing() {
     };
   }), [salesOrdersRaw]);
 
-  const [activeTab, setActiveTab] = useState('order-in-process');
+  const [activeTab, setActiveTab] = useState('quotation-in-process');
   const { filterTabs, activeKeyFor } = useTabAccess('Billing');
   const { requireAccess } = usePageAccess('Billing');
 
@@ -351,6 +354,7 @@ export default function Billing() {
   const [convertAmt, setConvertAmt] = useState(0);
   const [convertPreviousDue, setConvertPreviousDue] = useState(0);
   const [convertPrevInvoices, setConvertPrevInvoices] = useState([]);
+  const [convertDocType, setConvertDocType] = useState('quotation'); // 'quotation' | 'order'
 
   // View proof modal (Paid quotation)
   const [proofOpen, setProofOpen] = useState(false);
@@ -573,11 +577,12 @@ export default function Billing() {
     }
   };
 
-  const openConvertModal = (quot) => {
-    const prevInvs = invoiceList.filter(inv => inv.client === quot.client && inv.balance > 0);
+  const openConvertModal = (doc, docType = 'quotation') => {
+    const prevInvs = invoiceList.filter(inv => inv.client === doc.client && inv.balance > 0);
     const prevDue = prevInvs.reduce((sum, inv) => sum + inv.balance, 0);
-    setConvertQuot(quot);
-    setConvertAmt(quot.total);
+    setConvertDocType(docType);
+    setConvertQuot(doc);
+    setConvertAmt(doc.total);
     setConvertPreviousDue(prevDue);
     setConvertPrevInvoices(prevInvs);
     setConvertOpen(true);
@@ -589,21 +594,40 @@ export default function Billing() {
     const amt = convertAmt || convertQuot.total;
     const party = partiesList.find(p => p.name === convertQuot.client);
     if (!party?.key) {
-      enqueueSnackbar(`Create a billing party named "${convertQuot.client}" before converting this quotation`, { variant: 'error' });
+      enqueueSnackbar(`Create a billing party named "${convertQuot.client}" before converting`, { variant: 'error' });
       return;
     }
     try {
-      await convertQuotationMutation({
-        quotationId: convertQuot.key,
-        partyId: party.key,
-        amount: amt,
-        includePreviousDue: convertPreviousDue > 0,
-      }).unwrap();
-      enqueueSnackbar(`${convertQuot.quot} converted to invoice and moved to Invoices`, { variant: 'success' });
+      if (convertDocType === 'order') {
+        await createInvoiceMutation({
+          partyId: party.key,
+          invoiceType: convertQuot.type || 'GST',
+          subtotal: convertQuot.amount || 0,
+          gstAmount: convertQuot.gst || 0,
+          total: amt,
+          advanceAmount: convertQuot.advance || 0,
+          orderId: convertQuot.key,
+          items: (convertQuot.items || []).map(i => ({
+            itemName: i.name,
+            unit: i.unit || 'PCS',
+            price: i.rate || 0,
+            qty: i.qty || 0,
+          })),
+        }).unwrap();
+        enqueueSnackbar(`${convertQuot.quot} converted to invoice and moved to Invoices`, { variant: 'success' });
+      } else {
+        await convertQuotationMutation({
+          quotationId: convertQuot.key,
+          partyId: party.key,
+          amount: amt,
+          includePreviousDue: convertPreviousDue > 0,
+        }).unwrap();
+        enqueueSnackbar(`${convertQuot.quot} converted to invoice and moved to Invoices`, { variant: 'success' });
+      }
       setActiveTab('invoices');
       setConvertOpen(false);
     } catch (err) {
-      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to convert quotation', { variant: 'error' });
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to convert', { variant: 'error' });
     }
   };
 
@@ -769,7 +793,7 @@ export default function Billing() {
     { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${quotStatusColor[v] || '#aaa'}22`, color: quotStatusColor[v] || '#888', border: `1px solid ${quotStatusColor[v] || '#aaa'}44` }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions',
-      width: tabType === 'in-process' ? 420 : 190,
+      width: tabType === 'in-process' ? 500 : 190,
       fixed: 'right',
       render: (_, r) => {
         const isOrder = r.docType === 'Order';
@@ -780,17 +804,6 @@ export default function Billing() {
             <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar(isOrder ? 'Invoice shared on WhatsApp' : 'Quotation shared on WhatsApp', { variant: 'success' })} /></Tooltip>
             <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
             <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
-            {/* Order-specific actions */}
-            {isOrder && r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
-              <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>
-                Record Manually
-              </Button>
-            )}
-            {isOrder && r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
-              <Button size="small" icon={<CalendarOutlined />} style={{ color: '#fa8c16', fontSize: 12 }} onClick={() => enqueueSnackbar('Reminder sent to client', { variant: 'success' })}>
-                Reminder
-              </Button>
-            )}
             {/* Quotation-specific actions */}
             {tabType === 'in-process' && !isOrder && (
               <Button
@@ -859,26 +872,24 @@ export default function Billing() {
         onChange={(k) => { setActiveTab(k); setQuotStatusFilter('all'); }}
         items={filterTabs([
           {
-            key: 'order-in-process',
-            label: 'Order in Process',
+            key: 'quotation-in-process',
+            label: 'Quotation in Process',
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(124,58,237,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ padding: '10px 16px 8px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderBottom: `1px solid ${borderColor}` }}>
                   <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search reference, client..." allowClear value={quotSearch} onChange={(e) => setQuotSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
                   <Select value={quotStatusFilter} onChange={setQuotStatusFilter} size="small" style={{ width: 180 }}>
                     <Option value="all">All</Option>
+                    <Option value="In Process">In Process</Option>
                     <Option value="Paid">Paid</Option>
                     <Option value="Partially Paid">Partially Paid</Option>
-                    <Option value="Unpaid">Unpaid</Option>
                   </Select>
                 </div>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
-                    dataSource={[
-                      ...quotationList.filter(q => ['Paid', 'Partially Paid'].includes(q.status)),
-                      ...salesOrdersList,
-                    ].filter(r => quotStatusFilter === 'all' || r.status === quotStatusFilter)
-                      .filter(r => !quotSearch || (r.quot || '').toLowerCase().includes(quotSearch.toLowerCase()) || (r.client || '').toLowerCase().includes(quotSearch.toLowerCase()) || (r.order || '').toLowerCase().includes(quotSearch.toLowerCase()))}
+                    dataSource={quotationList
+                      .filter(q => quotStatusFilter === 'all' || q.status === quotStatusFilter)
+                      .filter(q => !quotSearch || (q.quot || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.client || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.order || '').toLowerCase().includes(quotSearch.toLowerCase()))}
                     columns={makeQuotationColumns('in-process')}
                     pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"
@@ -1911,8 +1922,10 @@ export default function Billing() {
       <Modal
         title={
           <Space>
-            <FileDoneOutlined style={{ color: '#7c3aed' }} />
-            <span style={{ fontWeight: 700 }}>Convert Quotation to Invoice</span>
+            <FileDoneOutlined style={{ color: convertDocType === 'order' ? '#B11E6A' : '#7c3aed' }} />
+            <span style={{ fontWeight: 700 }}>
+              Convert {convertDocType === 'order' ? 'Order' : 'Quotation'} to Invoice
+            </span>
           </Space>
         }
         open={convertOpen}
@@ -1923,18 +1936,22 @@ export default function Billing() {
       >
         {convertQuot && (
           <div style={{ marginTop: 8 }}>
-            {/* Quotation info */}
-            <div style={{ background: '#7c3aed10', border: '1px solid #7c3aed33', borderRadius: 10, padding: '12px 16px', marginBottom: 12 }}>
+            {/* Source doc info */}
+            <div style={{
+              background: convertDocType === 'order' ? '#B11E6A10' : '#7c3aed10',
+              border: `1px solid ${convertDocType === 'order' ? '#B11E6A33' : '#7c3aed33'}`,
+              borderRadius: 10, padding: '12px 16px', marginBottom: 12,
+            }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Quotation</Text>
-                <Text strong style={{ color: '#7c3aed' }}>{convertQuot.quot}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{convertDocType === 'order' ? 'Order' : 'Quotation'}</Text>
+                <Text strong style={{ color: convertDocType === 'order' ? '#B11E6A' : '#7c3aed' }}>{convertQuot.quot}</Text>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>Client</Text>
                 <Text strong>{convertQuot.client}</Text>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Quotation Amount</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{convertDocType === 'order' ? 'Order' : 'Quotation'} Amount</Text>
                 <Text strong style={{ color: '#B11E6A' }}>₹{convertQuot.total.toLocaleString()}</Text>
               </div>
             </div>
@@ -1980,7 +1997,7 @@ export default function Billing() {
               {convertAmt < convertQuot.total && convertAmt > 0 && (
                 <div style={{ background: '#fa8c1610', border: '1px solid #fa8c1633', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
                   <Text style={{ fontSize: 12, color: '#d46b08' }}>
-                    Remaining ₹{(convertQuot.total - convertAmt).toLocaleString()} will stay in the quotation
+                    Remaining ₹{(convertQuot.total - convertAmt).toLocaleString()} will stay in the {convertDocType === 'order' ? 'order' : 'quotation'}
                   </Text>
                 </div>
               )}

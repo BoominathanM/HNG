@@ -319,6 +319,7 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     deliveryBy: lead.deliveryBy,
     transportationBy: lead.transportationBy,
     forwardingCharge: lead.forwardingCharge,
+    forwardingChargeAmount: lead.forwardingChargeAmount || 0,
     paymentTerms: lead.paymentTerms,
     createdBy: req.user._id,
   });
@@ -426,7 +427,9 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     deliveryBy: resolveField(negObj.deliveryBy, lead?.deliveryBy),
     transportationBy: resolveField(negObj.transportationBy, lead?.transportationBy),
     forwardingCharge: resolveField(negObj.forwardingCharge, lead?.forwardingCharge),
+    forwardingChargeAmount: resolveField(negObj.forwardingChargeAmount, lead?.forwardingChargeAmount, 0),
     paymentTerms: resolveField(negObj.paymentTerms, lead?.paymentTerms),
+    paymentReminderDate: resolveField(negObj.paymentReminderDate, negObj.creditDueDate, lead?.paymentReminderDate, lead?.creditDueDate),
     // Tentative delivery date flows from negotiation/quotation extras or the originating lead
     expectedDeliveryDate: resolveField(negObj.expectedDeliveryDate, negObj.orderDeliveryDate, lead?.orderDeliveryDate),
     // Emergency / partial delivery data from the originating lead

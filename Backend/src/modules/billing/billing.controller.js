@@ -80,6 +80,7 @@ exports.getInvoices = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   if (req.query.partyId) filter.partyId = req.query.partyId;
+  if (req.query.orderId) filter.orderId = req.query.orderId;
   if (req.query.search) {
     const re = new RegExp(req.query.search, 'i');
     filter.$or = [{ invoiceNumber: re }];
@@ -230,9 +231,16 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
 
 // ─── QUOTATIONS in process (for Billing tab) ───────────────────────────────
 exports.getQuotationsInProcess = asyncHandler(async (req, res) => {
-  const quotations = await Quotation.find({
-    status: { $in: ['Paid', 'Partially Paid'] },
-    deletedAt: null,
-  }).sort('-createdAt');
-  res.status(200).json({ success: true, data: quotations });
+  // Return all non-deleted quotations regardless of status so newly created
+  // (Unpaid / In Process) quotations appear immediately in the Billing tab.
+  const quotations = await Quotation.find({ deletedAt: null })
+    .populate('leadId', 'hotelName contactPerson phone locationCity gstNumber leadType')
+    .sort('-createdAt');
+
+  // Exclude quotations already converted to a billing invoice.
+  const convertedIds = await Invoice.distinct('quotationId', { quotationId: { $ne: null } });
+  const convertedSet = new Set(convertedIds.map(id => String(id)));
+  const active = quotations.filter(q => !convertedSet.has(String(q._id)));
+
+  res.status(200).json({ success: true, data: active });
 });

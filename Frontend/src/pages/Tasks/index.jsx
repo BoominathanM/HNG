@@ -104,7 +104,7 @@ export default function Tasks() {
   const [filterType, setFilterType] = useState(null);
   const [filterPriority, setFilterPriority] = useState(null);
   const [filterStatus, setFilterStatus] = useState(null);
-  const [mainTab, setMainTab] = useState('current');
+  const [mainTab, setMainTab] = useState('suggested');
   const { filterTabs, activeKeyFor } = useTabAccess('Task Management');
   const { requireAccess } = usePageAccess('Task Management');
   const [view, setView] = useState('table');
@@ -119,6 +119,20 @@ export default function Tasks() {
   const [emergencyForm] = Form.useForm();
   const [dispatchVerifyOpen, setDispatchVerifyOpen] = useState(false);
   const [dispatchVerifyData, setDispatchVerifyData] = useState(null);
+  const [selectedHotel, setSelectedHotel] = useState(null);
+
+  // Group suggestedList: { hotelName: { orderCode: [items] } }
+  const hotelGroups = useMemo(() => {
+    const map = {};
+    suggestedList.forEach((s) => {
+      const hotel = s.client || 'Unknown';
+      if (!map[hotel]) map[hotel] = {};
+      const order = s.orderCode || 'Unknown';
+      if (!map[hotel][order]) map[hotel][order] = [];
+      map[hotel][order].push(s);
+    });
+    return map;
+  }, [suggestedList]);
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -448,12 +462,149 @@ export default function Tasks() {
         })}
       </Row>
 
-      {/* ── Main Tabs: Current Task | Suggested Task ─────────────────────────── */}
+      {/* ── Main Tabs: Current Task | Today's Checklist ─────────────────────── */}
       <Tabs
-        onChange={setMainTab}
+        onChange={(k) => { setMainTab(k); setSelectedHotel(null); }}
         type="card"
         style={{ marginBottom: 0 }}
         items={filterTabs([
+          {
+            key: 'suggested',
+            label: (
+              <Space size={6}>
+                <BulbOutlined />
+                Today's Checklist
+                {suggestedList.length > 0 && (
+                  <Badge count={suggestedList.length} style={{ background: '#B11E6A' }} />
+                )}
+              </Space>
+            ),
+            children: (
+              <div>
+                <Alert
+                  type="info"
+                  showIcon
+                  icon={<BulbOutlined />}
+                  message="Today's Checklist — Hotel-wise Production"
+                  description="Order products grouped by hotel. Click a hotel to see its orders and resource readiness. Items with pending components are shown to help plan the workflow."
+                  style={{ marginBottom: 16, borderRadius: 8 }}
+                />
+
+                {suggestedList.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '48px 0' }}>
+                    <BulbOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
+                    <Text type="secondary">No products awaiting task assignment</Text>
+                  </div>
+                ) : selectedHotel ? (
+                  /* ── Order-wise view for selected hotel ── */
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                      <Button size="small" onClick={() => setSelectedHotel(null)}>← Back to Hotels</Button>
+                      <Title level={5} style={{ margin: 0, color: textColor }}>{selectedHotel}</Title>
+                    </div>
+                    {Object.entries(hotelGroups[selectedHotel] || {}).map(([orderCode, items]) => (
+                      <div key={orderCode} style={{ marginBottom: 24 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                          <ShoppingOutlined style={{ color: '#B11E6A' }} />
+                          <Text strong style={{ color: textColor }}>{orderCode}</Text>
+                          <Badge count={items.length} style={{ background: '#B11E6A' }} />
+                          {items.some((i) => i.isUrgent) && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
+                          {items.every((i) => i.fullyReady) && <Tag color="green" style={{ fontSize: 11 }}>All Ready</Tag>}
+                        </div>
+                        <Row gutter={[16, 16]}>
+                          {items.map((s) => {
+                            const readyAlertType = s.fullyReady ? 'success' : 'warning';
+                            const readyText = s.fullyReady
+                              ? 'All resources ready — safe to assign and start production.'
+                              : `Ready to plan. Pending: ${s.pending.join(', ')}.`;
+                            return (
+                              <Col xs={24} md={12} lg={8} key={s.id}>
+                                <motion.div whileHover={{ y: -2 }}>
+                                  <Card
+                                    style={{ borderRadius: 12, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                                    styles={{ body: { padding: 16 } }}
+                                  >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                                      <Space size={4} wrap>
+                                        {s.isUrgent && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
+                                        {s.logoType && <Tag color="purple" style={{ fontSize: 11 }}>{s.logoType}</Tag>}
+                                      </Space>
+                                      <Text style={{ fontSize: 11, color: '#999' }}>{s.orderCode}</Text>
+                                    </div>
+                                    <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{s.product}</Text>
+                                    <Space size={4} wrap style={{ marginBottom: 10 }}>
+                                      {s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
+                                      <Tag color={s.stockReady ? 'green' : 'red'}>Stock {s.inventoryStock}</Tag>
+                                      <Tag color={s.stickerReady ? 'green' : 'orange'}>Sticker {s.stickerReady ? '✓' : '⏳'}</Tag>
+                                      <Tag color={s.printingReady ? 'green' : 'orange'}>Print {s.printingReady ? '✓' : '⏳'}</Tag>
+                                    </Space>
+                                    <Alert
+                                      type={readyAlertType}
+                                      showIcon
+                                      message={readyText}
+                                      style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
+                                    />
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                      <Button
+                                        size="small" type="primary" icon={<UserOutlined />}
+                                        style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                                        onClick={() => handleAssignSuggested(s)}
+                                      >
+                                        Assign Task
+                                      </Button>
+                                    </div>
+                                  </Card>
+                                </motion.div>
+                              </Col>
+                            );
+                          })}
+                        </Row>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  /* ── Hotel cards view ── */
+                  <Row gutter={[16, 16]}>
+                    {Object.entries(hotelGroups).map(([hotel, orders]) => {
+                      const allItems = Object.values(orders).flat();
+                      const readyCount = allItems.filter((i) => i.fullyReady).length;
+                      const urgentCount = allItems.filter((i) => i.isUrgent).length;
+                      const orderCount = Object.keys(orders).length;
+                      return (
+                        <Col xs={24} sm={12} md={8} lg={6} key={hotel}>
+                          <motion.div whileHover={{ y: -3 }}>
+                            <Card
+                              hoverable
+                              onClick={() => setSelectedHotel(hotel)}
+                              style={{ borderRadius: 12, border: '1.5px solid', borderColor: urgentCount > 0 ? '#ff4d4f' : isDark ? '#333' : '#f0e0eb', background: cardBg, cursor: 'pointer' }}
+                              styles={{ body: { padding: 16 } }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                                <Avatar style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', fontSize: 16 }}>
+                                  {hotel.charAt(0).toUpperCase()}
+                                </Avatar>
+                                {urgentCount > 0 && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
+                              </div>
+                              <Text strong style={{ display: 'block', fontSize: 14, color: textColor, marginBottom: 6, lineHeight: '1.3' }}>{hotel}</Text>
+                              <Space size={[4, 4]} wrap style={{ marginBottom: 8 }}>
+                                <Tag color="blue">{orderCount} order{orderCount !== 1 ? 's' : ''}</Tag>
+                                <Tag color="default">{allItems.length} item{allItems.length !== 1 ? 's' : ''}</Tag>
+                                {readyCount > 0 && <Tag color="green">{readyCount} ready</Tag>}
+                                {allItems.length - readyCount > 0 && <Tag color="orange">{allItems.length - readyCount} pending</Tag>}
+                              </Space>
+                              <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', marginTop: 4 }}>
+                                Click to view orders →
+                              </div>
+                            </Card>
+                          </motion.div>
+                        </Col>
+                      );
+                    })}
+                  </Row>
+                )}
+              </div>
+            ),
+          },
           {
             key: 'current',
             label: 'Current Task',
@@ -594,90 +745,6 @@ export default function Tasks() {
                     ))}
                   </Row>
                 )}
-              </div>
-            ),
-          },
-          {
-            key: 'suggested',
-            label: (
-              <Space size={6}>
-                <BulbOutlined />
-                Suggested Task
-                {suggestedList.length > 0 && (
-                  <Badge count={suggestedList.length} style={{ background: '#B11E6A' }} />
-                )}
-              </Space>
-            ),
-            children: (
-              <div>
-                <Alert
-                  type="info"
-                  showIcon
-                  icon={<BulbOutlined />}
-                  message="Suggested Tasks — Resource Readiness"
-                  description="Order products ready (or partially ready) for production. Readiness is computed from inventory stock, packaging and sticker/printing status. Items with pending components are still shown to help plan the workflow."
-                  style={{ marginBottom: 16, borderRadius: 8 }}
-                />
-                <Row gutter={[16, 16]}>
-                  {suggestedList.length === 0 ? (
-                    <Col xs={24}>
-                      <div style={{ textAlign: 'center', padding: '48px 0' }}>
-                        <BulbOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
-                        <Text type="secondary">No products awaiting task assignment</Text>
-                      </div>
-                    </Col>
-                  ) : (
-                    suggestedList.map((s) => {
-                      const readyAlertType = s.fullyReady ? 'success' : 'warning';
-                      const readyText = s.fullyReady
-                        ? 'All resources ready — safe to assign and start production.'
-                        : `Ready to plan. Pending: ${s.pending.join(', ')}.`;
-                      return (
-                        <Col xs={24} md={12} lg={8} key={s.id}>
-                          <motion.div whileHover={{ y: -2 }}>
-                            <Card
-                              style={{ borderRadius: 12, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                              styles={{ body: { padding: 16 } }}
-                            >
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                                <Space size={4} wrap>
-                                  {s.isUrgent && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
-                                  {s.logoType && <Tag color="purple" style={{ fontSize: 11 }}>{s.logoType}</Tag>}
-                                </Space>
-                                <Text style={{ fontSize: 11, color: '#999' }}>{s.orderCode}</Text>
-                              </div>
-                              <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{s.product}</Text>
-                              <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666', display: 'block', marginBottom: 8 }}>
-                                {s.client}
-                              </Text>
-                              <Space size={4} wrap style={{ marginBottom: 10 }}>
-                                {s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
-                                <Tag color={s.stockReady ? 'green' : 'red'}>Stock {s.inventoryStock}</Tag>
-                                <Tag color={s.stickerReady ? 'green' : 'orange'}>Sticker {s.stickerReady ? '✓' : '⏳'}</Tag>
-                                <Tag color={s.printingReady ? 'green' : 'orange'}>Print {s.printingReady ? '✓' : '⏳'}</Tag>
-                              </Space>
-                              <Alert
-                                type={readyAlertType}
-                                showIcon
-                                message={readyText}
-                                style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
-                              />
-                              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-                                <Button
-                                  size="small" type="primary" icon={<UserOutlined />}
-                                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                                  onClick={() => handleAssignSuggested(s)}
-                                >
-                                  Assign Task
-                                </Button>
-                              </div>
-                            </Card>
-                          </motion.div>
-                        </Col>
-                      );
-                    })
-                  )}
-                </Row>
               </div>
             ),
           },

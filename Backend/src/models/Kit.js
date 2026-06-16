@@ -22,6 +22,7 @@ const kitSchema = new mongoose.Schema({
   kitName: { type: String, required: [true, 'Kit name is required'], trim: true },
   displayUnit: String,
   size: String,
+  kitAttributes: { type: mongoose.Schema.Types.Mixed, default: {} },
   products: [kitItemSchema],
   deletedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

@@ -318,7 +318,7 @@ function generateWhatsAppText(data) {
   const lines = (data.products || []).filter(Boolean).map(p => `${p.name} - ${p.qty}(${p.rate})`).join('\n');
   const hotelTypeLine = data.hotelType === 'OLD' ? 'OLD HOTEL' : 'NEW HOTEL';
   const billLine = data.billType === 'GST' ? 'GST BILL' : 'NON GST BILL';
-  const fwdLine = data.forwardingCharge ? 'FORWARDING CHARGE IS THERE' : 'NO FORWARDING CHARGE';
+  const fwdLine = data.forwardingCharge ? `FORWARDING CHARGE: ₹${(data.forwardingChargeAmount || 0).toLocaleString()}` : 'NO FORWARDING CHARGE';
   const payLine = PAYMENT_LABELS[data.paymentTerms] || data.paymentTerms || '';
   let deliveryLine = '';
   if (data.deliveryBy === 'HNG' && data.transportationBy === 'CLIENT') {
@@ -824,6 +824,7 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const paymentTerms = Form.useWatch('paymentTerms');
   const leadType = Form.useWatch('leadType');
+  const forwardingChecked = Form.useWatch('forwardingCharge');
   const [uploadFilesMutation] = useUploadFilesMutation();
   const makeCloudinaryRequest = (folder) => async ({ file, onSuccess, onError }) => {
     const formData = new FormData();
@@ -856,6 +857,22 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
         <Form.Item name="forwardingCharge" valuePropName="checked">
           <Checkbox disabled={disabled}>Forwarding charge applicable</Checkbox>
         </Form.Item>
+        {forwardingChecked && (
+          <Form.Item
+            name="forwardingChargeAmount"
+            label="Forwarding Charge Amount (₹)"
+            style={{ marginTop: -8 }}
+            rules={[{ required: true, message: 'Enter forwarding charge amount' }]}
+          >
+            <InputNumber
+              min={0}
+              disabled={disabled}
+              style={{ width: '100%' }}
+              placeholder="Enter amount"
+              prefix="₹"
+            />
+          </Form.Item>
+        )}
       </Col>
       <Col xs={24} sm={12}>
         <Form.Item label="Payment Terms" name="paymentTerms">
@@ -1137,7 +1154,7 @@ export default function Sales() {
       expectedDelivery: resolvedDelivery ? dayjs(resolvedDelivery) : null,
       advance: order.advance || 0,
       paymentTerms: order.paymentTerms,
-      paymentReminderDate: order.paymentReminderDate ? dayjs(order.paymentReminderDate) : null,
+      paymentReminderDate: (order.paymentReminderDate || order.creditDueDate) ? dayjs(order.paymentReminderDate || order.creditDueDate) : null,
       paymentCollection: order.paymentCollection || [],
       editProducts: (order.products || []).filter(Boolean).map(p => ({
         name: p.name || p.itemName || '',
@@ -1799,7 +1816,7 @@ export default function Sales() {
   }, [viewMode, selectedRecord?.gstNumber, selectedRecord?.gstVerifiedData]);
 
   const newLeadDefaults = {
-    hotelType: 'OLD', billType: 'GST', forwardingCharge: false,
+    hotelType: 'OLD', billType: 'GST', forwardingCharge: false, forwardingChargeAmount: 0,
     deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'BEFORE_100',
     logoNeeded: false,
     products: [],
@@ -2116,12 +2133,12 @@ export default function Sales() {
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
       leadJourney: ['followUpStep'],
       personalization: ['productType', 'displayUnit'],
-      delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'paymentProofs', 'paymentCollection'],
+      delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'forwardingChargeAmount', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'creditDueDate', 'paymentProofs', 'paymentCollection'],
       products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitSize', 'kitSticker', 'kitLogo', 'kitOrders', 'productType', 'kitInsideItems'],
     };
     const rawValues = leadForm.getFieldsValue(fieldsBySection[section]);
     const values = { ...rawValues };
-    ['followUpDate', 'quotationDate', 'softwareExpiryDate', 'orderDeliveryDate', 'paymentReminderDate'].forEach(f => {
+    ['followUpDate', 'quotationDate', 'softwareExpiryDate', 'orderDeliveryDate', 'paymentReminderDate', 'creditDueDate'].forEach(f => {
       if (values[f]) values[f] = toStr(values[f]);
     });
     if (values.splitDates) {
@@ -2209,7 +2226,8 @@ export default function Sales() {
       hotelType: lead.hotelType, billType: lead.billType, gstNumber: lead.gstNumber,
       salesPerson: lead.salesPerson,
       products: (lead.products || []).map(p => ({ ...p })),
-      forwardingCharge: lead.forwardingCharge, deliveryBy: lead.deliveryBy, transportationBy: lead.transportationBy,
+      forwardingCharge: lead.forwardingCharge, forwardingChargeAmount: lead.forwardingChargeAmount || 0,
+      deliveryBy: lead.deliveryBy, transportationBy: lead.transportationBy,
       paymentTerms: lead.paymentTerms,
       status: 'Initial', flowStep: 0,
       date: new Date().toISOString().split('T')[0],
@@ -2255,6 +2273,7 @@ export default function Sales() {
         hotelType: lead.hotelType,
         gstNumber: lead.gstNumber,
         forwardingCharge: lead.forwardingCharge,
+        forwardingChargeAmount: lead.forwardingChargeAmount || 0,
         deliveryBy: lead.deliveryBy,
         transportationBy: lead.transportationBy,
         paymentTerms: lead.paymentTerms,
@@ -2370,6 +2389,7 @@ export default function Sales() {
           splitDates: src.splitDates || [],
           // Delivery & payment
           forwardingCharge: values.forwardingCharge ?? src.forwardingCharge,
+          forwardingChargeAmount: values.forwardingChargeAmount ?? src.forwardingChargeAmount ?? 0,
           deliveryBy: values.deliveryBy || src.deliveryBy,
           transportationBy: values.transportationBy || src.transportationBy,
           paymentTerms: values.paymentTerms || src.paymentTerms,
@@ -2548,6 +2568,7 @@ export default function Sales() {
       type: q.billType === 'GST' ? 'GST' : 'Non-GST',
       billType: q.billType,
       paymentTerms: q.paymentTerms,
+      paymentReminderDate: q.paymentReminderDate || q.creditDueDate || undefined,
       status,
       items: (q.products || []).map(p => mapOrderItem(p, q.kitDisplayUnit || q.displayUnit || '')),
       products: q.products || [],
@@ -2583,6 +2604,7 @@ export default function Sales() {
       state: q.state,
       pincode: q.pincode,
       forwardingCharge: q.forwardingCharge,
+      forwardingChargeAmount: q.forwardingChargeAmount || 0,
       deliveryBy: q.deliveryBy,
       transportationBy: q.transportationBy,
       // Carry the tentative delivery date through so the order detail can show it
@@ -2669,6 +2691,7 @@ export default function Sales() {
         deliveryBy: order.deliveryBy,
         transportationBy: order.transportationBy,
         forwardingCharge: order.forwardingCharge,
+        forwardingChargeAmount: order.forwardingChargeAmount || 0,
         expectedDeliveryDate: order.expectedDeliveryDate,
       };
       await createSalesOrderMutation(payload).unwrap();
@@ -3504,7 +3527,9 @@ export default function Sales() {
                   </Text>
                 </div>
               )}
-              <Tag color={rec.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>{rec.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}</Tag>
+              <Tag color={rec.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>
+                {rec.forwardingCharge ? `Forwarding: ₹${(rec.forwardingChargeAmount || 0).toLocaleString()}` : 'No Forwarding Charge'}
+              </Tag>
             </div>
           </Col>
           {!isSample && (
@@ -7207,7 +7232,7 @@ export default function Sales() {
                             </div>
                           )}
                           <Tag color={record.forwardingCharge ? 'orange' : 'default'} style={{ borderRadius: 20 }}>
-                            {record.forwardingCharge ? 'Forwarding Charge Applied' : 'No Forwarding Charge'}
+                            {record.forwardingCharge ? `Forwarding: ₹${(record.forwardingChargeAmount || 0).toLocaleString()}` : 'No Forwarding Charge'}
                           </Tag>
                         </div>
                       </Col>
