@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
@@ -174,16 +174,16 @@ export default function Purchase() {
   const [requestOrderScanLoading, setRequestOrderScanLoading] = useState(false);
   const [requestOrderScannedFile, setRequestOrderScannedFile] = useState(null);
 
-  /* â"€â"€ History material search â"€â"€ */
+  /* ── History material search ── */
   const [supplierHistorySearch, setSupplierHistorySearch] = useState('');
 
-  /* â"€â"€ AI scan state â"€â"€ */
+  /* ── AI scan state ── */
   const [supplierScanLoading, setSupplierScanLoading] = useState(false);
   const [supplierScannedFile, setSupplierScannedFile] = useState(null);
   const [quotationFile, setQuotationFile] = useState(null);
   const [quotationScanLoading, setQuotationScanLoading] = useState(false);
 
-  /* â"€â"€ Raise Request modal (separate from Ask Quotation) â"€â"€ */
+  /* ── Raise Request modal (separate from Ask Quotation) ── */
   const [showRaiseRequestModal, setShowRaiseRequestModal] = useState(false);
   const [raiseRequestProduct, setRaiseRequestProduct] = useState(null);
   const [raiseRequestSupplier, setRaiseRequestSupplier] = useState(null);
@@ -195,18 +195,18 @@ export default function Purchase() {
   /* ── WhatsApp sent tracking for stock status flow ── */
   const [whatsappSentItems, setWhatsappSentItems] = useState(new Set());
 
-  /* â"€â"€ Place Order modal â"€â"€ */
+  /* ── Place Order modal ── */
   const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
   const [selectedPlaceOrderItem, setSelectedPlaceOrderItem] = useState(null);
   const [selectedPlaceOrderReq, setSelectedPlaceOrderReq] = useState(null);
 
-  /* â"€â"€ Request Order payment terms watch â"€â"€ */
+  /* ── Request Order payment terms watch ── */
   const [requestOrderPaymentTerms, setRequestOrderPaymentTerms] = useState('');
 
-  /* â"€â"€ Payment type (Immediate / Credit) in Request Order â"€â"€ */
+  /* ── Payment type (Immediate / Credit) in Request Order ── */
   const [orderPaymentType, setOrderPaymentType] = useState('Immediate');
 
-  /* â"€â"€ Bulk Purchase modal â"€â"€ */
+  /* ── Bulk Purchase modal ── */
   const [showBulkPurchaseModal, setShowBulkPurchaseModal] = useState(false);
   const [bulkSupplierName, setBulkSupplierName] = useState('');
   const [bulkItems, setBulkItems] = useState([]);
@@ -215,49 +215,49 @@ export default function Purchase() {
   const [bulkRaiseFile, setBulkRaiseFile] = useState(null);
   const [bulkRaiseScanLoading, setBulkRaiseScanLoading] = useState(false);
 
-  /* â"€â"€ WhatsApp reminder tracking (30-min intervals per inventory item key) â"€â"€ */
+  /* ── WhatsApp reminder tracking (30-min intervals per inventory item key) ── */
   const reminderIntervalsRef = useRef({});
   const [reminderCounts, setReminderCounts] = useState({});   // { itemKey: count }
   const [activeReminders, setActiveReminders] = useState(new Set()); // item keys with active reminders
 
-  /* â"€â"€ Inventory item notes (stock_status tab) â"€â"€ */
+  /* ── Inventory item notes (stock_status tab) ── */
   const [invItemNotes, setInvItemNotes] = useState({});    // { itemKey: [{text, ts}] }
   const [invNoteInput, setInvNoteInput] = useState({});    // { itemKey: string }
   const [openInvNotes, setOpenInvNotes] = useState(null);  // itemKey whose notes panel is open
 
-  /* â"€â"€ Raised-request notes â"€â"€ */
+  /* ── Raised-request notes ── */
   const [openReqNotes, setOpenReqNotes] = useState(null);  // requestKey
   const [reqNoteInput, setReqNoteInput] = useState('');
 
-  /* â"€â"€ Inline qty edit for raised requests â"€â"€ */
+  /* ── Inline qty edit for raised requests ── */
   const [editingReqKey, setEditingReqKey] = useState(null);
   const [editQtyValue, setEditQtyValue] = useState(1);
 
-  /* â"€â"€ Finance status mock modal (demo: allow setting finance status) â"€â"€ */
+  /* ── Finance status mock modal (demo: allow setting finance status) ── */
   const [showFinanceStatusModal, setShowFinanceStatusModal] = useState(false);
   const [financeStatusTarget, setFinanceStatusTarget] = useState(null);
   const [financeNoteInput, setFinanceNoteInput] = useState('');
   const [financeDecision, setFinanceDecision] = useState('');
 
-  /* â"€â"€ Track keys whose qty was recently edited (show Re-request button) â"€â"€ */
+  /* ── Track keys whose qty was recently edited (show Re-request button) ── */
   const [recentlyEditedKeys, setRecentlyEditedKeys] = useState(new Set());
 
-  /* â"€â"€ Edit Quotation modal (general edit + resend) â"€â"€ */
+  /* ── Edit Quotation modal (general edit + resend) ── */
   const [showEditQuotationModal, setShowEditQuotationModal] = useState(false);
   const [editQuotationTarget, setEditQuotationTarget] = useState(null);
   const [editReqForm] = Form.useForm();
 
-  /* â"€â"€ Multi-select extra products for Ask Quotation modal â"€â"€ */
+  /* ── Multi-select extra products for Ask Quotation modal ── */
   const [quotationExtraProducts, setQuotationExtraProducts] = useState([]);
   const [quotationExtraQtys, setQuotationExtraQtys] = useState({});
 
-  /* â"€â"€ Multi-select extra products for Raise Request modal â"€â"€ */
+  /* ── Multi-select extra products for Raise Request modal ── */
   const [raiseRequestExtraProducts, setRaiseRequestExtraProducts] = useState([]);
   const [raiseRequestExtraQtys, setRaiseRequestExtraQtys] = useState({});
   const [orderCreditDate, setOrderCreditDate] = useState(null);
   const [placeOrderFiftyDate, setPlaceOrderFiftyDate] = useState(null);
 
-  /* â"€â"€ LR Tracking modal â"€â"€ */
+  /* ── LR Tracking modal ── */
   const [showLRModal, setShowLRModal] = useState(false);
   const [lrOrder, setLrOrder] = useState(null);
   const [lrNumber, setLrNumber] = useState('');
@@ -269,7 +269,7 @@ export default function Purchase() {
   const [lrUploadTarget, setLrUploadTarget] = useState(null);
   const [lrUploadForm] = Form.useForm();
 
-  /* â"€â"€ "Verified by" for received orders â"€â"€ */
+  /* ── "Verified by" for received orders ── */
   const [verifiedByName, setVerifiedByName] = useState('');
 
   /* ── Quotation Comparison tab ── */
@@ -434,7 +434,7 @@ export default function Purchase() {
   const [addVendorInlineForm] = Form.useForm();
   const [inlineDropdownContext, setInlineDropdownContext] = useState(''); // which dropdown triggered it
 
-  /* â"€â"€ Camera capture (shared across all scan sections) â"€â"€ */
+  /* ── Camera capture (shared across all scan sections) ── */
   const [showCameraModal, setShowCameraModal] = useState(false);
   const [cameraStream, setCameraStream] = useState(null);
   const [cameraSetFile, setCameraSetFile] = useState(null);
@@ -976,7 +976,7 @@ export default function Purchase() {
     }
   };
 
-  // â"€â"€ WhatsApp reminder helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // ── WhatsApp reminder helpers ────────────────────────────────────────
   const startQuotationReminder = (itemKey, itemName, supplierName) => {
     // Clear any existing reminder for this item
     if (reminderIntervalsRef.current[itemKey]) {
@@ -1013,7 +1013,7 @@ export default function Purchase() {
     return () => { Object.values(reminderIntervalsRef.current).forEach(clearInterval); };
   }, []);
 
-  // â"€â"€ Add inventory-item note helper â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // ── Add inventory-item note helper ───────────────────────────────────
   const handleAddInvNote = (itemKey) => {
     const text = (invNoteInput[itemKey] || '').trim();
     if (!text) return;
@@ -1025,7 +1025,7 @@ export default function Purchase() {
     setInvNoteInput(prev => ({ ...prev, [itemKey]: '' }));
   };
 
-  // â"€â"€ Add raised-request note helper â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // ── Add raised-request note helper ──────────────────────────────────
   const handleAddReqNote = (requestKey) => {
     const text = reqNoteInput.trim();
     if (!text) return;
@@ -1054,7 +1054,7 @@ export default function Purchase() {
                   label: <Space><WarningOutlined /> Quotation & Raise Request</Space>,
                   children: (
                     <div style={{ marginTop: 12 }}>
-                      {/* â"€â"€ New Product Requests from Sales â"€â"€ */}
+                      {/* ── New Product Requests from Sales ── */}
                       {newProductRequests.length > 0 && (
                         <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px solid #fa8c1666', background: isDark ? '#1a1500' : '#fffbe6' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
@@ -1104,7 +1104,7 @@ export default function Purchase() {
                         </div>
                       )}
 
-                      {/* â"€â"€ Stock Availability Header with Bulk Purchase button â"€â"€ */}
+                      {/* ── Stock Availability Header with Bulk Purchase button ── */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                         <div>
                           <Title level={5} style={{ margin: 0, color: textColor }}>Inventory Stock Availability</Title>
@@ -3011,10 +3011,10 @@ export default function Purchase() {
               onClick={() => {
                 const values = purchaseForm.getFieldsValue();
                 if (!values.supplier) { enqueueSnackbar('Please select a supplier first', { variant: 'warning' }); return; }
-                const mainLine = `â€¢ *${values.product}* — Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
+                const mainLine = `• *${values.product}* — Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
                 const extraLines = quotationExtraProducts.map(p => {
                   const inv = inventoryItems.find(i => i.key === p);
-                  return `â€¢ *${inv?.name || p}* — Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
+                  return `• *${inv?.name || p}* — Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
                 });
                 const allLines = [mainLine, ...extraLines].join('\n');
                 const msg = `Hello, I would like to request a quotation for the following items:\n\n${allLines}\n\nPlease advise on pricing and availability.`;
@@ -3906,7 +3906,7 @@ export default function Purchase() {
         })()}
       </Modal>
 
-      {/* â"€â"€ Bulk Purchase Request Modal â"€â"€ */}
+      {/* ── Bulk Purchase Request Modal ── */}
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
@@ -4419,7 +4419,7 @@ export default function Purchase() {
             <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '12px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
               <Text type="secondary" style={{ fontSize: 11 }}>Request</Text>
               <Text strong style={{ display: 'block', marginTop: 2 }}>{viewApprovalDoc.item}</Text>
-              <Text style={{ fontSize: 12, color: '#B11E6A' }}>Supplier: {viewApprovalDoc.supplier} Â· Qty: {viewApprovalDoc.qty} {viewApprovalDoc.unit}</Text>
+              <Text style={{ fontSize: 12, color: '#B11E6A' }}>Supplier: {viewApprovalDoc.supplier} · Qty: {viewApprovalDoc.qty} {viewApprovalDoc.unit}</Text>
             </div>
 
             {viewApprovalDoc.payment_doc ? (

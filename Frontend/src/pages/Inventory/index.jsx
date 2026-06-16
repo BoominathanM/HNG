@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
@@ -126,7 +126,7 @@ export default function Inventory() {
     current: i.currentStock,
     min: i.minStock,
     max: i.minStock * 10,
-    price: `â‚¹${i.purchasePrice}/${i.unit}`,
+    price: `₹${i.purchasePrice}/${i.unit}`,
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
     hsnCode: i.hsnCode,
     gstPercent: i.gstPercent || 0,
@@ -146,7 +146,7 @@ export default function Inventory() {
     key: m._id,
     date: m.createdAt?.slice(0, 10),
     type: m.movementType === 'IN' ? 'Addition' : m.movementType === 'OUT' ? 'Deduction' : 'Adjustment',
-    item: m.itemId?.itemName || 'â€”',
+    item: m.itemId?.itemName || '—',
     qty: m.qty,
     unit: m.itemId?.unit || '',
     entity: m.referenceType || 'Manual',
@@ -155,16 +155,16 @@ export default function Inventory() {
     notes: m.reason || '',
   })), [approvalsData]);
 
-  /* â”€â”€ Manual adjustment modal â”€â”€ */
+  /* ── Manual adjustment modal ── */
   const [adjustModal, setAdjustModal] = useState({ open: false, item: null, type: null });
   const [adjustForm] = Form.useForm();
 
-  /* â”€â”€ Add / Edit Item modal â”€â”€ */
+  /* ── Add / Edit Item modal ── */
   const [addItemModal, setAddItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [addItemForm] = Form.useForm();
 
-  /* â”€â”€ Kits â”€â”€ */
+  /* ── Kits ── */
   const { data: kitsData } = useGetKitsQuery();
   const [createKitMutation] = useCreateKitMutation();
   const [updateKitMutation] = useUpdateKitMutation();
@@ -259,7 +259,7 @@ export default function Inventory() {
     }
   };
 
-  /* â”€â”€ Add Stock (Receive Goods) drawer â”€â”€ */
+  /* ── Add Stock (Receive Goods) drawer ── */
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [receiveForm] = Form.useForm();
   const [activeItem, setActiveItem] = useState(null);
@@ -268,7 +268,7 @@ export default function Inventory() {
   const [showAddSupplier, setShowAddSupplier] = useState(false);
   const [supplierForm] = Form.useForm();
 
-  /* â”€â”€ Sell Stock (Issue Goods) drawer â”€â”€ */
+  /* ── Sell Stock (Issue Goods) drawer ── */
   const [issueOpen, setIssueOpen] = useState(false);
   const [issueForm] = Form.useForm();
   const [activeIssueItem, setActiveIssueItem] = useState(null);
@@ -284,26 +284,26 @@ export default function Inventory() {
   );
   const [newCategoryName, setNewCategoryName] = useState('');
 
-  /* â”€â”€ Search & Filter â”€â”€ */
+  /* ── Search & Filter ── */
   const [invSearch, setInvSearch] = useState('');
   const [invCategory, setInvCategory] = useState(null);
   const [invStatus, setInvStatus] = useState(null);
   const [approvalSearch, setApprovalSearch] = useState('');
   const [approvalType, setApprovalType] = useState(null);
   const [approvalStatus, setApprovalStatus] = useState(null);
-  /* â”€â”€ Stock History â”€â”€ */
+  /* ── Stock History ── */
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(10);
   const { data: historyData } = useGetStockHistoryQuery({ page: historyPage, limit: historyPageSize });
   const stockHistory = useMemo(() => (historyData?.data || []).map((m) => ({
     key: m._id,
     date: m.createdAt?.slice(0, 10),
-    item: m.itemId?.itemName || 'â€”',
-    code: m.itemId?.itemCode || 'â€”',
+    item: m.itemId?.itemName || '—',
+    code: m.itemId?.itemCode || '—',
     action: m.movementType === 'IN' ? 'Stock Added' : m.movementType === 'OUT' ? 'Stock Deducted' : 'Adjustment',
     qty: m.qty,
     unit: m.itemId?.unit || '',
-    source: m.referenceType || 'â€”',
+    source: m.referenceType || '—',
     person: 'Admin',
     notes: m.reason || '',
   })), [historyData]);
@@ -311,7 +311,7 @@ export default function Inventory() {
   const [historyActionFilter, setHistoryActionFilter] = useState(null);
   const [historyDateRange, setHistoryDateRange] = useState(null);
 
-  /* â”€â”€ Packing Material Config â”€â”€ */
+  /* ── Packing Material Config ── */
   const { data: packingConfigData } = useGetPackingConfigQuery();
   const [createPackingConfig] = useCreatePackingConfigMutation();
   const [updatePackingConfig] = useUpdatePackingConfigMutation();
@@ -360,19 +360,19 @@ export default function Inventory() {
     }
   };
 
-  /* â”€â”€ Active tab â”€â”€ */
+  /* ── Active tab ── */
   const [activeInvTab, setActiveInvTab] = useState('stock');
   const { filterTabs, activeKeyFor } = useTabAccess('Inventory');
   const { requireAccess } = usePageAccess('Inventory');
 
-  /* â”€â”€ Category & Kit expand â”€â”€ */
+  /* ── Category & Kit expand ── */
   const [expandedCategory, setExpandedCategory] = useState(null);
   const [expandedKit, setExpandedKit] = useState(null);
 
-  /* â”€â”€ Item Detail Drawer (row click) â”€â”€ */
+  /* ── Item Detail Drawer (row click) ── */
   const [detailItem, setDetailItem] = useState(null);
 
-  /* â”€â”€ Live Staff Checking â”€â”€ */
+  /* ── Live Staff Checking ── */
   const [checkSession, setCheckSession] = useState([]);
   const [checkSubmitOpen, setCheckSubmitOpen] = useState(false);
   const [checkNotes, setCheckNotes] = useState('');
@@ -400,7 +400,7 @@ export default function Inventory() {
     });
   }, [inventoryList]);
 
-  /* â”€â”€ Derived â”€â”€ */
+  /* ── Derived ── */
   const filteredInventory = inventoryList.filter((i) => {
     const q = invSearch.toLowerCase();
     const matchSearch = !q || i.name.toLowerCase().includes(q) || (i.code || '').toLowerCase().includes(q) || (i.sellers || []).map(s => (s.name || s)).join(' ').toLowerCase().includes(q);
@@ -556,7 +556,7 @@ export default function Inventory() {
     }
   };
 
-  /* â”€â”€ Submit Live Stock Check â”€â”€ */
+  /* ── Submit Live Stock Check ── */
   const handleSubmitCheck = async () => {
     const discrepancies = checkSession.filter(i => i.physicalCount !== i.systemCount);
     const unknownItems = checkSession.filter(i => i.physicalCount < i.systemCount && i.missingType === 'unknown');
@@ -571,7 +571,7 @@ export default function Inventory() {
       ).unwrap();
       unknownItems.forEach((item) => {
         enqueueSnackbar(
-          ['Unknown Stock Shortage Reported', `${Math.abs(item.physicalCount - item.systemCount)} ${item.unit} of "${item.name}" is unaccounted. Super Admin and Manager have been notified.`].filter(Boolean).join(' â€” '),
+          ['Unknown Stock Shortage Reported', `${Math.abs(item.physicalCount - item.systemCount)} ${item.unit} of "${item.name}" is unaccounted. Super Admin and Manager have been notified.`].filter(Boolean).join(' — '),
           { variant: 'warning' }
         );
       });
@@ -583,7 +583,7 @@ export default function Inventory() {
     }
   };
 
-  /* â”€â”€ Style helpers â”€â”€ */
+  /* ── Style helpers ── */
   const sectionCard = {
     borderRadius: 14,
     border: `1px solid ${borderColor}`,
@@ -611,7 +611,7 @@ export default function Inventory() {
     letterSpacing: 0.8,
   });
 
-  /* â”€â”€ Entity selector helper â”€â”€ */
+  /* ── Entity selector helper ── */
   const renderEntitySelector = ({
     label, icon, search, setSearch, filtered, selected, setSelected,
     showAdd, setShowAdd, addForm, addFormFields, onSave, gradient,
@@ -627,7 +627,7 @@ export default function Inventory() {
             <Avatar style={{ background: gradient, flexShrink: 0 }}>{selected.name[0]}</Avatar>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Text style={{ fontWeight: 700, color: textColor, display: 'block', fontSize: 14 }}>{selected.name}</Text>
-              <Text style={{ fontSize: 12, color: '#aaa' }}>{[selected.phone, selected.address].filter(Boolean).join(' Â· ')}</Text>
+              <Text style={{ fontSize: 12, color: '#aaa' }}>{[selected.phone, selected.address].filter(Boolean).join(' · ')}</Text>
             </div>
             <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => { setSelected(null); setSearch(''); setShowAdd(false); }} style={{ color: '#aaa' }} />
           </div>
@@ -657,7 +657,7 @@ export default function Inventory() {
                       <Avatar size={34} style={{ background: gradient, flexShrink: 0, fontSize: 13 }}>{item.name[0]}</Avatar>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <Text style={{ fontWeight: 600, fontSize: 13, color: textColor, display: 'block' }}>{item.name}</Text>
-                        <Text style={{ fontSize: 11, color: '#aaa' }}>{[item.phone, item.address].filter(Boolean).join(' Â· ')}</Text>
+                        <Text style={{ fontSize: 11, color: '#aaa' }}>{[item.phone, item.address].filter(Boolean).join(' · ')}</Text>
                       </div>
                       {isSel && <CheckOutlined style={{ color: '#B11E6A' }} />}
                     </div>
@@ -700,7 +700,7 @@ export default function Inventory() {
     { title: 'Code', dataIndex: 'code', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text> },
     { title: 'Item Name', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
     { title: 'Category', dataIndex: 'category', responsive: ['sm'], render: (v) => <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
-    { title: 'Value', key: 'value', responsive: ['lg'], render: (_, r) => r.unitValue ? `${r.unitValue} ${r.unit}` : (r.unit || 'â€”') },
+    { title: 'Value', key: 'value', responsive: ['lg'], render: (_, r) => r.unitValue ? `${r.unitValue} ${r.unit}` : (r.unit || '—') },
     {
       title: 'Stock Level', key: 'level',
       render: (_, r) => (
@@ -720,12 +720,12 @@ export default function Inventory() {
         : <Tag color="success" style={{ borderRadius: 12 }}>Healthy</Tag>
     },
     { title: 'Price', dataIndex: 'price', responsive: ['md'] },
-    { title: 'GST', dataIndex: 'gstPercent', responsive: ['md'], render: (v) => v > 0 ? <Tag style={{ borderRadius: 12, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33' }}>{v}%</Tag> : <Text type="secondary">â€”</Text> },
+    { title: 'GST', dataIndex: 'gstPercent', responsive: ['md'], render: (v) => v > 0 ? <Tag style={{ borderRadius: 12, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33' }}>{v}%</Tag> : <Text type="secondary">—</Text> },
     {
       title: 'Vendors', dataIndex: 'sellers', key: 'sellers', responsive: ['lg'],
       render: (v, r) => {
         const list = Array.isArray(v) ? v : (v ? [{ name: v, stock: r.current }] : []);
-        if (list.length === 0) return <Text type="secondary">â€”</Text>;
+        if (list.length === 0) return <Text type="secondary">—</Text>;
         return (
           <Space size={4} wrap>
             {list.map((s, i) => {
@@ -822,12 +822,12 @@ export default function Inventory() {
         </Col>
       </Row>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ════════════════════════════════════════
           INVENTORY TABS
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ════════════════════════════════════════ */}
       <Tabs onChange={setActiveInvTab} style={{ marginBottom: 20 }}
         items={filterTabs([
-          /* â”€â”€ Tab 1: Stock Inventory â”€â”€ */
+          /* ── Tab 1: Stock Inventory ── */
           {
             key: 'stock',
             label: <Space><ShoppingOutlined />Stock Inventory</Space>,
@@ -873,7 +873,7 @@ export default function Inventory() {
 
                       return (
                         <div key={cat} style={{ borderRadius: 14, overflow: 'hidden', border: `1px solid ${isExpanded ? '#B11E6A44' : borderColor}`, background: cardBg, boxShadow: isExpanded ? '0 4px 20px rgba(177,30,106,0.10)' : '0 2px 8px rgba(0,0,0,0.04)', transition: 'all 0.2s' }}>
-                          {/* Category header â€” click to expand */}
+                          {/* Category header — click to expand */}
                           <div
                             onClick={() => setExpandedCategory(expandedCategory === cat ? null : cat)}
                             style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer', background: isExpanded ? (isDark ? 'rgba(177,30,106,0.12)' : 'rgba(177,30,106,0.05)') : 'transparent', borderBottom: isExpanded ? `1px solid ${borderColor}` : 'none', transition: 'background 0.2s' }}
@@ -896,7 +896,7 @@ export default function Inventory() {
                             </Space>
 
                             {/* Expand chevron */}
-                            <div style={{ fontSize: 16, color: '#B11E6A', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>â–¾</div>
+                            <div style={{ fontSize: 16, color: '#B11E6A', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▾</div>
                           </div>
 
                           {/* Expanded items table */}
@@ -923,7 +923,7 @@ export default function Inventory() {
             })(),
           },
 
-          /* â”€â”€ Tab 2: Approvals â”€â”€ */
+          /* ── Tab 2: Approvals ── */
           {
             key: 'approvals',
             label: <Space><SafetyCertificateOutlined /> Approvals <Tag color="orange" style={{ borderRadius: 10, marginLeft: 4 }}>{pendingAdjustments.filter(a => a.status === 'Pending').length}</Tag></Space>,
@@ -953,7 +953,7 @@ export default function Inventory() {
                     { title: 'Item', dataIndex: 'item', key: 'item', render: (v) => <Text strong>{v}</Text> },
                     { title: 'Type', dataIndex: 'type', key: 'type', render: (t) => <Tag color={t === 'Addition' ? 'success' : 'error'} icon={t === 'Addition' ? <PlusOutlined /> : <MinusOutlined />} style={{ borderRadius: 12 }}>{t}</Tag> },
                     { title: 'Qty', dataIndex: 'qty', key: 'qty', render: (q) => <Text strong>{q} units</Text> },
-                    { title: 'Notes', dataIndex: 'notes', key: 'notes', render: (v) => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>â€”</Text> },
+                    { title: 'Notes', dataIndex: 'notes', key: 'notes', render: (v) => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>—</Text> },
                     { title: 'Requested By', dataIndex: 'person', key: 'person' },
                     {
                       title: 'Status', dataIndex: 'status', key: 'status',
@@ -975,7 +975,7 @@ export default function Inventory() {
             )
           },
 
-          /* â”€â”€ Tab 3: Stock History â”€â”€ */
+          /* ── Tab 3: Stock History ── */
           {
             key: 'history',
             label: <Space><HistoryOutlined />Stock History</Space>,
@@ -1019,9 +1019,9 @@ export default function Inventory() {
                     },
                     { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.action === 'Stock Added' ? '#52c41a' : '#ff4d4f' }}>{r.action === 'Stock Added' ? '+' : '-'}{r.qty} units</Text> },
                     { title: 'Source / Entity', dataIndex: 'source', key: 'source', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                    { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', render: v => v ? <Text style={{ color: '#7c3aed' }}>{v}</Text> : <Text type="secondary">â€”</Text> },
+                    { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', render: v => v ? <Text style={{ color: '#7c3aed' }}>{v}</Text> : <Text type="secondary">—</Text> },
                     { title: 'Person', dataIndex: 'person', key: 'person' },
-                    { title: 'Notes', dataIndex: 'notes', key: 'notes', render: v => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : 'â€”' },
+                    { title: 'Notes', dataIndex: 'notes', key: 'notes', render: v => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : '—' },
                   ]}
                   pagination={{
                     current: historyPage,
@@ -1037,7 +1037,7 @@ export default function Inventory() {
             )
           },
 
-          /* â”€â”€ Tab 4: Live Staff Checking â”€â”€ */
+          /* ── Tab 4: Live Staff Checking ── */
           {
             key: 'livecheck',
             label: (
@@ -1157,7 +1157,7 @@ export default function Inventory() {
                         title: 'Missing Reason',
                         render: (_, r) => {
                           const diff = r.physicalCount - r.systemCount;
-                          if (diff >= 0) return <Text type="secondary" style={{ fontSize: 12 }}>â€”</Text>;
+                          if (diff >= 0) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
                           return (
                             <Space direction="vertical" size={6} style={{ width: '100%' }}>
                               <Select
@@ -1187,7 +1187,7 @@ export default function Inventory() {
                                   type="warning"
                                   showIcon
                                   icon={<ExclamationCircleOutlined />}
-                                  message={<Text strong style={{ fontSize: 12 }}>Unknown Shortage â€” Will be Reported</Text>}
+                                  message={<Text strong style={{ fontSize: 12 }}>Unknown Shortage — Will be Reported</Text>}
                                   description={
                                     <Text style={{ fontSize: 11 }}>
                                       {Math.abs(diff)} units of <strong>{r.name}</strong> is unaccounted for.
@@ -1218,7 +1218,7 @@ export default function Inventory() {
                       </Tag>
                       {checkSession.some(i => i.physicalCount < i.systemCount && i.missingType === 'unknown') && (
                         <Tag color="orange" icon={<BellOutlined />} style={{ borderRadius: 20, fontSize: 12 }}>
-                          {checkSession.filter(i => i.physicalCount < i.systemCount && i.missingType === 'unknown').length} Unknown â€” Will Notify Management
+                          {checkSession.filter(i => i.physicalCount < i.systemCount && i.missingType === 'unknown').length} Unknown — Will Notify Management
                         </Tag>
                       )}
                     </Space>
@@ -1236,7 +1236,7 @@ export default function Inventory() {
               </div>
             )
           },
-          /* â”€â”€ Tab: Kit â”€â”€ */
+          /* ── Tab: Kit ── */
           {
             key: 'kit',
             label: <Space><ContainerOutlined />Kit</Space>,
@@ -1267,7 +1267,7 @@ export default function Inventory() {
                     const isKitExpanded = expandedKit === kit._id;
                     return (
                       <div key={kit._id} style={{ borderRadius: 14, overflow: 'hidden', border: `1px solid ${isKitExpanded ? '#B11E6A44' : borderColor}`, background: cardBg, boxShadow: isKitExpanded ? '0 4px 20px rgba(177,30,106,0.10)' : '0 2px 8px rgba(0,0,0,0.04)', transition: 'all 0.2s' }}>
-                        {/* Kit card header â€” click to expand */}
+                        {/* Kit card header — click to expand */}
                         <div
                           onClick={() => setExpandedKit(isKitExpanded ? null : kit._id)}
                           style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer', background: isKitExpanded ? (isDark ? 'rgba(177,30,106,0.12)' : 'rgba(177,30,106,0.05)') : 'transparent', borderBottom: isKitExpanded ? `1px solid ${borderColor}` : 'none', transition: 'background 0.2s' }}
@@ -1285,8 +1285,8 @@ export default function Inventory() {
                             <div style={{ marginTop: 2 }}>
                               <Text type="secondary" style={{ fontSize: 12 }}>
                                 {(kit.products || []).length} product{(kit.products || []).length !== 1 ? 's' : ''}
-                                {kit.displayUnit ? ` Â· ${kit.displayUnit.replace(/_/g, ' ')}` : ''}
-                                {kit.size ? ` Â· ${kit.size}` : ''}
+                                {kit.displayUnit ? ` · ${kit.displayUnit.replace(/_/g, ' ')}` : ''}
+                                {kit.size ? ` · ${kit.size}` : ''}
                               </Text>
                             </div>
                           </div>
@@ -1303,7 +1303,7 @@ export default function Inventory() {
                           </Space>
 
                           {/* Chevron */}
-                          <div style={{ fontSize: 16, color: '#B11E6A', transform: isKitExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>â–¾</div>
+                          <div style={{ fontSize: 16, color: '#B11E6A', transform: isKitExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▾</div>
                         </div>
 
                         {/* Expanded: kit products table */}
@@ -1327,8 +1327,8 @@ export default function Inventory() {
                                   },
                                   { title: 'Product Name', dataIndex: 'productName', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
                                   { title: 'Qty', dataIndex: 'qty', width: 80, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                                  { title: 'Rate (â‚¹)', key: 'rate', width: 100, render: (_, p) => { const v = p.purchasePrice ?? p.rate; return v != null && v !== 0 ? `â‚¹${Number(v).toLocaleString()}` : 'â€”'; } },
-                                  { title: 'Unit', dataIndex: 'unit', width: 80, render: v => v || 'â€”' },
+                                  { title: 'Rate (₹)', key: 'rate', width: 100, render: (_, p) => { const v = p.purchasePrice ?? p.rate; return v != null && v !== 0 ? `₹${Number(v).toLocaleString()}` : '—'; } },
+                                  { title: 'Unit', dataIndex: 'unit', width: 80, render: v => v || '—' },
                                 ]}
                                 style={{ borderRadius: 10, overflow: 'hidden' }}
                               />
@@ -1343,7 +1343,7 @@ export default function Inventory() {
             )
           },
 
-          /* â”€â”€ Tab: Packing Material Configuration â”€â”€ */
+          /* ── Tab: Packing Material Configuration ── */
           {
             key: 'packing_config',
             label: <Space><SettingOutlined />Packing Config</Space>,
@@ -1384,7 +1384,7 @@ export default function Inventory() {
                         dataIndex: 'tabMapping',
                         render: v => v
                           ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
-                          : <Text type="secondary">â€”</Text>,
+                          : <Text type="secondary">—</Text>,
                       },
                       {
                         title: 'Action', key: 'action', width: 100,
@@ -1441,7 +1441,7 @@ export default function Inventory() {
                         dataIndex: 'tabMapping',
                         render: v => v
                           ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
-                          : <Text type="secondary">â€”</Text>,
+                          : <Text type="secondary">—</Text>,
                       },
                       {
                         title: 'Action', key: 'action', width: 100,
@@ -1471,9 +1471,9 @@ export default function Inventory() {
         activeKey={activeKeyFor(activeInvTab)}
       />
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ═══════════════════════════════════════
           PACKING CONFIG ADD / EDIT MODAL
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ═══════════════════════════════════════ */}
       <Modal
         open={packingConfigModal}
         title={
@@ -1513,9 +1513,9 @@ export default function Inventory() {
         </Form>
       </Modal>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ═══════════════════════════════════════
           KIT ADD / EDIT MODAL
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ═══════════════════════════════════════ */}
       <Modal
         open={kitModal}
         title={editingKit ? 'Edit Kit' : 'Add Kit'}
@@ -1551,7 +1551,7 @@ export default function Inventory() {
 
           <Divider style={{ margin: '4px 0 12px' }}>Products in this Kit</Divider>
 
-          {/* Product cards â€” same fields as Add Item */}
+          {/* Product cards — same fields as Add Item */}
           <Form.List name="products">
             {(fields, { add, remove }) => (
               <>
@@ -1571,7 +1571,7 @@ export default function Inventory() {
                       <Button type="text" danger size="small" icon={<MinusOutlined />} onClick={() => remove(field.name)} />
                     </div>
 
-                    {/* Product fields â€” same layout as Add Item */}
+                    {/* Product fields — same layout as Add Item */}
                     <div style={{ padding: '12px 14px' }}>
                       <Row gutter={[12, 0]}>
                         <Col xs={24} sm={12}>
@@ -1638,12 +1638,12 @@ export default function Inventory() {
                         </Col>
                         <Col xs={24} sm={8}>
                           <Form.Item {...field} label="Purchase Price" name={[field.name, 'purchasePrice']}>
-                            <Input prefix="â‚¹" />
+                            <Input prefix="₹" />
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={8}>
                           <Form.Item {...field} label="Selling Price" name={[field.name, 'sellingPrice']}>
-                            <Input prefix="â‚¹" />
+                            <Input prefix="₹" />
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={8}>
@@ -1708,9 +1708,9 @@ export default function Inventory() {
         </Form>
       </Modal>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ═══════════════════════════════════════
           ITEM DETAIL DRAWER (row click)
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ═══════════════════════════════════════ */}
       <Drawer
         open={!!detailItem}
         onClose={() => setDetailItem(null)}
@@ -1748,17 +1748,17 @@ export default function Inventory() {
             <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
               <Text strong style={{ color: textColor, display: 'block', marginBottom: 10 }}>Item Details</Text>
               <Descriptions column={2} size="small" labelStyle={{ color: '#aaa', fontSize: 12 }} contentStyle={{ fontWeight: 600, fontSize: 13 }}>
-                <Descriptions.Item label="Category">{detailItem.category || 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="Unit">{detailItem.unit || 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="Purchase Price">{detailItem.price || 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="Selling Price">{detailItem.sellingPrice != null ? `â‚¹${Number(detailItem.sellingPrice).toLocaleString()}` : 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="Default Size">{detailItem.defaultSize || 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="HSN Code">{detailItem.hsnCode || 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="GST %">{detailItem.gstPercent > 0 ? `${detailItem.gstPercent}%` : 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="Discount">{detailItem.discountPercent != null && detailItem.discountPercent > 0 ? `${detailItem.discountPercent}%` : 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="Brand">{detailItem.brand || 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="Packing Material">{detailItem.packingMaterial || 'â€”'}</Descriptions.Item>
-                <Descriptions.Item label="Material Category">{detailItem.materialCategory || 'â€”'}</Descriptions.Item>
+                <Descriptions.Item label="Category">{detailItem.category || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Unit">{detailItem.unit || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Purchase Price">{detailItem.price || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Selling Price">{detailItem.sellingPrice != null ? `₹${Number(detailItem.sellingPrice).toLocaleString()}` : '—'}</Descriptions.Item>
+                <Descriptions.Item label="Default Size">{detailItem.defaultSize || '—'}</Descriptions.Item>
+                <Descriptions.Item label="HSN Code">{detailItem.hsnCode || '—'}</Descriptions.Item>
+                <Descriptions.Item label="GST %">{detailItem.gstPercent > 0 ? `${detailItem.gstPercent}%` : '—'}</Descriptions.Item>
+                <Descriptions.Item label="Discount">{detailItem.discountPercent != null && detailItem.discountPercent > 0 ? `${detailItem.discountPercent}%` : '—'}</Descriptions.Item>
+                <Descriptions.Item label="Brand">{detailItem.brand || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Packing Material">{detailItem.packingMaterial || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Material Category">{detailItem.materialCategory || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Status">
                   <Tag style={{ borderRadius: 20, fontWeight: 500, background: detailItem.status === 'OK' ? '#B11E6A22' : detailItem.status === 'Low' ? '#C94F8A22' : '#8a165222', color: detailItem.status === 'OK' ? '#B11E6A' : detailItem.status === 'Low' ? '#C94F8A' : '#8a1652', border: 'none' }}>
                     {detailItem.status === 'Out' ? 'Out of Stock' : detailItem.status}
@@ -1815,9 +1815,9 @@ export default function Inventory() {
         )}
       </Drawer>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ═══════════════════════════════════════
           SUBMIT STOCK CHECK CONFIRMATION MODAL
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ═══════════════════════════════════════ */}
       <Modal
         open={checkSubmitOpen}
         onCancel={() => setCheckSubmitOpen(false)}
@@ -1901,9 +1901,9 @@ export default function Inventory() {
         </div>
       </Modal>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ═══════════════════════════════════════
           MANUAL ADJUSTMENT MODAL (+ / - buttons)
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ═══════════════════════════════════════ */}
       <Modal
         title={
           <Space>
@@ -1912,7 +1912,7 @@ export default function Inventory() {
               : <MinusOutlined style={{ color: '#ff4d4f', fontSize: 16 }} />}
             <span style={{ fontSize: 15, fontWeight: 700 }}>
               {adjustModal.type === 'Addition' ? 'Add Stock' : 'Reduce Stock'}
-              {adjustModal.item ? ` â€” ${adjustModal.item.name}` : ''}
+              {adjustModal.item ? ` — ${adjustModal.item.name}` : ''}
             </span>
           </Space>
         }
@@ -1962,9 +1962,9 @@ export default function Inventory() {
         </Form>
       </Modal>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ═══════════════════════════════════════
           ADD ITEM MODAL
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ═══════════════════════════════════════ */}
       <Modal
         title={<span style={{ fontSize: 16, fontWeight: 700 }}>{editingItem ? 'Edit Inventory Item' : 'Add Inventory Item'}</span>}
         open={addItemModal}
@@ -2004,12 +2004,12 @@ export default function Inventory() {
             <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Purchase Price" name="purchase_price">
-                <Input prefix="â‚¹" addonAfter={<Form.Item name="purchase_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
+                <Input prefix="₹" addonAfter={<Form.Item name="purchase_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Selling Price" name="selling_price">
-                <Input prefix="â‚¹" addonAfter={<Form.Item name="selling_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
+                <Input prefix="₹" addonAfter={<Form.Item name="selling_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={8}>
@@ -2051,9 +2051,9 @@ export default function Inventory() {
         </Form>
       </Modal>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ═══════════════════════════════════════
           ADD STOCK DRAWER (Receive Goods)
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ═══════════════════════════════════════ */}
       <Drawer
         open={receiveOpen}
         onClose={() => { setReceiveOpen(false); setSelectedSupplier(null); setShowAddSupplier(false); receiveForm.resetFields(); supplierForm.resetFields(); }}
@@ -2131,7 +2131,7 @@ export default function Inventory() {
                   </Col>
                   <Col span={8}>
                     <Form.Item label={<Text style={{ fontSize: 13 }}>Supply Price</Text>} name="supply_price" style={{ marginBottom: 12 }}>
-                      <InputNumber prefix="â‚¹" style={{ width: '100%', borderRadius: 8, height: 42, paddingTop: 4 }} placeholder="0.00" />
+                      <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8, height: 42, paddingTop: 4 }} placeholder="0.00" />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
@@ -2193,9 +2193,9 @@ export default function Inventory() {
         </div>
       </Drawer>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      {/* ═══════════════════════════════════════
           SELL STOCK DRAWER (Issue Goods)
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      ═══════════════════════════════════════ */}
       <Drawer
         open={issueOpen}
         onClose={() => { setIssueOpen(false); setSelectedVendor(null); setShowAddVendor(false); issueForm.resetFields(); vendorForm.resetFields(); }}
@@ -2273,7 +2273,7 @@ export default function Inventory() {
                   </Col>
                   <Col span={8}>
                     <Form.Item label={<Text style={{ fontSize: 13 }}>Sell Price</Text>} name="sell_price" style={{ marginBottom: 12 }}>
-                      <InputNumber prefix="â‚¹" style={{ width: '100%', borderRadius: 8, height: 42, paddingTop: 4 }} placeholder="0.00" />
+                      <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8, height: 42, paddingTop: 4 }} placeholder="0.00" />
                     </Form.Item>
                   </Col>
                   <Col span={8}>

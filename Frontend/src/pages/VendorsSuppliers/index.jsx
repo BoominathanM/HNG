@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
@@ -60,7 +60,7 @@ export default function VendorsSuppliers() {
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
-  /* â”€â”€ Vendors state â€” RTK Query â”€â”€ */
+  /* ── Vendors state — RTK Query ── */
   const { data: vendorData, isLoading: vendorsLoading } = useGetVendorsQuery({ type: 'raw_material', limit: 500 });
   const { data: printingData } = useGetVendorsQuery({ type: 'printing', limit: 500 });
   const [createVendor] = useCreateVendorMutation();
@@ -75,10 +75,10 @@ export default function VendorsSuppliers() {
   const vendorHistoryRaw = useMemo(() => (vendorHistoryData?.data || []).map((h) => ({
     key: h._id,
     date: h.date?.slice(0, 10) || h.createdAt?.slice(0, 10),
-    bill_no: h.billNo || 'â€”',
-    inv_no: h.invNo || 'â€”',
-    items: (h.items || []).map((i) => ({ name: i.name, qty: `${i.qty} ${i.unit || ''}`, price: i.price ? `â‚¹${i.price}` : 'â€”', total: i.total ? `â‚¹${i.total}` : 'â€”' })),
-    status: h.status || 'â€”',
+    bill_no: h.billNo || '—',
+    inv_no: h.invNo || '—',
+    items: (h.items || []).map((i) => ({ name: i.name, qty: `${i.qty} ${i.unit || ''}`, price: i.price ? `₹${i.price}` : '—', total: i.total ? `₹${i.total}` : '—' })),
+    status: h.status || '—',
   })), [vendorHistoryData]);
 
   const vendors = useMemo(() => (vendorData?.data || []).map((v) => ({
@@ -116,31 +116,31 @@ export default function VendorsSuppliers() {
   const [vendorScanLoading, setVendorScanLoading] = useState(false);
   const [vendorScannedFile, setVendorScannedFile] = useState(null);
 
-  /* â”€â”€ View bill detail â”€â”€ */
+  /* ── View bill detail ── */
   const [viewBillDetail, setViewBillDetail] = useState(null);
 
-  /* â”€â”€ Update status modal â”€â”€ */
+  /* ── Update status modal ── */
   const [showUpdateStatusModal, setShowUpdateStatusModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [updateType] = useState('vendor');
   const [currentStatus, setCurrentStatus] = useState('');
   const [statusForm] = Form.useForm();
 
-  /* â”€â”€ Vendor bill scan â”€â”€ */
+  /* ── Vendor bill scan ── */
   const [showVendorBillScanModal, setShowVendorBillScanModal] = useState(false);
   const [vendorBillFile, setVendorBillFile] = useState(null);
   const [vendorBillScanLoading, setVendorBillScanLoading] = useState(false);
   const [vendorBillForm] = Form.useForm();
   const [purchaseExpenses, setPurchaseExpenses] = useState([]);
 
-  /* â”€â”€ Vendor users (from Settings > Users with dept = Vendors) â”€â”€ */
+  /* ── Vendor users (from Settings > Users with dept = Vendors) ── */
   const { data: usersData } = useGetUsersQuery();
   const vendorUsers = useMemo(() => {
     const all = usersData?.data || [];
     return all.filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock'].includes(u.role));
   }, [usersData]);
 
-  /* â”€â”€ Company settings (for automation vendors) â”€â”€ */
+  /* ── Company settings (for automation vendors) ── */
   const { data: companyData } = useGetCompanySettingsQuery();
   const [updateCompanyMutation] = useUpdateCompanySettingsMutation();
   const automationVendors = useMemo(() => {
@@ -158,14 +158,14 @@ export default function VendorsSuppliers() {
     }
   };
 
-  /* â”€â”€ Printing Suppliers state (loaded from API above) â”€â”€ */
+  /* ── Printing Suppliers state (loaded from API above) ── */
   const [printingSearch, setPrintingSearch] = useState('');
   const [printingTypeFilter, setPrintingTypeFilter] = useState('all');
   const [viewPrintingSupplier, setViewPrintingSupplier] = useState(null);
   const [showAddPrintingSupplierModal, setShowAddPrintingSupplierModal] = useState(false);
   const [printingSupplierForm] = Form.useForm();
 
-  /* â”€â”€ Camera capture â”€â”€ */
+  /* ── Camera capture ── */
   const [showCameraModal, setShowCameraModal] = useState(false);
   const [cameraStream, setCameraStream] = useState(null);
   const [cameraSetFile, setCameraSetFile] = useState(null);
@@ -211,13 +211,13 @@ export default function VendorsSuppliers() {
     setCameraSetFile(null);
   };
 
-  /* â”€â”€ Computed â”€â”€ */
+  /* ── Computed ── */
   const filteredVendors = vendors.filter((v) =>
     v.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
     v.phone.includes(vendorSearch)
   );
 
-  /* â”€â”€ Handlers â”€â”€ */
+  /* ── Handlers ── */
   const handleSaveVendor = async () => {
     const vals = vendorForm.getFieldsValue();
     try {
@@ -250,7 +250,7 @@ export default function VendorsSuppliers() {
         cust_email: 'procurement@hilton.in',
         cust_tax: '27AABHH5678K1Z2',
         cust_address: 'Koregaon Park, Pune, MH 411001',
-        cust_bank: 'ICICI Bank â€” A/C 007601234567 | IFSC ICIC0000076',
+        cust_bank: 'ICICI Bank — A/C 007601234567 | IFSC ICIC0000076',
         cust_notes: 'Premium hotel chain. Monthly billing cycle.',
         cust_discount: 8,
       });
@@ -293,8 +293,8 @@ export default function VendorsSuppliers() {
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
         {[
           { label: 'Total Vendors', value: vendors.length, icon: <ShopOutlined />, sub: 'Registered vendor accounts' },
-          { label: 'Total Paid', value: `â‚¹${totalPaid.toLocaleString()}`, icon: <WalletOutlined />, sub: 'Cumulative payments made' },
-          { label: 'Total Pending', value: `â‚¹${totalPending.toLocaleString()}`, icon: <WarningOutlined />, sub: `${vendors.filter(v => v.pending > 0).length} vendors with dues` },
+          { label: 'Total Paid', value: `₹${totalPaid.toLocaleString()}`, icon: <WalletOutlined />, sub: 'Cumulative payments made' },
+          { label: 'Total Pending', value: `₹${totalPending.toLocaleString()}`, icon: <WarningOutlined />, sub: `${vendors.filter(v => v.pending > 0).length} vendors with dues` },
           { label: 'Printing Suppliers', value: printingSuppliers.length, icon: <TeamOutlined />, sub: 'Sticker, box & ziplock' },
         ].map((s, i) => (
           <Col xs={12} sm={6} key={s.label}>
@@ -382,8 +382,8 @@ export default function VendorsSuppliers() {
                                   title: 'Total Amount',
                                   key: 'total',
                                   render: (_, r) => {
-                                    const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[â‚¹,]/g, '')), 0);
-                                    return <Text strong>â‚¹{total.toLocaleString()}</Text>;
+                                    const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0);
+                                    return <Text strong>₹{total.toLocaleString()}</Text>;
                                   }
                                 },
                                 { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="blue">{v}</Tag> },
@@ -450,7 +450,7 @@ export default function VendorsSuppliers() {
                                 onClick={() => {
                                   if (!filteredVendors.length) { enqueueSnackbar('No vendors to export', { variant: 'warning' }); return; }
                                   exportToCSV(
-                                    ['Vendor Name', 'Phone', 'Email', 'Address', 'Total Paid (â‚¹)', 'Pending (â‚¹)'],
+                                    ['Vendor Name', 'Phone', 'Email', 'Address', 'Total Paid (₹)', 'Pending (₹)'],
                                     filteredVendors.map(v => [v.name, v.phone, v.email, v.address, v.totalPaid, v.pending]),
                                     'vendors.csv'
                                   );
@@ -469,8 +469,8 @@ export default function VendorsSuppliers() {
                               { title: 'Phone', dataIndex: 'phone', key: 'phone' },
                               { title: 'Email', dataIndex: 'email', key: 'email' },
                               { title: 'Address', dataIndex: 'address', key: 'address' },
-                              { title: 'Total Paid', dataIndex: 'totalPaid', key: 'totalPaid', render: v => <Text style={{ color: '#52c41a', fontWeight: 600 }}>â‚¹{v.toLocaleString()}</Text> },
-                              { title: 'Pending', dataIndex: 'pending', key: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>â‚¹{v.toLocaleString()}</Text> },
+                              { title: 'Total Paid', dataIndex: 'totalPaid', key: 'totalPaid', render: v => <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
+                              { title: 'Pending', dataIndex: 'pending', key: 'pending', render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 600 }}>₹{v.toLocaleString()}</Text> },
                               {
                                 title: 'Action', key: 'action',
                                 render: (_, r) => (
@@ -525,14 +525,14 @@ export default function VendorsSuppliers() {
                         </Space>
                       </div>
 
-                      {/* â”€â”€ Vendor Team Members (users with department = Vendors) â”€â”€ */}
+                      {/* ── Vendor Team Members (users with department = Vendors) ── */}
                       {vendorUsers.length > 0 && (
                         <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, background: isDark ? '#1a0f14' : '#fff8fb', border: '1px solid #B11E6A22' }}>
                           <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 10, fontSize: 13 }}>
                             Vendor Team Members
                           </Text>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 12 }}>
-                            Select one automation vendor per type â€” tasks will be auto-assigned to them for Sticker / Box / Ziplock orders.
+                            Select one automation vendor per type — tasks will be auto-assigned to them for Sticker / Box / Ziplock orders.
                           </Text>
                           {['Sticker', 'Box', 'Ziplock'].map(type => {
                             const typeUsers = vendorUsers.filter(u => u.role === type);
@@ -595,10 +595,10 @@ export default function VendorsSuppliers() {
                             ),
                           },
                           { title: 'Name', dataIndex: 'name', width: 180, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                          { title: 'Phone', dataIndex: 'phone', width: 145, render: v => <Text>{v || 'â€”'}</Text> },
-                          { title: 'Email', dataIndex: 'email', width: 200, render: v => <Text>{v || 'â€”'}</Text> },
-                          { title: 'Tax ID (GST/PAN)', dataIndex: 'taxId', width: 155, render: v => <Text>{v || 'â€”'}</Text> },
-                          { title: 'Address', dataIndex: 'address', width: 160, render: v => <Text>{v || 'â€”'}</Text> },
+                          { title: 'Phone', dataIndex: 'phone', width: 145, render: v => <Text>{v || '—'}</Text> },
+                          { title: 'Email', dataIndex: 'email', width: 200, render: v => <Text>{v || '—'}</Text> },
+                          { title: 'Tax ID (GST/PAN)', dataIndex: 'taxId', width: 155, render: v => <Text>{v || '—'}</Text> },
+                          { title: 'Address', dataIndex: 'address', width: 160, render: v => <Text>{v || '—'}</Text> },
                           {
                             title: 'Orders', key: 'orders', width: 80,
                             render: (_, r) => (
@@ -618,7 +618,7 @@ export default function VendorsSuppliers() {
         </Col>
       </Row>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€ Printing Supplier Orders Modal â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ──────── Printing Supplier Orders Modal ──────── */}
       <Modal
         open={!!viewPrintingSupplier}
         onCancel={() => setViewPrintingSupplier(null)}
@@ -637,10 +637,10 @@ export default function VendorsSuppliers() {
         {viewPrintingSupplier && (
           <div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 20 }}>
-              <div><Text type="secondary" style={{ fontSize: 12 }}>Phone</Text><br /><Text strong>{viewPrintingSupplier.phone || 'â€”'}</Text></div>
-              <div><Text type="secondary" style={{ fontSize: 12 }}>Email</Text><br /><Text strong>{viewPrintingSupplier.email || 'â€”'}</Text></div>
-              <div><Text type="secondary" style={{ fontSize: 12 }}>Tax ID</Text><br /><Text strong>{viewPrintingSupplier.taxId || 'â€”'}</Text></div>
-              <div><Text type="secondary" style={{ fontSize: 12 }}>Address</Text><br /><Text strong>{viewPrintingSupplier.address || 'â€”'}</Text></div>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Phone</Text><br /><Text strong>{viewPrintingSupplier.phone || '—'}</Text></div>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Email</Text><br /><Text strong>{viewPrintingSupplier.email || '—'}</Text></div>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Tax ID</Text><br /><Text strong>{viewPrintingSupplier.taxId || '—'}</Text></div>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Address</Text><br /><Text strong>{viewPrintingSupplier.address || '—'}</Text></div>
             </div>
             {viewPrintingSupplier.bank && (
               <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: isDark ? '#1a1a2e' : '#f8f8f8', fontSize: 12 }}>
@@ -660,7 +660,7 @@ export default function VendorsSuppliers() {
                 { title: 'Date', dataIndex: 'date', width: 100 },
                 { title: 'Item', dataIndex: 'item', ellipsis: true },
                 { title: 'Qty', dataIndex: 'qty', width: 70, render: (v, r) => `${v} ${r.unit}` },
-                { title: 'Amount', dataIndex: 'amount', width: 90, render: v => <Text strong>â‚¹{v?.toLocaleString()}</Text> },
+                { title: 'Amount', dataIndex: 'amount', width: 90, render: v => <Text strong>₹{v?.toLocaleString()}</Text> },
                 { title: 'Status', dataIndex: 'status', width: 100, render: v => <Tag color={v === 'Delivered' ? 'success' : v === 'In Transit' ? 'processing' : 'warning'} style={{ borderRadius: 10, fontSize: 11 }}>{v}</Tag> },
               ]}
             />
@@ -668,7 +668,7 @@ export default function VendorsSuppliers() {
         )}
       </Modal>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€ Add Printing Supplier Modal â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ──────── Add Printing Supplier Modal ──────── */}
       <Modal
         open={showAddPrintingSupplierModal}
         onCancel={() => { setShowAddPrintingSupplierModal(false); printingSupplierForm.resetFields(); }}
@@ -725,7 +725,7 @@ export default function VendorsSuppliers() {
         </Form>
       </Modal>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€ Add Vendor Modal â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ──────── Add Vendor Modal ──────── */}
       <Modal
         title={<Text strong style={{ fontSize: 16 }}>Add New Vendor</Text>}
         open={showAddVendorModal}
@@ -741,7 +741,7 @@ export default function VendorsSuppliers() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera â€” AI will auto-fill the fields below</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -821,7 +821,7 @@ export default function VendorsSuppliers() {
         </Form>
       </Modal>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€ Scan & Record Vendor Bill Modal â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ──────── Scan & Record Vendor Bill Modal ──────── */}
       <Modal
         title={
           <Space>
@@ -831,7 +831,7 @@ export default function VendorsSuppliers() {
             <div>
               <Text strong style={{ fontSize: 15 }}>Scan & Record Vendor Bill</Text>
               <br />
-              <Text type="secondary" style={{ fontSize: 11 }}>AI extracts details â€” create as Purchase Expense</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>AI extracts details — create as Purchase Expense</Text>
             </div>
           </Space>
         }
@@ -899,8 +899,8 @@ export default function VendorsSuppliers() {
             </Row>
             <Row gutter={12}>
               <Col span={12}>
-                <Form.Item label="Total Amount (â‚¹)" name="total_amount" rules={[{ required: true }]}>
-                  <InputNumber prefix="â‚¹" style={{ width: '100%' }} min={0} />
+                <Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true }]}>
+                  <InputNumber prefix="₹" style={{ width: '100%' }} min={0} />
                 </Form.Item>
               </Col>
               <Col span={12}>
@@ -947,7 +947,7 @@ export default function VendorsSuppliers() {
         </div>
       </Modal>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€ AI Bill Details Modal â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ──────── AI Bill Details Modal ──────── */}
       <Modal
         title={
           <Space>
@@ -978,8 +978,8 @@ export default function VendorsSuppliers() {
                 <Descriptions.Item label="Bill Number"><Text strong>{viewBillDetail.bill_no}</Text></Descriptions.Item>
                 <Descriptions.Item label="Invoice Date">{viewBillDetail.date}</Descriptions.Item>
                 <Descriptions.Item label="Vendor">{viewVendor?.name}</Descriptions.Item>
-                <Descriptions.Item label="Tax Amount">â‚¹{(parseInt(viewBillDetail.items[0].total.replace(/[â‚¹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
-                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[â‚¹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
+                <Descriptions.Item label="Tax Amount">₹{(parseInt(viewBillDetail.items[0].total.replace(/[₹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
+                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
               </Descriptions>
 
               <Divider orientation="left">AI Extracted Items</Divider>
@@ -1017,7 +1017,7 @@ export default function VendorsSuppliers() {
         )}
       </Modal>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€ Update Status Modal â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ──────── Update Status Modal ──────── */}
       <Modal
         title={
           <Space>
@@ -1102,7 +1102,7 @@ export default function VendorsSuppliers() {
         </Form>
       </Modal>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€ Camera Capture Modal â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ──────── Camera Capture Modal ──────── */}
       <Modal
         title={
           <Space>
