@@ -73,7 +73,10 @@ import {
   getCheckStateMap,
   getFlowStep,
   getProgressFromChecks,
+  inferItemLogoType,
+  normYNOps,
   PAYMENT_LABELS,
+  packTabFromString,
   statusPill,
 } from './data';
 
@@ -199,7 +202,14 @@ export default function OperationDetail() {
     isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
     splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
     // Fall back to o.products when items is empty (legacy / sample orders that only stored products)
-    items: (o.items?.length ? o.items : (o.products || [])).map((it, idx) => ({ ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx) })),
+    items: (o.items?.length ? o.items : (o.products || [])).map((it, idx) => {
+      const sticker = normYNOps(it.sticker || it.stickerPrinting);
+      const printing = normYNOps(it.printing);
+      const pmRaw = it.packingMaterial || it.packaging || '';
+      const packingMaterialTab = it.packingMaterialTab || packTabFromString(pmRaw);
+      const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, it.logoType);
+      return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, logoType };
+    }),
     readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || o.phone || '',
     contactPerson: o.contactPerson || '',

@@ -81,13 +81,15 @@ import {
   getEmergencyProductSet,
   getFlowStep,
   getProgressFromChecks,
+  inferItemLogoType,
+  normYNOps,
   PACKAGING_TYPE_LABELS,
+  packTabFromString,
   statusPill,
 } from './data';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
-
 
 const queueStatuses = [
   'Sent',
@@ -223,11 +225,27 @@ export default function Operations() {
       return sds.some((sd) => (sd.products || []).some((ep) => ep.product) || !!sd.product);
     })(),
     // Fall back to o.products when items is empty (legacy / sample orders that only stored products)
-    items: (o.items?.length ? o.items : (o.products || [])).map(item => ({
-      ...item,
-      itemName: item.itemName || item.name,
-      packingMaterialTab: packingMaterialTabMap[item.packingMaterial || item.packaging] || item.packingMaterialTab || '',
-    })),
+    items: (o.items?.length ? o.items : (o.products || [])).map(item => {
+      // Normalize sticker/printing: old DB rows may store lowercase 'yes'/'no';
+      // the Sticker-queue checks (item.sticker === 'YES') require uppercase.
+      const sticker = normYNOps(item.sticker || item.stickerPrinting);
+      const printing = normYNOps(item.printing);
+      const pmRaw = item.packingMaterial || item.packaging || '';
+      // Config lookup first; string-match fallback for items without a config entry
+      // (e.g. orders from before packing config was set up, or unregistered material names).
+      const packingMaterialTab = packingMaterialTabMap[pmRaw] || item.packingMaterialTab || packTabFromString(pmRaw);
+      // Infer logoType for items saved before mapOrderItem computed it — ensures Box/Frosted
+      // queue gates (which check logoType or packingMaterialTab) route old items correctly.
+      const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, item.logoType);
+      return {
+        ...item,
+        itemName: item.itemName || item.name,
+        sticker,
+        printing,
+        packingMaterialTab,
+        logoType,
+      };
+    }),
     readiness: o.readiness || {},
     location: o.location || '', phone: o.clientPhone || '',
     paymentProofs: o.paymentProofs || [],

@@ -1,3 +1,36 @@
+// ─── Item normalization helpers ────────────────────────────────────────────────
+// Exported so both Operations/index.jsx and OperationDetail.jsx can use them.
+
+// Normalize any yes/no-ish value to uppercase enum ('YES'|'NO'|'').
+// Old DB records may store lowercase 'yes'/'no' — the sticker-queue checks
+// (item.sticker === 'YES') and enum validators require uppercase.
+export const normYNOps = (v) => { const s = String(v ?? '').trim().toLowerCase(); return s === 'yes' ? 'YES' : s === 'no' ? 'NO' : ''; };
+
+// Resolve a packing material string → Operations tab ('Box'|'Ziplock'|'') by keyword match.
+// Used as a fallback when the item has no config-map entry (old orders, unregistered names).
+export const packTabFromString = (pm) => {
+  const p = (pm || '').toLowerCase();
+  if (p.includes('ziplock') || p.includes('frosted') || p.includes('pouch')) return 'Ziplock';
+  if (p.includes('box')) return 'Box';
+  return '';
+};
+
+// Infer logoType for items saved before mapOrderItem started computing it.
+// existing: the currently stored logoType (returned as-is when truthy so we never overwrite data).
+export const inferItemLogoType = (sticker, printing, pmRaw, packingMaterialTab, existing) => {
+  if (existing) return existing;
+  if (sticker === 'YES' || printing === 'YES') return 'Sticker';
+  const hay = (pmRaw || '').toLowerCase();
+  if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
+  if (hay.includes('box')) return 'Box';
+  if (sticker !== 'NO' && hay.includes('sticker')) return 'Sticker';
+  if (packingMaterialTab === 'Ziplock') return 'Frosted Ziplock';
+  if (packingMaterialTab === 'Box') return 'Box';
+  return '';
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 export const SIZE_MAP = {
   Soap: '2.5cm x 2.5cm',
   Shampoo: '2cm x 3cm',
