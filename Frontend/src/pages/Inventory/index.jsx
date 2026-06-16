@@ -623,17 +623,11 @@ export default function Inventory() {
         itemName: vals.name,
         category: vals.category || '',
         unit: vals.unit || 'Pcs',
-        unitValue: Number(String(vals.value ?? '').replace(/[^0-9.]/g, '')) || 0,
-        defaultSize: vals.default_size || '',
         minStock: Number(vals.min) || 0,
         purchasePrice: Number(String(vals.purchase_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         gstPercent: Number(vals.gstPercent) || 0,
         hsnCode: vals.hsn || '',
-        discountPercent: Number(String(vals.discount ?? '').replace(/[^0-9.]/g, '')) || 0,
-        packingMaterial: Array.isArray(vals.packingMaterial) ? vals.packingMaterial.join(', ') : (vals.packingMaterial || ''),
-        materialCategory: Array.isArray(vals.materialCategory) ? vals.materialCategory.join(', ') : (vals.materialCategory || ''),
-        brand: Array.isArray(vals.brand) ? vals.brand.join(', ') : (vals.brand || ''),
         productAttributes: vals.productAttrs || {},
       };
       if (editingItem) {
@@ -875,7 +869,7 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
-          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, value: r.unitValue, default_size: r.defaultSize, min: r.min, purchase_price: r.value, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, discount: r.discountPercent, packingMaterial: r.packingMaterial ? r.packingMaterial.split(', ').filter(Boolean) : [], materialCategory: r.materialCategory ? r.materialCategory.split(', ').filter(Boolean) : [], brand: r.brand ? r.brand.split(', ').filter(Boolean) : [], productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
+          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
         </Space>
@@ -2064,16 +2058,6 @@ export default function Inventory() {
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item label="Product Spec" name="value" tooltip="Quantity / weight / volume of a single product unit (e.g. 10 gram per soap)">
-                <Input placeholder="e.g. 10" addonAfter={<Form.Item name="unit" noStyle><Select style={{ width: 80 }} placeholder="Unit"><Option value="Kg">Kg</Option><Option value="Ltr">Ltr</Option><Option value="Pcs">Pcs</Option><Option value="ml">ml</Option><Option value="gram">gram</Option></Select></Form.Item>} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item label="Default Size" name="default_size" tooltip="e.g. 2.5cm x 2.5cm">
-                <Input placeholder="e.g. 2.5cm x 2.5cm" />
-              </Form.Item>
-            </Col>
             {!editingItem && <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>}
             <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={12}>
@@ -2098,29 +2082,6 @@ export default function Inventory() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={8}><Form.Item label="HSN" name="hsn"><Input placeholder="Ex: 6704" /></Form.Item></Col>
-            <Col xs={24} sm={8}><Form.Item label="Discount on Sales Price" name="discount"><Input suffix="%" /></Form.Item></Col>
-            <Col xs={24} sm={8}>
-              <Form.Item label="Packing Material" name="packingMaterial">
-                <Select
-                  mode="multiple"
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  placeholder="Select"
-                  options={packingMaterials.map(c => ({ value: c.value, label: c.label }))}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={8}>
-              <Form.Item label="Material Category" name="materialCategory">
-                <SelectWithAdd field="materialCategory" mode="multiple" defaultOptions={MATERIAL_CATEGORY_OPTIONS} placeholder="Eco / Plastic / Wooden" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={8}>
-              <Form.Item label="Brand" name="brand">
-                <SelectWithAdd field="brand" mode="multiple" defaultOptions={[]} placeholder="Select / Add brand" />
-              </Form.Item>
-            </Col>
           </Row>
 
           {/* ── Dynamic product-type attributes ── */}
