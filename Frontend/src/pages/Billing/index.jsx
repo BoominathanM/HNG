@@ -948,7 +948,7 @@ export default function Billing() {
         onCancel={() => setViewModal(false)}
         footer={null}
         width={Math.min(860, window.innerWidth - 32)}
-        styles={{ body: { padding: '16px 12px', background: isDark ? '#1a1a2a' : '#f4f5f9', maxHeight: '85vh', overflowY: 'auto' } }}
+        styles={{ body: { padding: '16px 12px', background: isDark ? '#1a1a2a' : '#f4f5f9' } }}
         title={
           <Space>
             <span style={{ fontSize: 15, fontWeight: 700 }}>

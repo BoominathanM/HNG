@@ -1666,7 +1666,7 @@ export default function Inventory() {
         okText={editingKit ? 'Update Kit' : 'Add Kit'}
         width={Math.min(780, window.innerWidth - 24)}
         okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
-        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        styles={{ body: { padding: '16px 24px' } }}
         afterOpenChange={(open) => { if (open) initKitForm(editingKit); }}
       >
         <Form form={kitForm} layout="vertical">
