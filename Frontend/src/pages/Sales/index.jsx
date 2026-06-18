@@ -151,6 +151,62 @@ const PERSONALIZATION_OPTIONS = [
   { value: 'SEPARATE_PRODUCT', label: 'Separate Product' },
 ];
 
+// ─── Order-composition categories ────────────────────────────────────────────
+// A single order may mix all three; the grand total is A + B + C + forwarding.
+//  • personalized      (A) = a kit + extra products customized together as one unit
+//  • separate_kit      (B) = a kit purchased as-is, standalone
+//  • separate_product  (C) = an individual non-kit product
+const ORDER_CATEGORIES = {
+  PERSONALIZED: 'personalized',
+  SEPARATE_KIT: 'separate_kit',
+  SEPARATE_PRODUCT: 'separate_product',
+};
+
+const PRODUCT_SELECTION_OPTIONS = [
+  { value: ORDER_CATEGORIES.PERSONALIZED, label: 'Personalized (Kit + Products)' },
+  { value: ORDER_CATEGORIES.SEPARATE_KIT, label: 'Separate Kit' },
+  { value: ORDER_CATEGORIES.SEPARATE_PRODUCT, label: 'Separate Product' },
+];
+
+const CATEGORY_META = {
+  [ORDER_CATEGORIES.PERSONALIZED]: { label: 'Personalized', short: 'A', color: '#7c3aed' },
+  [ORDER_CATEGORIES.SEPARATE_KIT]: { label: 'Separate Kit', short: 'B', color: '#0ea5e9' },
+  [ORDER_CATEGORIES.SEPARATE_PRODUCT]: { label: 'Separate Product', short: 'C', color: '#ec4899' },
+};
+
+// productType may hold the new 3-category values, the legacy 2-value set, or a single string.
+// These helpers normalize all of those so old records keep rendering and new ones drive the
+// 3-category UI/totals. Legacy mapping: 'PERSONALIZED_KIT' → a kit, 'SEPARATE_PRODUCT' → C.
+const ALL_PRODUCT_TYPE_OPTIONS = [...PRODUCT_SELECTION_OPTIONS, ...PERSONALIZATION_OPTIONS];
+const productTypeLabel = (pt) => (ALL_PRODUCT_TYPE_OPTIONS.find(o => o.value === pt)?.label || pt);
+const ptArr = (productType) => (Array.isArray(productType) ? productType : (productType ? [productType] : []));
+const ptHasPersonalized = (pt) => ptArr(pt).includes(ORDER_CATEGORIES.PERSONALIZED);
+const ptHasSeparateKit = (pt) => ptArr(pt).includes(ORDER_CATEGORIES.SEPARATE_KIT);
+// Personalization/customization specs (display unit, size, sticker, logo, printing) only apply to a
+// Personalized kit. A Separate Kit is bought as-is, so those fields are hidden for it. Legacy
+// 'PERSONALIZED_KIT' records are treated as personalized.
+const ptHasPersonalizedUI = (pt) => {
+  const a = ptArr(pt);
+  return a.includes(ORDER_CATEGORIES.PERSONALIZED) || a.includes('PERSONALIZED_KIT');
+};
+// Show the kit configuration UI when any kit-bearing category (new or legacy) is selected.
+const ptHasKitUI = (pt) => {
+  const a = ptArr(pt);
+  return a.includes('PERSONALIZED_KIT') || a.includes(ORDER_CATEGORIES.PERSONALIZED) || a.includes(ORDER_CATEGORIES.SEPARATE_KIT);
+};
+// Show the separate-product UI when the separate-product category (new or legacy) is selected.
+const ptHasSeparateUI = (pt) => {
+  const a = ptArr(pt);
+  return a.includes('SEPARATE_PRODUCT') || a.includes(ORDER_CATEGORIES.SEPARATE_PRODUCT);
+};
+// Default category for a newly-selected kit, based on which kit categories the user picked.
+// If both personalized & separate-kit are selected we default each kit to personalized and let
+// the user flip individual kits to separate-kit via the per-kit selector.
+const defaultKitCategory = (pt) =>
+  ptHasPersonalized(pt) ? ORDER_CATEGORIES.PERSONALIZED
+    : ptHasSeparateKit(pt) ? ORDER_CATEGORIES.SEPARATE_KIT
+      : ORDER_CATEGORIES.SEPARATE_KIT;
+
 const DISPLAY_UNIT_OPTIONS = [
   { value: 'ZIPLOCK_POUCH', label: 'Ziplock Pouch' },
   { value: 'STICKY_POUCH', label: 'Sticky Pouch' },
@@ -303,9 +359,17 @@ function prepareFormValues(data) {
   if (selectedKits.length > 0) {
     processed.kitOrders = selectedKits.map((kitId, i) => {
       const ko = existingKitOrders.find(o => o && o.kitId === kitId) || existingKitOrders[i] || {};
+      // Normalize kitIncludes: backend stores [{id,qty}], form needs [id] + {id:qty} map
+      const rawIncludes = ko.kitIncludes || [];
+      const isObjFormat = rawIncludes.length > 0 && rawIncludes[0] != null && typeof rawIncludes[0] === 'object' && rawIncludes[0].id != null;
+      const kitIncludes = isObjFormat ? rawIncludes.map(item => item.id) : rawIncludes;
+      const kitIncludesQty = isObjFormat
+        ? Object.fromEntries(rawIncludes.map(item => [item.id, item.qty || 1]))
+        : {};
       return {
         ...ko,
         kitId,
+        category: ko.category || defaultKitCategory(processed.productType),
         displayUnit: pickVal(ko.displayUnit, processed.kitDisplayUnit, processed.displayUnit) ?? '',
         size: pickVal(ko.size, processed.kitSize) ?? '',
         sticker: pickVal(ko.sticker, processed.kitSticker) ?? '',
@@ -313,6 +377,8 @@ function prepareFormValues(data) {
         printing: pickVal(ko.printing, processed.kitPrinting) ?? '',
         overallQty: pickVal(ko.overallQty, processed.kitOverallQty),
         kitPrice: pickVal(ko.kitPrice, processed.kitPrice),
+        kitIncludes,
+        kitIncludesQty,
       };
     });
     // Backfill the shared top-level fields from the first kit so the "Products adding" card
@@ -346,6 +412,149 @@ function calcGrandTotal(products = []) {
 function calcGstAmount(products = []) {
   return products.filter(Boolean).reduce((s, p) =>
     s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+}
+
+// Resolve a product row's order-composition category, inferring for legacy rows
+// that predate the `category` field. Kit rows inherit their kit's category;
+// everything else defaults to a standalone separate product.
+function rowCategory(p, kitOrders = []) {
+  if (!p) return ORDER_CATEGORIES.SEPARATE_PRODUCT;
+  if (p.category) return p.category;
+  if (p.isKit || p.kitType) {
+    const ko = (kitOrders || []).find(o => o && o.kitId && o.kitId === p.kitId);
+    if (ko?.category) return ko.category;
+    return ORDER_CATEGORIES.SEPARATE_KIT;
+  }
+  return ORDER_CATEGORIES.SEPARATE_PRODUCT;
+}
+
+const koCategory = (ko) => (ko && ko.category) || ORDER_CATEGORIES.SEPARATE_KIT;
+
+// GST-inclusive value of one kit: kitPrice × overallQty, falling back to the sum of
+// its component product line subtotals (× qty) when a price hasn't been entered yet.
+function kitOrderValue(ko, kitRows = []) {
+  const price = Number(ko?.kitPrice) || 0;
+  const qty = Number(ko?.overallQty) || 0;
+  if (price > 0) return Math.round(price * (qty || 1));
+  const rows = kitRows.filter(p => p && p.kitId === ko?.kitId);
+  const sub = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0), 0);
+  const gst = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
+  return Math.round((sub + gst) * (qty || 1));
+}
+
+// Stamp every product row with its order-composition category. Kit rows follow their
+// kit's category (so flipping a kit between Personalized/Separate Kit propagates to its
+// rows); non-kit rows default to a standalone separate product unless already tagged.
+function tagProductCategories(products = [], kitOrders = []) {
+  return (products || []).filter(Boolean).map(p => {
+    if (p.isKit || p.kitType) {
+      const ko = (kitOrders || []).find(o => o && o.kitId && o.kitId === p.kitId);
+      return { ...p, category: ko?.category || p.category || ORDER_CATEGORIES.SEPARATE_KIT };
+    }
+    return { ...p, category: p.category || ORDER_CATEGORIES.SEPARATE_PRODUCT };
+  });
+}
+
+// GST-inclusive subtotal of a set of (non-kit) product rows.
+function sumProductRows(rows = []) {
+  const sub = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0), 0);
+  const gst = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
+  return Math.round(sub + gst);
+}
+
+// Single source of truth for category buckets shown across detail/payment views.
+// Returns { personalized (A), separateKit (B), separateProduct (C), fwd, grand }.
+function computeRecordBuckets(rec = {}) {
+  const prods = (rec.products || []).filter(Boolean);
+  const kitOrders = (rec.kitOrders || []).filter(Boolean);
+  const cat = (p) => rowCategory(p, kitOrders);
+
+  const kitRows = prods.filter(p => p.isKit || p.kitType);
+  const persProdRows = prods.filter(p => !(p.isKit || p.kitType) && cat(p) === ORDER_CATEGORIES.PERSONALIZED);
+  const sepProdRows = prods.filter(p => !(p.isKit || p.kitType) && cat(p) === ORDER_CATEGORIES.SEPARATE_PRODUCT);
+
+  let personalizedKit = 0;
+  let separateKit = 0;
+  if (kitOrders.length) {
+    kitOrders.forEach(ko => {
+      const val = kitOrderValue(ko, kitRows);
+      if (koCategory(ko) === ORDER_CATEGORIES.PERSONALIZED) personalizedKit += val;
+      else separateKit += val;
+    });
+  } else if (kitRows.length) {
+    // Legacy records (no kitOrders): value kit rows as one standalone-kit bucket.
+    const topPrice = Number(rec.kitPrice) || 0;
+    const topQty = Number(rec.kitOverallQty) || 0;
+    separateKit += topPrice > 0 ? Math.round(topPrice * (topQty || 1)) : sumProductRows(kitRows);
+  }
+
+  const personalized = personalizedKit + sumProductRows(persProdRows);
+  const separateProduct = sumProductRows(sepProdRows);
+  const fwd = rec.forwardingCharge ? Math.round(Number(rec.forwardingChargeAmount) || 0) : 0;
+  const grand = personalized + separateKit + separateProduct + fwd;
+  return { personalized, separateKit, separateProduct, fwd, grand };
+}
+
+// Backward-compatible scalar grand total (kept for existing call sites).
+function computeRecordGrandTotal(rec = {}) {
+  return computeRecordBuckets(rec).grand;
+}
+
+// Combine kitIncludes (id[]) + kitIncludesQty ({id:qty}) into [{id,qty}] for persistence.
+function normalizeKitOrdersForSave(kitOrders = [], productType) {
+  return (kitOrders || []).map(o => {
+    const ids = (o.kitIncludes || []);
+    const combined = ids.length > 0
+      ? ids.map(id => ({ id, qty: Number(o.kitIncludesQty?.[id]) || 1 }))
+      : undefined;
+    const { kitIncludesQty, ...rest } = o;
+    return {
+      ...rest,
+      kitIncludes: combined,
+      overallQty: Number(o.overallQty) || undefined,
+      kitPrice: o.kitPrice != null ? Number(o.kitPrice) : undefined,
+      category: o.category || defaultKitCategory(productType),
+    };
+  });
+}
+
+const fmtINR = (n) => `₹${Math.round(Number(n) || 0).toLocaleString()}`;
+
+// Reusable 3-bucket total panel: Personalized (A) + Separate Kit (B) + Separate Product (C)
+// + Forwarding → Grand Total. Shown across lead/quotation/negotiation/order views & payment.
+function CategoryTotalsBreakdown({ rec, isDark }) {
+  const b = computeRecordBuckets(rec);
+  const rows = [
+    { ...CATEGORY_META[ORDER_CATEGORIES.PERSONALIZED], val: b.personalized },
+    { ...CATEGORY_META[ORDER_CATEGORIES.SEPARATE_KIT], val: b.separateKit },
+    { ...CATEGORY_META[ORDER_CATEGORIES.SEPARATE_PRODUCT], val: b.separateProduct },
+  ];
+  const active = rows.filter(r => r.val > 0);
+  const border = isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid #eef0f3';
+  const labelColor = isDark ? '#cbd5e1' : '#475569';
+  const sumTag = `${active.map(a => a.short).join('+')}${b.fwd > 0 ? '+Fwd' : ''}`;
+  return (
+    <div style={{ border, borderRadius: 12, padding: '12px 16px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fafbfc' }}>
+      {active.map(r => (
+        <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: labelColor }}>
+            <span style={{ width: 18, height: 18, borderRadius: 5, background: r.color, color: '#fff', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{r.short}</span>
+            {r.label}
+          </span>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{fmtINR(r.val)}</span>
+        </div>
+      ))}
+      {b.fwd > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, color: labelColor }}>
+          <span>Forwarding Charge</span><span style={{ fontWeight: 600 }}>{fmtINR(b.fwd)}</span>
+        </div>
+      )}
+      <div style={{ borderTop: border, marginTop: 6, paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Grand Total{active.length > 1 ? ` (${sumTag})` : ''}</span>
+        <span style={{ fontWeight: 800, fontSize: 18, color: '#16a34a' }}>{fmtINR(b.grand)}</span>
+      </div>
+    </div>
+  );
 }
 
 function generateWhatsAppText(data) {
@@ -1415,17 +1624,27 @@ export default function Sales() {
         : newAdvance;
 
       // Recalculate total from edited products if products were edited
-      const editedProds = (vals.editProducts || []).filter(Boolean).map(p => ({
-        ...p,
-        name: p.name || '',
-        qty: Number(p.qty) || 0,
-        rate: Number(p.rate) || 0,
-        gst: Number(p.gst) || 0,
-      }));
+      const editedProds = tagProductCategories(
+        (vals.editProducts || []).filter(Boolean).map(p => ({
+          ...p,
+          name: p.name || '',
+          qty: Number(p.qty) || 0,
+          rate: Number(p.rate) || 0,
+          gst: Number(p.gst) || 0,
+        })),
+        vals.kitOrders || orderEditTarget.kitOrders || [],
+      );
       const newSubtotal = editedProds.reduce((s, p) => s + p.qty * p.rate, 0);
       const newGstAmount = editedProds.reduce((s, p) => s + p.qty * p.rate * (p.gst / 100), 0);
       const computedTotal = Math.round(newSubtotal + newGstAmount);
-      const orderTotal = computedTotal > 0 ? computedTotal : (orderEditTarget.total || orderEditTarget.totalAmount || 0);
+      // Kit-aware grand total so the balance/amount-to-pay accounts for kitPrice × overallQty + forwarding
+      const kitAwareTotal = Math.round(computeRecordGrandTotal({
+        ...orderEditTarget,
+        products: editedProds.length > 0 ? editedProds : orderEditTarget.products,
+      }));
+      const orderTotal = kitAwareTotal > 0
+        ? kitAwareTotal
+        : (computedTotal > 0 ? computedTotal : (orderEditTarget.total || orderEditTarget.totalAmount || 0));
 
       const paymentStatus = orderTotal > 0 && newPaidAmount >= orderTotal
         ? 'Paid'
@@ -1466,6 +1685,17 @@ export default function Sales() {
         state: vals.state || orderEditTarget.state,
         pincode: vals.pincode || orderEditTarget.pincode,
         gstNumber: vals.gstNumber || orderEditTarget.gstNumber,
+        kitDisplayUnit: vals.kitDisplayUnit || orderEditTarget.kitDisplayUnit,
+        kitSize: vals.kitSize || orderEditTarget.kitSize,
+        kitSticker: vals.kitSticker || orderEditTarget.kitSticker,
+        kitLogo: vals.kitLogo || orderEditTarget.kitLogo,
+        kitPrinting: vals.kitPrinting || orderEditTarget.kitPrinting,
+        kitOverallQty: vals.kitOverallQty || orderEditTarget.kitOverallQty,
+        kitPrice: vals.kitPrice || orderEditTarget.kitPrice,
+        kitOrders: normalizeKitOrdersForSave(
+          vals.kitOrders?.length > 0 ? vals.kitOrders : (orderEditTarget.kitOrders || []),
+          orderEditTarget?.productType
+        ),
       };
       try {
         const backendPatch = {
@@ -1480,7 +1710,13 @@ export default function Sales() {
           paymentCollection: newCollection,
           paymentProofs: mergedProofs,
           paymentStatus,
-          ...(editedProds.length > 0 && { products: editedProds, total: orderTotal, gstAmount: Math.round(newGstAmount) }),
+          // Rebuild items[] too so edited products + their category reach Operations (which reads items).
+          ...(editedProds.length > 0 && {
+            products: editedProds,
+            items: editedProds.map(p => mapOrderItem(p, updated.kitDisplayUnit || updated.displayUnit || '')),
+            total: orderTotal,
+            gstAmount: Math.round(newGstAmount),
+          }),
           clientName: updated.hotelName,
           billingName: updated.billingName,
           contactPerson: updated.contactPerson,
@@ -1490,6 +1726,14 @@ export default function Sales() {
           state: updated.state,
           pincode: updated.pincode,
           gstNumber: updated.gstNumber,
+          kitDisplayUnit: updated.kitDisplayUnit || undefined,
+          kitSize: updated.kitSize || undefined,
+          kitSticker: updated.kitSticker || undefined,
+          kitLogo: updated.kitLogo || undefined,
+          kitPrinting: updated.kitPrinting || undefined,
+          kitOverallQty: updated.kitOverallQty || undefined,
+          kitPrice: updated.kitPrice || undefined,
+          kitOrders: updated.kitOrders?.length > 0 ? updated.kitOrders : undefined,
         };
         await updateSalesOrderMutation(backendPatch).unwrap();
         setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
@@ -1606,6 +1850,8 @@ export default function Sales() {
   const watchedOrderProducts = Form.useWatch('products', orderForm);
   const watchedLeadProducts = Form.useWatch('products', leadForm);
   const watchedNegotiationProducts = Form.useWatch('products', negotiationForm);
+  const watchedOrderEditSelKits = Form.useWatch('selectedKits', orderEditForm) || [];
+  const watchedOrderEditKitOrds = Form.useWatch('kitOrders', orderEditForm) || [];
   const watchedNegRoundValue = Form.useWatch('useRoundedTotal', negotiationForm);
   const watchedLeadPaymentTerms = Form.useWatch('paymentTerms', leadForm);
   const watchedLeadPaymentCollection = Form.useWatch('paymentCollection', leadForm);
@@ -1767,10 +2013,15 @@ export default function Sales() {
     const allKitRows = [];
     const kitPriceById = {};
     const existingKitOrders = leadForm.getFieldValue('kitOrders') || [];
+    const productType = leadForm.getFieldValue('productType');
 
     kitIds.forEach(kitId => {
       const kit = kits.find(k => k._id === kitId);
       if (!kit) return;
+      // A kit is Personalized (kit + extra products) or a Separate Kit (as-is). Keep any
+      // existing per-kit choice; otherwise default from the Product Selection categories.
+      const existingKo = existingKitOrders.find(o => o.kitId === kitId);
+      const kitCat = existingKo?.category || defaultKitCategory(productType);
       (kit.products || []).forEach(p => {
         const invItem = inventoryItemsRaw.find(i => i.itemName === p.productName);
         const rate = p.rate || invItem?.sellingPrice || 0;
@@ -1783,6 +2034,7 @@ export default function Sales() {
           unit: p.unit || invItem?.unit,
           kitName: kit.kitName,
           kitId,
+          category: kitCat,
           packingMaterial: p.packingMaterial || invItem?.packingMaterial || '',
           materialCategory: p.materialCategory || invItem?.materialCategory || '',
           brand: p.brand || invItem?.brand || '',
@@ -1808,10 +2060,15 @@ export default function Sales() {
       const existing = existingKitOrders.find(o => o.kitId === kitId);
       const computedPrice = Math.round(kitPriceById[kitId] || 0);
       if (existing) {
-        return { ...existing, kitPrice: existing.kitPrice != null ? existing.kitPrice : computedPrice };
+        return {
+          ...existing,
+          category: existing.category || defaultKitCategory(productType),
+          kitPrice: existing.kitPrice != null ? existing.kitPrice : computedPrice,
+        };
       }
       return {
         kitId,
+        category: defaultKitCategory(productType),
         displayUnit: kit?.displayUnit || '',
         size: kit?.size || '',
         overallQty: undefined,
@@ -1965,7 +2222,11 @@ export default function Sales() {
       const collected = (q.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const backendPaid = Number(q.paidAmount) || Number(q.totalPaid) || 0;
       const paidTotal = collected > 0 ? collected : (backendPaid || Number(q.advancePaid || 0));
-      const total = Number(q.total || 0);
+      const qProducts = q.products?.length ? q.products : itemsToProducts(q.items);
+      // Kit-aware grand total so the table/balance/status match the detail payment panel
+      // (kit bucket = kitPrice × overallQty + separate + forwarding); fall back to stored total.
+      const kitAwareTotal = Math.round(computeRecordGrandTotal({ ...q, products: qProducts }));
+      const total = kitAwareTotal > 0 ? kitAwareTotal : Number(q.total || 0);
       const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
         : (q.status || 'Unpaid');
@@ -1985,7 +2246,7 @@ export default function Sales() {
         balance: total - paidTotal,
         date: q.createdAt?.slice(0, 10),
         billType: q.billType || (q.type === 'GST' ? 'GST' : q.type === 'Non-GST' ? 'NON_GST' : q.type),
-        products: q.products?.length ? q.products : itemsToProducts(q.items),
+        products: qProducts,
         itemCount: (q.products?.length || q.items?.length || 0),
       };
     }));
@@ -1995,7 +2256,10 @@ export default function Sales() {
       const collected = (n.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const backendPaid = Number(n.paidAmount) || Number(n.totalPaid) || 0;
       const paidTotal = collected > 0 ? collected : (backendPaid || Number(n.advancePaid || 0));
-      const total = Number(n.total || 0);
+      const nProducts = n.products?.length ? n.products : itemsToProducts(n.items);
+      // Kit-aware grand total so the table/balance/status match the detail payment panel.
+      const kitAwareTotal = Math.round(computeRecordGrandTotal({ ...n, products: nProducts }));
+      const total = kitAwareTotal > 0 ? kitAwareTotal : Number(n.total || 0);
       const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
         : (n.status || 'Unpaid');
@@ -2015,7 +2279,7 @@ export default function Sales() {
         balance: total - paidTotal,
         date: n.createdAt?.slice(0, 10),
         billType: n.billType || (n.type === 'GST' ? 'GST' : n.type === 'Non-GST' ? 'NON_GST' : n.type),
-        products: n.products?.length ? n.products : itemsToProducts(n.items),
+        products: nProducts,
         itemCount: (n.products?.length || n.items?.length || 0),
       };
     }));
@@ -2037,7 +2301,14 @@ export default function Sales() {
       const gstFromProducts = Math.round(calcGstAmount(normalizedProducts));
       const storedGst = Number(o.gstAmount) || 0;
       const effectiveGst = gstFromProducts > 0 ? gstFromProducts : storedGst;
-      const total = subtotal + effectiveGst;
+      const rawTotal = subtotal + effectiveGst;
+      // Kit-aware grand total — single source of truth shared with the detail views and
+      // payment-collection panels: kit bucket = kitPrice × overallQty (GST-inclusive), plus
+      // separate products + their GST, plus forwarding. Using it here makes the table total,
+      // balance and payment status agree with what Payment Collection shows (raw subtotal+GST
+      // under-counts kit orders because it never multiplies by the kit's overall quantity).
+      const kitAwareTotal = Math.round(computeRecordGrandTotal({ ...o, products: normalizedProducts }));
+      const total = kitAwareTotal > 0 ? kitAwareTotal : (rawTotal > 0 ? rawTotal : Number(o.total) || 0);
       // Compute from what we have; if list API omits paymentCollection, fall back to backend status
       const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
@@ -2110,7 +2381,11 @@ export default function Sales() {
     const gstFromProdsFull = Math.round(calcGstAmount(prods));
     const storedGstFull = Number(full.gstAmount) || 0;
     const effectiveGstFull = gstFromProdsFull > 0 ? gstFromProdsFull : storedGstFull;
-    const total = subtotalFull + effectiveGstFull;
+    const rawTotalFull = subtotalFull + effectiveGstFull;
+    // Kit-aware grand total (mirrors the list normalization above) so the synced-back
+    // balance/status match the payment-collection panels for kit + separate orders.
+    const kitAwareFull = Math.round(computeRecordGrandTotal({ ...full, products: prods }));
+    const total = kitAwareFull > 0 ? kitAwareFull : (rawTotalFull > 0 ? rawTotalFull : Number(full.total) || 0);
     const newStatus = paidTotal > 0 && total > 0 ? (paidTotal >= total ? 'Paid' : 'Partially Paid') : undefined;
     const quotCode = full.quotationId?.quotCode || full.quotationCode;
     setOrdersData(prev => prev.map(o => {
@@ -2224,7 +2499,7 @@ export default function Sales() {
     })).filter(f => f.url);
     return {
       ...values,
-      products: normalizeProducts(values.products || []),
+      products: tagProductCategories(normalizeProducts(values.products || []), values.kitOrders || []),
       billType,
       detailedAddress,
       city,
@@ -2260,7 +2535,7 @@ export default function Sales() {
       kitPrinting: values.kitPrinting || undefined,
       kitPrice: values.kitPrice != null ? Number(values.kitPrice) : undefined,
       kitOverallQty: Number(values.kitOverallQty) || undefined,
-      kitOrders: (values.kitOrders || []).map(o => ({ ...o, overallQty: Number(o.overallQty) || undefined, kitPrice: o.kitPrice != null ? Number(o.kitPrice) : undefined })),
+      kitOrders: normalizeKitOrdersForSave(values.kitOrders || [], values.productType),
       packingMaterial: values.packingMaterial || '',
       hotelLogoUrl: hotelLogoUrl || undefined,
       paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
@@ -2526,6 +2801,10 @@ export default function Sales() {
           : 'Unpaid';
       }
     }
+    // Re-stamp category on product rows so inline kit-category flips persist + new rows get tagged.
+    if (values.products) {
+      values.products = tagProductCategories(normalizeProducts(values.products), values.kitOrders || selectedRecord.kitOrders || []);
+    }
     const updated = { ...selectedRecord, ...values };
     if (section === 'leadStatus' && values.status && values.status !== selectedRecord.status) {
       updated.statusHistory = [...(selectedRecord.statusHistory || []), { status: values.status, changedAt: now }];
@@ -2786,8 +3065,16 @@ export default function Sales() {
         const subtotal = calcTotal(values.products);
         const gstAmount = (values.products || []).reduce(
           (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
-        const grandTotal = subtotal + gstAmount;
+        const itemsTotal = subtotal + gstAmount;
         const src = quotationFromLead || {};
+        const kitAwareTotal = Math.round(computeRecordGrandTotal({
+          ...values,
+          products: values.products || [],
+          kitOrders: normalizeKitOrdersForSave(values.kitOrders || [], values.productType),
+          forwardingCharge: values.forwardingCharge,
+          forwardingChargeAmount: values.forwardingChargeAmount || 0,
+        }));
+        const grandTotal = kitAwareTotal > 0 ? kitAwareTotal : itemsTotal;
         const effectiveBillType = values.billType || src.billType || 'GST';
         const advancePaid = Number(src.paidAmount || src.advancePaid) || 0;
         const balance = grandTotal - advancePaid;
@@ -2936,8 +3223,11 @@ export default function Sales() {
       brand: p.brand,
       otherSpecs: p.otherSpecs,
       isKit: p.isKit || false,
+      kitId: p.kitId || '',
       kitName: p.kitName || '',
       kitType: p.kitType || '',
+      // Order-composition category so Operations can group personalized/separate-kit/separate-product.
+      category: p.category || (isKitItem ? ORDER_CATEGORIES.SEPARATE_KIT : ORDER_CATEGORIES.SEPARATE_PRODUCT),
     };
   };
 
@@ -3852,14 +4142,135 @@ export default function Sales() {
     // ── Shared helpers for detail views ────────────────────────────
     const DetailProductCards = ({ products = [], totalAmount, kitDisplayUnit, kitSize, kitName, selectedKits = [], kitOrders = [], kitSticker, kitLogo, kitPrinting, kitOverallQty, kitPrice, forwardingCharge, forwardingChargeAmount }) => {
       const kitProds = products.filter(p => p && (p.isKit || p.kitType));
+      const sepProds = products.filter(p => p && !p.isKit && !p.kitType);
       const effectiveKitName = kitName || (kitProds.length > 0 ? (kitProds[0].kitName || kitProds[0].kitType || null) : null);
       const effectiveDisplayUnit = (kitDisplayUnit || '').replace(/_/g, ' ');
       // Per-kit summary: render one block per selected kit with its order details
-      const hasKitSummary = (selectedKits.length > 0 && kitOrders.length > 0) || (kitProds.length > 0 && (effectiveKitName || effectiveDisplayUnit || kitSticker || kitLogo || kitPrinting || kitOverallQty || kitPrice));
+      const hasKitSummary = selectedKits.length > 0 || (kitProds.length > 0 && (effectiveKitName || effectiveDisplayUnit || kitSticker || kitLogo || kitPrinting || kitOverallQty || kitPrice));
+      // Helper: render a single product card (reused in per-kit sections and flat list)
+      const renderDetailProdCard = (p, i) => {
+        // Normalize: fields may be top-level OR nested under p.specs (legacy)
+        const logo            = p.logo            || p.specs?.logo;
+        const _stickerRaw     = p.sticker         || p.stickerPrinting || p.specs?.sticker;
+        const sticker         = normYesNo(_stickerRaw) || _stickerRaw;
+        const packingMaterial = p.packingMaterial || p.packaging || p.specs?.packingMaterial;
+        const materialCategory= p.materialCategory|| p.material  || p.specs?.materialCategory;
+        const brand           = p.brand           || p.specs?.brand;
+        const otherSpecs      = p.otherSpecs      || p.specs?.otherSpecs;
+        const productName     = p.name || p.itemName || p.kitType || '—';
+        const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','stickerPrinting','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
+        const extraAttrs = Object.entries(p || {}).filter(([k, v]) => {
+          if (SHOWN_ATTR_KEYS.has(k)) return false;
+          if (v == null || v === '') return false;
+          if (Array.isArray(v)) return v.length > 0;
+          return typeof v !== 'object';
+        });
+        const isKitItem       = p.isKit || !!p.kitType;
+        const kitLabel        = p.kitName || p.kitType || '';
+        const unitLabel       = p.unit || (isKitItem ? (kitDisplayUnit || '').replace(/_/g, ' ') : '') || '';
+        const sizeLabel       = p.size || (isKitItem ? kitSize || '' : '') || '';
+        const gstVal          = Number(p.gst) || 0;
+        const lineTotal       = Math.round((p.qty || 0) * (p.rate || 0) * (1 + gstVal / 100));
+        const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel || extraAttrs.length;
+        return (
+          <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
+            {/* ── Header row ── */}
+            <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 10 }}>{isKitItem ? 'KIT PRODUCT' : 'PRODUCT'}</Text>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text strong style={{ fontSize: 14 }}>{productName}</Text>
+                    {isKitItem && <Tag color="magenta" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>KIT</Tag>}
+                  </div>
+                  {kitLabel && <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Kit: {kitLabel}</Text>}
+                </div>
+              </div>
+              <Space size={4} wrap>
+                {unitLabel && <Tag color="blue" style={{ borderRadius: 12, fontSize: 11 }}>{unitLabel}</Tag>}
+                {sizeLabel && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{sizeLabel}</Tag>}
+              </Space>
+              <div style={{ textAlign: 'right' }}>
+                <Text strong style={{ display: 'block', fontSize: 18, color: '#B11E6A', lineHeight: 1.2 }}>₹{lineTotal.toLocaleString()}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} {unitLabel || 'pcs'} × ₹{p.rate}{gstVal > 0 ? ` + ${gstVal}% GST` : ''}</Text>
+              </div>
+            </div>
+            {/* ── Specs section ── */}
+            {hasSpecs && (
+              <div style={{ padding: '12px 16px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
+                <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 10 }}>SPECIFICATIONS</Text>
+                <Row gutter={[12, 10]}>
+                  {logo && (
+                    <Col xs={12} sm={8}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Logo</Text>
+                      <Tag color={logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{logo === 'YES' ? '✓ Logo' : '✗ No Logo'}</Tag>
+                    </Col>
+                  )}
+                  {sticker && (
+                    <Col xs={12} sm={8}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Sticker / Printing</Text>
+                      <Tag color={sticker === 'YES' ? 'blue' : sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>
+                        {sticker === 'YES' ? '✓ Yes' : sticker === 'PRINTING' ? 'Printing' : sticker}
+                      </Tag>
+                    </Col>
+                  )}
+                  {packingMaterial && (
+                    <Col xs={12} sm={8}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Packing Material</Text>
+                      <Text strong style={{ fontSize: 12 }}>{packingMaterial}</Text>
+                    </Col>
+                  )}
+                  {materialCategory && (
+                    <Col xs={12} sm={8}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Material Category</Text>
+                      <Tag color={materialCategory === 'Eco Friendly' ? 'green' : materialCategory === 'Wooden' ? 'orange' : 'blue'} style={{ borderRadius: 20, fontSize: 11 }}>{materialCategory}</Tag>
+                    </Col>
+                  )}
+                  {brand && (
+                    <Col xs={12} sm={8}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Brand</Text>
+                      <Text strong style={{ fontSize: 12 }}>{brand}</Text>
+                    </Col>
+                  )}
+                  {unitLabel && (
+                    <Col xs={12} sm={8}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Unit</Text>
+                      <Text strong style={{ fontSize: 12 }}>{unitLabel}</Text>
+                    </Col>
+                  )}
+                  {sizeLabel && (
+                    <Col xs={12} sm={8}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Size</Text>
+                      <Text strong style={{ fontSize: 12 }}>{sizeLabel}</Text>
+                    </Col>
+                  )}
+                  {extraAttrs.map(([k, v]) => (
+                    <Col xs={12} sm={8} key={k}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>{prettyAttrKeyLead(k)}</Text>
+                      <Text strong style={{ fontSize: 12 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
+                    </Col>
+                  ))}
+                  {otherSpecs && (
+                    <Col xs={24} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.03)' }}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Other Specifications</Text>
+                      <div style={{ padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fa', borderRadius: 8, fontSize: 12, color: isDark ? '#ccc' : '#444' }}>
+                        {otherSpecs}
+                      </div>
+                    </Col>
+                  )}
+                </Row>
+              </div>
+            )}
+          </div>
+        );
+      };
       return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {/* Per-kit order details summary — shown when kit metadata is available */}
-        {hasKitSummary && selectedKits.length > 0 && kitOrders.length > 0 ? (
+        {hasKitSummary && selectedKits.length > 0 ? (
           selectedKits.map((kitId, idx) => {
             const ko = kitOrders.find(o => o.kitId === kitId) || kitOrders[idx] || {};
             const kitDef = kits.find(k => k._id === kitId);
@@ -3871,7 +4282,8 @@ export default function Sales() {
             const kSticker = ko.sticker || kitSticker;
             const kLogo = ko.logo || kitLogo;
             const kPrinting = ko.printing || kitPrinting;
-            const thisKitProds = products.filter(p => (p.isKit || p.kitType) && (p.kitId === kitId || p.kitName === kName));
+            const overallQty = Number(kQty) || 0;
+            const thisKitProds = products.filter(p => (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && idx === 0)));
             return (
               <div key={kitId} style={{ padding: '12px 16px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.2)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
@@ -3886,14 +4298,34 @@ export default function Sales() {
                   {kPrice > 0 && <Tag color="orange" style={{ borderRadius: 12, fontSize: 11 }}>₹{Number(kPrice).toLocaleString()}{kQty > 0 ? ` × ${kQty} = ₹${(Number(kPrice) * kQty).toLocaleString()}` : ''}</Tag>}
                 </div>
                 {thisKitProds.length > 0 && (
-                  <div style={{ marginTop: 6 }}>
-                    <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 4, letterSpacing: 0.5 }}>CONTENTS ({thisKitProds.length} items)</Text>
-                    <Space wrap size={4}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+                    {thisKitProds.map((p, j) => renderDetailProdCard(p, j))}
+                  </div>
+                )}
+                {overallQty > 1 && thisKitProds.length > 0 && (
+                  <div style={{ padding: '10px 14px', background: isDark ? 'rgba(24,144,255,0.08)' : 'rgba(24,144,255,0.04)', borderRadius: 8, border: '1px solid rgba(24,144,255,0.15)', marginTop: 8 }}>
+                    <Text style={{ fontSize: 11, fontWeight: 700, color: '#1890ff', display: 'block', marginBottom: 6 }}>TOTAL QUANTITIES ({overallQty} kits)</Text>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {thisKitProds.map((p, i) => (
-                        <Tag key={i} style={{ borderRadius: 10, fontSize: 11, background: isDark ? 'rgba(114,46,209,0.15)' : 'rgba(114,46,209,0.08)', border: '1px solid rgba(114,46,209,0.2)', color: '#722ed1' }}>
-                          {p.name || p.kitType || p.itemName} ×{p.qty}
-                        </Tag>
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                          <Text type="secondary">{p.name || p.kitType || '—'}</Text>
+                          <Text>{p.qty || 0} × {overallQty} = <Text strong style={{ color: '#1890ff' }}>{(Number(p.qty)||0)*overallQty}</Text> pcs</Text>
+                        </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+                {Array.isArray(ko.kitIncludes) && ko.kitIncludes.length > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 4, letterSpacing: 0.5 }}>INCLUDED IN PACKAGING</Text>
+                    <Space wrap size={4}>
+                      {ko.kitIncludes.map((v, i) => {
+                        const id = typeof v === 'object' ? v.id : v;
+                        const qty = typeof v === 'object' ? v.qty : null;
+                        const kMatch = kits.find(k => k._id === id);
+                        const label = kMatch ? kMatch.kitName : id;
+                        return <Tag key={i} color={kMatch ? 'purple' : 'orange'} style={{ borderRadius: 10, fontSize: 11 }}>{label}{qty && qty > 1 ? ` ×${qty}` : ''}</Tag>;
+                      })}
                     </Space>
                   </div>
                 )}
@@ -3901,167 +4333,46 @@ export default function Sales() {
             );
           })
         ) : hasKitSummary ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.18)', flexWrap: 'wrap' }}>
-            <GiftOutlined style={{ color: '#722ed1' }} />
-            {effectiveKitName && <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Kit: {effectiveKitName}</Text>}
-            {effectiveDisplayUnit && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>{effectiveDisplayUnit}</Tag>}
-            {kitSize && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{kitSize}</Tag>}
-            {kitOverallQty > 0 && <Tag color="blue" style={{ borderRadius: 12, fontSize: 11 }}>Qty: {kitOverallQty} kits</Tag>}
-            {kitSticker && <Tag color={kitSticker === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Sticker: {kitSticker === 'YES' ? 'Yes' : 'No'}</Tag>}
-            {kitLogo && <Tag color={kitLogo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Logo: {kitLogo === 'YES' ? 'Yes' : 'No'}</Tag>}
-            {kitPrinting && <Tag color={kitPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Printing: {kitPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
-            {kitPrice > 0 && <Tag color="orange" style={{ borderRadius: 12, fontSize: 11 }}>₹{Number(kitPrice).toLocaleString()}{kitOverallQty > 0 ? ` × ${kitOverallQty} = ₹${(Number(kitPrice) * kitOverallQty).toLocaleString()}` : ''}</Tag>}
-          </div>
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.18)', flexWrap: 'wrap' }}>
+              <GiftOutlined style={{ color: '#722ed1' }} />
+              {effectiveKitName && <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Kit: {effectiveKitName}</Text>}
+              {effectiveDisplayUnit && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>{effectiveDisplayUnit}</Tag>}
+              {kitSize && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{kitSize}</Tag>}
+              {kitOverallQty > 0 && <Tag color="blue" style={{ borderRadius: 12, fontSize: 11 }}>Qty: {kitOverallQty} kits</Tag>}
+              {kitSticker && <Tag color={kitSticker === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Sticker: {kitSticker === 'YES' ? 'Yes' : 'No'}</Tag>}
+              {kitLogo && <Tag color={kitLogo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Logo: {kitLogo === 'YES' ? 'Yes' : 'No'}</Tag>}
+              {kitPrinting && <Tag color={kitPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Printing: {kitPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
+              {kitPrice > 0 && <Tag color="orange" style={{ borderRadius: 12, fontSize: 11 }}>₹{Number(kitPrice).toLocaleString()}{kitOverallQty > 0 ? ` × ${kitOverallQty} = ₹${(Number(kitPrice) * kitOverallQty).toLocaleString()}` : ''}</Tag>}
+            </div>
+            {kitProds.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {kitProds.map((p, j) => renderDetailProdCard(p, j))}
+              </div>
+            )}
+          </>
         ) : null}
-        {products.map((p, i) => {
-          // Normalize: fields may be top-level OR nested under p.specs (legacy)
-          const logo            = p.logo            || p.specs?.logo;
-          const _stickerRaw     = p.sticker         || p.stickerPrinting || p.specs?.sticker;
-          const sticker         = normYesNo(_stickerRaw) || _stickerRaw; // uppercase yes/no; keep specials (e.g. PRINTING)
-          const packingMaterial = p.packingMaterial || p.packaging || p.specs?.packingMaterial;
-          const materialCategory= p.materialCategory|| p.material  || p.specs?.materialCategory;
-          const brand           = p.brand           || p.specs?.brand;
-          const otherSpecs      = p.otherSpecs      || p.specs?.otherSpecs;
-          const productName     = p.name || p.itemName || p.kitType || '—';
-          // Inventory-driven product attributes (shape, fragrance, bottleType, …) not already
-          // shown as a dedicated spec above — rendered generically so nothing is hidden.
-          const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','stickerPrinting','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
-          const extraAttrs = Object.entries(p || {}).filter(([k, v]) => {
-            if (SHOWN_ATTR_KEYS.has(k)) return false;
-            if (v == null || v === '') return false;
-            if (Array.isArray(v)) return v.length > 0;
-            return typeof v !== 'object';
-          });
-          const isKitItem       = p.isKit || !!p.kitType;
-          const kitLabel        = p.kitName || p.kitType || '';
-          const unitLabel       = p.unit || (isKitItem ? (kitDisplayUnit || '').replace(/_/g, ' ') : '') || '';
-          const sizeLabel       = p.size || (isKitItem ? kitSize || '' : '') || '';
-          const gstVal          = Number(p.gst) || 0;
-          const lineTotal       = Math.round((p.qty || 0) * (p.rate || 0) * (1 + gstVal / 100));
-          const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel || extraAttrs.length;
-          return (
-            <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
-              {/* ── Header row ── */}
-              <div style={{ background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
-                  </div>
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 10 }}>{isKitItem ? 'KIT PRODUCT' : 'PRODUCT'}</Text>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <Text strong style={{ fontSize: 14 }}>{productName}</Text>
-                      {isKitItem && <Tag color="magenta" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>KIT</Tag>}
-                    </div>
-                    {kitLabel && <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Kit: {kitLabel}</Text>}
-                  </div>
-                </div>
-                <Space size={4} wrap>
-                  {unitLabel && <Tag color="blue" style={{ borderRadius: 12, fontSize: 11 }}>{unitLabel}</Tag>}
-                  {sizeLabel && <Tag color="geekblue" style={{ borderRadius: 12, fontSize: 11 }}>{sizeLabel}</Tag>}
-                </Space>
-                <div style={{ textAlign: 'right' }}>
-                  <Text strong style={{ display: 'block', fontSize: 18, color: '#B11E6A', lineHeight: 1.2 }}>₹{lineTotal.toLocaleString()}</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} {unitLabel || 'pcs'} × ₹{p.rate}{gstVal > 0 ? ` + ${gstVal}% GST` : ''}</Text>
-                </div>
-              </div>
-              {/* ── Specs section ── */}
-              {hasSpecs && (
-                <div style={{ padding: '12px 16px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(177,30,106,0.1)'}` }}>
-                  <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 10 }}>SPECIFICATIONS</Text>
-                  <Row gutter={[12, 10]}>
-                    {logo && (
-                      <Col xs={12} sm={8}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Logo</Text>
-                        <Tag color={logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>{logo === 'YES' ? '✓ Logo' : '✗ No Logo'}</Tag>
-                      </Col>
-                    )}
-                    {sticker && (
-                      <Col xs={12} sm={8}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Sticker / Printing</Text>
-                        <Tag color={sticker === 'YES' ? 'blue' : sticker === 'PRINTING' ? 'purple' : 'default'} style={{ borderRadius: 20, fontSize: 11 }}>
-                          {sticker === 'YES' ? '✓ Yes' : sticker === 'PRINTING' ? 'Printing' : sticker}
-                        </Tag>
-                      </Col>
-                    )}
-                    {packingMaterial && (
-                      <Col xs={12} sm={8}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Packing Material</Text>
-                        <Text strong style={{ fontSize: 12 }}>{packingMaterial}</Text>
-                      </Col>
-                    )}
-                    {materialCategory && (
-                      <Col xs={12} sm={8}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Material Category</Text>
-                        <Tag color={materialCategory === 'Eco Friendly' ? 'green' : materialCategory === 'Wooden' ? 'orange' : 'blue'} style={{ borderRadius: 20, fontSize: 11 }}>{materialCategory}</Tag>
-                      </Col>
-                    )}
-                    {brand && (
-                      <Col xs={12} sm={8}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Brand</Text>
-                        <Text strong style={{ fontSize: 12 }}>{brand}</Text>
-                      </Col>
-                    )}
-                    {unitLabel && (
-                      <Col xs={12} sm={8}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Unit</Text>
-                        <Text strong style={{ fontSize: 12 }}>{unitLabel}</Text>
-                      </Col>
-                    )}
-                    {sizeLabel && (
-                      <Col xs={12} sm={8}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>Size</Text>
-                        <Text strong style={{ fontSize: 12 }}>{sizeLabel}</Text>
-                      </Col>
-                    )}
-                    {extraAttrs.map(([k, v]) => (
-                      <Col xs={12} sm={8} key={k}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>{prettyAttrKeyLead(k)}</Text>
-                        <Text strong style={{ fontSize: 12 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
-                      </Col>
-                    ))}
-                    {otherSpecs && (
-                      <Col xs={24} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.03)' }}>
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Other Specifications</Text>
-                        <div style={{ padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fa', borderRadius: 8, fontSize: 12, color: isDark ? '#ccc' : '#444' }}>
-                          {otherSpecs}
-                        </div>
-                      </Col>
-                    )}
-                  </Row>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {(() => {
-          const subtot = Math.round(calcTotal(products));
-          const gstFromProds = Math.round(products.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0));
-          // When per-product gst% is 0 but totalAmount is known, infer GST from the stored total
-          const inferredGst = Math.max(0, Math.round(totalAmount || 0) - subtot);
-          const gstAmt = gstFromProds > 0 ? gstFromProds : inferredGst;
-          const fwdAmt = forwardingCharge ? Math.round(Number(forwardingChargeAmount) || 0) : 0;
-          const grandTot = subtot + gstAmt + fwdAmt;
-          return (
-            <div style={{ padding: '12px 16px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>{products.length} product{products.length !== 1 ? 's' : ''}</Text>
-                <div style={{ textAlign: 'right' }}>
-                  <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>WITHOUT GST: ₹{subtot.toLocaleString()}{gstAmt > 0 ? `  |  GST: ₹${gstAmt.toLocaleString()}` : ''}{fwdAmt > 0 ? `  |  FORWARDING: ₹${fwdAmt.toLocaleString()}` : ''}</Text>
-                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL (WITH GST{fwdAmt > 0 ? ' + FWD' : ''})</Text>
-                  <Text strong style={{ fontSize: 20, color: '#B11E6A' }}>₹{grandTot.toLocaleString()}</Text>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        {sepProds.map((p, i) => renderDetailProdCard(p, i))}
+        {products.length > 0 && (
+          <div style={{ marginTop: 4 }}>
+            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+              ORDER TOTAL — BY CATEGORY ({products.length} product{products.length !== 1 ? 's' : ''})
+            </Text>
+            <CategoryTotalsBreakdown rec={{ products, kitOrders, forwardingCharge, forwardingChargeAmount, kitPrice, kitOverallQty }} isDark={isDark} />
+          </div>
+        )}
       </div>
       );
     };
 
-    const DetailDeliveryPayment = ({ rec }) => {
+    const DetailDeliveryPayment = ({ rec, grandTotal, showPaymentSummary = true }) => {
       const isSample = rec.orderCategory === 'SAMPLE' || rec.leadType === 'SAMPLE';
+      const recTotal = Math.round(Number(grandTotal) || computeRecordGrandTotal(rec)) || Number(rec.totalAmount) || 0;
+      const recCollected = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const recPaid = recCollected > 0 ? recCollected : (Number(rec.paidAmount) || Number(rec.advancePaid) || 0);
+      const recBalance = Math.max(0, recTotal - recPaid);
       return (
+        <>
         <Row gutter={12}>
           <Col xs={24} sm={isSample ? 24 : 12}>
             <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
@@ -4096,6 +4407,25 @@ export default function Sales() {
             </Col>
           )}
         </Row>
+        {!isSample && showPaymentSummary && recTotal > 0 && (
+          <div style={{ marginTop: 12, padding: '12px 16px', background: recBalance > 0 ? 'rgba(250,140,22,0.06)' : 'rgba(82,196,26,0.06)', borderRadius: 10, border: `1px solid ${recBalance > 0 ? 'rgba(250,140,22,0.25)' : 'rgba(82,196,26,0.25)'}` }}>
+            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 8, letterSpacing: 0.5 }}>PAYMENT SUMMARY</Text>
+            <div style={{ marginBottom: 10 }}>
+              <CategoryTotalsBreakdown rec={rec} isDark={isDark} />
+            </div>
+            {recPaid > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Amount Paid</Text>
+                <Text strong style={{ color: '#52c41a' }}>₹{recPaid.toLocaleString()}</Text>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+              <Text style={{ fontSize: 13, fontWeight: 700 }}>Amount to Pay</Text>
+              <Text strong style={{ fontSize: 15, color: recBalance > 0 ? '#fa8c16' : '#52c41a' }}>₹{recBalance.toLocaleString()}</Text>
+            </div>
+          </div>
+        )}
+        </>
       );
     };
 
@@ -4262,7 +4592,19 @@ export default function Sales() {
               {/* Delivery & Payment */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
-                <DetailDeliveryPayment rec={q} />
+                {(() => {
+                  const qLeadId = String(q.leadId?._id || q.leadId || '');
+                  const qLead = qLeadId ? leadsData.find(l => String(l.key) === qLeadId || String(l._id) === qLeadId) : null;
+                  const qKitOrders = (Array.isArray(q.kitOrders) && q.kitOrders.length > 0 ? q.kitOrders : null)
+                    || (Array.isArray(qLead?.kitOrders) && qLead.kitOrders.length > 0 ? qLead.kitOrders : null) || [];
+                  const qEnriched = {
+                    ...q,
+                    kitOrders: qKitOrders,
+                    kitPrice: q.kitPrice || qLead?.kitPrice,
+                    kitOverallQty: q.kitOverallQty || qLead?.kitOverallQty,
+                  };
+                  return <DetailDeliveryPayment rec={qEnriched} grandTotal={computeRecordGrandTotal(qEnriched)} />;
+                })()}
               </Card>
 
               {/* Revision History */}
@@ -4616,7 +4958,19 @@ export default function Sales() {
               {/* Delivery & Payment */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
-                <DetailDeliveryPayment rec={n} />
+                {(() => {
+                  const nLeadId = String(n.leadId?._id || n.leadId || '');
+                  const nLead = nLeadId ? leadsData.find(l => String(l.key) === nLeadId || String(l._id) === nLeadId) : null;
+                  const nKitOrders = (Array.isArray(n.kitOrders) && n.kitOrders.length > 0 ? n.kitOrders : null)
+                    || (Array.isArray(nLead?.kitOrders) && nLead.kitOrders.length > 0 ? nLead.kitOrders : null) || [];
+                  const nEnriched = {
+                    ...n,
+                    kitOrders: nKitOrders,
+                    kitPrice: n.kitPrice || nLead?.kitPrice,
+                    kitOverallQty: n.kitOverallQty || nLead?.kitOverallQty,
+                  };
+                  return <DetailDeliveryPayment rec={nEnriched} grandTotal={computeRecordGrandTotal(nEnriched)} />;
+                })()}
               </Card>
 
               {n.notes && (
@@ -4807,7 +5161,18 @@ export default function Sales() {
       // Prefer per-product GST if set; fall back to backend-stored gstAmount (for converted/legacy orders)
       const oBackendGst = Number(full.gstAmount ?? base.gstAmount ?? o.gstAmount) || 0;
       const oGstAmount = oGstFromProducts > 0 ? oGstFromProducts : oBackendGst;
-      const oTotal = oSubtotal + oGstAmount;
+      // Kit-aware grand total (kitPrice × overallQty + separate products + GST + forwarding) so the
+      // Payment Summary / To Collect match the product-card total for kit orders.
+      const oLeadForTotal = o.leadCode ? leadsData.find(l => l.leadCode === o.leadCode || l.leadId === o.leadCode) : null;
+      const oKitOrdersForTotal = (Array.isArray(o.kitOrders) && o.kitOrders.length > 0 ? o.kitOrders : null)
+        || (Array.isArray(oLeadForTotal?.kitOrders) && oLeadForTotal.kitOrders.length > 0 ? oLeadForTotal.kitOrders : null) || [];
+      const oKitAwareTotal = Math.round(computeRecordGrandTotal({
+        ...o,
+        kitOrders: oKitOrdersForTotal,
+        kitPrice: o.kitPrice || oLeadForTotal?.kitPrice,
+        kitOverallQty: o.kitOverallQty || oLeadForTotal?.kitOverallQty,
+      }));
+      const oTotal = oKitAwareTotal > 0 ? oKitAwareTotal : (oSubtotal + oGstAmount);
       // o.paymentCollection is now the best-available source (merged above)
       const detailCollectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const detailAdvance = Number(full.advancePaidAmount ?? full.advancePaid ?? base.advance ?? 0);
@@ -5146,7 +5511,7 @@ export default function Sales() {
               {/* Delivery & Payment */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>{o.orderCategory !== 'SAMPLE' ? 'Delivery & Payment' : 'Delivery Details'}</span></Space>}>
-                <DetailDeliveryPayment rec={o} />
+                <DetailDeliveryPayment rec={o} showPaymentSummary={false} />
               </Card>
 
               {/* Payment summary */}
@@ -5512,8 +5877,120 @@ export default function Sales() {
               <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Street / detailed address" /></Form.Item></Col>
             </Row>
 
-            {/* ── Kit Details (read-only) ── */}
-            {renderOrderEditKitDetails(orderEditTarget)}
+            {/* ── Kit Details (editable) ── */}
+            {(() => {
+              const editKitIds = watchedOrderEditSelKits.length > 0 ? watchedOrderEditSelKits : (orderEditTarget?.selectedKit ? [orderEditTarget.selectedKit] : []);
+              const hasKitProds = (orderEditForm.getFieldValue('editProducts') || []).some(p => p?.isKit || p?.kitType);
+              if (editKitIds.length === 0 && !hasKitProds) return null;
+              return (
+                <>
+                  <Divider style={{ margin: '4px 0 12px', fontSize: 12, color: '#722ed1', borderColor: 'rgba(114,46,209,0.2)' }}>
+                    <Space><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1', fontWeight: 600 }}>Kit Details</span></Space>
+                  </Divider>
+                  {editKitIds.length > 0 ? editKitIds.map((kitId, kitIndex) => {
+                    const kitDef = kits.find(k => k._id === kitId);
+                    const kitLabel = kitDef?.kitName || 'Personalized Kit';
+                    const otherKitOpts = editKitIds.map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; }).filter(Boolean);
+                    return (
+                      <div key={kitId} style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.16)', marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                          <GiftOutlined style={{ color: '#722ed1' }} />
+                          <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{kitLabel}</Text>
+                        </div>
+                        <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
+                        <Row gutter={[10, 0]}>
+                          <Col xs={24} sm={8}><Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 8 }}>
+                            <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} />
+                          </Form.Item></Col>
+                          <Col xs={12} sm={4}><Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 8 }}>
+                            <Input placeholder="e.g. 2.5cm" />
+                          </Form.Item></Col>
+                          <Col xs={12} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 8 }}>
+                            <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                          </Form.Item></Col>
+                          <Col xs={12} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 8 }}>
+                            <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                          </Form.Item></Col>
+                          <Col xs={12} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 8 }}>
+                            <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                          </Form.Item></Col>
+                          <Col xs={12} sm={8}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 8 }}>
+                            <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" />
+                          </Form.Item></Col>
+                          <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 8 }}>
+                            <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                          </Form.Item></Col>
+                          {ptHasPersonalized(orderEditTarget?.productType) && (<>
+                          <Col xs={24} sm={16}><Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 4 }} tooltip="Items physically inside this kit's packaging">
+                            <Select mode="multiple" allowClear placeholder="Select items inside this kit" options={otherKitOpts} />
+                          </Form.Item>
+                          <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
+                            {({ getFieldValue }) => {
+                              const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
+                              if (!sel.length) return null;
+                              return (
+                                <div style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
+                                  <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
+                                  {sel.map(id => {
+                                    const kMatch = kits.find(k => k._id === id);
+                                    return (
+                                      <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
+                                        <Col flex="1"><Text style={{ fontSize: 12 }}>{kMatch?.kitName || id}</Text></Col>
+                                        <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
+                                      </Row>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            }}
+                          </Form.Item>
+                          </Col>
+                          </>)}
+                        </Row>
+                        <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.kitPrice !== c.kitOrders?.[kitIndex]?.kitPrice || p.kitOrders?.[kitIndex]?.overallQty !== c.kitOrders?.[kitIndex]?.overallQty}>
+                          {({ getFieldValue }) => {
+                            const single = Number(getFieldValue(['kitOrders', kitIndex, 'kitPrice'])) || 0;
+                            const qty = Number(getFieldValue(['kitOrders', kitIndex, 'overallQty'])) || 0;
+                            if (!single || !qty) return null;
+                            return <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>Kit Amount: <Text strong style={{ color: '#722ed1' }}>₹{(single * qty).toLocaleString()}</Text> ({single.toLocaleString()} × {qty})</Text>;
+                          }}
+                        </Form.Item>
+                      </div>
+                    );
+                  }) : (
+                    <div style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.16)', marginBottom: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <GiftOutlined style={{ color: '#722ed1' }} />
+                        <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Personalized Kit</Text>
+                      </div>
+                      <Row gutter={[10, 0]}>
+                        <Col xs={24} sm={8}><Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 8 }}>
+                          <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={8}><Form.Item label="Size" name="kitSize" style={{ marginBottom: 8 }}>
+                          <Input placeholder="e.g. 2.5cm" />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 8 }}>
+                          <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={4}><Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 8 }}>
+                          <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 8 }}>
+                          <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={8}><Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 8 }}>
+                          <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 8 }}>
+                          <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                        </Form.Item></Col>
+                      </Row>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* ── Products ── */}
             <Divider style={{ margin: '4px 0 12px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
@@ -5567,18 +6044,27 @@ export default function Sales() {
                   <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ name: '', qty: 1, rate: 0, gst: 0 })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
                     + Add Product
                   </Button>
-                  {/* Live total from products */}
+                  {/* Live total from products (kit-aware: kitPrice × qty + separate + GST + forwarding) */}
                   <Form.Item noStyle shouldUpdate>
                     {({ getFieldValue }) => {
                       const prods = getFieldValue('editProducts') || [];
-                      const subtotal = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
-                      const gstAmt = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
-                      const total = Math.round(subtotal + gstAmt);
+                      const sepProds = prods.filter(p => p && !p.isKit && !p.kitType);
+                      const subtotal = sepProds.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
+                      const gstAmt = sepProds.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
+                      const total = Math.round(computeRecordGrandTotal({
+                        ...orderEditTarget,
+                        products: prods,
+                        kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                        kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                        kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+                      }));
                       if (total === 0) return null;
+                      const kitPortion = Math.max(0, total - Math.round(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? Math.round(Number(orderEditTarget?.forwardingChargeAmount) || 0) : 0));
                       return (
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8 }}>
-                          <Text type="secondary" style={{ fontSize: 12 }}>Subtotal: <strong>₹{Math.round(subtotal).toLocaleString()}</strong></Text>
-                          <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{Math.round(gstAmt).toLocaleString()}</strong></Text>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                          {kitPortion > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Kit: <strong>₹{kitPortion.toLocaleString()}</strong></Text>}
+                          {subtotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Separate: <strong>₹{Math.round(subtotal).toLocaleString()}</strong></Text>}
+                          {gstAmt > 0 && <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{Math.round(gstAmt).toLocaleString()}</strong></Text>}
                           <Text style={{ fontSize: 13, color: '#B11E6A', fontWeight: 700 }}>Total: ₹{total.toLocaleString()}</Text>
                         </div>
                       );
@@ -5598,9 +6084,13 @@ export default function Sales() {
             {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
               <Select onChange={(val) => {
                 const prods = orderEditForm.getFieldValue('editProducts') || [];
-                const sub = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
-                const gst = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
-                const computedTot = Math.round(sub + gst);
+                const computedTot = Math.round(computeRecordGrandTotal({
+                  ...orderEditTarget,
+                  products: prods,
+                  kitOrders: orderEditForm.getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                  kitPrice: orderEditForm.getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                  kitOverallQty: orderEditForm.getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+                }));
                 const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                 let suggestedAdvance = 0;
                 if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
@@ -5611,13 +6101,17 @@ export default function Sales() {
                 {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
               </Select>
             </Form.Item>}
-            {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms || prev.editProducts !== cur.editProducts}>
+            {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms || prev.editProducts !== cur.editProducts || prev.kitOrders !== cur.kitOrders}>
               {({ getFieldValue }) => {
                 const pt = getFieldValue('paymentTerms');
                 const prods = getFieldValue('editProducts') || [];
-                const sub = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
-                const gst = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
-                const computedTot = Math.round(sub + gst);
+                const computedTot = Math.round(computeRecordGrandTotal({
+                  ...orderEditTarget,
+                  products: prods,
+                  kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                  kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                  kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+                }));
                 const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                 let adviceText = '';
                 if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
@@ -5719,7 +6213,17 @@ export default function Sales() {
                   Number(orderEditTarget?.paidAmount || 0) - existingCollTotal
                 );
                 const effectivePaid = collTotal + uncapturedPaid;
-                const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+                // Kit-aware live total so balance reflects kitPrice × qty + separate + GST + forwarding
+                const prods = getFieldValue('editProducts') || [];
+                const computedTot = Math.round(computeRecordGrandTotal({
+                  ...orderEditTarget,
+                  products: prods,
+                  kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                  kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                  kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+                }));
+                const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
+                const amountToPay = Math.max(0, orderTotal - effectivePaid);
                 const status = orderTotal > 0 && effectivePaid >= orderTotal
                   ? 'Paid'
                   : effectivePaid > 0
@@ -5728,16 +6232,30 @@ export default function Sales() {
                 const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
                 const bg = status === 'Paid' ? 'rgba(82,196,26,0.08)' : status === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
                 return (
-                  <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
-                    <Space size={12}>
-                      {effectivePaid > 0 && (
-                        <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
-                          Collected: ₹{effectivePaid.toLocaleString()} / ₹{orderTotal.toLocaleString()}
-                        </Text>
-                      )}
+                  <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, marginBottom: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
                       <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
-                    </Space>
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <CategoryTotalsBreakdown rec={{
+                        ...orderEditTarget,
+                        products: prods,
+                        kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                        kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                        kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+                      }} isDark={isDark} />
+                    </div>
+                    {effectivePaid > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>Collected</Text>
+                        <Text strong style={{ fontSize: 13, color: '#52c41a' }}>₹{effectivePaid.toLocaleString()}</Text>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+                      <Text style={{ fontSize: 12, fontWeight: 700 }}>Amount to Pay</Text>
+                      <Text strong style={{ fontSize: 14, color: amountToPay > 0 ? '#fa8c16' : '#52c41a' }}>₹{amountToPay.toLocaleString()}</Text>
+                    </div>
                   </div>
                 );
               }}
@@ -7028,9 +7546,7 @@ export default function Sales() {
                     const kitName = effectiveKitIdsView.length > 0
                       ? effectiveKitIdsView.map(id => kits.find(k => k._id === id)?.kitName || id).join(', ')
                       : null;
-                    const isKitType = Array.isArray(record.productType)
-                      ? record.productType.includes('PERSONALIZED_KIT')
-                      : record.productType === 'PERSONALIZED_KIT';
+                    const isKitType = ptHasKitUI(record.productType);
                     // Derive kit products: prefer dedicated kitProducts field, fall back to isKit products in
                     // the products array (set by applyKitsToForm), then fall back to the kit definition itself.
                     const kitProductsToShow = (() => {
@@ -7059,8 +7575,8 @@ export default function Sales() {
                             <InfoRow label="Product Selection" value={
                               record.productType
                                 ? (Array.isArray(record.productType)
-                                  ? record.productType.map(pt => PERSONALIZATION_OPTIONS.find(o => o.value === pt)?.label || pt).join(', ')
-                                  : PERSONALIZATION_OPTIONS.find(o => o.value === record.productType)?.label || record.productType)
+                                  ? record.productType.map(productTypeLabel).join(', ')
+                                  : productTypeLabel(record.productType))
                                 : '—'
                             } />
                           </Col>
@@ -7143,10 +7659,10 @@ export default function Sales() {
                       {/* Product Selection first, then Kit selector — always visible */}
                       <Row gutter={16}>
                         <Col xs={24} sm={12}>
-                          <Form.Item label="Product Selection" name="productType">
+                          <Form.Item label="Product Selection" name="productType" tooltip="Pick any combination. Personalized = a kit customized with extra products; Separate Kit = a kit as-is; Separate Product = individual items. One order can mix all three.">
                             <SelectWithAdd
                               mode="multiple"
-                              defaultOptions={PERSONALIZATION_OPTIONS}
+                              defaultOptions={PRODUCT_SELECTION_OPTIONS}
                               placeholder="Select product types (optional)"
                             />
                           </Form.Item>
@@ -7165,11 +7681,8 @@ export default function Sales() {
                           </Form.Item>
                         </Col>
                       </Row>
-                      {/* Kit specs — only shown when productType includes a kit type */}
-                      {(watchedProductType || []).some(pt => {
-                        const opt = PERSONALIZATION_OPTIONS.find(o => o.value === pt);
-                        return (opt?.label || pt).toLowerCase().includes('kit');
-                      }) && (
+                      {/* Kit customization specs — only for Personalized kits (a Separate Kit is bought as-is). */}
+                      {ptHasPersonalizedUI(watchedProductType) && (
                         <>
                         <Row gutter={16} style={{ marginTop: 4 }}>
                           <Col xs={24} sm={6}>
@@ -7245,8 +7758,8 @@ export default function Sales() {
                 // In detail view the productType Form.Item isn't rendered so Form.useWatch
                 // returns undefined; fall back to the record's saved value.
                 const effectiveProductType = watchedProductType ?? record.productType;
-                const hasKit = effectiveProductType?.includes('PERSONALIZED_KIT');
-                const hasSeparate = effectiveProductType?.includes('SEPARATE_PRODUCT');
+                const hasKit = ptHasKitUI(effectiveProductType);
+                const hasSeparate = ptHasSeparateUI(effectiveProductType);
 
                 if (isDetail) {
                   return (
@@ -7283,6 +7796,125 @@ export default function Sales() {
                     >
                       {editingSection === 'products' ? (
                         <>
+                        {/* ── Per-kit Order Details (Display Unit, Size, Sticker, Logo, Printing, Price, Includes) ── */}
+                        {(() => {
+                          // In detail view the selectedKits Form.Item is not rendered, so Form.useWatch
+                          // may return [] even when the lead has kit data. Fall back to record directly.
+                          const inlineKitIds = (watchedSelectedKits.length > 0 ? watchedSelectedKits : null)
+                            || (Array.isArray(record.selectedKits) && record.selectedKits.length > 0 ? record.selectedKits : null)
+                            || (record.selectedKit ? [record.selectedKit] : []);
+                          const inlineHasKit = ptHasKitUI(record.productType) || inlineKitIds.length > 0;
+                          if (!inlineHasKit || inlineKitIds.length === 0) return null;
+                          return (
+                          <div style={{ marginBottom: 16 }}>
+                            {inlineKitIds.map((kitId, kitIndex) => {
+                              const kitDefInline = kits.find(k => k._id === kitId);
+                              const kitCardNameInline = kitDefInline?.kitName || 'Personalized Kit';
+                              // Separate Kit = as-is → hide customization specs; Personalized shows them.
+                              const koCatInline = watchedKitOrders[kitIndex]?.category
+                                || (record.kitOrders || [])[kitIndex]?.category
+                                || defaultKitCategory(record.productType);
+                              const showKitCustomInline = koCatInline === ORDER_CATEGORIES.PERSONALIZED;
+                              const otherKitOptsInline = inlineKitIds.map(id => {
+                                const k = kits.find(kk => kk._id === id);
+                                return k ? { value: id, label: k.kitName } : null;
+                              }).filter(Boolean);
+                              const sepProdOptsInline = (watchedLeadProducts || [])
+                                .filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName))
+                                .map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' }))
+                                .filter(o => o.value);
+                              const groupedOptsInline = [
+                                ...(otherKitOptsInline.length > 0 ? [{ label: 'Kits', options: otherKitOptsInline }] : []),
+                                ...(sepProdOptsInline.length > 0 ? [{ label: 'Separate Products', options: sepProdOptsInline }] : []),
+                              ];
+                              const flatOptsInline = [...otherKitOptsInline, ...sepProdOptsInline];
+                              return (
+                                <div key={kitId} style={{ marginBottom: 12, padding: '12px 16px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.2)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                                    <GiftOutlined style={{ color: '#722ed1' }} />
+                                    <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{kitCardNameInline} — Order Details</Text>
+                                  </div>
+                                  <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
+                                  <Row gutter={12} style={{ marginBottom: 10 }}>
+                                    <Col xs={24} sm={5}>
+                                      <Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 0 }}>
+                                        <Select allowClear showSearch optionFilterProp="label" placeholder="Display unit" options={configDisplayUnitOptions} />
+                                      </Form.Item>
+                                    </Col>
+                                    <Col xs={12} sm={4}>
+                                      <Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 0 }}>
+                                        <Input placeholder="e.g. 2.5cm x 2.5cm" />
+                                      </Form.Item>
+                                    </Col>
+                                    <Col xs={12} sm={4}>
+                                      <Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}>
+                                        <InputNumber min={1} style={{ width: '100%' }} />
+                                      </Form.Item>
+                                    </Col>
+                                    <Col xs={12} sm={4}>
+                                      <Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}>
+                                        <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                      </Form.Item>
+                                    </Col>
+                                    <Col xs={12} sm={4}>
+                                      <Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
+                                        <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                      </Form.Item>
+                                    </Col>
+                                    <Col xs={12} sm={4}>
+                                      <Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}>
+                                        <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                      </Form.Item>
+                                    </Col>
+                                  </Row>
+                                  <Row gutter={12}>
+                                    <Col xs={12} sm={6}>
+                                      <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
+                                        <InputNumber min={0} style={{ width: '100%' }} formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
+                                      </Form.Item>
+                                    </Col>
+                                    {ptHasPersonalized(record?.productType) && (<>
+                                    <Col xs={24} sm={18}>
+                                      <Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 0 }}
+                                        tooltip="Select which kits or products are physically placed inside this kit's packaging.">
+                                        <Select
+                                          mode="multiple"
+                                          allowClear
+                                          showSearch
+                                          optionFilterProp="label"
+                                          placeholder={flatOptsInline.length > 0 ? 'Select kits / products inside this kit' : 'Add other kits or separate products first'}
+                                          options={groupedOptsInline}
+                                        />
+                                      </Form.Item>
+                                      <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
+                                        {({ getFieldValue }) => {
+                                          const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
+                                          if (!sel.length) return null;
+                                          return (
+                                            <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
+                                              <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
+                                              {sel.map(id => {
+                                                const kMatch = kits.find(k => k._id === id) || flatOptsInline.find(o => o.value === id);
+                                                return (
+                                                  <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
+                                                    <Col flex="1"><Text style={{ fontSize: 12 }}>{kMatch?.kitName || kMatch?.label || id}</Text></Col>
+                                                    <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
+                                                  </Row>
+                                                );
+                                              })}
+                                            </div>
+                                          );
+                                        }}
+                                      </Form.Item>
+                                    </Col>
+                                    </>)}
+                                  </Row>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          );
+                        })()}
                         {/* ── Inline product edit ── */}
                         <Form.List name="products">
                           {(fields, { add, remove }) => (
@@ -7340,8 +7972,8 @@ export default function Sales() {
                             <GiftOutlined style={{ color: '#722ed1' }} />
                             <Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 600 }}>
                               {Array.isArray(record.productType)
-                                ? record.productType.map(pt => pt === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product').join(' & ')
-                                : (record.productType === 'PERSONALIZED_KIT' ? 'Personalized Kit' : 'Separate Product')}
+                                ? record.productType.map(productTypeLabel).join(' & ')
+                                : productTypeLabel(record.productType)}
                             </Text>
                             {record.displayUnit && (
                               <>
@@ -7512,6 +8144,20 @@ export default function Sales() {
                                       {kitSingle > 0 && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>Kit Price: ₹{kitSingle.toLocaleString()}</Tag>}
                                       {kitSingle > 0 && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>Kit Amount: ₹{(kitSingle * (overallQty || 1)).toLocaleString()}</Tag>}
                                     </div>
+                                    {Array.isArray(kCfg.kitIncludes) && kCfg.kitIncludes.length > 0 && (
+                                      <div style={{ padding: '6px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 6, border: '1px dashed rgba(114,46,209,0.22)' }}>
+                                        <Text type="secondary" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, display: 'block', marginBottom: 4 }}>INCLUDED IN PACKAGING</Text>
+                                        <Space wrap size={4}>
+                                          {kCfg.kitIncludes.map((v, i) => {
+                                            const id = typeof v === 'object' ? v.id : v;
+                                            const qty = typeof v === 'object' ? v.qty : null;
+                                            const kMatch = kits.find(k => k._id === id);
+                                            const label = kMatch ? kMatch.kitName : id;
+                                            return <Tag key={i} color={kMatch ? 'purple' : 'orange'} style={{ borderRadius: 12, fontSize: 11 }}>{label}{qty && qty > 1 ? ` ×${qty}` : ''}</Tag>;
+                                          })}
+                                        </Space>
+                                      </div>
+                                    )}
                                     {thisKitProds.map((p, i) => renderProductCard(p, i, i))}
                                     {overallQty > 1 && thisKitProds.length > 0 && (
                                       <div style={{ padding: '10px 14px', background: isDark ? 'rgba(24,144,255,0.08)' : 'rgba(24,144,255,0.04)', borderRadius: 8, border: '1px solid rgba(24,144,255,0.15)' }}>
@@ -7549,26 +8195,15 @@ export default function Sales() {
                           );
                         })()}
 
-                        {/* Total footer */}
-                        {(() => {
-                          const prods = record.products || [];
-                          const leadSubtotal = calcTotal(prods);
-                          const leadGstAmt = prods.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
-                          const leadFwdAmt = record.forwardingCharge ? Math.round(Number(record.forwardingChargeAmount) || 0) : 0;
-                          const leadGrandTotal = leadSubtotal + leadGstAmt + leadFwdAmt;
-                          return (
-                            <div style={{ marginTop: 14, padding: '14px 18px', background: 'rgba(177,30,106,0.06)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.14)' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Text type="secondary" style={{ fontSize: 12 }}>{prods.length} product{prods.length !== 1 ? 's' : ''}</Text>
-                                <div style={{ textAlign: 'right' }}>
-                                  <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>WITHOUT GST: ₹{leadSubtotal.toLocaleString()}{leadGstAmt > 0 ? `  |  GST: ₹${Math.round(leadGstAmt).toLocaleString()}` : ''}{leadFwdAmt > 0 ? `  |  FORWARDING: ₹${leadFwdAmt.toLocaleString()}` : ''}</Text>
-                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TOTAL ORDER VALUE (WITH GST{leadFwdAmt > 0 ? ' + FWD' : ''})</Text>
-                                  <Text strong style={{ fontSize: 22, color: '#B11E6A' }}>₹{Math.round(leadGrandTotal).toLocaleString()}</Text>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })()}
+                        {/* Total footer — split by order-composition category */}
+                        {(record.products || []).length > 0 && (
+                          <div style={{ marginTop: 14 }}>
+                            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                              TOTAL ORDER VALUE — BY CATEGORY ({(record.products || []).length} product{(record.products || []).length !== 1 ? 's' : ''})
+                            </Text>
+                            <CategoryTotalsBreakdown rec={record} isDark={isDark} />
+                          </div>
+                        )}
                       </>
                       )}
                     </Card>
@@ -7593,6 +8228,10 @@ export default function Sales() {
                     {effectiveKitIds.map((kitId, kitIndex) => {
                       const kit = kits.find(k => k._id === kitId);
                       const kitCardName = kit?.kitName || 'Personalized Kit';
+                      // A Separate Kit is bought as-is → hide the customization specs (display unit,
+                      // size, sticker, logo, printing). Personalized kits show them all.
+                      const koCat = watchedKitOrders[kitIndex]?.category || defaultKitCategory(watchedProductType);
+                      const showKitCustom = koCat === ORDER_CATEGORIES.PERSONALIZED;
                       return (
                         <Card
                           key={kitId}
@@ -7607,7 +8246,7 @@ export default function Sales() {
                         >
                           {/* Hidden kitId so the array stays in sync */}
                           <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
-                          {/* Per-kit Display Unit, Size, Overall Qty, Sticker, Logo */}
+                          {/* Per-kit Category, Display Unit, Size, Overall Qty, Sticker, Logo */}
                           <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
                             <Col xs={24} sm={5}>
                               <Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 0 }}>
@@ -7666,8 +8305,8 @@ export default function Sales() {
                             </Col>
                           </Row>
 
-                          {/* ── Included in Kit Packaging ── */}
-                          {(() => {
+                          {/* ── Included in Kit Packaging (Personalized only) ── */}
+                          {ptHasPersonalized(watchedProductType) && (() => {
                             // All selected kits in this lead (including the current one)
                             const otherKitOpts = effectiveKitIds
                               .map(id => {
@@ -7708,6 +8347,28 @@ export default function Sales() {
                                     }
                                     options={groupedOpts}
                                   />
+                                </Form.Item>
+                                <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
+                                  {({ getFieldValue }) => {
+                                    const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
+                                    if (!sel.length) return null;
+                                    return (
+                                      <div style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
+                                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
+                                        {sel.map(id => {
+                                          const kMatch = kits.find(k => k._id === id);
+                                          const sProd = (watchedLeadProducts || []).find(p => (p.name || p.itemName) === id);
+                                          const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
+                                          return (
+                                            <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
+                                              <Col flex="1"><Text style={{ fontSize: 12 }}>{label}</Text></Col>
+                                              <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
+                                            </Row>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  }}
                                 </Form.Item>
                                 <Form.Item noStyle shouldUpdate={(prev, cur) =>
                                   prev.kitOrders?.[kitIndex]?.kitIncludes !== cur.kitOrders?.[kitIndex]?.kitIncludes
@@ -8015,6 +8676,31 @@ export default function Sales() {
                               <div style={{ marginTop: 8, padding: '6px 10px', background: psBg, borderRadius: 8, border: `1px solid ${psBorder}`, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                 <Text type="secondary" style={{ fontSize: 11 }}>PAYMENT STATUS:</Text>
                                 <Text strong style={{ color: psColor, fontSize: 12 }}>{ps}</Text>
+                              </div>
+                            );
+                          })()}
+                          {(() => {
+                            const recTotal = Math.round(computeRecordGrandTotal(record)) || Number(record.totalAmount) || 0;
+                            const recCollected = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                            const recPaid = recCollected > 0 ? recCollected : (Number(record.paidAmount) || Number(record.advancePaid) || 0);
+                            const recBalance = Math.max(0, recTotal - recPaid);
+                            if (recTotal <= 0) return null;
+                            return (
+                              <div style={{ marginTop: 10, padding: '10px 12px', background: recBalance > 0 ? 'rgba(250,140,22,0.06)' : 'rgba(82,196,26,0.06)', borderRadius: 8, border: `1px solid ${recBalance > 0 ? 'rgba(250,140,22,0.25)' : 'rgba(82,196,26,0.25)'}` }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>Order Total</Text>
+                                  <Text strong style={{ fontSize: 12 }}>₹{recTotal.toLocaleString()}</Text>
+                                </div>
+                                {recPaid > 0 && (
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>Amount Paid</Text>
+                                    <Text strong style={{ fontSize: 12, color: '#52c41a' }}>₹{recPaid.toLocaleString()}</Text>
+                                  </div>
+                                )}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 6, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+                                  <Text style={{ fontSize: 12, fontWeight: 700 }}>Amount to Pay</Text>
+                                  <Text strong style={{ fontSize: 14, color: recBalance > 0 ? '#fa8c16' : '#52c41a' }}>₹{recBalance.toLocaleString()}</Text>
+                                </div>
                               </div>
                             );
                           })()}
@@ -9003,8 +9689,120 @@ export default function Sales() {
             <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Street / detailed address" /></Form.Item></Col>
           </Row>
 
-          {/* ── Kit Details (read-only) ── */}
-          {renderOrderEditKitDetails(orderEditTarget)}
+          {/* ── Kit Details (editable) ── */}
+          {(() => {
+            const editKitIds = watchedOrderEditSelKits.length > 0 ? watchedOrderEditSelKits : (orderEditTarget?.selectedKit ? [orderEditTarget.selectedKit] : []);
+            const hasKitProds = (orderEditForm.getFieldValue('editProducts') || []).some(p => p?.isKit || p?.kitType);
+            if (editKitIds.length === 0 && !hasKitProds) return null;
+            return (
+              <>
+                <Divider style={{ margin: '4px 0 12px', fontSize: 12, color: '#722ed1', borderColor: 'rgba(114,46,209,0.2)' }}>
+                  <Space><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1', fontWeight: 600 }}>Kit Details</span></Space>
+                </Divider>
+                {editKitIds.length > 0 ? editKitIds.map((kitId, kitIndex) => {
+                  const kitDef = kits.find(k => k._id === kitId);
+                  const kitLabel = kitDef?.kitName || 'Personalized Kit';
+                  const otherKitOpts = editKitIds.map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; }).filter(Boolean);
+                  return (
+                    <div key={kitId} style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.16)', marginBottom: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <GiftOutlined style={{ color: '#722ed1' }} />
+                        <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{kitLabel}</Text>
+                      </div>
+                      <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
+                      <Row gutter={[10, 0]}>
+                        <Col xs={24} sm={8}><Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 8 }}>
+                          <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={4}><Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 8 }}>
+                          <Input placeholder="e.g. 2.5cm" />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 8 }}>
+                          <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 8 }}>
+                          <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 8 }}>
+                          <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={8}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 8 }}>
+                          <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" />
+                        </Form.Item></Col>
+                        <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 8 }}>
+                          <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                        </Form.Item></Col>
+                        {ptHasPersonalized(orderEditTarget?.productType) && (<>
+                        <Col xs={24} sm={16}><Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 4 }} tooltip="Items physically inside this kit's packaging">
+                          <Select mode="multiple" allowClear placeholder="Select items inside this kit" options={otherKitOpts} />
+                        </Form.Item>
+                        <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
+                          {({ getFieldValue }) => {
+                            const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
+                            if (!sel.length) return null;
+                            return (
+                              <div style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
+                                <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
+                                {sel.map(id => {
+                                  const kMatch = kits.find(k => k._id === id);
+                                  return (
+                                    <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
+                                      <Col flex="1"><Text style={{ fontSize: 12 }}>{kMatch?.kitName || id}</Text></Col>
+                                      <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
+                                    </Row>
+                                  );
+                                })}
+                              </div>
+                            );
+                          }}
+                        </Form.Item>
+                        </Col>
+                        </>)}
+                      </Row>
+                      <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.kitPrice !== c.kitOrders?.[kitIndex]?.kitPrice || p.kitOrders?.[kitIndex]?.overallQty !== c.kitOrders?.[kitIndex]?.overallQty}>
+                        {({ getFieldValue }) => {
+                          const single = Number(getFieldValue(['kitOrders', kitIndex, 'kitPrice'])) || 0;
+                          const qty = Number(getFieldValue(['kitOrders', kitIndex, 'overallQty'])) || 0;
+                          if (!single || !qty) return null;
+                          return <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>Kit Amount: <Text strong style={{ color: '#722ed1' }}>₹{(single * qty).toLocaleString()}</Text> ({single.toLocaleString()} × {qty})</Text>;
+                        }}
+                      </Form.Item>
+                    </div>
+                  );
+                }) : (
+                  <div style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.16)', marginBottom: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <GiftOutlined style={{ color: '#722ed1' }} />
+                      <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Personalized Kit</Text>
+                    </div>
+                    <Row gutter={[10, 0]}>
+                      <Col xs={24} sm={8}><Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 8 }}>
+                        <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} />
+                      </Form.Item></Col>
+                      <Col xs={12} sm={8}><Form.Item label="Size" name="kitSize" style={{ marginBottom: 8 }}>
+                        <Input placeholder="e.g. 2.5cm" />
+                      </Form.Item></Col>
+                      <Col xs={12} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 8 }}>
+                        <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                      </Form.Item></Col>
+                      <Col xs={12} sm={4}><Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 8 }}>
+                        <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                      </Form.Item></Col>
+                      <Col xs={12} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 8 }}>
+                        <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                      </Form.Item></Col>
+                      <Col xs={12} sm={8}><Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 8 }}>
+                        <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" />
+                      </Form.Item></Col>
+                      <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 8 }}>
+                        <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                      </Form.Item></Col>
+                    </Row>
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {/* ── Products ── */}
           <Divider style={{ margin: '4px 0 12px', fontSize: 12, color: '#B11E6A', borderColor: 'rgba(177,30,106,0.2)' }}>
@@ -9061,14 +9859,23 @@ export default function Sales() {
                 <Form.Item noStyle shouldUpdate>
                   {({ getFieldValue }) => {
                     const prods = getFieldValue('editProducts') || [];
-                    const subtotal = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
-                    const gstAmt = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
-                    const total = Math.round(subtotal + gstAmt);
+                    const sepProds = prods.filter(p => p && !p.isKit && !p.kitType);
+                    const subtotal = sepProds.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
+                    const gstAmt = sepProds.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
+                    const total = Math.round(computeRecordGrandTotal({
+                      ...orderEditTarget,
+                      products: prods,
+                      kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                      kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                      kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+                    }));
                     if (total === 0) return null;
+                    const kitPortion = Math.max(0, total - Math.round(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? Math.round(Number(orderEditTarget?.forwardingChargeAmount) || 0) : 0));
                     return (
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8 }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>Subtotal: <strong>₹{Math.round(subtotal).toLocaleString()}</strong></Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{Math.round(gstAmt).toLocaleString()}</strong></Text>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                        {kitPortion > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Kit: <strong>₹{kitPortion.toLocaleString()}</strong></Text>}
+                        {subtotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Separate: <strong>₹{Math.round(subtotal).toLocaleString()}</strong></Text>}
+                        {gstAmt > 0 && <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{Math.round(gstAmt).toLocaleString()}</strong></Text>}
                         <Text style={{ fontSize: 13, color: '#B11E6A', fontWeight: 700 }}>Total: ₹{total.toLocaleString()}</Text>
                       </div>
                     );
@@ -9088,9 +9895,13 @@ export default function Sales() {
           {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
             <Select onChange={(val) => {
               const prods = orderEditForm.getFieldValue('editProducts') || [];
-              const sub = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
-              const gst = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
-              const computedTot = Math.round(sub + gst);
+              const computedTot = Math.round(computeRecordGrandTotal({
+                ...orderEditTarget,
+                products: prods,
+                kitOrders: orderEditForm.getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                kitPrice: orderEditForm.getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                kitOverallQty: orderEditForm.getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+              }));
               const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
               let suggestedAdvance = 0;
               if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
@@ -9101,13 +9912,17 @@ export default function Sales() {
               {PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
             </Select>
           </Form.Item>}
-          {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms || prev.editProducts !== cur.editProducts}>
+          {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item noStyle shouldUpdate={(prev, cur) => prev.paymentTerms !== cur.paymentTerms || prev.editProducts !== cur.editProducts || prev.kitOrders !== cur.kitOrders}>
             {({ getFieldValue }) => {
               const pt = getFieldValue('paymentTerms');
               const prods = getFieldValue('editProducts') || [];
-              const sub = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
-              const gst = prods.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
-              const computedTot = Math.round(sub + gst);
+              const computedTot = Math.round(computeRecordGrandTotal({
+                ...orderEditTarget,
+                products: prods,
+                kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+              }));
               const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
               let adviceText = '';
               if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
@@ -9211,7 +10026,17 @@ export default function Sales() {
                 Number(orderEditTarget?.paidAmount || 0) - existingCollTotal
               );
               const effectivePaid = collTotal + uncapturedPaid;
-              const orderTotal = orderEditTarget?.total || orderEditTarget?.totalAmount || 0;
+              // Kit-aware live total so balance reflects kitPrice × qty + separate + GST + forwarding
+              const prods = getFieldValue('editProducts') || [];
+              const computedTot = Math.round(computeRecordGrandTotal({
+                ...orderEditTarget,
+                products: prods,
+                kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
+                kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
+                kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
+              }));
+              const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
+              const amountToPay = Math.max(0, orderTotal - effectivePaid);
               const status = orderTotal > 0 && effectivePaid >= orderTotal
                 ? 'Paid'
                 : effectivePaid > 0
@@ -9220,16 +10045,25 @@ export default function Sales() {
               const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
               const bg = status === 'Paid' ? 'rgba(82,196,26,0.08)' : status === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
               return (
-                <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
-                  <Space size={12}>
-                    {effectivePaid > 0 && (
-                      <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
-                        Collected: ₹{effectivePaid.toLocaleString()} / ₹{orderTotal.toLocaleString()}
-                      </Text>
-                    )}
+                <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, marginBottom: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
                     <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
-                  </Space>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Order Total</Text>
+                    <Text strong style={{ fontSize: 13 }}>₹{orderTotal.toLocaleString()}</Text>
+                  </div>
+                  {effectivePaid > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>Collected</Text>
+                      <Text strong style={{ fontSize: 13, color: '#52c41a' }}>₹{effectivePaid.toLocaleString()}</Text>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+                    <Text style={{ fontSize: 12, fontWeight: 700 }}>Amount to Pay</Text>
+                    <Text strong style={{ fontSize: 14, color: amountToPay > 0 ? '#fa8c16' : '#52c41a' }}>₹{amountToPay.toLocaleString()}</Text>
+                  </div>
                 </div>
               );
             }}

@@ -23,6 +23,22 @@ const quotationSchema = new mongoose.Schema({
     price: Number,
     qty: Number,
     lineTotal: Number,
+    // Operations/packaging + kit fields carried through so quotation → negotiation → order
+    // keeps routing data and the order-composition category.
+    logoType: String,
+    packaging: String,
+    packingMaterial: String,
+    material: String,
+    sticker: String,
+    printing: String,
+    size: String,
+    gst: Number,
+    isKit: Boolean,
+    kitId: String,
+    kitName: String,
+    kitType: String,
+    // Order-composition category: personalized | separate_kit | separate_product
+    category: { type: String, default: '' },
   }],
   note: String,
   deletedAt: Date,

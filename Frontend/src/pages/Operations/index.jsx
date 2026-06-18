@@ -75,6 +75,7 @@ import {
   buildProductionQueues,
   canAssignTaskFromChecks,
   designColor,
+  ORDER_CATEGORY_META,
   designerCredentials,
   FLOW_STAGES,
   getCheckStateMap,
@@ -578,6 +579,15 @@ export default function Operations() {
         },
       },
       {
+        title: 'Category',
+        dataIndex: 'category',
+        width: 130,
+        render: (value) => {
+          const meta = ORDER_CATEGORY_META[value] || ORDER_CATEGORY_META.separate_product;
+          return <Tag style={{ background: `${meta.color}1a`, color: meta.color, border: `1px solid ${meta.color}55`, borderRadius: 12, fontSize: 11, fontWeight: 600 }}>{meta.label}</Tag>;
+        },
+      },
+      {
         title: label === 'Box' ? 'Size / PVK' : 'Size',
         dataIndex: 'size',
         render: (value, record) => {
@@ -1043,6 +1053,7 @@ export default function Operations() {
             isEmergencyGated: group.every((r) => r.isEmergencyGated),
             qty: group.reduce((sum, r) => sum + Number(r.qty || 0), 0),
             product: 'Kit',
+            category: first.category,
             size: order?.kitSize || null,
             stickerPrinting: first.stickerPrinting,
             packagingType: first.packagingType,
@@ -1052,6 +1063,16 @@ export default function Operations() {
         }
       });
     }
+
+    // Cluster rows by order-composition category (personalized → separate kit → separate product)
+    // so each category reads as a group within the queue, keeping emergency items first inside each.
+    const CATEGORY_ORDER = { personalized: 0, separate_kit: 1, separate_product: 2 };
+    tableSource = [...tableSource].sort((a, b) => {
+      const ca = CATEGORY_ORDER[a.category] ?? 3;
+      const cb = CATEGORY_ORDER[b.category] ?? 3;
+      if (ca !== cb) return ca - cb;
+      return (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0);
+    });
 
     return (
       <div>

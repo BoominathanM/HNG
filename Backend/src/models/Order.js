@@ -57,11 +57,23 @@ const orderSchema = new mongoose.Schema({
     },
     size: String,
     packaging: String,
+    packingMaterial: String,
     material: String,
     rate: Number,
+    gst: Number,
     boxes: Number,
     inventoryStock: { type: Number, default: 0 },
     verified: { type: Boolean, default: false },
+    // ─── Order-composition category (drives 3-bucket totals + Operations grouping) ───
+    // 'personalized'  = kit + extra products customized together as one unit
+    // 'separate_kit'  = a kit purchased as-is, standalone
+    // 'separate_product' = an individual non-kit product
+    category: { type: String, default: '' },
+    // Kit identity — kept on order items so Operations can group/route kit vs. separate.
+    isKit: { type: Boolean, default: false },
+    kitId: String,
+    kitName: String,
+    kitType: String,
   }],
   // Resolved from selected display unit's tabMapping (Box | Ziplock | Sticker)
   displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', ''], default: '' },

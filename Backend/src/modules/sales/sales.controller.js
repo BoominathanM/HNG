@@ -260,8 +260,9 @@ exports.convertToNegotiation = asyncHandler(async (req, res, next) => {
     amount: req.body.amount || quotation.amount,
     gstAmount: req.body.gstAmount || quotation.gstAmount,
     total: req.body.total || quotation.total,
-    advancePaid: req.body.advancePaid || quotation.advancePaid,
-    balance: req.body.balance || quotation.balance,
+    advancePaid: req.body.advancePaid || quotation.advancePaid || 0,
+    // Recompute balance from the effective total so kit-aware totals propagate correctly.
+    balance: (req.body.total || quotation.total || 0) - (req.body.advancePaid || quotation.advancePaid || 0),
     type: quotation.type,
     items: quotation.items,
     createdBy: req.user._id,
@@ -289,9 +290,13 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     printing: p.printing || '',
     size: p.size || '',
     material: p.material || p.materialCategory || '',
+    gst: Number(p.gst ?? p.gstPercent) || 0,
     isKit: p.isKit || false,
+    kitId: p.kitId || '',
     kitName: p.kitName || '',
     kitType: p.kitType || '',
+    // Order-composition category (personalized | separate_kit | separate_product)
+    category: p.category || '',
   }));
   const negotiation = await Negotiation.create({
     negCode,
@@ -302,6 +307,10 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     total: req.body.total || req.body.totalAmount || 0,
     type: req.body.billType === 'GST' ? 'GST' : 'Non-GST',
     items,
+    // Carry the full product composition (rich Sales UI + 3-bucket totals read these)
+    products: req.body.products || lead.products || [],
+    kitOrders: req.body.kitOrders || lead.kitOrders || [],
+    productType: req.body.productType || lead.productType,
     kitDisplayUnit: req.body.kitDisplayUnit || lead.kitDisplayUnit || lead.displayUnit || '',
     displayUnit: req.body.displayUnit || lead.displayUnit || lead.kitDisplayUnit || '',
     kitSize: req.body.kitSize || lead.kitSize || '',
@@ -410,13 +419,17 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     gstAmount: negotiation.gstAmount,
     total: negotiation.total,
     advancePaid: resolveField(negObj.advancePaid, 0),
-    balance: resolveField(negObj.balance, 0),
+    // Recompute balance from total so it stays consistent even when the stored
+    // negotiation balance was calculated from the items-only subtotal.
+    balance: negotiation.total - resolveField(negObj.paidAmount, negObj.advancePaid, 0),
     paidAmount: resolveField(negObj.paidAmount, negObj.advancePaid, 0),
     paymentCollection: negObj.paymentCollection || [],
     paymentStatus: negObj.paymentStatus || 'Unpaid',
     type: negotiation.type,
     items: negotiation.items,
-    products: negObj.products || [],
+    products: negObj.products || lead?.products || [],
+    kitOrders: negObj.kitOrders || lead?.kitOrders || [],
+    productType: resolveField(negObj.productType, lead?.productType),
     // Contact & billing details copied from negotiation extras or lead
     location: resolveField(negObj.location, lead?.location, lead?.locationCity),
     clientPhone: resolveField(negObj.phone, negObj.clientPhone, lead?.phone),

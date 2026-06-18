@@ -29,6 +29,16 @@ export const inferItemLogoType = (sticker, printing, pmRaw, packingMaterialTab, 
   return '';
 };
 
+// Order-composition category of an order item, inferring for legacy items that predate the field.
+//  personalized = kit + extra products; separate_kit = kit as-is; separate_product = individual item.
+export const ORDER_CATEGORY_META = {
+  personalized: { label: 'Personalized', color: '#7c3aed' },
+  separate_kit: { label: 'Separate Kit', color: '#0ea5e9' },
+  separate_product: { label: 'Separate Product', color: '#ec4899' },
+};
+export const itemCategoryOf = (item) =>
+  item?.category || ((item?.isKit || item?.kitType) ? 'separate_kit' : 'separate_product');
+
 // ──────────────────────────────────────────────────────────────────────────────
 
 export const SIZE_MAP = {
@@ -309,6 +319,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             key: `${order.id}-${idx}-sticker${keySuffix}`,
             orderId: order.id,
             orderCategory: order.orderCategory || 'ORDER',
+            category: itemCategoryOf(item),
             hotelLogo: order.hotelLogo || order.clientName,
             product: productName,
             qty,
@@ -384,6 +395,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           key: `${order.id}-${idx}-box${keySuffix}`,
           orderId: order.id,
           orderCategory: order.orderCategory || 'ORDER',
+          category: itemCategoryOf(item),
           hotelLogo: order.hotelLogo || order.clientName,
           product,
           qty,
@@ -463,6 +475,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           key: `${order.id}-${idx}-frosted${keySuffix}`,
           orderId: order.id,
           orderCategory: order.orderCategory || 'ORDER',
+          category: itemCategoryOf(item),
           hotelLogo: order.hotelLogo || order.clientName,
           product,
           qty,

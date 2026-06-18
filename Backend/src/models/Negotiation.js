@@ -32,9 +32,13 @@ const negotiationSchema = new mongoose.Schema({
     sticker: String,
     printing: String,
     size: String,
+    gst: Number,
     isKit: Boolean,
+    kitId: String,
     kitName: String,
     kitType: String,
+    // Order-composition category: personalized | separate_kit | separate_product
+    category: { type: String, default: '' },
   }],
   note: String,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

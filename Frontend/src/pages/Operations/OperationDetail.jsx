@@ -96,7 +96,7 @@ export default function OperationDetail() {
   const [taskForm] = Form.useForm();
   const [assignModalForm] = Form.useForm();
   const [kitPackingForm] = Form.useForm();
-  const { data: ordersData } = useGetOperationOrdersQuery();
+  const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery({ limit: 500 });
   const { data: stickerData } = useGetStickerRequestsQuery();
   const stickerRequests = stickerData?.data || [];
   const { data: invData } = useGetItemsQuery({ limit: 1000 });
@@ -653,6 +653,10 @@ export default function OperationDetail() {
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const mutedBg = isDark ? '#161622' : '#faf8fb';
   const textColor = isDark ? '#ececf1' : '#1a1a2e';
+
+  if (ordersLoading) {
+    return <div className="page-container"><Text>Loading order…</Text></div>;
+  }
 
   if (!order) {
     return (
