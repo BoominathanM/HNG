@@ -99,7 +99,7 @@ export default function OperationDetail() {
   const { data: ordersData } = useGetOperationOrdersQuery();
   const { data: stickerData } = useGetStickerRequestsQuery();
   const stickerRequests = stickerData?.data || [];
-  const { data: invData } = useGetItemsQuery();
+  const { data: invData } = useGetItemsQuery({ limit: 1000 });
   const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
 
   // Build { sticker_printing: [...], box: [...], frosted_ziplock: [...] } from live vendor data.

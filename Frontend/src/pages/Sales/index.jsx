@@ -1745,7 +1745,7 @@ export default function Sales() {
     .map((u) => ({ value: u.fullName, label: u.fullName }));
   const kits = kitsRaw?.data || [];
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
-  const { data: itemsRaw } = useGetItemsQuery();
+  const { data: itemsRaw } = useGetItemsQuery({ limit: 1000 });
   const inventoryItemsRaw = itemsRaw?.data || [];
   const inventoryItems = React.useMemo(() => {
     const nameCount = {};

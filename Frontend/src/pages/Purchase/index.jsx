@@ -71,7 +71,7 @@ export default function Purchase() {
 
   // ── Data from RTK Query ─────────────────────────────────────────────────
   const { data: vendorData } = useGetVendorsQuery({ type: 'raw_material' });
-  const { data: itemsData } = useGetItemsQuery();
+  const { data: itemsData } = useGetItemsQuery({ limit: 1000 });
   const { data: requestsData } = useGetRequestsQuery({ limit: 500 });
   const { data: purchaseOrdersData } = useGetPurchaseOrdersQuery({ limit: 500 });
   const { data: localPurchasesData } = useGetLocalPurchasesQuery();

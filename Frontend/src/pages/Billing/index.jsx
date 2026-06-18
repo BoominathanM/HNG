@@ -70,7 +70,7 @@ export default function Billing() {
   const { data: invoicesData } = useGetInvoicesQuery({ page: invoicesPage, limit: invoicesPageSize, ...(invoiceStatusFilter ? { status: invoiceStatusFilter } : {}) });
   const { data: quotationsData } = useGetQuotationsInProcessQuery();
   const { data: partiesData } = useGetBillingPartiesQuery();
-  const { data: invItemsData } = useGetItemsQuery();
+  const { data: invItemsData } = useGetItemsQuery({ limit: 1000 });
   const { data: companySettingsData } = useGetCompanySettingsQuery();
   const { data: salesOrdersRaw } = useGetSalesOrdersQuery({ limit: 200 });
   const invoiceSettings = companySettingsData?.data || {};
