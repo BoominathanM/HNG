@@ -120,6 +120,9 @@ export default function Tasks() {
   const [dispatchVerifyOpen, setDispatchVerifyOpen] = useState(false);
   const [dispatchVerifyData, setDispatchVerifyData] = useState(null);
   const [selectedHotel, setSelectedHotel] = useState(null);
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignTarget, setAssignTarget] = useState(null);
+  const [assignForm] = Form.useForm();
 
   // Group suggestedList: { hotelName: { orderCode: [items] } }
   const hotelGroups = useMemo(() => {
@@ -206,22 +209,49 @@ export default function Tasks() {
     }
   };
 
-  // Assign a task directly from a Suggested-Task readiness card.
-  const handleAssignSuggested = async (s) => {
+  // Open the Assign-Task modal pre-filled from a Suggested-Task readiness card.
+  // Task details (assignee, priority, due date) are mandatory — no direct assign.
+  const handleAssignSuggested = (s) => {
+    if (!requireAccess('add')) return;
+    setAssignTarget(s);
+    assignForm.resetFields();
+    assignForm.setFieldsValue({
+      title: `Production — ${s.product}`,
+      type: 'Production',
+      priority: s.isUrgent ? 'Urgent' : undefined,
+    });
+    setAssignModalOpen(true);
+  };
+
+  // Submit the Assign-Task modal — validates mandatory fields before creating.
+  const handleSubmitAssign = async () => {
+    const s = assignTarget;
+    if (!s) return;
     try {
+      const vals = await assignForm.validateFields();
+      const assignedUser = assignableUsers.find((u) => u._id === vals.assignee);
       await createTask({
-        taskName: `Production — ${s.product}`,
-        taskType: 'Production',
+        taskName: vals.title,
+        taskType: vals.type,
+        priority: vals.priority,
+        assignedTo: assignedUser?._id,
+        assigneeName: assignedUser?.fullName,
+        dueDate: vals.due ? vals.due.toISOString() : undefined,
+        description: vals.desc,
         orderId: s.orderId,
         product: s.product,
         productIndex: typeof s.id === 'string' ? Number(s.id.split('-').pop()) : undefined,
         qty: s.qty,
         clientName: s.client,
         status: 'Pending',
+        isEmergency: vals.priority === 'Urgent',
       }).unwrap();
-      enqueueSnackbar(`Task created for ${s.product}`, { variant: 'success' });
+      setAssignModalOpen(false);
+      setAssignTarget(null);
+      enqueueSnackbar(`Task assigned for ${s.product}`, { variant: 'success' });
     } catch (e) {
-      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to create task', { variant: 'error' });
+      if (e?.errorFields) return;
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to assign task', { variant: 'error' });
     }
   };
 
@@ -804,6 +834,68 @@ export default function Tasks() {
             <Col xs={24} sm={12}><Form.Item label="Due Date" name="due"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={24} sm={12}><Form.Item label="End Time" name="endTime"><Input type="time" /></Form.Item></Col>
             <Col xs={24}><Form.Item label="Description" name="desc"><Input.TextArea rows={3} /></Form.Item></Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      {/* ── Assign Task Modal (from Today's Checklist) ────────────────────────── */}
+      <Modal
+        title="Assign Task"
+        open={assignModalOpen}
+        onCancel={() => { setAssignModalOpen(false); setAssignTarget(null); }}
+        footer={[
+          <Button key="cancel" onClick={() => { setAssignModalOpen(false); setAssignTarget(null); }}>Cancel</Button>,
+          <Button key="assign" type="primary" onClick={handleSubmitAssign} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Assign Task</Button>,
+        ]}
+        width={Math.min(520, window.innerWidth - 32)}>
+        {assignTarget && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16, borderRadius: 8 }}
+            message={`${assignTarget.product}${assignTarget.qty > 0 ? ` — ${Number(assignTarget.qty).toLocaleString()} units` : ''}`}
+            description={`${assignTarget.client || 'Unknown'}${assignTarget.orderCode ? ` · ${assignTarget.orderCode}` : ''}`}
+          />
+        )}
+        <Form form={assignForm} layout="vertical">
+          <Row gutter={16}>
+            <Col xs={24}>
+              <Form.Item label="Task Title" name="title" rules={[{ required: true, message: 'Please enter a task title' }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Task Type" name="type" rules={[{ required: true, message: 'Please select a task type' }]}>
+                <Select>{Object.keys(typeColor).map((t) => <Option key={t} value={t}>{t}</Option>)}</Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Priority" name="priority" rules={[{ required: true, message: 'Please select a priority' }]}>
+                <Select>{Object.keys(priorityColor).map((p) => <Option key={p} value={p}>{p}</Option>)}</Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Assign To" name="assignee" rules={[{ required: true, message: 'Please select an assignee' }]}>
+                <Select
+                  placeholder="Select staff"
+                  showSearch
+                  optionFilterProp="label"
+                  notFoundContent={assignableUsers.length ? 'No match' : 'No users found'}
+                  options={assignableUsers.map((u) => ({
+                    value: u._id,
+                    label: `${u.fullName} — ${u.role}`,
+                  }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Due Date" name="due" rules={[{ required: true, message: 'Please select a due date' }]}>
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              <Form.Item label="Description" name="desc"><Input.TextArea rows={3} /></Form.Item>
+            </Col>
           </Row>
         </Form>
       </Modal>

@@ -586,6 +586,49 @@ export default function Operations() {
         },
       },
       {
+        title: 'Product Spec',
+        key: 'productSpec',
+        render: (_, record) => {
+          if (record.isKitParent || record.isKitChild) return <Text type="secondary">—</Text>;
+          // Look up the full item from the normalized order to get all attributes
+          const ord = apiOrders.find((o) => o.id === record.orderId);
+          const productLower = (record.product || '').toLowerCase();
+          const item = (ord?.items || []).find(
+            (it) => (it.itemName || it.name || it.product || '').toLowerCase() === productLower,
+          );
+          if (!item) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          const sticker = (item.sticker || '').toUpperCase();
+          const printing = (item.printing || '').toUpperCase();
+          const packing = item.packingMaterial || item.packaging || '';
+          const brand = item.brand || '';
+          const mat = item.materialCategory || item.material || '';
+          // Dynamic attrs not already shown
+          const SKIP = new Set(['itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total','printing','stickerPrinting','product']);
+          const dynAttrs = Object.entries(item).filter(([k, v]) => {
+            if (SKIP.has(k)) return false;
+            if (v == null || v === '') return false;
+            if (typeof v === 'object' && !Array.isArray(v)) return false;
+            if (Array.isArray(v) && v.length === 0) return false;
+            return true;
+          });
+          const hasAny = sticker || printing || packing || brand || mat || dynAttrs.length > 0;
+          if (!hasAny) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          const prettyK = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
+          return (
+            <Space wrap size={3} style={{ maxWidth: 200 }}>
+              {sticker && <Tag color={sticker === 'YES' ? 'green' : 'default'} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>Sticker: {sticker === 'YES' ? 'Yes' : 'No'}</Tag>}
+              {printing && <Tag color={printing === 'YES' ? 'purple' : 'default'} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>Print: {printing === 'YES' ? 'Yes' : 'No'}</Tag>}
+              {packing && <Tag color="orange" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{packing}</Tag>}
+              {brand && <Tag style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{brand}</Tag>}
+              {mat && <Tag color="cyan" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{mat}</Tag>}
+              {dynAttrs.map(([k, v]) => (
+                <Tag key={k} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{prettyK(k)}: {Array.isArray(v) ? v.join(', ') : String(v)}</Tag>
+              ))}
+            </Space>
+          );
+        },
+      },
+      {
         title: 'Qty',
         dataIndex: 'qty',
         render: (value, record) => {

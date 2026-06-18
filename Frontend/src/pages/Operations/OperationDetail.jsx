@@ -36,6 +36,7 @@ import {
   FileImageOutlined,
   FilePdfOutlined,
   FileTextOutlined,
+  GiftOutlined,
   MessageOutlined,
   PlusOutlined,
   PrinterOutlined,
@@ -224,6 +225,12 @@ export default function OperationDetail() {
     forwardingCharge: o.forwardingCharge ?? o.leadId?.forwardingCharge ?? false,
     forwardingChargeAmount: o.forwardingChargeAmount ?? o.leadId?.forwardingChargeAmount ?? 0,
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
+    kitSticker: o.kitSticker || o.leadId?.kitSticker || '',
+    kitLogo: o.kitLogo || o.leadId?.kitLogo || '',
+    kitPrinting: o.kitPrinting || o.leadId?.kitPrinting || '',
+    kitSize: o.kitSize || o.leadId?.kitSize || '',
+    selectedKits: o.selectedKits || o.leadId?.selectedKits || [],
+    kitOrders: o.kitOrders || o.leadId?.kitOrders || [],
     displayUnitTab: o.displayUnitTab || o.leadId?.displayUnitTab || '',
     logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
     logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
@@ -694,13 +701,48 @@ export default function OperationDetail() {
         );
       },
     },
+    {
+      title: 'Kit Name',
+      key: 'kitName',
+      render: (_, record) => {
+        const kitName = record.kitName || record.kitType;
+        return kitName ? <Tag color="purple" icon={<GiftOutlined />}>{kitName}</Tag> : '—';
+      },
+    },
     { title: 'Print Type', dataIndex: 'logoType', render: (value) => value ? <Tag color="purple">{value}</Tag> : '—' },
+    {
+      title: 'Sticker',
+      key: 'sticker',
+      render: (_, record) => {
+        const val = (record.sticker || order?.kitSticker || '').toUpperCase();
+        if (!val) return '—';
+        return <Tag color={val === 'YES' ? 'green' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
+      },
+    },
+    {
+      title: 'Logo',
+      key: 'logo',
+      render: (_, record) => {
+        const val = (record.logo || order?.kitLogo || '').toUpperCase();
+        if (!val) return '—';
+        return <Tag color={val === 'YES' ? 'cyan' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
+      },
+    },
+    {
+      title: 'Printing',
+      key: 'printing',
+      render: (_, record) => {
+        const val = (record.printing || order?.kitPrinting || '').toUpperCase();
+        if (!val) return '—';
+        return <Tag color={val === 'YES' ? 'green' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
+      },
+    },
     {
       title: 'Inventory Stock',
       key: 'inventoryStock',
       align: 'right',
       render: (_, record) => {
-        const name = record.itemName || record.name;
+        const name = record.itemName || record.name || record.kitType;
         const liveStock = record.itemId?.currentStock ?? invMap[name]?.currentStock ?? record.inventoryStock ?? 0;
         const enough = liveStock >= (record.qty || 0);
         return (
@@ -715,7 +757,7 @@ export default function OperationDetail() {
       dataIndex: 'qty',
       align: 'right',
       render: (value, record) => {
-        const name = record.itemName || record.name;
+        const name = record.itemName || record.name || record.kitType;
         const liveStock = record.itemId?.currentStock ?? invMap[name]?.currentStock ?? record.inventoryStock ?? 0;
         const enough = liveStock >= (value || 0);
         return (
@@ -735,7 +777,7 @@ export default function OperationDetail() {
       key: 'sellingPrice',
       align: 'right',
       render: (_, record) => {
-        const name = record.itemName || record.name;
+        const name = record.itemName || record.name || record.kitType;
         const sp = record.price || record.rate || record.itemId?.sellingPrice || invMap[name]?.sellingPrice;
         return sp ? <Text>₹{Number(sp).toLocaleString()}</Text> : '—';
       },
@@ -762,16 +804,18 @@ export default function OperationDetail() {
       title: 'HSN Code',
       key: 'hsnCode',
       render: (_, record) => {
-        const name = record.itemName || record.name;
-        return record.hsnCode || record.itemId?.hsnCode || invMap[name]?.hsnCode || '—';
+        const name = record.itemName || record.name || record.kitType;
+        const inv = invMap[name];
+        return record.hsnCode || record.itemId?.hsnCode || inv?.hsnCode || '—';
       },
     },
     {
       title: 'Default Size',
       key: 'defaultSize',
       render: (_, record) => {
-        const name = record.itemName || record.name;
-        const sz = record.size || record.itemId?.defaultSize || invMap[name]?.defaultSize;
+        const name = record.itemName || record.name || record.kitType;
+        const inv = invMap[name];
+        const sz = record.defaultSize || record.size || record.itemId?.defaultSize || inv?.defaultSize || inv?.size;
         return sz ? <Tag color="geekblue">{sz}</Tag> : '—';
       },
     },
@@ -779,24 +823,68 @@ export default function OperationDetail() {
       title: 'Packing Material',
       key: 'packingMaterial',
       render: (_, record) => {
-        const name = record.itemName || record.name;
-        return record.packingMaterial || record.packaging || record.itemId?.packingMaterial || invMap[name]?.packingMaterial || '—';
+        const name = record.itemName || record.name || record.kitType;
+        const inv = invMap[name];
+        return record.packingMaterial || record.packaging || record.itemId?.packingMaterial || inv?.packingMaterial || '—';
       },
     },
     {
       title: 'Material Category',
       key: 'materialCategory',
       render: (_, record) => {
-        const name = record.itemName || record.name;
-        return record.materialCategory || record.material || record.itemId?.materialCategory || invMap[name]?.materialCategory || '—';
+        const name = record.itemName || record.name || record.kitType;
+        const inv = invMap[name];
+        return record.materialCategory || record.material || record.itemId?.materialCategory || inv?.materialCategory || '—';
       },
     },
     {
       title: 'Brand',
       key: 'brand',
       render: (_, record) => {
-        const name = record.itemName || record.name;
-        return record.brand || record.itemId?.brand || invMap[name]?.brand || '—';
+        const name = record.itemName || record.name || record.kitType;
+        const inv = invMap[name];
+        return record.brand || record.itemId?.brand || inv?.brand || '—';
+      },
+    },
+    {
+      title: 'Product Attributes',
+      key: 'productAttrs',
+      render: (_, record) => {
+        // Keys already displayed as dedicated columns — skip them here
+        const SKIP_KEYS = new Set([
+          'itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent',
+          'unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory',
+          'hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize',
+          'specs','displayType','itemId','_id','key','amount','rateValue','total','inventoryStock',
+          'printing','stickerPrinting','product','isEmergencyProduct','isEmergencyGated',
+        ]);
+        const attrs = Object.entries(record).filter(([k, v]) => {
+          if (SKIP_KEYS.has(k)) return false;
+          if (v == null || v === '') return false;
+          if (typeof v === 'object' && !Array.isArray(v)) return false;
+          if (Array.isArray(v) && v.length === 0) return false;
+          return true;
+        });
+        // Also check inventory item for extra known attrs
+        const invName = record.itemName || record.name || record.kitType;
+        const inv = invMap[invName];
+        const invAttrs = inv ? Object.entries(inv.productAttributes || {}).filter(([k, v]) => {
+          if (SKIP_KEYS.has(k)) return false;
+          return v != null && v !== '' && typeof v !== 'object';
+        }) : [];
+        // Merge: prefer order-level values over inventory defaults
+        const merged = new Map([...invAttrs, ...attrs]);
+        if (merged.size === 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        const prettyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
+        return (
+          <Space wrap size={3} style={{ maxWidth: 220 }}>
+            {[...merged.entries()].map(([k, v]) => (
+              <Tag key={k} style={{ fontSize: 10, borderRadius: 4, margin: 0, whiteSpace: 'normal' }}>
+                {prettyKey(k)}: {Array.isArray(v) ? v.join(', ') : String(v)}
+              </Tag>
+            ))}
+          </Space>
+        );
       },
     },
     {
@@ -1316,6 +1404,106 @@ export default function OperationDetail() {
                     />
                   </div>
                 </Card>
+
+                {/* Kit Contents — list the products that go inside each kit unit */}
+                {isKitOrder && (() => {
+                  const kitItems = (order.items || []).filter(it => it.isKit || it.kitType);
+                  if (kitItems.length === 0) return null;
+                  const kitSelIds = Array.isArray(order.selectedKits) && order.selectedKits.length > 0
+                    ? order.selectedKits : (order.selectedKit ? [order.selectedKit] : []);
+                  const kitOrders = Array.isArray(order.kitOrders) ? order.kitOrders : [];
+                  return (
+                    <Card
+                      title={
+                        <Space wrap>
+                          <GiftOutlined style={{ color: '#722ed1' }} />
+                          <Text strong style={{ color: textColor }}>Kit Contents — Products to Pack</Text>
+                          {order.kitDisplayUnit && <Tag color="purple">{(order.kitDisplayUnit || '').replace(/_/g, ' ')}</Tag>}
+                          {order.kitSize && <Tag color="geekblue">{order.kitSize}</Tag>}
+                          {order.kitOverallQty > 0 && <Tag color="blue">{order.kitOverallQty} kits</Tag>}
+                        </Space>
+                      }
+                      style={{ borderRadius: 14, border: '1px solid rgba(114,46,209,0.2)', background: cardBg, boxShadow: '0 4px 20px rgba(114,46,209,0.06)' }}
+                    >
+                      {/* Per-kit summary when multiple kits exist */}
+                      {kitSelIds.length > 1 && kitOrders.length > 0 && kitOrders.map((ko, idx) => {
+                        const kName = ko.kitName || `Kit ${idx + 1}`;
+                        const kItems = kitItems.filter(it => it.kitId === ko.kitId || it.kitName === kName);
+                        return (
+                          <div key={idx} style={{ marginBottom: 12 }}>
+                            <Text strong style={{ fontSize: 12, color: '#722ed1', display: 'block', marginBottom: 6 }}>
+                              <GiftOutlined style={{ marginRight: 4 }} />{kName}
+                              {ko.overallQty > 0 && <Tag color="blue" style={{ marginLeft: 8, fontSize: 11 }}>{ko.overallQty} kits</Tag>}
+                            </Text>
+                            <Space wrap size={4}>
+                              {kItems.map((it, i) => (
+                                <Tag key={i} color="purple" style={{ borderRadius: 10, fontSize: 11 }}>
+                                  {it.itemName || it.name || it.product} ×{it.qty}
+                                </Tag>
+                              ))}
+                            </Space>
+                          </div>
+                        );
+                      })}
+                      {/* Single kit or flat listing */}
+                      {(kitSelIds.length <= 1 || kitOrders.length === 0) && (
+                        <>
+                          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+                            The following products need to be placed inside each kit unit:
+                          </Text>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {kitItems.map((it, i) => {
+                              const itSticker = (it.sticker || '').toUpperCase();
+                              const itPrinting = (it.printing || '').toUpperCase();
+                              const itPacking = it.packingMaterial || it.packaging || '';
+                              const itSize = it.size || it.defaultSize || '';
+                              const itBrand = it.brand || '';
+                              const itMat = it.materialCategory || it.material || '';
+                              const hasSpec = itSticker || itPrinting || itPacking || itSize || itBrand || itMat;
+                              return (
+                                <div key={i} style={{ padding: '10px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.15)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                                    <Space size={6}>
+                                      <div style={{ width: 20, height: 20, borderRadius: '50%', background: 'linear-gradient(135deg,#722ed1,#9254de)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                        <span style={{ color: '#fff', fontSize: 9, fontWeight: 700 }}>{i + 1}</span>
+                                      </div>
+                                      <Text strong style={{ color: textColor, fontSize: 13 }}>{it.itemName || it.name || it.product || '—'}</Text>
+                                    </Space>
+                                    <Space size={4} wrap>
+                                      <Tag color="blue" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>×{it.qty}</Tag>
+                                      {it.unit && <Tag style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{it.unit}</Tag>}
+                                    </Space>
+                                  </div>
+                                  {hasSpec && (
+                                    <Space wrap size={4} style={{ marginTop: 6 }}>
+                                      {itSticker && <Tag color={itSticker === 'YES' ? 'green' : 'default'} style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Sticker: {itSticker === 'YES' ? 'Yes' : 'No'}</Tag>}
+                                      {itPrinting && <Tag color={itPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Printing: {itPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
+                                      {itPacking && <Tag color="orange" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{itPacking}</Tag>}
+                                      {itSize && <Tag color="geekblue" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{itSize}</Tag>}
+                                      {itBrand && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{itBrand}</Tag>}
+                                      {itMat && <Tag color="cyan" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{itMat}</Tag>}
+                                    </Space>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                      {/* Kit specs row */}
+                      {(order.kitSticker || order.kitLogo || order.kitPrinting) && (
+                        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed rgba(114,46,209,0.15)' }}>
+                          <Space wrap size={6}>
+                            {order.kitSticker && <Tag color={order.kitSticker === 'YES' ? 'green' : 'default'} style={{ borderRadius: 10 }}>Sticker: {order.kitSticker === 'YES' ? 'Yes' : 'No'}</Tag>}
+                            {order.kitLogo && <Tag color={order.kitLogo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 10 }}>Logo: {order.kitLogo === 'YES' ? 'Yes' : 'No'}</Tag>}
+                            {order.kitPrinting && <Tag color={order.kitPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 10 }}>Printing: {order.kitPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
+                            {order.kitPrice > 0 && <Tag color="orange" style={{ borderRadius: 10 }}>₹{Number(order.kitPrice).toLocaleString()} per kit</Tag>}
+                          </Space>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })()}
 
                 {/* Display Unit Approval — kit orders only. Final dual sign-off (Sales + Ops)
                     on the kit's display unit / packaging before Kit Packing can be assigned. */}
