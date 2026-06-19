@@ -373,7 +373,11 @@ export default function OperationDetail() {
 
   const order = allOrders.find((item) => item.id === id);
   const assignedEmployee = order ? { key: order.key, name: order.assignedEmployee } : null;
-  const isKitOrder = !!(order?.kitDisplayUnit);
+  const isKitOrder = !!(order?.kitDisplayUnit) ||
+    (Array.isArray(order?.productType) ? order.productType : (order?.productType ? [order.productType] : []))
+      .some(v => ['personalized', 'separate_kit', 'PERSONALIZED_KIT'].includes(v)) ||
+    (Array.isArray(order?.selectedKits) && order.selectedKits.length > 0) ||
+    (order?.items || []).some(it => it.isKit || it.kitType);
 
   // Approved designs for this hotel (reuse in future orders).
   const { data: hotelDesignsRaw } = useGetHotelDesignsQuery(
@@ -1408,6 +1412,118 @@ export default function OperationDetail() {
                     />
                   </div>
                 </Card>
+
+                {/* Products adding — personalized kit summary for Operations */}
+                {isKitOrder && (() => {
+                  const ptArrOps = Array.isArray(order.productType) ? order.productType : (order.productType ? [order.productType] : []);
+                  const PT_LABELS = {
+                    personalized: 'Personalized (Kit + Products)',
+                    separate_kit: 'Separate Kit',
+                    separate_product: 'Separate Product',
+                    PERSONALIZED_KIT: 'Personalized Kit',
+                    SEPARATE_PRODUCT: 'Separate Product',
+                  };
+                  const ptLabel = ptArrOps.map(v => PT_LABELS[v] || v).join(', ');
+                  const kitItems = (order.items || []).filter(it => it.isKit || it.kitType);
+                  const kitNameFromItems = kitItems.length > 0 ? (kitItems[0].kitName || kitItems[0].kitType || null) : null;
+                  const kitNameFromOrders = (Array.isArray(order.kitOrders) && order.kitOrders.length > 0)
+                    ? order.kitOrders.map(ko => ko.kitName).filter(Boolean).join(', ')
+                    : null;
+                  const displayKitName = kitNameFromOrders || kitNameFromItems;
+                  const hasAnyKitInfo = order.kitDisplayUnit || order.kitSize || order.kitSticker || order.kitLogo || order.kitPrinting || order.kitPrice || order.kitOverallQty || displayKitName || ptArrOps.length > 0;
+                  if (!hasAnyKitInfo) return null;
+                  const OIROps = ({ label, value }) => (
+                    <div style={{ padding: '8px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}` }}>
+                      <Text type="secondary" style={{ fontSize: 11 }}>{label}</Text>
+                      <Text strong style={{ fontSize: 13, display: 'block', marginTop: 1 }}>{value || '—'}</Text>
+                    </div>
+                  );
+                  return (
+                    <Card
+                      title={
+                        <Space>
+                          <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
+                          <GiftOutlined style={{ color: '#722ed1' }} />
+                          <Text strong style={{ color: textColor }}>Products adding</Text>
+                        </Space>
+                      }
+                      style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(114,46,209,0.06)' }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <Row gutter={[16, 12]}>
+                          {ptLabel && (
+                            <Col xs={24} sm={12}>
+                              <OIROps label="Product Selection" value={ptLabel} />
+                            </Col>
+                          )}
+                          {displayKitName && (
+                            <Col xs={24} sm={12}>
+                              <OIROps label="Kit Selected" value={displayKitName} />
+                            </Col>
+                          )}
+                          {order.kitDisplayUnit && (
+                            <Col xs={12} sm={6}>
+                              <OIROps label="Display Unit" value={(order.kitDisplayUnit || '').replace(/_/g, ' ')} />
+                            </Col>
+                          )}
+                          {order.kitSize && (
+                            <Col xs={12} sm={6}>
+                              <OIROps label="Kit Size" value={order.kitSize} />
+                            </Col>
+                          )}
+                          {order.kitSticker && (
+                            <Col xs={12} sm={6}>
+                              <OIROps label="Sticker" value={order.kitSticker === 'YES' ? 'Yes' : 'No'} />
+                            </Col>
+                          )}
+                          {order.kitLogo && (
+                            <Col xs={12} sm={6}>
+                              <OIROps label="Logo" value={order.kitLogo === 'YES' ? 'Yes' : 'No'} />
+                            </Col>
+                          )}
+                          {order.kitPrinting && (
+                            <Col xs={12} sm={6}>
+                              <OIROps label="Printing" value={order.kitPrinting === 'YES' ? 'Yes' : 'No'} />
+                            </Col>
+                          )}
+                          {(order.kitPrice != null && order.kitPrice !== '') && (
+                            <Col xs={12} sm={6}>
+                              <OIROps label="Kit Price (single)" value={`₹${Number(order.kitPrice).toLocaleString()}`} />
+                            </Col>
+                          )}
+                          {Number(order.kitOverallQty) > 0 && (
+                            <Col xs={12} sm={6}>
+                              <OIROps label="Overall Qty" value={`${Number(order.kitOverallQty)} kit${Number(order.kitOverallQty) > 1 ? 's' : ''}`} />
+                            </Col>
+                          )}
+                          {(order.kitPrice != null && order.kitPrice !== '') && (
+                            <Col xs={12} sm={6}>
+                              <OIROps label="Kit Amount" value={`₹${(Number(order.kitPrice) * (Number(order.kitOverallQty) || 1)).toLocaleString()}`} />
+                            </Col>
+                          )}
+                        </Row>
+                        {kitItems.length > 0 && (
+                          <div>
+                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
+                              KIT CONTENTS ({kitItems.length} items)
+                            </Text>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {kitItems.map((it, i) => (
+                                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                                  <Text strong style={{ fontSize: 13 }}>{it.itemName || it.name || it.kitType || '—'}</Text>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{((it.qty || 0) * (it.rate || 0)).toLocaleString()}</Text>
+                                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{it.qty} × ₹{it.rate}{it.gst ? ` (+${it.gst}% GST)` : ''}</Text>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })()}
 
                 {/* Kit Contents — list the products that go inside each kit unit */}
                 {isKitOrder && (() => {

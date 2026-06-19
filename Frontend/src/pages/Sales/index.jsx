@@ -395,6 +395,10 @@ function prepareFormValues(data) {
     processed.kitOrders = existingKitOrders;
   }
 
+  // Existing saved payment entries are shown as read-only display cards above the Form.List.
+  // The Form.List itself starts empty so users only add NEW entries here.
+  processed.paymentCollection = [];
+
   return processed;
 }
 
@@ -1492,6 +1496,13 @@ export default function Sales() {
   const [orderEditForm] = Form.useForm();
   const [orderEditPaymentProofs, setOrderEditPaymentProofs] = useState([]);
 
+  // Quick Add Payment Entry modal — shared across lead/quotation/negotiation/order detail views
+  const [payEntryTarget, setPayEntryTarget] = useState(null); // { type, record }
+  const [payEntryForm] = Form.useForm();
+  const [payEntrySaving, setPayEntrySaving] = useState(false);
+  const [payEntryProof, setPayEntryProof] = useState(null); // { name, url } after upload
+  const [payEntryProofUploading, setPayEntryProofUploading] = useState(false);
+
   const handleDownloadQuotation = (order) => {
     // findLinkedQuotation handles both raw ObjectId and populated {_id, quotCode} objects
     const linkedQuot = findLinkedQuotation(order);
@@ -1606,7 +1617,7 @@ export default function Sales() {
   const saveOrderEdit = () => {
     orderEditForm.validateFields().then(async vals => {
       const newAdvance = vals.advance ?? orderEditTarget.advance ?? 0;
-      const newCollection = (vals.paymentCollection || []).filter(e => e.paymentMethod);
+      const newCollection = (vals.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }));
       const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
 
       // Any amount already in paidAmount that wasn't backed by collection entries
@@ -1750,6 +1761,185 @@ export default function Sales() {
         enqueueSnackbar(`Please fill required fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
       }
     });
+  };
+
+  // ── Quick Add Payment Entry — shared handler for lead/quotation/negotiation/order ──
+  const openPayEntry = (type, record) => {
+    setPayEntryTarget({ type, record });
+    payEntryForm.resetFields();
+    setPayEntryProof(null);
+  };
+
+  const savePayEntry = async () => {
+    let vals;
+    try { vals = await payEntryForm.validateFields(); } catch { return; }
+    if (!payEntryProof) {
+      enqueueSnackbar('Please upload a payment proof before saving', { variant: 'warning' });
+      return;
+    }
+    setPayEntrySaving(true);
+    try {
+      const { type, record } = payEntryTarget;
+      const newEntry = {
+        paymentMethod: vals.paymentMethod,
+        paidAmount: Number(vals.paidAmount),
+        notes: vals.notes || '',
+        paymentDate: vals.paymentDate ? vals.paymentDate.toISOString() : new Date().toISOString(),
+        proof: payEntryProof,
+        recordedAt: new Date().toISOString(),
+      };
+      const newCollection = [...(record.paymentCollection || []), newEntry];
+      const newPaidAmount = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const recProducts = record.products?.length ? record.products : itemsToProducts(record.items);
+      const recTotal = Math.round(computeRecordGrandTotal({ ...record, products: recProducts }));
+      const newBalance = Math.max(0, recTotal - newPaidAmount);
+      const newStatus = recTotal > 0 && newPaidAmount >= recTotal
+        ? 'Paid' : newPaidAmount > 0 ? 'Partially Paid' : 'Unpaid';
+      const patch = {
+        paymentCollection: newCollection,
+        paidAmount: newPaidAmount,
+        balance: newBalance,
+        paymentStatus: newStatus,
+        advancePaid: newPaidAmount,
+      };
+      const updated = { ...record, ...patch };
+      if (type === 'lead') {
+        await updateLeadMutation({ id: record._id || record.key, ...patch }).unwrap();
+        setLeadsData(prev => prev.map(l => (l.key === record.key || l._id === record._id) ? { ...l, ...patch } : l));
+        if (selectedRecord?._id === record._id || selectedRecord?.key === record.key) setSelectedRecord(updated);
+      } else if (type === 'quotation') {
+        await updateSalesQuotationMutation({ id: record._id || record.key, ...patch }).unwrap();
+        setQuotationsData(prev => prev.map(q => (q.key === record.key || q._id === record._id) ? { ...q, ...patch } : q));
+        if (selectedRecord?._id === record._id || selectedRecord?.key === record.key) setSelectedRecord(updated);
+      } else if (type === 'negotiation') {
+        await updateNegotiationMutation({ id: record._id || record.key, ...patch }).unwrap();
+        setNegotiationsData(prev => prev.map(n => (n.key === record.key || n._id === record._id) ? { ...n, ...patch } : n));
+        if (selectedRecord?._id === record._id || selectedRecord?.key === record.key) setSelectedRecord(updated);
+      } else if (type === 'order') {
+        await updateSalesOrderMutation({ id: record._id || record.key, ...patch }).unwrap();
+        setOrdersData(prev => prev.map(o => (o.key === record.key || o._id === record._id) ? { ...o, ...patch } : o));
+        if (selectedRecord?._id === record._id || selectedRecord?.key === record.key) setSelectedRecord(updated);
+      }
+      enqueueSnackbar('Payment entry added', { variant: 'success' });
+      setPayEntryTarget(null);
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to save payment entry', { variant: 'error' });
+    } finally {
+      setPayEntrySaving(false);
+    }
+  };
+
+  // ── Quick Add Payment Entry modal JSX — rendered from every detail-view return ────
+  const renderPayEntryModal = () => {
+    if (!payEntryTarget) return (
+      <Modal
+        title={<Space><DollarOutlined style={{ color: '#B11E6A' }} /><span>Add Payment Entry</span></Space>}
+        open={false}
+        footer={null}
+      />
+    );
+    const rec = payEntryTarget.record;
+    const recProducts = rec.products?.length ? rec.products : itemsToProducts(rec.items || []);
+    const recTotal = Math.round(computeRecordGrandTotal({ ...rec, products: recProducts }));
+    const alreadyPaid = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0) || Number(rec.paidAmount) || 0;
+    const balance = Math.max(0, recTotal - alreadyPaid);
+    return (
+      <Modal
+        title={<Space><DollarOutlined style={{ color: '#B11E6A' }} /><span>Add Payment Entry</span></Space>}
+        open={!!payEntryTarget}
+        onCancel={() => { setPayEntryTarget(null); setPayEntryProof(null); }}
+        width={Math.min(460, window.innerWidth - 32)}
+        destroyOnClose
+        footer={[
+          <Button key="cancel" onClick={() => { setPayEntryTarget(null); setPayEntryProof(null); }}>Cancel</Button>,
+          <Button key="save" type="primary" loading={payEntrySaving}
+            style={{ background: '#B11E6A', borderColor: '#B11E6A' }}
+            onClick={savePayEntry}>
+            Save Entry
+          </Button>,
+        ]}
+      >
+        {recTotal > 0 && (
+          <div style={{ marginBottom: 16, padding: '10px 14px', background: balance > 0 ? 'rgba(250,140,22,0.06)' : 'rgba(82,196,26,0.06)', borderRadius: 8, border: `1px solid ${balance > 0 ? 'rgba(250,140,22,0.25)' : 'rgba(82,196,26,0.25)'}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>Grand Total</Text>
+              <Text strong>₹{recTotal.toLocaleString()}</Text>
+            </div>
+            {alreadyPaid > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Already Collected</Text>
+                <Text strong style={{ color: '#52c41a' }}>₹{alreadyPaid.toLocaleString()}</Text>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 6, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+              <Text style={{ fontSize: 12, fontWeight: 700 }}>Balance Due</Text>
+              <Text strong style={{ color: balance > 0 ? '#fa8c16' : '#52c41a' }}>₹{balance.toLocaleString()}</Text>
+            </div>
+          </div>
+        )}
+        <Form form={payEntryForm} layout="vertical">
+          <Row gutter={12}>
+            <Col xs={12}>
+              <Form.Item name="paymentMethod" label="Payment Method" rules={[{ required: true, message: 'Select method' }]}>
+                <Select placeholder="Select method">
+                  {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item name="paymentDate" label="Payment Date" rules={[{ required: true, message: 'Select date' }]}>
+                <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" disabledDate={d => d && d > dayjs().endOf('day')} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="paidAmount" label="Amount Received (₹)" rules={[{ required: true, message: 'Enter amount' }, { type: 'number', min: 0.01, message: 'Must be > 0', transform: v => Number(v) }]}>
+            <InputNumber style={{ width: '100%' }} min={0} placeholder={balance > 0 ? `e.g. ${balance.toLocaleString()}` : 'e.g. 5000'} />
+          </Form.Item>
+          <Form.Item name="notes" label="Notes (optional)">
+            <Input placeholder="UPI ref, cheque no., etc." />
+          </Form.Item>
+          <Form.Item label={<span>Payment Proof <span style={{ color: '#ff4d4f' }}>*</span></span>} required>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <Upload
+                accept="image/*,.pdf"
+                showUploadList={false}
+                disabled={payEntryProofUploading}
+                customRequest={async ({ file, onSuccess, onError }) => {
+                  setPayEntryProofUploading(true);
+                  const fd = new FormData();
+                  fd.append('files', file);
+                  try {
+                    const res = await uploadFilesMutation({ formData: fd, folder: 'payment-proofs' }).unwrap();
+                    const up = res.data?.[0];
+                    if (up) {
+                      setPayEntryProof({ name: file.name || 'Proof', url: up.url });
+                      onSuccess(up, file);
+                      enqueueSnackbar('Proof uploaded', { variant: 'success' });
+                    } else onError(new Error('Upload failed'));
+                  } catch (err) { onError(err); enqueueSnackbar('Upload failed', { variant: 'error' }); }
+                  finally { setPayEntryProofUploading(false); }
+                }}
+              >
+                <Button icon={<UploadOutlined />} loading={payEntryProofUploading} style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
+                  {payEntryProof ? 'Change Proof' : 'Upload Proof'}
+                </Button>
+              </Upload>
+              {payEntryProof && (
+                <a href={payEntryProof.url} target="_blank" rel="noopener noreferrer"
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#1890ff' }}>
+                  <FileTextOutlined />
+                  {payEntryProof.name}
+                  <span style={{ color: '#52c41a', fontSize: 11 }}>✓ Uploaded</span>
+                </a>
+              )}
+            </div>
+            {!payEntryProof && (
+              <div style={{ fontSize: 11, color: '#ff4d4f', marginTop: 4 }}>Upload proof is required to save entry</div>
+            )}
+          </Form.Item>
+        </Form>
+      </Modal>
+    );
   };
 
   // ── Order-edit modal display helpers (shared by both modal copies) ───────────────
@@ -2212,9 +2402,31 @@ export default function Sales() {
 
   useEffect(() => {
     if (leadsRaw?.data) setLeadsData((leadsRaw.data).map((l) => {
-      const hasProof = (l.paymentProofs || []).length > 0;
-      const paymentStatus = !hasProof ? 'Unpaid' : l.paymentTerms === 'BEFORE_100' ? 'Paid' : 'Partially Paid';
-      return { ...l, key: l._id, leadId: l.leadCode, hotelName: l.hotelName, status: l.status, salesPerson: l.salesPerson, createdAt: l.createdAt, paymentStatus };
+      const collected = (l.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const backendPaid = Number(l.paidAmount) || Number(l.totalPaid) || 0;
+      const paidTotal = collected > 0 ? collected : (backendPaid || Number(l.advancePaid || 0));
+      const lProducts = l.products?.length ? l.products : itemsToProducts(l.items);
+      const kitAwareTotal = Math.round(computeRecordGrandTotal({ ...l, products: lProducts }));
+      const total = kitAwareTotal > 0 ? kitAwareTotal : Number(l.total || 0);
+      const computedStatus = total > 0
+        ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
+        : ((l.paymentProofs || []).length > 0 ? (l.paymentTerms === 'BEFORE_100' ? 'Paid' : 'Partially Paid') : (l.paymentStatus || 'Unpaid'));
+      const paymentStatus = (computedStatus !== 'Unpaid') ? computedStatus
+        : (l.paymentStatus === 'Paid' || l.paymentStatus === 'Partially Paid') ? l.paymentStatus
+        : 'Unpaid';
+      return {
+        ...l,
+        key: l._id,
+        leadId: l.leadCode,
+        hotelName: l.hotelName,
+        status: l.status,
+        salesPerson: l.salesPerson,
+        createdAt: l.createdAt,
+        paymentStatus,
+        totalAmount: total,
+        paidAmount: paidTotal,
+        balance: total - paidTotal,
+      };
     }));
   }, [leadsRaw]);
   useEffect(() => {
@@ -2539,12 +2751,16 @@ export default function Sales() {
       packingMaterial: values.packingMaterial || '',
       hotelLogoUrl: hotelLogoUrl || undefined,
       paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
-      paymentCollection: (values.paymentCollection || []).filter(e => e.paymentMethod),
+      paymentCollection: [
+        ...(selectedRecord?.paymentCollection || []),
+        ...(values.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() })),
+      ],
       paymentStatus: (() => {
         const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
         const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
         if (collectionTotal > 0) {
-          const recordTotal = Math.round(calcGrandTotal(values.products || formStore.products || []));
+          const prods = values.products || formStore.products || [];
+          const recordTotal = Math.round(computeRecordGrandTotal({ ...values, products: prods }));
           return recordTotal > 0 && collectionTotal >= recordTotal ? 'Paid' : 'Partially Paid';
         }
         const proofs = paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []);
@@ -2789,7 +3005,7 @@ export default function Sales() {
     if (section === 'delivery') {
       const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
       const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-      const recordTotal = Math.round(calcGrandTotal(selectedRecord.products || []));
+      const recordTotal = Math.round(computeRecordGrandTotal(selectedRecord));
       if (collectionTotal > 0) {
         values.advancePaid = collectionTotal;
         values.paidAmount = collectionTotal;
@@ -3526,7 +3742,7 @@ export default function Sales() {
     const gstAmount = (values.products || []).reduce(
       (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
     const total = subtotal + gstAmount;
-    const newCollection = (values.paymentCollection || []).filter(e => e.paymentMethod);
+    const newCollection = (values.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }));
     const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const advancePaid = collTotal > 0 ? collTotal : (Number(values.advance) || 0);
     const paymentStatus = total > 0 && advancePaid >= total
@@ -3787,6 +4003,36 @@ export default function Sales() {
     {
       title: 'Status', dataIndex: 'status', width: 130,
       render: (v) => <Tag color={STATUS_COLORS[v] || '#ccc'} style={{ fontSize: 13 }}>{v}</Tag>
+    },
+    {
+      title: 'Amount', dataIndex: 'totalAmount', width: 110, responsive: ['sm'],
+      render: (v) => v > 0 ? <Text strong style={{ fontSize: 13 }}>₹{v.toLocaleString()}</Text> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>,
+    },
+    {
+      title: 'Collected', key: 'leadCollected', width: 110, responsive: ['sm'],
+      render: (_, r) => (
+        <Text strong style={{ fontSize: 13, color: r.paidAmount > 0 ? '#52c41a' : textColor }}>
+          {r.paidAmount > 0 ? `₹${r.paidAmount.toLocaleString()}` : '—'}
+        </Text>
+      ),
+    },
+    {
+      title: 'Payment', key: 'leadPayStatus', width: 140,
+      render: (_, r) => {
+        if (!r.totalAmount) return <Tag color="default" style={{ borderRadius: 20, fontSize: 12, fontWeight: 600 }}>No Amount</Tag>;
+        const color = r.paymentStatus === 'Paid' ? 'success' : r.paymentStatus === 'Partially Paid' ? 'warning' : 'error';
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{r.paymentStatus}</Tag>
+            {r.paidAmount > 0 && (
+              <Text type="secondary" style={{ fontSize: 11 }}>₹{r.paidAmount.toLocaleString()} / ₹{(r.totalAmount || 0).toLocaleString()}</Text>
+            )}
+            {r.paidAmount > 0 && r.balance > 0 && (
+              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{r.balance.toLocaleString()} due</Text>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: 'Created At', dataIndex: 'createdAt', width: 140,
@@ -4439,6 +4685,7 @@ export default function Sales() {
         { title: 'Approved', description: 'Confirmed' },
       ];
       return (
+        <>
         <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('quotations'); }} style={{ borderRadius: 8 }}>Back to Quotations</Button>
@@ -4605,6 +4852,49 @@ export default function Sales() {
                   };
                   return <DetailDeliveryPayment rec={qEnriched} grandTotal={computeRecordGrandTotal(qEnriched)} />;
                 })()}
+                {(q.paymentCollection || []).length > 0 && (
+                  <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: 0.5 }}>
+                      PAYMENT COLLECTION ({q.paymentCollection.length} entr{q.paymentCollection.length > 1 ? 'ies' : 'y'})
+                    </Text>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {q.paymentCollection.map((entry, idx) => (
+                        <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                            <div>
+                              <Space size={8}>
+                                <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
+                                <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
+                              </Space>
+                              <div style={{ paddingLeft: 21, marginTop: 3 }}>
+                                {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
+                                {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                              </div>
+                            </div>
+                            <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
+                          </div>
+                          {entry.proof?.url && (
+                            <div style={{ marginTop: 5, paddingLeft: 21 }}>
+                              <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
+                        <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(q.paymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div style={{ marginTop: 12 }}>
+                  <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('quotation', q)}>
+                    Add Payment Entry
+                  </Button>
+                </div>
               </Card>
 
               {/* Revision History */}
@@ -4735,6 +5025,8 @@ export default function Sales() {
             </Col>
           </Row>
         </motion.div>
+        {renderPayEntryModal()}
+        </>
       );
     }
 
@@ -4748,6 +5040,7 @@ export default function Sales() {
         { title: 'Approved', description: 'Deal closed' },
       ];
       return (
+        <>
         <motion.div className="page-container" style={{ paddingBottom: 60 }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('quotations'); }} style={{ borderRadius: 8 }}>Back to Quotations & Negotiations</Button>
@@ -4971,6 +5264,49 @@ export default function Sales() {
                   };
                   return <DetailDeliveryPayment rec={nEnriched} grandTotal={computeRecordGrandTotal(nEnriched)} />;
                 })()}
+                {(n.paymentCollection || []).length > 0 && (
+                  <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: 0.5 }}>
+                      PAYMENT COLLECTION ({n.paymentCollection.length} entr{n.paymentCollection.length > 1 ? 'ies' : 'y'})
+                    </Text>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {n.paymentCollection.map((entry, idx) => (
+                        <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                            <div>
+                              <Space size={8}>
+                                <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
+                                <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
+                              </Space>
+                              <div style={{ paddingLeft: 21, marginTop: 3 }}>
+                                {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
+                                {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                              </div>
+                            </div>
+                            <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
+                          </div>
+                          {entry.proof?.url && (
+                            <div style={{ marginTop: 5, paddingLeft: 21 }}>
+                              <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
+                        <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(n.paymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div style={{ marginTop: 12 }}>
+                  <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('negotiation', n)}>
+                    Add Payment Entry
+                  </Button>
+                </div>
               </Card>
 
               {n.notes && (
@@ -5082,6 +5418,8 @@ export default function Sales() {
             </Col>
           </Row>
         </motion.div>
+        {renderPayEntryModal()}
+        </>
       );
     }
 
@@ -5173,6 +5511,14 @@ export default function Sales() {
         kitOverallQty: o.kitOverallQty || oLeadForTotal?.kitOverallQty,
       }));
       const oTotal = oKitAwareTotal > 0 ? oKitAwareTotal : (oSubtotal + oGstAmount);
+      const oHasKitProducts = (o.products || []).some(p => p && (p.isKit || p.kitType));
+      // Enriched rec for CategoryTotalsBreakdown in Payment Summary (matches what computeRecordGrandTotal uses)
+      const oEnrichedForBreakdown = {
+        ...o,
+        kitOrders: oKitOrdersForTotal,
+        kitPrice: o.kitPrice || oLeadForTotal?.kitPrice,
+        kitOverallQty: o.kitOverallQty || oLeadForTotal?.kitOverallQty,
+      };
       // o.paymentCollection is now the best-available source (merged above)
       const detailCollectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const detailAdvance = Number(full.advancePaidAmount ?? full.advancePaid ?? base.advance ?? 0);
@@ -5265,7 +5611,7 @@ export default function Sales() {
               <Card size="small" style={{ borderRadius: 12, border: `1px solid ${isDark ? '#333' : '#eee'}`, background: isDark ? '#1E1E2E' : '#fafafa' }} styles={{ body: { padding: '12px 14px' } }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}><span style={{ color: '#888', fontSize: 15 }}><CreditCardOutlined /></span><Text type="secondary" style={{ fontSize: 11 }}>Order Value</Text></div>
                 <Text strong style={{ fontSize: 14, color: textColor, display: 'block' }}>₹{oTotal.toLocaleString()}</Text>
-                {oGstAmount > 0 && (
+                {oGstAmount > 0 && !oHasKitProducts && (
                   <div style={{ marginTop: 3 }}>
                     <Text type="secondary" style={{ fontSize: 10 }}>Without GST: ₹{oSubtotal.toLocaleString()}</Text>
                     <br />
@@ -5422,6 +5768,131 @@ export default function Sales() {
 
           <Row gutter={20}>
             <Col xs={24} lg={16}>
+              {/* ── Products adding — personalized kit summary (mirrors Lead detail) ── */}
+              {(() => {
+                const oSelKitIdsPA = Array.isArray(o.selectedKits) && o.selectedKits.length > 0
+                  ? o.selectedKits : (o.selectedKit ? [o.selectedKit] : []);
+                const kitNamePA = oSelKitIdsPA.length > 0
+                  ? oSelKitIdsPA.map(id => kits.find(k => k._id === id)?.kitName || id).join(', ')
+                  : null;
+                const kitPsPA = (o.products || []).filter(p => p && (p.isKit || p.kitType));
+                const isKitTypePA = ptHasKitUI(o.productType);
+                const hasKitInfoPA = oSelKitIdsPA.length > 0 || o.kitDisplayUnit || o.kitPrice || o.kitOverallQty || kitPsPA.length > 0;
+                if (!hasKitInfoPA && !o.productType) return null;
+                const kitProductsToShowPA = kitPsPA.length > 0
+                  ? kitPsPA.map(p => ({
+                      productName: p.name || p.kitType || p.itemName || '',
+                      displayType: p.displayType || '',
+                      qty: p.qty,
+                      rate: p.rate || 0,
+                      gstPercent: p.gst || p.gstPercent || 0,
+                    }))
+                  : (oSelKitIdsPA.length > 0
+                      ? (kits.find(k => k._id === oSelKitIdsPA[0])?.products || []).map(p => ({
+                          productName: p.productName || '',
+                          displayType: '',
+                          qty: p.qty,
+                          rate: p.rate || 0,
+                          gstPercent: 0,
+                        }))
+                      : []);
+                const OIR = ({ label, value }) => (
+                  <div style={{ padding: '8px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>{label}</Text>
+                    <Text strong style={{ fontSize: 13, display: 'block', marginTop: 1 }}>{value || '—'}</Text>
+                  </div>
+                );
+                return (
+                  <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <Row gutter={[16, 12]}>
+                        {o.productType && (
+                          <Col xs={24} sm={12}>
+                            <OIR label="Product Selection" value={
+                              Array.isArray(o.productType)
+                                ? o.productType.map(productTypeLabel).join(', ')
+                                : productTypeLabel(o.productType)
+                            } />
+                          </Col>
+                        )}
+                        {kitNamePA && (
+                          <Col xs={24} sm={12}>
+                            <OIR label="Kit Selected" value={kitNamePA} />
+                          </Col>
+                        )}
+                        {(o.kitDisplayUnit || o.displayUnit) && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Display Unit" value={(o.kitDisplayUnit || o.displayUnit || '').replace(/_/g, ' ')} />
+                          </Col>
+                        )}
+                        {o.kitSize && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Kit Size" value={o.kitSize} />
+                          </Col>
+                        )}
+                        {o.kitSticker && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Sticker" value={o.kitSticker === 'YES' ? 'Yes' : 'No'} />
+                          </Col>
+                        )}
+                        {o.kitLogo && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Logo" value={o.kitLogo === 'YES' ? 'Yes' : 'No'} />
+                          </Col>
+                        )}
+                        {o.kitPrinting && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Printing" value={o.kitPrinting === 'YES' ? 'Yes' : 'No'} />
+                          </Col>
+                        )}
+                        {(o.kitPrice != null && o.kitPrice !== '') && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Kit Price (single)" value={`₹${Number(o.kitPrice).toLocaleString()}`} />
+                          </Col>
+                        )}
+                        {Number(o.kitOverallQty) > 0 && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Overall Qty" value={`${Number(o.kitOverallQty)} kit${Number(o.kitOverallQty) > 1 ? 's' : ''}`} />
+                          </Col>
+                        )}
+                        {(o.kitPrice != null && o.kitPrice !== '') && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Kit Amount" value={`₹${(Number(o.kitPrice) * (Number(o.kitOverallQty) || 1)).toLocaleString()}`} />
+                          </Col>
+                        )}
+                      </Row>
+                      {isKitTypePA && kitProductsToShowPA.length > 0 && (
+                        <div>
+                          <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
+                            KIT CONTENTS ({kitProductsToShowPA.length} items)
+                          </Text>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {kitProductsToShowPA.map((kp, i) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                                <div>
+                                  <Text strong style={{ fontSize: 13 }}>{kp.productName || '—'}</Text>
+                                  {kp.displayType && <Tag color="purple" style={{ marginLeft: 8, borderRadius: 12, fontSize: 10 }}>{kp.displayType}</Tag>}
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
+                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {isKitTypePA && kitProductsToShowPA.length === 0 && kitNamePA && (
+                        <div style={{ padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px dashed rgba(114,46,209,0.2)' }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Kit: <Text strong style={{ color: '#722ed1' }}>{kitNamePA}</Text> — products listed below in Order Details</Text>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })()}
+
               {/* Products */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Order Products & Specifications</span></Space>}>
@@ -5514,39 +5985,71 @@ export default function Sales() {
                 <DetailDeliveryPayment rec={o} showPaymentSummary={false} />
               </Card>
 
-              {/* Payment summary */}
+              {/* Payment summary — matches Lead detail layout (CategoryTotalsBreakdown + collected + balance) */}
               {o.orderCategory !== 'SAMPLE' && <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><CreditCardOutlined style={{ color: '#52c41a' }} /><span>Payment Summary</span></Space>}>
-                <Row gutter={12}>
-                  <Col xs={24} sm={6}>
-                    <div style={{ padding: '14px 16px', background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(24,144,255,0.06)', borderRadius: 10, border: '1px solid rgba(24,144,255,0.2)', textAlign: 'center' }}>
-                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>WITHOUT GST</Text>
-                      <Text strong style={{ fontSize: 18, color: '#1890ff' }}>₹{oSubtotal.toLocaleString()}</Text>
+                <div>
+                  <CategoryTotalsBreakdown rec={oEnrichedForBreakdown} isDark={isDark} />
+                  {!oHasKitProducts && oGstAmount > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 12, color: isDark ? '#aaa' : '#888' }}>
+                      <span>Without GST</span>
+                      <span>₹{oSubtotal.toLocaleString()}</span>
                     </div>
-                  </Col>
-                  <Col xs={24} sm={6}>
-                    <div style={{ padding: '14px 16px', background: 'rgba(82,196,26,0.06)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)', textAlign: 'center' }}>
-                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>WITH GST (TOTAL)</Text>
-                      <Text strong style={{ fontSize: 18, color: '#52c41a' }}>₹{oTotal.toLocaleString()}</Text>
-                      {oGstAmount > 0 && <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>GST: ₹{oGstAmount.toLocaleString()}</Text>}
+                  )}
+                  {totalCollected > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>Amount Paid</Text>
+                      <Text strong style={{ color: '#52c41a' }}>₹{totalCollected.toLocaleString()}</Text>
                     </div>
-                  </Col>
-                  <Col xs={24} sm={6}>
-                    <div style={{ padding: '14px 16px', background: 'rgba(82,196,26,0.06)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)', textAlign: 'center' }}>
-                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>COLLECTED</Text>
-                      <Text strong style={{ fontSize: 18, color: '#52c41a' }}>₹{totalCollected.toLocaleString()}</Text>
-                      {o.advance > 0 && o.paidAmount !== o.advance && (
-                        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 2 }}>Advance: ₹{(o.advance || 0).toLocaleString()}</Text>
-                      )}
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, paddingTop: 10, borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : '#eef0f3'}` }}>
+                    <Text style={{ fontSize: 13, fontWeight: 700 }}>Amount to Pay</Text>
+                    <Text strong style={{ fontSize: 15, color: toCollect > 0 ? '#fa8c16' : '#52c41a' }}>₹{toCollect.toLocaleString()}</Text>
+                  </div>
+                  {(o.paymentCollection || []).length > 0 && (
+                    <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: 0.5 }}>
+                        PAYMENT COLLECTION ({o.paymentCollection.length} entr{o.paymentCollection.length > 1 ? 'ies' : 'y'})
+                      </Text>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {o.paymentCollection.map((entry, idx) => (
+                          <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                              <div>
+                                <Space size={8}>
+                                  <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
+                                  <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                  {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
+                                </Space>
+                                <div style={{ paddingLeft: 21, marginTop: 3 }}>
+                                  {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
+                                  {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                                </div>
+                              </div>
+                              <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
+                            </div>
+                            {entry.proof?.url && (
+                              <div style={{ marginTop: 5, paddingLeft: 21 }}>
+                                <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
+                          <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(o.paymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
+                        </div>
+                      </div>
                     </div>
-                  </Col>
-                  <Col xs={24} sm={6}>
-                    <div style={{ padding: '14px 16px', background: toCollect > 0 ? 'rgba(250,140,22,0.06)' : 'rgba(82,196,26,0.06)', borderRadius: 10, border: `1px solid ${toCollect > 0 ? 'rgba(250,140,22,0.2)' : 'rgba(82,196,26,0.2)'}`, textAlign: 'center' }}>
-                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>TO COLLECT</Text>
-                      <Text strong style={{ fontSize: 18, color: toCollect > 0 ? '#fa8c16' : '#52c41a' }}>₹{toCollect.toLocaleString()}</Text>
-                    </div>
-                  </Col>
-                </Row>
+                  )}
+                  <div style={{ marginTop: 14 }}>
+                    <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('order', o)}>
+                      Add Payment Entry
+                    </Button>
+                  </div>
+                </div>
               </Card>}
 
               {/* Compliance — visible if status is Completed or Partially Completed */}
@@ -6263,6 +6766,7 @@ export default function Sales() {
             </>}
           </Form>
         </Modal>
+        {renderPayEntryModal()}
         </>
       );
     }
@@ -6717,6 +7221,7 @@ export default function Sales() {
     const showProductsCard = isDetail || isAddLead || isAddCustomer;
 
     return (
+      <>
       <motion.div
         className="page-container"
         style={{ paddingBottom: 60 }}
@@ -8724,13 +9229,28 @@ export default function Sales() {
                             </Text>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                               {record.paymentCollection.map((entry, idx) => (
-                                <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                    <DollarOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
-                                    <Text style={{ fontSize: 13, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                <div key={idx} style={{ padding: '8px 12px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                                    <div>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                        <DollarOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
+                                        <Text style={{ fontSize: 13, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                        {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
+                                      </div>
+                                      <div style={{ paddingLeft: 24, marginTop: 3 }}>
+                                        {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
+                                        {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                                      </div>
+                                    </div>
+                                    <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
                                   </div>
-                                  <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
-                                  {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
+                                  {entry.proof?.url && (
+                                    <div style={{ marginTop: 5, paddingLeft: 24 }}>
+                                      <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
+                                      </a>
+                                    </div>
+                                  )}
                                 </div>
                               ))}
                               <div style={{ padding: '8px 12px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
@@ -8760,6 +9280,18 @@ export default function Sales() {
                               ))}
                             </div>
                           </div>
+                        </Col>
+                      )}
+                      {record.leadType !== 'SAMPLE' && (
+                        <Col xs={24} style={{ marginTop: 14 }}>
+                          <Button
+                            icon={<PlusOutlined />}
+                            size="small"
+                            style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }}
+                            onClick={() => openPayEntry('lead', record)}
+                          >
+                            Add Payment Entry
+                          </Button>
                         </Col>
                       )}
                     </Row>
@@ -8876,63 +9408,177 @@ export default function Sales() {
                       <Text style={{ fontSize: 12, color: '#1890ff' }}>Credit terms selected — no advance required. You can still record any upfront payment below.</Text>
                     </div>
                   )}
+
+                  {/* ── Existing saved payment entries (read-only display) ── */}
+                  {(record.paymentCollection || []).length > 0 && (() => {
+                    const existingTotal = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                    return (
+                      <div style={{ marginBottom: 14 }}>
+                        <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, display: 'block', marginBottom: 8 }}>
+                          PAYMENT HISTORY ({record.paymentCollection.length} entr{record.paymentCollection.length > 1 ? 'ies' : 'y'})
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {record.paymentCollection.map((entry, idx) => (
+                            <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.15)', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <Space size={8} wrap>
+                                  <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 14 }} />
+                                  <Text style={{ fontSize: 13, fontWeight: 600 }}>
+                                    {(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}
+                                  </Text>
+                                  {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
+                                </Space>
+                                <div style={{ paddingLeft: 22, marginTop: 5, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  {entry.paymentDate ? (
+                                    <Text type="secondary" style={{ fontSize: 11 }}>
+                                      <CalendarOutlined style={{ marginRight: 4, fontSize: 10 }} />
+                                      Payment Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}
+                                    </Text>
+                                  ) : entry.recordedAt ? (
+                                    <Text type="secondary" style={{ fontSize: 11 }}>
+                                      <CalendarOutlined style={{ marginRight: 4, fontSize: 10 }} />
+                                      {dayjs(entry.recordedAt).format('DD MMM YYYY · hh:mm A')}
+                                    </Text>
+                                  ) : (
+                                    <Text type="secondary" style={{ fontSize: 11 }}>Date not recorded</Text>
+                                  )}
+                                  {entry.proof?.url ? (
+                                    <a href={entry.proof.url} target="_blank" rel="noopener noreferrer"
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#1890ff' }}>
+                                      <FileTextOutlined style={{ fontSize: 11 }} />
+                                      {entry.proof.name || 'View Proof'} ↗
+                                    </a>
+                                  ) : (
+                                    <Text type="secondary" style={{ fontSize: 11 }}>No proof uploaded</Text>
+                                  )}
+                                </div>
+                              </div>
+                              <Text strong style={{ color: '#52c41a', fontSize: 14, whiteSpace: 'nowrap', marginLeft: 12 }}>
+                                ₹{Number(entry.paidAmount || 0).toLocaleString()}
+                              </Text>
+                            </div>
+                          ))}
+                          <div style={{ padding: '6px 14px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
+                            <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{existingTotal.toLocaleString()}</Text>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Live payment summary: Grand Total / Collected / Balance Due ── */}
+                  {(() => {
+                    const existingColl = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                    const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+                    const totalColl = existingColl + newColl;
+                    const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
+                    const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'forwardingCharge', 'forwardingChargeAmount']);
+                    const recordTotal = Math.round(computeRecordGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, forwardingCharge: fvKit.forwardingCharge, forwardingChargeAmount: fvKit.forwardingChargeAmount }));
+                    const balance = Math.max(0, recordTotal - totalColl);
+                    if (recordTotal === 0) return null;
+                    return (
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        <div style={{ flex: 1, padding: '8px 10px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.05)', borderRadius: 8, border: '1px solid rgba(177,30,106,0.2)', textAlign: 'center' }}>
+                          <Text type="secondary" style={{ fontSize: 10, display: 'block', letterSpacing: 0.4 }}>GRAND TOTAL</Text>
+                          <Text strong style={{ fontSize: 14, color: '#B11E6A' }}>₹{recordTotal.toLocaleString()}</Text>
+                        </div>
+                        <div style={{ flex: 1, padding: '8px 10px', background: isDark ? 'rgba(82,196,26,0.08)' : 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', textAlign: 'center' }}>
+                          <Text type="secondary" style={{ fontSize: 10, display: 'block', letterSpacing: 0.4 }}>COLLECTED</Text>
+                          <Text strong style={{ fontSize: 14, color: '#52c41a' }}>₹{totalColl.toLocaleString()}</Text>
+                        </div>
+                        <div style={{ flex: 1, padding: '8px 10px', background: balance > 0 ? (isDark ? 'rgba(250,140,22,0.08)' : 'rgba(250,140,22,0.06)') : (isDark ? 'rgba(82,196,26,0.08)' : 'rgba(82,196,26,0.06)'), borderRadius: 8, border: `1px solid ${balance > 0 ? 'rgba(250,140,22,0.3)' : 'rgba(82,196,26,0.2)'}`, textAlign: 'center' }}>
+                          <Text type="secondary" style={{ fontSize: 10, display: 'block', letterSpacing: 0.4 }}>BALANCE DUE</Text>
+                          <Text strong style={{ fontSize: 14, color: balance > 0 ? '#fa8c16' : '#52c41a' }}>₹{balance.toLocaleString()}</Text>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Form.List for NEW payment entries only ── */}
                   <Form.List name="paymentCollection">
                     {(fields, { add, remove }) => (
                       <>
                         {fields.map(({ key, name, ...rest }) => (
                           <div key={key} style={{ background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
                             <Row gutter={[8, 0]} align="middle">
-                              <Col xs={24} sm={7}>
+                              <Col xs={24} sm={6}>
                                 <Form.Item {...rest} name={[name, 'paymentMethod']} label="Payment Method" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Select method' }]}>
                                   <Select placeholder="Select method" size="small">
                                     {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
                                   </Select>
                                 </Form.Item>
                               </Col>
-                              <Col xs={24} sm={7}>
+                              <Col xs={24} sm={6}>
                                 <Form.Item {...rest} name={[name, 'paidAmount']} label="Paid Amount (₹)" style={{ marginBottom: 0 }}>
                                   <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="e.g. 5000" />
                                 </Form.Item>
                               </Col>
-                              <Col xs={24} sm={8}>
+                              <Col xs={24} sm={7}>
                                 <Form.Item {...rest} name={[name, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
                                   <Input size="small" placeholder="e.g. UPI ref no." />
                                 </Form.Item>
                               </Col>
-                              <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 20 }}>
+                              <Col xs={4} sm={3} style={{ paddingTop: 22 }}>
+                                <Upload
+                                  accept="image/*,.pdf"
+                                  showUploadList={false}
+                                  customRequest={async ({ file, onSuccess, onError }) => {
+                                    const fd = new FormData();
+                                    fd.append('files', file);
+                                    try {
+                                      const res = await uploadFilesMutation({ formData: fd, folder: 'payment-proofs' }).unwrap();
+                                      const up = res.data?.[0];
+                                      if (up) {
+                                        leadForm.setFieldValue(['paymentCollection', name, 'proof'], { name: file.name || 'Proof', url: up.url });
+                                        onSuccess(up, file);
+                                        enqueueSnackbar('Proof uploaded', { variant: 'success' });
+                                      } else onError(new Error('Upload failed'));
+                                    } catch (err) { onError(err); enqueueSnackbar('Upload failed', { variant: 'error' }); }
+                                  }}
+                                >
+                                  <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontSize: 11 }}>
+                                    {(watchedLeadPaymentCollection?.[name]?.proof?.url) ? 'Change' : 'Proof'}
+                                  </Button>
+                                </Upload>
+                                {watchedLeadPaymentCollection?.[name]?.proof?.url && (
+                                  <a href={watchedLeadPaymentCollection[name].proof.url} target="_blank" rel="noopener noreferrer"
+                                    style={{ fontSize: 10, color: '#1890ff', display: 'block', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 60 }}>
+                                    <FileTextOutlined /> View
+                                  </a>
+                                )}
+                              </Col>
+                              <Col xs={4} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 20 }}>
                                 <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
                               </Col>
                             </Row>
                           </div>
                         ))}
                         <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 12 }}>
-                          + Add Payment Entry
+                          + Add New Payment Entry
                         </Button>
                       </>
                     )}
                   </Form.List>
 
-                  {/* Auto-computed payment status from collection entries vs product total */}
+                  {/* Auto-computed payment status (existing + new entries) */}
                   {(() => {
-                    const safeCollection = Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : [];
+                    const existingColl = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                    const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+                    const totalColl = existingColl + newColl;
                     const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
-                    const collTotal = safeCollection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
-                    const recordTotal = Math.round(calcGrandTotal(safeProducts));
-                    const status = recordTotal > 0 && collTotal >= recordTotal
-                      ? 'Paid'
-                      : collTotal > 0
-                      ? 'Partially Paid'
-                      : 'Unpaid';
+                    const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'forwardingCharge', 'forwardingChargeAmount']);
+                    const recordTotal = Math.round(computeRecordGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, forwardingCharge: fvKit.forwardingCharge, forwardingChargeAmount: fvKit.forwardingChargeAmount }));
+                    const balance = Math.max(0, recordTotal - totalColl);
+                    const status = recordTotal > 0 && totalColl >= recordTotal ? 'Paid' : totalColl > 0 ? 'Partially Paid' : 'Unpaid';
                     const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
                     const bg = status === 'Paid' ? 'rgba(82,196,26,0.08)' : status === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
                     return (
                       <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                         <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
                         <Space size={12}>
-                          {collTotal > 0 && recordTotal > 0 && (
-                            <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
-                              ₹{collTotal.toLocaleString()} / ₹{recordTotal.toLocaleString()}
-                            </Text>
+                          {balance > 0 && recordTotal > 0 && (
+                            <Text style={{ fontSize: 12, color: '#fa8c16', fontWeight: 600 }}>₹{balance.toLocaleString()} due</Text>
                           )}
                           <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
                         </Space>
@@ -9172,6 +9818,8 @@ export default function Sales() {
         </Form>
         {/* Raise Complaint Modal — handled via shared modal at end of file */}
       </motion.div>
+      {renderPayEntryModal()}
+    </>
     );
   }
 
@@ -10116,6 +10764,9 @@ export default function Sales() {
           </div>
         )}
       </Modal>
+
+      {/* ── Quick Add Payment Entry Modal ─────────────────────────────────── */}
+      {renderPayEntryModal()}
 
     </div>
   );
