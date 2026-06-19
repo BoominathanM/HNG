@@ -164,7 +164,6 @@ const ORDER_CATEGORIES = {
 
 const PRODUCT_SELECTION_OPTIONS = [
   { value: ORDER_CATEGORIES.PERSONALIZED, label: 'Personalized (Kit + Products)' },
-  { value: ORDER_CATEGORIES.SEPARATE_KIT, label: 'Separate Kit' },
   { value: ORDER_CATEGORIES.SEPARATE_PRODUCT, label: 'Separate Product' },
 ];
 
@@ -8198,11 +8197,12 @@ export default function Sales() {
                       {/* Product Selection first, then Kit selector — always visible */}
                       <Row gutter={16}>
                         <Col xs={24} sm={12}>
-                          <Form.Item label="Product Selection" name="productType" tooltip="Pick any combination. Personalized = a kit customized with extra products; Separate Kit = a kit as-is; Separate Product = individual items. One order can mix all three.">
-                            <SelectWithAdd
+                          <Form.Item label="Product Selection" name="productType" tooltip="Personalized = a kit customized with extra products; Separate Product = individual items. Kits selected via 'Select Kit(s) to Include' can be marked inside personalized packaging using 'Included in Kit Packaging'.">
+                            <Select
                               mode="multiple"
-                              defaultOptions={PRODUCT_SELECTION_OPTIONS}
+                              allowClear
                               placeholder="Select product types (optional)"
+                              options={PRODUCT_SELECTION_OPTIONS}
                             />
                           </Form.Item>
                         </Col>
@@ -8223,8 +8223,9 @@ export default function Sales() {
                       {/* Kit customization specs — only for Personalized kits (a Separate Kit is bought as-is). */}
                       {ptHasPersonalizedUI(watchedProductType) && (
                         <>
-                        <Row gutter={16} style={{ marginTop: 4 }}>
-                          <Col xs={24} sm={6}>
+                        {/* Row 1: All 6 kit config fields in one line */}
+                        <Row gutter={[8, 8]} style={{ marginTop: 4 }}>
+                          <Col xs={12} sm={4}>
                             <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
                               <Select
                                 allowClear showSearch optionFilterProp="label"
@@ -8234,7 +8235,6 @@ export default function Sales() {
                               />
                             </Form.Item>
                           </Col>
-                          {/* Display Unit Type — shown when selected DU has configured subtypes */}
                           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.kitDisplayUnit !== cur.kitDisplayUnit}>
                             {({ getFieldValue, setFieldsValue }) => {
                               const du = getFieldValue('kitDisplayUnit');
@@ -8243,11 +8243,10 @@ export default function Sales() {
                               if (!subtypes.length) return null;
                               const duLabel = duCfg?.label || 'Display Unit';
                               return (
-                                <Col xs={24} sm={6}>
+                                <Col xs={12} sm={4}>
                                   <Form.Item label={`${duLabel} Type`} name="kitDisplayUnitType" style={{ marginBottom: 0 }}>
                                     <Select
-                                      allowClear
-                                      placeholder={`Select ${duLabel} type`}
+                                      allowClear placeholder={`${duLabel} type`}
                                       options={subtypes.map(s => ({ value: s.value, label: s.label }))}
                                       onChange={(val) => {
                                         const st = subtypes.find(s => s.value === val);
@@ -8257,6 +8256,7 @@ export default function Sales() {
                                           if (st.sticker) patch.kitSticker = st.sticker;
                                           if (st.logo) patch.kitLogo = st.logo;
                                           if (st.printing) patch.kitPrinting = st.printing;
+                                          if (st.lamination) patch.kitLamination = st.lamination;
                                           if (st.sellingPrice != null) patch.kitPrice = st.sellingPrice;
                                           setFieldsValue(patch);
                                         }
@@ -8267,42 +8267,61 @@ export default function Sales() {
                               );
                             }}
                           </Form.Item>
-                          <Col xs={24} sm={4}>
+                          <Col xs={12} sm={4}>
                             <Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}>
                               <Input placeholder="e.g. 2.5cm x 2.5cm" />
                             </Form.Item>
                           </Col>
-                          <Col xs={12} sm={4}>
+                          <Col xs={8} sm={4}>
                             <Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}>
                               <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                             </Form.Item>
                           </Col>
-                          <Col xs={12} sm={4}>
+                          <Col xs={8} sm={4}>
                             <Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}>
                               <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                             </Form.Item>
                           </Col>
-                          <Col xs={12} sm={4}>
+                          <Col xs={8} sm={4}>
                             <Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}>
                               <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                             </Form.Item>
                           </Col>
                         </Row>
-                        <Row gutter={16} style={{ marginTop: 12 }} align="bottom">
-                          <Col xs={12} sm={6}>
-                            <Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 0 }} tooltip="Total number of kits ordered. The kit amount is the single kit price multiplied by this quantity.">
+                        {/* Lamination — shown only for box-type display units */}
+                        <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
+                          {({ getFieldValue }) => {
+                            const du = getFieldValue('kitDisplayUnit');
+                            const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                            const isBox = duCfg?.label?.toLowerCase().includes('box') || duCfg?.tabMapping === 'Box';
+                            if (!isBox) return null;
+                            return (
+                              <Row gutter={[8, 0]} style={{ marginTop: 4 }}>
+                                <Col xs={12} sm={6}>
+                                  <Form.Item label="Lamination" name="kitLamination" style={{ marginBottom: 0 }}>
+                                    <Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                  </Form.Item>
+                                </Col>
+                              </Row>
+                            );
+                          }}
+                        </Form.Item>
+                        {/* Row 2: Qty, Price, Total */}
+                        <Row gutter={16} style={{ marginTop: 10 }} align="bottom">
+                          <Col xs={12} sm={5}>
+                            <Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 0 }} tooltip="Total number of kits ordered.">
                               <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kit count" />
                             </Form.Item>
                           </Col>
-                          <Col xs={24} sm={10}>
-                            <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }} tooltip="Auto-filled from the selected display unit type's selling price, or from the kit products sum. You can edit this value.">
-                              <InputNumber min={0} style={{ width: '100%' }} placeholder="Single kit price — editable" formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
+                          <Col xs={24} sm={9}>
+                            <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }} tooltip="Auto-filled from display unit type selling price or kit products sum. Editable.">
+                              <InputNumber min={0} style={{ width: '100%' }} placeholder="Single kit price" formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
                             </Form.Item>
                             <Button type="link" size="small" style={{ padding: 0, marginTop: 2, height: 'auto', fontSize: 12 }} onClick={() => leadForm.setFieldValue('kitPrice', computeKitPriceSum())}>
                               Σ Use sum of kit products (₹{computeKitPriceSum().toLocaleString()})
                             </Button>
                           </Col>
-                          <Col xs={24} sm={8}>
+                          <Col xs={24} sm={10}>
                             <Form.Item noStyle shouldUpdate>
                               {({ getFieldValue }) => {
                                 const single = Number(getFieldValue('kitPrice')) || 0;
@@ -8317,20 +8336,20 @@ export default function Sales() {
                                   <div style={{ padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.06)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.2)' }}>
                                     <div>
                                       <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.6, display: 'block' }}>KIT AMOUNT</Text>
-                                      <Text strong style={{ fontSize: 16, color: '#722ed1' }}>₹{kitAmt.toLocaleString()}</Text>
+                                      <Text strong style={{ fontSize: 15, color: '#722ed1' }}>₹{kitAmt.toLocaleString()}</Text>
                                       <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
                                     </div>
                                     {prodAmt > 0 && (
                                       <>
-                                        <div style={{ borderTop: '1px solid rgba(114,46,209,0.15)', margin: '6px 0' }} />
+                                        <div style={{ borderTop: '1px solid rgba(114,46,209,0.15)', margin: '5px 0' }} />
                                         <div>
                                           <Text style={{ fontSize: 11, fontWeight: 700, color: '#B11E6A', letterSpacing: 0.6, display: 'block' }}>PRODUCT AMOUNT</Text>
-                                          <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>₹{prodAmt.toLocaleString()}</Text>
+                                          <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>₹{prodAmt.toLocaleString()}</Text>
                                         </div>
-                                        <div style={{ borderTop: '1px solid rgba(114,46,209,0.15)', margin: '6px 0' }} />
+                                        <div style={{ borderTop: '1px solid rgba(114,46,209,0.15)', margin: '5px 0' }} />
                                         <div>
-                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#52c41a', letterSpacing: 0.6, display: 'block' }}>TOTAL KIT AMOUNT</Text>
-                                          <Text strong style={{ fontSize: 18, color: '#52c41a' }}>₹{totalKitAmt.toLocaleString()}</Text>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#52c41a', letterSpacing: 0.6, display: 'block' }}>TOTAL</Text>
+                                          <Text strong style={{ fontSize: 17, color: '#52c41a' }}>₹{totalKitAmt.toLocaleString()}</Text>
                                         </div>
                                       </>
                                     )}
@@ -8340,6 +8359,87 @@ export default function Sales() {
                             </Form.Item>
                           </Col>
                         </Row>
+                        {/* Included in Kit Packaging — moved here from Order Details card */}
+                        {watchedSelectedKits.length > 0 && ptHasPersonalized(watchedProductType) && (() => {
+                          const allSepProdOpts = (watchedLeadProducts || [])
+                            .filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName))
+                            .map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' }))
+                            .filter(o => o.value);
+                          return (
+                            <div style={{ marginTop: 12 }}>
+                              <Divider style={{ margin: '8px 0 10px', fontSize: 12, color: '#722ed1', borderColor: 'rgba(114,46,209,0.2)' }}>
+                                <Space><AppstoreOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1', fontWeight: 600 }}>Included in Kit Packaging</span></Space>
+                              </Divider>
+                              {watchedSelectedKits.map((kitId, kitIndex) => {
+                                const kitDef = kits.find(k => k._id === kitId);
+                                const kitLabel = kitDef?.kitName || 'Personalized Kit';
+                                const otherKitOpts = watchedSelectedKits
+                                  .map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; })
+                                  .filter(Boolean);
+                                const groupedOpts = [
+                                  ...(otherKitOpts.length > 0 ? [{ label: 'Kits', options: otherKitOpts }] : []),
+                                  ...(allSepProdOpts.length > 0 ? [{ label: 'Separate Products', options: allSepProdOpts }] : []),
+                                ];
+                                return (
+                                  <div key={kitId} style={{ marginBottom: 10 }}>
+                                    {watchedSelectedKits.length > 1 && (
+                                      <Text style={{ fontSize: 12, fontWeight: 600, color: '#722ed1', display: 'block', marginBottom: 6 }}>{kitLabel}</Text>
+                                    )}
+                                    <Form.Item name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 6 }} tooltip="Items physically inside this kit's packaging">
+                                      <Select mode="multiple" allowClear showSearch optionFilterProp="label"
+                                        placeholder={groupedOpts.length > 0 ? 'Select kits / products inside this kit packaging' : 'Add separate products or kits first'}
+                                        options={groupedOpts}
+                                      />
+                                    </Form.Item>
+                                    <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes) || JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludesQty) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludesQty)}>
+                                      {({ getFieldValue }) => {
+                                        const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
+                                        if (!sel.length) return null;
+                                        const overallQty = Number(getFieldValue(['kitOrders', kitIndex, 'overallQty'])) || Number(getFieldValue('kitOverallQty')) || 1;
+                                        return (
+                                          <div style={{ padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.15)' }}>
+                                            <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6 }}>QTY PER KIT × {overallQty} kit{overallQty > 1 ? 's' : ''} = TOTAL INCLUDED</Text>
+                                            {sel.map(id => {
+                                              const kMatch = kits.find(k => k._id === id);
+                                              const sProd = (watchedLeadProducts || []).find(p => (p.name || p.itemName) === id);
+                                              const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
+                                              const isKit = Boolean(kMatch);
+                                              const perKitQty = Number(getFieldValue(['kitOrders', kitIndex, 'kitIncludesQty', id])) || 1;
+                                              const totalIncluded = perKitQty * overallQty;
+                                              // Remaining standalone qty after deducting kit inclusions
+                                              const standaloneQty = isKit
+                                                ? (Number(watchedKitOrders.find(ko => ko?.kitId === id)?.overallQty) || 0)
+                                                : (Number((watchedLeadProducts || []).find(p => (p.name || p.itemName) === id)?.qty) || 0);
+                                              const netQty = Math.max(0, standaloneQty - totalIncluded);
+                                              return (
+                                                <Row key={id} align="middle" gutter={8} style={{ marginBottom: 6 }}>
+                                                  <Col flex="1">
+                                                    <Text style={{ fontSize: 12 }}>{label}</Text>
+                                                    {standaloneQty > 0 && (
+                                                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                                                        Standalone: {standaloneQty} → Net: <Text strong style={{ color: netQty < 0 ? '#ff4d4f' : '#52c41a' }}>{netQty}</Text>
+                                                        {' '}({perKitQty} × {overallQty} = {totalIncluded} inside kits)
+                                                      </Text>
+                                                    )}
+                                                  </Col>
+                                                  <Col>
+                                                    <Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle>
+                                                      <InputNumber min={1} size="small" style={{ width: 70 }} />
+                                                    </Form.Item>
+                                                  </Col>
+                                                </Row>
+                                              );
+                                            })}
+                                          </div>
+                                        );
+                                      }}
+                                    </Form.Item>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                         </>
                       )}
                     </>
@@ -8463,6 +8563,7 @@ export default function Sales() {
                                                     if (st.sticker) leadForm.setFieldValue(['kitOrders', kitIndex, 'sticker'], st.sticker);
                                                     if (st.logo) leadForm.setFieldValue(['kitOrders', kitIndex, 'logo'], st.logo);
                                                     if (st.printing) leadForm.setFieldValue(['kitOrders', kitIndex, 'printing'], st.printing);
+                                                    if (st.lamination) leadForm.setFieldValue(['kitOrders', kitIndex, 'lamination'], st.lamination);
                                                     if (st.sellingPrice != null) leadForm.setFieldValue(['kitOrders', kitIndex, 'kitPrice'], st.sellingPrice);
                                                   }
                                                 }}
@@ -8877,9 +8978,9 @@ export default function Sales() {
                         >
                           {/* Hidden kitId so the array stays in sync */}
                           <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
-                          {/* Per-kit Display Unit + Type (auto-fills size/sticker/logo/printing/price) */}
-                          <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
-                            <Col xs={24} sm={5}>
+                          {/* Row 1: All 6 kit config fields in one line */}
+                          <Row gutter={[8, 8]} align="bottom" style={{ marginBottom: 10 }}>
+                            <Col xs={12} sm={4}>
                               <Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 0 }}>
                                 <Select
                                   allowClear showSearch optionFilterProp="label" placeholder="Select display unit"
@@ -8896,7 +8997,7 @@ export default function Sales() {
                                 if (!subtypes.length) return null;
                                 const duLabel = duCfg?.label || 'Display Unit';
                                 return (
-                                  <Col xs={24} sm={5}>
+                                  <Col xs={12} sm={4}>
                                     <Form.Item label={`${duLabel} Type`} name={['kitOrders', kitIndex, 'displayUnitType']} style={{ marginBottom: 0 }}>
                                       <Select
                                         allowClear placeholder={`${duLabel} type`}
@@ -8908,6 +9009,7 @@ export default function Sales() {
                                             if (st.sticker) leadForm.setFieldValue(['kitOrders', kitIndex, 'sticker'], st.sticker);
                                             if (st.logo) leadForm.setFieldValue(['kitOrders', kitIndex, 'logo'], st.logo);
                                             if (st.printing) leadForm.setFieldValue(['kitOrders', kitIndex, 'printing'], st.printing);
+                                            if (st.lamination) leadForm.setFieldValue(['kitOrders', kitIndex, 'lamination'], st.lamination);
                                             if (st.sellingPrice != null) leadForm.setFieldValue(['kitOrders', kitIndex, 'kitPrice'], st.sellingPrice);
                                           }
                                         }}
@@ -8922,31 +9024,49 @@ export default function Sales() {
                                 <Input placeholder="e.g. 2.5cm x 2.5cm" />
                               </Form.Item>
                             </Col>
-                            <Col xs={12} sm={4}>
-                              <Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}>
-                                <InputNumber min={1} style={{ width: '100%' }} placeholder="Total qty" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={12} sm={4}>
+                            <Col xs={8} sm={4}>
                               <Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}>
                                 <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                               </Form.Item>
                             </Col>
-                            <Col xs={12} sm={4}>
+                            <Col xs={8} sm={4}>
                               <Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
                                 <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                               </Form.Item>
                             </Col>
-                          </Row>
-                          {/* Per-kit Printing + Kit Price (auto-summed from this kit's products, editable) */}
-                          <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
-                            <Col xs={12} sm={5}>
+                            <Col xs={8} sm={4}>
                               <Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}>
                                 <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                               </Form.Item>
                             </Col>
+                          </Row>
+                          {/* Lamination — shown only for box-type display units */}
+                          <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
+                            {({ getFieldValue }) => {
+                              const du = getFieldValue(['kitOrders', kitIndex, 'displayUnit']);
+                              const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                              const isBox = duCfg?.label?.toLowerCase().includes('box') || duCfg?.tabMapping === 'Box';
+                              if (!isBox) return null;
+                              return (
+                                <Row gutter={[8, 0]} style={{ marginBottom: 8 }}>
+                                  <Col xs={12} sm={6}>
+                                    <Form.Item label="Lamination" name={['kitOrders', kitIndex, 'lamination']} style={{ marginBottom: 0 }}>
+                                      <Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                    </Form.Item>
+                                  </Col>
+                                </Row>
+                              );
+                            }}
+                          </Form.Item>
+                          {/* Row 2: Overall Qty + Kit Price + Total (kit × price + products subtotal) */}
+                          <Row gutter={12} align="bottom" style={{ marginBottom: 14 }}>
+                            <Col xs={12} sm={5}>
+                              <Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}>
+                                <InputNumber min={1} style={{ width: '100%' }} placeholder="Total qty" />
+                              </Form.Item>
+                            </Col>
                             <Col xs={24} sm={9}>
-                              <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }} tooltip="Auto-filled from display unit type selling price, or sum of kit products. You can edit this value.">
+                              <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }} tooltip="Auto-filled from display unit type selling price, or sum of kit products. Editable.">
                                 <InputNumber min={0} style={{ width: '100%' }} placeholder="Auto-summed — editable" formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
                               </Form.Item>
                               <Button type="link" size="small" style={{ padding: 0, marginTop: 2, height: 'auto', fontSize: 12 }} onClick={() => leadForm.setFieldValue(['kitOrders', kitIndex, 'kitPrice'], computeKitPriceForKit(kitId, kitIndex))}>
@@ -8957,105 +9077,37 @@ export default function Sales() {
                               {(() => {
                                 const single = Number(watchedKitOrders[kitIndex]?.kitPrice) || 0;
                                 const qty = Number(watchedKitOrders[kitIndex]?.overallQty) || 1;
-                                const total = single * qty;
+                                const kitAmt = single * qty;
+                                const prodSubtotal = (watchedLeadProducts || [])
+                                  .filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && kitIndex === 0)))
+                                  .reduce((s, p) => s + Math.round((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100)), 0);
+                                const total = kitAmt + prodSubtotal;
                                 return (
                                   <div style={{ padding: '8px 14px', background: isDark ? 'rgba(24,144,255,0.1)' : 'rgba(24,144,255,0.06)', borderRadius: 10, border: '1px solid rgba(24,144,255,0.2)' }}>
-                                    <Text style={{ fontSize: 11, fontWeight: 700, color: '#1890ff', letterSpacing: 0.6, display: 'block' }}>KIT AMOUNT</Text>
-                                    <Text strong style={{ fontSize: 18, color: '#1890ff' }}>₹{total.toLocaleString()}</Text>
-                                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
+                                    <div>
+                                      <Text style={{ fontSize: 11, fontWeight: 700, color: '#1890ff', letterSpacing: 0.6, display: 'block' }}>KIT AMOUNT</Text>
+                                      <Text strong style={{ fontSize: 15, color: '#1890ff' }}>₹{kitAmt.toLocaleString()}</Text>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
+                                    </div>
+                                    {prodSubtotal > 0 && (
+                                      <>
+                                        <div style={{ borderTop: '1px solid rgba(24,144,255,0.15)', margin: '5px 0' }} />
+                                        <div>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#B11E6A', letterSpacing: 0.6, display: 'block' }}>PRODUCTS</Text>
+                                          <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>₹{prodSubtotal.toLocaleString()}</Text>
+                                        </div>
+                                        <div style={{ borderTop: '1px solid rgba(24,144,255,0.15)', margin: '5px 0' }} />
+                                        <div>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#52c41a', letterSpacing: 0.6, display: 'block' }}>TOTAL</Text>
+                                          <Text strong style={{ fontSize: 17, color: '#52c41a' }}>₹{total.toLocaleString()}</Text>
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
                                 );
                               })()}
                             </Col>
                           </Row>
-
-                          {/* ── Included in Kit Packaging (Personalized only) ── */}
-                          {ptHasPersonalized(watchedProductType) && (() => {
-                            // All selected kits in this lead (including the current one)
-                            const otherKitOpts = effectiveKitIds
-                              .map(id => {
-                                const k = kits.find(kk => kk._id === id);
-                                return k ? { value: id, label: k.kitName } : null;
-                              })
-                              .filter(Boolean);
-                            // Separate (non-kit) products currently in the form, including any
-                            // kit-ingredient products the user added again as a separate product
-                            const sepProdOpts = (watchedLeadProducts || [])
-                              .filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName))
-                              .map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' }))
-                              .filter(o => o.value);
-                            const groupedOpts = [
-                              ...(otherKitOpts.length > 0 ? [{ label: 'Kits', options: otherKitOpts }] : []),
-                              ...(sepProdOpts.length > 0 ? [{ label: 'Separate Products', options: sepProdOpts }] : []),
-                            ];
-                            const flatOpts = [...otherKitOpts, ...sepProdOpts];
-                            return (
-                              <>
-                                <Divider style={{ margin: '4px 0 10px', fontSize: 11, color: '#722ed1', borderColor: 'rgba(114,46,209,0.2)' }}>
-                                  <Space><AppstoreOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1', fontWeight: 600 }}>Included in Kit Packaging</span></Space>
-                                </Divider>
-                                <Form.Item
-                                  name={['kitOrders', kitIndex, 'kitIncludes']}
-                                  tooltip="Select which kits or separate products are physically placed inside this kit's packaging."
-                                  style={{ marginBottom: 8 }}
-                                >
-                                  <Select
-                                    mode="multiple"
-                                    allowClear
-                                    showSearch
-                                    optionFilterProp="label"
-                                    placeholder={
-                                      flatOpts.length > 0
-                                        ? 'Select kits / products to place inside this kit'
-                                        : 'Select other kits or add separate products first'
-                                    }
-                                    options={groupedOpts}
-                                  />
-                                </Form.Item>
-                                <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
-                                  {({ getFieldValue }) => {
-                                    const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
-                                    if (!sel.length) return null;
-                                    return (
-                                      <div style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
-                                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
-                                        {sel.map(id => {
-                                          const kMatch = kits.find(k => k._id === id);
-                                          const sProd = (watchedLeadProducts || []).find(p => (p.name || p.itemName) === id);
-                                          const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
-                                          return (
-                                            <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
-                                              <Col flex="1"><Text style={{ fontSize: 12 }}>{label}</Text></Col>
-                                              <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
-                                            </Row>
-                                          );
-                                        })}
-                                      </div>
-                                    );
-                                  }}
-                                </Form.Item>
-                                <Form.Item noStyle shouldUpdate={(prev, cur) =>
-                                  prev.kitOrders?.[kitIndex]?.kitIncludes !== cur.kitOrders?.[kitIndex]?.kitIncludes
-                                }>
-                                  {({ getFieldValue }) => {
-                                    const includes = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
-                                    if (includes.length === 0) return null;
-                                    const kitSelected = includes.filter(v => otherKitOpts.some(o => o.value === v));
-                                    const sepSelected = includes.filter(v => sepProdOpts.some(o => o.value === v));
-                                    return (
-                                      <div style={{ marginBottom: 14, padding: '10px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', border: '1px solid rgba(114,46,209,0.2)', borderRadius: 10 }}>
-                                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6, letterSpacing: 0.6 }}>
-                                          INSIDE PACKAGING ({includes.length})
-                                        </Text>
-                                        {kitSelected.map((n, i) => <Tag key={`k${i}`} color="purple" style={{ margin: '2px 2px 2px 0' }}>{kits.find(k => k._id === n)?.kitName || n}</Tag>)}
-                                        {sepSelected.map((n, i) => <Tag key={`s${i}`} color="orange" style={{ margin: '2px 2px 2px 0' }}>{n}</Tag>)}
-                                      </div>
-                                    );
-                                  }}
-                                </Form.Item>
-                              </>
-                            );
-                          })()}
 
                           <Form.List name="products">
                             {(fields, { add, remove }) => {

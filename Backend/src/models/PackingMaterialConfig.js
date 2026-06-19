@@ -7,6 +7,7 @@ const subtypeSchema = new mongoose.Schema({
   sticker: { type: String, enum: ['YES', 'NO', ''], default: '' },
   logo: { type: String, enum: ['YES', 'NO', ''], default: '' },
   printing: { type: String, enum: ['YES', 'NO', ''], default: '' },
+  lamination: { type: String, enum: ['YES', 'NO', ''], default: '' },
   purchasePrice: { type: Number, default: 0 },
   marginAmount: { type: Number, default: 0 },
   sellingPrice: { type: Number, default: 0 },

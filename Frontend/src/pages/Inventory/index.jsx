@@ -1539,6 +1539,7 @@ export default function Inventory() {
                                     {s.sticker && <Tag color={s.sticker === 'YES' ? 'green' : 'red'} style={{ fontSize: 10, borderRadius: 10, margin: 0 }}>Sticker: {s.sticker}</Tag>}
                                     {s.logo && <Tag color={s.logo === 'YES' ? 'green' : 'red'} style={{ fontSize: 10, borderRadius: 10, margin: 0 }}>Logo: {s.logo}</Tag>}
                                     {s.printing && <Tag color={s.printing === 'YES' ? 'green' : 'red'} style={{ fontSize: 10, borderRadius: 10, margin: 0 }}>Printing: {s.printing}</Tag>}
+                                    {s.lamination && <Tag color={s.lamination === 'YES' ? 'blue' : 'default'} style={{ fontSize: 10, borderRadius: 10, margin: 0 }}>Lamination: {s.lamination}</Tag>}
                                   </div>
                                   <div style={{ marginTop: 4, fontSize: 11, color: '#555' }}>
                                     Purchase: <b>₹{s.purchasePrice || 0}</b> &nbsp;|&nbsp; Margin: <b>₹{s.marginAmount || 0}</b> &nbsp;|&nbsp; Selling: <b style={{ color: '#722ed1' }}>₹{s.sellingPrice || 0}</b>
@@ -1667,23 +1668,40 @@ export default function Inventory() {
                         <Button type="text" danger size="small" icon={<MinusOutlined />} onClick={() => remove(name)} />
                       </Col>
                     </Row>
-                    <Row gutter={8}>
-                      <Col xs={8}>
-                        <Form.Item name={[name, 'sticker']} label="Sticker" style={{ marginBottom: 6 }}>
-                          <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={8}>
-                        <Form.Item name={[name, 'logo']} label="Logo" style={{ marginBottom: 6 }}>
-                          <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={8}>
-                        <Form.Item name={[name, 'printing']} label="Printing" style={{ marginBottom: 6 }}>
-                          <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
-                        </Form.Item>
-                      </Col>
-                    </Row>
+                    <Form.Item noStyle shouldUpdate={(p, c) => p.label !== c.label || p.tabMapping !== c.tabMapping}>
+                      {({ getFieldValue }) => {
+                        const lbl = getFieldValue('label') || '';
+                        const tab = getFieldValue('tabMapping');
+                        const isBox = lbl.toLowerCase().includes('box') || tab === 'Box';
+                        const colSpan = isBox ? 6 : 8;
+                        return (
+                          <Row gutter={8}>
+                            <Col xs={colSpan}>
+                              <Form.Item name={[name, 'sticker']} label="Sticker" style={{ marginBottom: 6 }}>
+                                <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={colSpan}>
+                              <Form.Item name={[name, 'logo']} label="Logo" style={{ marginBottom: 6 }}>
+                                <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={colSpan}>
+                              <Form.Item name={[name, 'printing']} label="Printing" style={{ marginBottom: 6 }}>
+                                <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
+                            {isBox && (
+                              <Col xs={6}>
+                                <Form.Item name={[name, 'lamination']} label="Lamination" style={{ marginBottom: 6 }}>
+                                  <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                </Form.Item>
+                              </Col>
+                            )}
+                          </Row>
+                        );
+                      }}
+                    </Form.Item>
                     <Row gutter={8}>
                       <Col xs={8}>
                         <Form.Item name={[name, 'purchasePrice']} label="Purchase Price (₹)" style={{ marginBottom: 0 }}>
@@ -1705,7 +1723,7 @@ export default function Inventory() {
                 ))}
                 <Button
                   type="dashed" size="small" icon={<PlusOutlined />}
-                  onClick={() => add({ label: '', sticker: '', logo: '', printing: '', purchasePrice: 0, marginAmount: 0, sellingPrice: 0 })}
+                  onClick={() => add({ label: '', sticker: '', logo: '', printing: '', lamination: '', purchasePrice: 0, marginAmount: 0, sellingPrice: 0 })}
                   block
                   style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}
                 >
