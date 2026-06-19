@@ -11,10 +11,11 @@ exports.getAll = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { type, label, value, tabMapping } = req.body;
+    const { type, label, value, tabMapping, subtypes } = req.body;
     const item = await PackingMaterialConfig.create({
       type, label, value,
       tabMapping: tabMapping || null,
+      subtypes: subtypes || [],
       createdBy: req.user?._id,
     });
     res.status(201).json({ success: true, data: item });
@@ -26,10 +27,10 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
-    const { label, value, tabMapping, type } = req.body;
+    const { label, value, tabMapping, subtypes } = req.body;
     const item = await PackingMaterialConfig.findByIdAndUpdate(
       req.params.id,
-      { label, value, tabMapping: tabMapping ?? null },
+      { label, value, tabMapping: tabMapping ?? null, subtypes: subtypes || [] },
       { new: true, runValidators: true },
     );
     if (!item) return res.status(404).json({ success: false, message: 'Not found' });

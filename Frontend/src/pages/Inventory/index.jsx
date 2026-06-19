@@ -449,12 +449,19 @@ export default function Inventory() {
     setEditingPackingConfig(item);
     setPackingConfigModal(true);
     packingConfigForm.resetFields();
-    if (item) packingConfigForm.setFieldsValue({ label: item.label, value: item.value, tabMapping: item.tabMapping });
+    if (item) packingConfigForm.setFieldsValue({ label: item.label, value: item.value, tabMapping: item.tabMapping, subtypes: item.subtypes || [] });
   };
 
   const handleSavePackingConfig = async () => {
     try {
       const values = await packingConfigForm.validateFields();
+      // Auto-generate value for each subtype from its label
+      if (values.subtypes) {
+        values.subtypes = values.subtypes.map(s => ({
+          ...s,
+          value: s.label.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''),
+        }));
+      }
       if (editingPackingConfig) {
         await updatePackingConfig({ id: editingPackingConfig._id, type: packingConfigType, ...values }).unwrap();
         enqueueSnackbar('Updated successfully', { variant: 'success' });
@@ -1518,6 +1525,32 @@ export default function Inventory() {
                     dataSource={displayUnits.map(d => ({ ...d, key: d._id }))}
                     pagination={false}
                     style={{ borderRadius: 10, overflow: 'hidden' }}
+                    expandable={{
+                      expandedRowRender: row => (
+                        <div style={{ padding: '8px 12px' }}>
+                          {(row.subtypes || []).length === 0 ? (
+                            <Text type="secondary" style={{ fontSize: 12 }}>No types configured for this display unit.</Text>
+                          ) : (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                              {(row.subtypes || []).map((s, i) => (
+                                <div key={i} style={{ background: 'rgba(177,30,106,0.04)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 8, padding: '6px 12px', minWidth: 180 }}>
+                                  <Text strong style={{ fontSize: 12, color: '#B11E6A', display: 'block' }}>{s.label}{s.size ? <Text type="secondary" style={{ fontSize: 11, fontWeight: 400, marginLeft: 6 }}>({s.size})</Text> : null}</Text>
+                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                                    {s.sticker && <Tag color={s.sticker === 'YES' ? 'green' : 'red'} style={{ fontSize: 10, borderRadius: 10, margin: 0 }}>Sticker: {s.sticker}</Tag>}
+                                    {s.logo && <Tag color={s.logo === 'YES' ? 'green' : 'red'} style={{ fontSize: 10, borderRadius: 10, margin: 0 }}>Logo: {s.logo}</Tag>}
+                                    {s.printing && <Tag color={s.printing === 'YES' ? 'green' : 'red'} style={{ fontSize: 10, borderRadius: 10, margin: 0 }}>Printing: {s.printing}</Tag>}
+                                  </div>
+                                  <div style={{ marginTop: 4, fontSize: 11, color: '#555' }}>
+                                    Purchase: <b>₹{s.purchasePrice || 0}</b> &nbsp;|&nbsp; Margin: <b>₹{s.marginAmount || 0}</b> &nbsp;|&nbsp; Selling: <b style={{ color: '#722ed1' }}>₹{s.sellingPrice || 0}</b>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ),
+                      rowExpandable: () => true,
+                    }}
                     columns={[
                       { title: 'Label', dataIndex: 'label', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
                       { title: 'Value', dataIndex: 'value', render: v => <Tag style={{ borderRadius: 12 }}>{v}</Tag> },
@@ -1527,6 +1560,11 @@ export default function Inventory() {
                         render: v => v
                           ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
                           : <Text type="secondary">—</Text>,
+                      },
+                      {
+                        title: 'Types',
+                        dataIndex: 'subtypes',
+                        render: v => <Tag color="geekblue" style={{ borderRadius: 10 }}>{(v || []).length} type{(v || []).length !== 1 ? 's' : ''}</Tag>,
                       },
                       {
                         title: 'Action', key: 'action', width: 100,
@@ -1549,62 +1587,6 @@ export default function Inventory() {
                   )}
                 </Card>
 
-                {/* Packing Materials */}
-                <Card
-                  style={{ borderRadius: 14, border: `1px solid ${borderColor}`, background: cardBg }}
-                  styles={{ body: { padding: '16px 20px' } }}
-                  title={
-                    <Space>
-                      <ContainerOutlined style={{ color: '#B11E6A' }} />
-                      <Text strong style={{ color: textColor }}>Packing Materials</Text>
-                      <Tag color="magenta" style={{ borderRadius: 20 }}>{packingMaterials.length}</Tag>
-                    </Space>
-                  }
-                  extra={
-                    <Button
-                      type="primary" size="small" icon={<PlusOutlined />}
-                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                      onClick={() => openPackingConfigModal('packingMaterial')}
-                    >
-                      Add Packing Material
-                    </Button>
-                  }
-                >
-                  <Table
-                    size="small"
-                    dataSource={packingMaterials.map(p => ({ ...p, key: p._id }))}
-                    pagination={false}
-                    style={{ borderRadius: 10, overflow: 'hidden' }}
-                    columns={[
-                      { title: 'Label', dataIndex: 'label', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
-                      { title: 'Value', dataIndex: 'value', render: v => <Tag style={{ borderRadius: 12 }}>{v}</Tag> },
-                      {
-                        title: 'Operations Tab',
-                        dataIndex: 'tabMapping',
-                        render: v => v
-                          ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
-                          : <Text type="secondary">—</Text>,
-                      },
-                      {
-                        title: 'Action', key: 'action', width: 100,
-                        render: (_, row) => (
-                          <Space size={6}>
-                            <Button size="small" icon={<EditOutlined />} onClick={() => openPackingConfigModal('packingMaterial', row)} />
-                            <Button
-                              size="small" danger icon={<DeleteOutlined />}
-                              onClick={() => handleDeletePackingConfig(row._id)}
-                            />
-                          </Space>
-                        ),
-                      },
-                    ]}
-                  />
-                  {packingMaterials.length === 0 && (
-                    <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                      <Text type="secondary">No packing materials configured. Click "Add Packing Material" to start.</Text>
-                    </div>
-                  )}
-                </Card>
 
               </div>
             ),
@@ -1622,29 +1604,34 @@ export default function Inventory() {
           <Space>
             <SettingOutlined style={{ color: '#B11E6A' }} />
             <span style={{ fontWeight: 700 }}>
-              {editingPackingConfig ? 'Edit' : 'Add'} {packingConfigType === 'displayUnit' ? 'Display Unit' : 'Packing Material'}
+              {editingPackingConfig ? 'Edit' : 'Add'} Display Unit
             </span>
           </Space>
         }
         onCancel={() => { setPackingConfigModal(false); setEditingPackingConfig(null); }}
         onOk={handleSavePackingConfig}
         okText={editingPackingConfig ? 'Update' : 'Add'}
-        width={420}
+        width={660}
         okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto', paddingRight: 4 } }}
       >
         <Form form={packingConfigForm} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item label="Label" name="label" rules={[{ required: true, message: 'Label is required' }]}>
-            <Input placeholder="e.g. Ziplock Pouch" />
-          </Form.Item>
-          <Form.Item label="Value" name="value" rules={[{ required: true, message: 'Value is required' }]}>
-            <Input placeholder="e.g. ZIPLOCK_POUCH" />
-          </Form.Item>
+          <Row gutter={12}>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Label" name="label" rules={[{ required: true, message: 'Label is required' }]}>
+                <Input placeholder="e.g. Box" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Value" name="value" rules={[{ required: true, message: 'Value is required' }]}>
+                <Input placeholder="e.g. BOX" />
+              </Form.Item>
+            </Col>
+          </Row>
           <Form.Item
             label="Operations Tab Mapping"
             name="tabMapping"
-            tooltip={packingConfigType === 'displayUnit'
-              ? 'Which Operations tab orders using this display unit appear in'
-              : 'Which Operations tab orders using this packing material appear in'}
+            tooltip="Which Operations tab orders using this display unit appear in"
           >
             <Select allowClear placeholder="Select tab (optional)">
               <Option value="Sticker">Sticker</Option>
@@ -1652,6 +1639,81 @@ export default function Inventory() {
               <Option value="Ziplock">Ziplock (Frosted)</Option>
             </Select>
           </Form.Item>
+
+          <Divider style={{ margin: '8px 0 12px' }}>
+            <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>Types & Pricing</Text>
+          </Divider>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10 }}>
+            Add sub-types for this display unit (e.g. "Small Box", "Large Box") with their sticker/logo/printing options and pricing.
+          </Text>
+
+          <Form.List name="subtypes">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map(({ key, name }) => (
+                  <div key={key} style={{ background: 'rgba(177,30,106,0.03)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+                    <Row gutter={8} align="middle" style={{ marginBottom: 8 }}>
+                      <Col flex="1">
+                        <Form.Item name={[name, 'label']} rules={[{ required: true, message: 'Type label required' }]} style={{ marginBottom: 0 }}>
+                          <Input size="small" placeholder="Type label (e.g. Small Box)" style={{ fontWeight: 600 }} />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={10} sm={8}>
+                        <Form.Item name={[name, 'size']} style={{ marginBottom: 0 }}>
+                          <Input size="small" placeholder="Size (e.g. 2.5×2.5cm)" />
+                        </Form.Item>
+                      </Col>
+                      <Col>
+                        <Button type="text" danger size="small" icon={<MinusOutlined />} onClick={() => remove(name)} />
+                      </Col>
+                    </Row>
+                    <Row gutter={8}>
+                      <Col xs={8}>
+                        <Form.Item name={[name, 'sticker']} label="Sticker" style={{ marginBottom: 6 }}>
+                          <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8}>
+                        <Form.Item name={[name, 'logo']} label="Logo" style={{ marginBottom: 6 }}>
+                          <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8}>
+                        <Form.Item name={[name, 'printing']} label="Printing" style={{ marginBottom: 6 }}>
+                          <Select size="small" allowClear placeholder="—" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                    <Row gutter={8}>
+                      <Col xs={8}>
+                        <Form.Item name={[name, 'purchasePrice']} label="Purchase Price (₹)" style={{ marginBottom: 0 }}>
+                          <InputNumber size="small" min={0} style={{ width: '100%' }} placeholder="0" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8}>
+                        <Form.Item name={[name, 'marginAmount']} label="Margin Amount (₹)" style={{ marginBottom: 0 }}>
+                          <InputNumber size="small" min={0} style={{ width: '100%' }} placeholder="0" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8}>
+                        <Form.Item name={[name, 'sellingPrice']} label="Selling Price (₹)" style={{ marginBottom: 0 }}>
+                          <InputNumber size="small" min={0} style={{ width: '100%' }} placeholder="0" />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </div>
+                ))}
+                <Button
+                  type="dashed" size="small" icon={<PlusOutlined />}
+                  onClick={() => add({ label: '', sticker: '', logo: '', printing: '', purchasePrice: 0, marginAmount: 0, sellingPrice: 0 })}
+                  block
+                  style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}
+                >
+                  Add Type
+                </Button>
+              </>
+            )}
+          </Form.List>
         </Form>
       </Modal>
 
