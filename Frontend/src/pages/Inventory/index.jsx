@@ -139,6 +139,15 @@ const PRODUCT_FIELD_DEFS = {
   ],
 };
 
+// Generic attribute fields shown when the item name doesn't match any known product type.
+const GENERIC_PRODUCT_FIELD_DEFS = [
+  { key: 'fragrance', label: 'Fragrance', field: 'generic_fragrance', options: [] },
+  { key: 'material', label: 'Material', field: 'generic_material', options: [] },
+  { key: 'brand', label: 'Brand', field: 'generic_brand', options: [] },
+  { key: 'size', label: 'Size', field: 'generic_size', options: [] },
+  { key: 'color', label: 'Color', field: 'generic_color', options: [] },
+];
+
 const getProductTypeKey = (name) => {
   const n = (name || '').toLowerCase().trim();
   if (n.includes('soap')) return 'soap';
@@ -2173,28 +2182,31 @@ export default function Inventory() {
           </Row>
 
           {/* ── Dynamic product-type attributes ── */}
-          {productFieldDefs.length > 0 && (
-            <>
-              <Divider style={{ margin: '4px 0 12px' }}>
-                <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>Product Attributes</Text>
-              </Divider>
-              <Row gutter={16}>
-                {productFieldDefs.map((fd) => (
-                  <Col xs={24} sm={12} key={fd.key}>
-                    <Form.Item label={fd.label} name={['productAttrs', fd.key]}>
-                      <SelectWithAdd
-                        field={fd.field}
-                        mode={fd.mode}
-                        defaultOptions={fd.usePackingConfig ? packingMaterials.map(c => ({ value: c.value, label: c.label })) : fd.options}
-                        placeholder={`Select / Add ${fd.label.toLowerCase()}`}
-                        allowClear
-                      />
-                    </Form.Item>
-                  </Col>
-                ))}
-              </Row>
-            </>
-          )}
+          {(() => {
+            const activeDefs = productFieldDefs.length > 0 ? productFieldDefs : GENERIC_PRODUCT_FIELD_DEFS;
+            return (
+              <>
+                <Divider style={{ margin: '4px 0 12px' }}>
+                  <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>Product Attributes</Text>
+                </Divider>
+                <Row gutter={16}>
+                  {activeDefs.map((fd) => (
+                    <Col xs={24} sm={12} key={fd.key}>
+                      <Form.Item label={fd.label} name={['productAttrs', fd.key]}>
+                        <SelectWithAdd
+                          field={fd.field}
+                          mode={fd.mode}
+                          defaultOptions={fd.usePackingConfig ? packingMaterials.map(c => ({ value: c.value, label: c.label })) : fd.options}
+                          placeholder={`Select / Add ${fd.label.toLowerCase()}`}
+                          allowClear
+                        />
+                      </Form.Item>
+                    </Col>
+                  ))}
+                </Row>
+              </>
+            );
+          })()}
         </Form>
       </Modal>
 
