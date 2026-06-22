@@ -32,7 +32,7 @@ const orderSchema = new mongoose.Schema({
     qty: Number,
     lineTotal: Number,
     // ─── Operations / packaging fields ───
-    logoType: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'None', ''], default: '' },
+    logoType: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'None', ''], default: '' },
     // Normalize legacy/lowercase values (e.g. 'yes'/'no') to the enum BEFORE validation runs,
     // so converting older quotations/negotiations whose items stored 'yes' doesn't 500.
     sticker: {
@@ -75,8 +75,8 @@ const orderSchema = new mongoose.Schema({
     kitName: String,
     kitType: String,
   }],
-  // Resolved from selected display unit's tabMapping (Box | Ziplock | Sticker)
-  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', ''], default: '' },
+  // Resolved from selected display unit's tabMapping (Box | Ziplock | Sticker | Butter Paper)
+  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', 'Butter Paper', ''], default: '' },
   // Logo branding
   logoRequired: { type: Boolean, default: false },
   logoUrl: String,

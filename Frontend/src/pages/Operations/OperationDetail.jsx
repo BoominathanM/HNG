@@ -115,6 +115,9 @@ export default function OperationDetail() {
       frosted_ziplock: vendors
         .filter((v) => v.supplierType === 'Ziplock')
         .map((v) => ({ value: v._id, label: v.name })),
+      butter_paper: vendors
+        .filter((v) => v.supplierType === 'Butter Paper')
+        .map((v) => ({ value: v._id, label: v.name })),
     };
   }, [printingVendorData]);
   const invMap = useMemo(() => {
@@ -173,8 +176,8 @@ export default function OperationDetail() {
 
   const allOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
-    hotelName: o.clientName || '—',
-    hotelLogo: o.clientName || '—', salesPerson: o.salesPerson || o.assignedTo?.fullName || '—',
+    hotelName: o.clientName || '-',
+    hotelLogo: o.clientName || '-', salesPerson: o.salesPerson || o.assignedTo?.fullName || '-',
     createdAt: o.createdAt, orderType: o.orderType || 'Sticker',
     clientApproval: o.clientApproval || 'Waiting',
     designStatus: o.designStatus || 'Not Started',
@@ -212,18 +215,31 @@ export default function OperationDetail() {
       return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, logoType };
     }),
     readiness: o.readiness || {},
-    location: o.location || '', phone: o.clientPhone || o.phone || '',
-    contactPerson: o.contactPerson || '',
-    billingName: o.billingName || o.clientName || '',
-    gstNumber: o.gstNumber || '',
-    gstPercent: o.gstPercent,
-    salesPerson: o.salesPerson || o.assignedTo?.fullName || '',
+    location: o.location || o.leadId?.location || o.leadId?.locationCity || '',
+    phone: o.clientPhone || o.phone || o.leadId?.phone || '',
+    email: o.email || o.leadId?.email || '',
+    contactPerson: o.contactPerson || o.leadId?.contactPerson || '',
+    alternativeName: o.alternativeName || o.leadId?.alternativeName || '',
+    alternativeRole: o.alternativeRole || o.leadId?.alternativeRole || '',
+    alternativePhone: o.alternativePhone || o.leadId?.alternativePhone || '',
+    billingName: o.billingName || o.leadId?.billingName || o.clientName || '',
+    gstNumber: o.gstNumber || o.leadId?.gstNumber || '',
+    gstPercent: o.gstPercent ?? o.leadId?.gstPercent,
+    salesPerson: o.salesPerson || o.assignedTo?.fullName || o.leadId?.salesPerson || '',
     orderCategory: (o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (o.orderCategory || 'ORDER'),
-    billType: o.billType || o.type || 'GST',
+    billType: o.billType || o.type || o.leadId?.billType || 'GST',
     deliveryBy: o.deliveryBy || o.leadId?.deliveryBy || '',
     transportationBy: o.transportationBy || o.leadId?.transportationBy || '',
     forwardingCharge: o.forwardingCharge ?? o.leadId?.forwardingCharge ?? false,
     forwardingChargeAmount: o.forwardingChargeAmount ?? o.leadId?.forwardingChargeAmount ?? 0,
+    destination: o.destination || o.leadId?.destination || '',
+    hotelType: o.hotelType || o.leadId?.hotelType || '',
+    rooms: o.rooms ?? o.leadId?.rooms,
+    occupancy: o.occupancy ?? o.leadId?.occupancy,
+    city: o.city || o.leadId?.city || '',
+    state: o.state || o.leadId?.state || '',
+    pincode: o.pincode || o.leadId?.pincode || '',
+    detailedAddress: o.detailedAddress || o.leadId?.detailedAddress || '',
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
     kitSticker: o.kitSticker || o.leadId?.kitSticker || '',
     kitLogo: o.kitLogo || o.leadId?.kitLogo || '',
@@ -288,13 +304,24 @@ export default function OperationDetail() {
       vals = await assignModalForm.validateFields();
     } catch { return; }
 
+    // Validate sub-task rows: each row must have description and assignee
+    const filledSubTasks = subTasks.filter((t) => t.description || t.qty || t.assignee);
+    if (filledSubTasks.length === 0) {
+      enqueueSnackbar('Please add at least one sub-task with a description and assignee', { variant: 'warning' });
+      return;
+    }
+    const invalidSubTask = filledSubTasks.find((t) => !t.description || !t.assignee);
+    if (invalidSubTask) {
+      enqueueSnackbar('Each sub-task must have a description and an assignee', { variant: 'warning' });
+      return;
+    }
+
     // Resolve numeric productIndex: find this record's position in order.items
     const productIndex = (order?.items || []).findIndex(
       (it) => String(it.key) === String(assignModalRecord?.key)
     );
 
-    const cleanSubTasks = subTasks
-      .filter((t) => t.description || t.qty || t.assignee)
+    const cleanSubTasks = filledSubTasks
       .map((t) => ({ label: t.description, qty: Number(t.qty) || 0, assigneeName: t.assignee }));
     const payload = {
       orderId: order?.key || order?._id || id,
@@ -351,6 +378,7 @@ export default function OperationDetail() {
       sticker_printing: productionQueues.sticker,
       box: productionQueues.box,
       frosted_ziplock: productionQueues.frosted,
+      butter_paper: productionQueues.butter,
     };
     const currentOrder = allOrders.find((o) => o.id === id);
     const splitDates = currentOrder?.splitDates || [];
@@ -690,7 +718,7 @@ export default function OperationDetail() {
           <Space direction="vertical" size={2} style={{ gap: 2 }}>
             <Space size={6}>
               {isEmergencyProduct && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
-              <Text strong style={isEmergencyProduct ? { color: '#ff4d4f' } : {}}>{name || '—'}</Text>
+              <Text strong style={isEmergencyProduct ? { color: '#ff4d4f' } : {}}>{name || '-'}</Text>
             </Space>
             {isEmergencyProduct && emergencyDate && (
               <Space size={4}>
@@ -714,16 +742,16 @@ export default function OperationDetail() {
       key: 'kitName',
       render: (_, record) => {
         const kitName = record.kitName || record.kitType;
-        return kitName ? <Tag color="purple" icon={<GiftOutlined />}>{kitName}</Tag> : '—';
+        return kitName ? <Tag color="purple" icon={<GiftOutlined />}>{kitName}</Tag> : '-';
       },
     },
-    { title: 'Print Type', dataIndex: 'logoType', render: (value) => value ? <Tag color="purple">{value}</Tag> : '—' },
+    { title: 'Print Type', dataIndex: 'logoType', render: (value) => value ? <Tag color="purple">{value}</Tag> : '-' },
     {
       title: 'Sticker',
       key: 'sticker',
       render: (_, record) => {
         const val = (record.sticker || order?.kitSticker || '').toUpperCase();
-        if (!val) return '—';
+        if (!val) return '-';
         return <Tag color={val === 'YES' ? 'green' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
       },
     },
@@ -732,7 +760,7 @@ export default function OperationDetail() {
       key: 'logo',
       render: (_, record) => {
         const val = (record.logo || order?.kitLogo || '').toUpperCase();
-        if (!val) return '—';
+        if (!val) return '-';
         return <Tag color={val === 'YES' ? 'cyan' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
       },
     },
@@ -741,7 +769,7 @@ export default function OperationDetail() {
       key: 'printing',
       render: (_, record) => {
         const val = (record.printing || order?.kitPrinting || '').toUpperCase();
-        if (!val) return '—';
+        if (!val) return '-';
         return <Tag color={val === 'YES' ? 'green' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
       },
     },
@@ -787,7 +815,7 @@ export default function OperationDetail() {
       render: (_, record) => {
         const name = record.itemName || record.name || record.kitType;
         const sp = record.price || record.rate || record.itemId?.sellingPrice || invMap[name]?.sellingPrice;
-        return sp ? <Text>₹{Number(sp).toLocaleString()}</Text> : '—';
+        return sp ? <Text>₹{Number(sp).toLocaleString()}</Text> : '-';
       },
     },
     {
@@ -796,7 +824,7 @@ export default function OperationDetail() {
       align: 'right',
       render: (_, record) => {
         const val = record.lineTotal || (record.qty || 0) * (record.price || record.rate || 0);
-        return val ? <Text strong style={{ color: '#B11E6A' }}>₹{Number(val).toLocaleString()}</Text> : '—';
+        return val ? <Text strong style={{ color: '#B11E6A' }}>₹{Number(val).toLocaleString()}</Text> : '-';
       },
     },
     {
@@ -805,7 +833,7 @@ export default function OperationDetail() {
       align: 'center',
       render: (_, record) => {
         const gst = record.gst ?? order?.gstPercent;
-        return gst != null ? <Tag color="blue">{gst}%</Tag> : '—';
+        return gst != null ? <Tag color="blue">{gst}%</Tag> : '-';
       },
     },
     {
@@ -814,7 +842,7 @@ export default function OperationDetail() {
       render: (_, record) => {
         const name = record.itemName || record.name || record.kitType;
         const inv = invMap[name];
-        return record.hsnCode || record.itemId?.hsnCode || inv?.hsnCode || '—';
+        return record.hsnCode || record.itemId?.hsnCode || inv?.hsnCode || '-';
       },
     },
     {
@@ -824,7 +852,7 @@ export default function OperationDetail() {
         const name = record.itemName || record.name || record.kitType;
         const inv = invMap[name];
         const sz = record.defaultSize || record.size || record.itemId?.defaultSize || inv?.defaultSize || inv?.size;
-        return sz ? <Tag color="geekblue">{sz}</Tag> : '—';
+        return sz ? <Tag color="geekblue">{sz}</Tag> : '-';
       },
     },
     {
@@ -833,7 +861,7 @@ export default function OperationDetail() {
       render: (_, record) => {
         const name = record.itemName || record.name || record.kitType;
         const inv = invMap[name];
-        return record.packingMaterial || record.packaging || record.itemId?.packingMaterial || inv?.packingMaterial || '—';
+        return record.packingMaterial || record.packaging || record.itemId?.packingMaterial || inv?.packingMaterial || '-';
       },
     },
     {
@@ -842,7 +870,7 @@ export default function OperationDetail() {
       render: (_, record) => {
         const name = record.itemName || record.name || record.kitType;
         const inv = invMap[name];
-        return record.materialCategory || record.material || record.itemId?.materialCategory || inv?.materialCategory || '—';
+        return record.materialCategory || record.material || record.itemId?.materialCategory || inv?.materialCategory || '-';
       },
     },
     {
@@ -851,7 +879,7 @@ export default function OperationDetail() {
       render: (_, record) => {
         const name = record.itemName || record.name || record.kitType;
         const inv = invMap[name];
-        return record.brand || record.itemId?.brand || inv?.brand || '—';
+        return record.brand || record.itemId?.brand || inv?.brand || '-';
       },
     },
     {
@@ -976,9 +1004,9 @@ export default function OperationDetail() {
         if (!sr) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
         if (sr.opsHeadApproved) {
           return (
-            <Tooltip title={`Approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
+            <Tooltip title={`Approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}`}>
               <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
-                Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+                Ops OK Â· {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
               </Tag>
             </Tooltip>
           );
@@ -1081,7 +1109,7 @@ export default function OperationDetail() {
 
       {order.deliveryType === 'Partial' && (order.balanceQty > 0 || order.partialQty > 0) && (
         <Tag color="orange" style={{ marginBottom: 8 }}>
-          Partial: {order.partialQty || 0} now · Balance {order.balanceQty || 0} (same order ID)
+          Partial: {order.partialQty || 0} now Â· Balance {order.balanceQty || 0} (same order ID)
         </Tag>
       )}
 
@@ -1160,7 +1188,7 @@ export default function OperationDetail() {
                   </Text>
                   <Space wrap>
                     <Tag color="blue" style={{ fontSize: 13, padding: '4px 14px', borderRadius: 20 }}>
-                      {PAYMENT_LABELS[order.paymentTerms] || order.paymentTerms || '—'}
+                      {PAYMENT_LABELS[order.paymentTerms] || order.paymentTerms || '-'}
                     </Tag>
                     {order.paymentTerms === '50_ADVANCE_50_AFTER' && order.paymentReminderDate && (
                       <Tag color="orange" style={{ fontSize: 12 }}>
@@ -1175,11 +1203,11 @@ export default function OperationDetail() {
               <Row gutter={[16, 10]}>
                 <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Delivery By</Text>
-                  <Text strong style={{ color: textColor }}>{order.deliveryBy || '—'}</Text>
+                  <Text strong style={{ color: textColor }}>{order.deliveryBy || '-'}</Text>
                 </Col>
                 <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Transportation By</Text>
-                  <Text strong style={{ color: textColor }}>{order.transportationBy || '—'}</Text>
+                  <Text strong style={{ color: textColor }}>{order.transportationBy || '-'}</Text>
                 </Col>
                 <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Forwarding Charge</Text>
@@ -1222,7 +1250,7 @@ export default function OperationDetail() {
                   <Text strong style={{ color: textColor }}>
                     {order.expectedDelivery
                       ? new Date(order.expectedDelivery).toLocaleDateString('en-IN', { dateStyle: 'medium' })
-                      : '—'}
+                      : '-'}
                   </Text>
                 </Col>
               </Row>
@@ -1231,16 +1259,50 @@ export default function OperationDetail() {
               <Row gutter={[16, 10]}>
                 <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Contact Person</Text>
-                  <Text strong style={{ color: textColor }}>{order.contactPerson || '—'}</Text>
+                  <Text strong style={{ color: textColor }}>{order.contactPerson || '-'}</Text>
                 </Col>
                 <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Phone</Text>
-                  <Text strong style={{ color: textColor }}>{order.phone || '—'}</Text>
+                  <Text strong style={{ color: textColor }}>{order.phone || '-'}</Text>
                 </Col>
                 <Col xs={12} sm={8}>
-                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Location</Text>
-                  <Text strong style={{ color: textColor }}>{order.location || '—'}</Text>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Email</Text>
+                  <Text strong style={{ color: textColor }}>{order.email || '-'}</Text>
                 </Col>
+                {order.alternativeName && (
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Alt Contact</Text>
+                    <Text strong style={{ color: textColor }}>{order.alternativeName}{order.alternativeRole ? ` (${order.alternativeRole})` : ''}</Text>
+                  </Col>
+                )}
+                {order.alternativePhone && (
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Alt Phone</Text>
+                    <Text strong style={{ color: textColor }}>{order.alternativePhone}</Text>
+                  </Col>
+                )}
+                <Col xs={12} sm={8}>
+                  <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Location</Text>
+                  <Text strong style={{ color: textColor }}>{order.location || '-'}</Text>
+                </Col>
+                {(order.city || order.state) && (
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>City / State</Text>
+                    <Text strong style={{ color: textColor }}>{[order.city, order.state].filter(Boolean).join(', ')}</Text>
+                  </Col>
+                )}
+                {order.destination && (
+                  <Col xs={12} sm={8}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Destination</Text>
+                    <Text strong style={{ color: textColor }}>{order.destination}</Text>
+                  </Col>
+                )}
+                {order.detailedAddress && (
+                  <Col xs={24}>
+                    <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Detailed Address</Text>
+                    <Text strong style={{ color: textColor }}>{order.detailedAddress}</Text>
+                  </Col>
+                )}
               </Row>
 
               {/* Payment Proofs — hidden for sample orders */}
@@ -1308,15 +1370,15 @@ export default function OperationDetail() {
                 <Row gutter={[16, 10]}>
                   <Col xs={12} sm={8}>
                     <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Billing Name</Text>
-                    <Text strong style={{ color: textColor }}>{order.billingName || '—'}</Text>
+                    <Text strong style={{ color: textColor }}>{order.billingName || '-'}</Text>
                   </Col>
                   <Col xs={12} sm={8}>
                     <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>GST Number</Text>
-                    <Text strong style={{ color: textColor }}>{order.gstNumber || '—'}</Text>
+                    <Text strong style={{ color: textColor }}>{order.gstNumber || '-'}</Text>
                   </Col>
                   <Col xs={12} sm={8}>
                     <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>GST %</Text>
-                    <Text strong style={{ color: textColor }}>{order.gstPercent != null ? `${order.gstPercent}%` : '—'}</Text>
+                    <Text strong style={{ color: textColor }}>{order.gstPercent != null ? `${order.gstPercent}%` : '-'}</Text>
                   </Col>
                   <Col xs={12} sm={8}>
                     <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Bill Type</Text>
@@ -1332,7 +1394,7 @@ export default function OperationDetail() {
                   </Col>
                   <Col xs={12} sm={8}>
                     <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Sales Person</Text>
-                    <Text strong style={{ color: textColor }}>{order.salesPerson || '—'}</Text>
+                    <Text strong style={{ color: textColor }}>{order.salesPerson || '-'}</Text>
                   </Col>
                 </Row>
               </div>
@@ -1413,441 +1475,6 @@ export default function OperationDetail() {
                   </div>
                 </Card>
 
-                {/* Products adding — personalized kit summary for Operations */}
-                {isKitOrder && (() => {
-                  const ptArrOps = Array.isArray(order.productType) ? order.productType : (order.productType ? [order.productType] : []);
-                  const PT_LABELS = {
-                    personalized: 'Personalized (Kit + Products)',
-                    separate_kit: 'Separate Kit',
-                    separate_product: 'Separate Product',
-                    PERSONALIZED_KIT: 'Personalized Kit',
-                    SEPARATE_PRODUCT: 'Separate Product',
-                  };
-                  const ptLabel = ptArrOps.map(v => PT_LABELS[v] || v).join(', ');
-                  const kitItems = (order.items || []).filter(it => it.isKit || it.kitType);
-                  const kitNameFromItems = kitItems.length > 0 ? (kitItems[0].kitName || kitItems[0].kitType || null) : null;
-                  const kitNameFromOrders = (Array.isArray(order.kitOrders) && order.kitOrders.length > 0)
-                    ? order.kitOrders.map(ko => ko.kitName).filter(Boolean).join(', ')
-                    : null;
-                  const displayKitName = kitNameFromOrders || kitNameFromItems;
-                  const hasAnyKitInfo = order.kitDisplayUnit || order.kitSize || order.kitSticker || order.kitLogo || order.kitPrinting || order.kitPrice || order.kitOverallQty || displayKitName || ptArrOps.length > 0;
-                  if (!hasAnyKitInfo) return null;
-                  const OIROps = ({ label, value }) => (
-                    <div style={{ padding: '8px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}` }}>
-                      <Text type="secondary" style={{ fontSize: 11 }}>{label}</Text>
-                      <Text strong style={{ fontSize: 13, display: 'block', marginTop: 1 }}>{value || '—'}</Text>
-                    </div>
-                  );
-                  return (
-                    <Card
-                      title={
-                        <Space>
-                          <div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} />
-                          <GiftOutlined style={{ color: '#722ed1' }} />
-                          <Text strong style={{ color: textColor }}>Products adding</Text>
-                        </Space>
-                      }
-                      style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(114,46,209,0.06)' }}
-                    >
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        <Row gutter={[16, 12]}>
-                          {ptLabel && (
-                            <Col xs={24} sm={12}>
-                              <OIROps label="Product Selection" value={ptLabel} />
-                            </Col>
-                          )}
-                          {displayKitName && (
-                            <Col xs={24} sm={12}>
-                              <OIROps label="Kit Selected" value={displayKitName} />
-                            </Col>
-                          )}
-                          {order.kitDisplayUnit && (
-                            <Col xs={12} sm={6}>
-                              <OIROps label="Display Unit" value={(order.kitDisplayUnit || '').replace(/_/g, ' ')} />
-                            </Col>
-                          )}
-                          {order.kitSize && (
-                            <Col xs={12} sm={6}>
-                              <OIROps label="Kit Size" value={order.kitSize} />
-                            </Col>
-                          )}
-                          {order.kitSticker && (
-                            <Col xs={12} sm={6}>
-                              <OIROps label="Sticker" value={order.kitSticker === 'YES' ? 'Yes' : 'No'} />
-                            </Col>
-                          )}
-                          {order.kitLogo && (
-                            <Col xs={12} sm={6}>
-                              <OIROps label="Logo" value={order.kitLogo === 'YES' ? 'Yes' : 'No'} />
-                            </Col>
-                          )}
-                          {order.kitPrinting && (
-                            <Col xs={12} sm={6}>
-                              <OIROps label="Printing" value={order.kitPrinting === 'YES' ? 'Yes' : 'No'} />
-                            </Col>
-                          )}
-                          {(order.kitPrice != null && order.kitPrice !== '') && (
-                            <Col xs={12} sm={6}>
-                              <OIROps label="Kit Price (single)" value={`₹${Number(order.kitPrice).toLocaleString()}`} />
-                            </Col>
-                          )}
-                          {Number(order.kitOverallQty) > 0 && (
-                            <Col xs={12} sm={6}>
-                              <OIROps label="Overall Qty" value={`${Number(order.kitOverallQty)} kit${Number(order.kitOverallQty) > 1 ? 's' : ''}`} />
-                            </Col>
-                          )}
-                          {(order.kitPrice != null && order.kitPrice !== '') && (
-                            <Col xs={12} sm={6}>
-                              <OIROps label="Kit Amount" value={`₹${(Number(order.kitPrice) * (Number(order.kitOverallQty) || 1)).toLocaleString()}`} />
-                            </Col>
-                          )}
-                        </Row>
-                        {kitItems.length > 0 && (
-                          <div>
-                            <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
-                              KIT CONTENTS ({kitItems.length} items)
-                            </Text>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              {kitItems.map((it, i) => (
-                                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
-                                  <Text strong style={{ fontSize: 13 }}>{it.itemName || it.name || it.kitType || '—'}</Text>
-                                  <div style={{ textAlign: 'right' }}>
-                                    <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{((it.qty || 0) * (it.rate || 0)).toLocaleString()}</Text>
-                                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{it.qty} × ₹{it.rate}{it.gst ? ` (+${it.gst}% GST)` : ''}</Text>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </Card>
-                  );
-                })()}
-
-                {/* Kit Contents — list the products that go inside each kit unit */}
-                {isKitOrder && (() => {
-                  const kitItems = (order.items || []).filter(it => it.isKit || it.kitType);
-                  if (kitItems.length === 0) return null;
-                  const kitSelIds = Array.isArray(order.selectedKits) && order.selectedKits.length > 0
-                    ? order.selectedKits : (order.selectedKit ? [order.selectedKit] : []);
-                  const kitOrders = Array.isArray(order.kitOrders) ? order.kitOrders : [];
-                  return (
-                    <Card
-                      title={
-                        <Space wrap>
-                          <GiftOutlined style={{ color: '#722ed1' }} />
-                          <Text strong style={{ color: textColor }}>Kit Contents — Products to Pack</Text>
-                          {order.kitDisplayUnit && <Tag color="purple">{(order.kitDisplayUnit || '').replace(/_/g, ' ')}</Tag>}
-                          {order.kitSize && <Tag color="geekblue">{order.kitSize}</Tag>}
-                          {order.kitOverallQty > 0 && <Tag color="blue">{order.kitOverallQty} kits</Tag>}
-                        </Space>
-                      }
-                      style={{ borderRadius: 14, border: '1px solid rgba(114,46,209,0.2)', background: cardBg, boxShadow: '0 4px 20px rgba(114,46,209,0.06)' }}
-                    >
-                      {/* Per-kit summary when multiple kits exist */}
-                      {kitSelIds.length > 1 && kitOrders.length > 0 && kitOrders.map((ko, idx) => {
-                        const kName = ko.kitName || `Kit ${idx + 1}`;
-                        const kItems = kitItems.filter(it => it.kitId === ko.kitId || it.kitName === kName);
-                        return (
-                          <div key={idx} style={{ marginBottom: 12 }}>
-                            <Text strong style={{ fontSize: 12, color: '#722ed1', display: 'block', marginBottom: 6 }}>
-                              <GiftOutlined style={{ marginRight: 4 }} />{kName}
-                              {ko.overallQty > 0 && <Tag color="blue" style={{ marginLeft: 8, fontSize: 11 }}>{ko.overallQty} kits</Tag>}
-                            </Text>
-                            <Space wrap size={4}>
-                              {kItems.map((it, i) => (
-                                <Tag key={i} color="purple" style={{ borderRadius: 10, fontSize: 11 }}>
-                                  {it.itemName || it.name || it.product} ×{it.qty}
-                                </Tag>
-                              ))}
-                            </Space>
-                          </div>
-                        );
-                      })}
-                      {/* Single kit or flat listing */}
-                      {(kitSelIds.length <= 1 || kitOrders.length === 0) && (
-                        <>
-                          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
-                            The following products need to be placed inside each kit unit:
-                          </Text>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {kitItems.map((it, i) => {
-                              const itSticker = (it.sticker || '').toUpperCase();
-                              const itPrinting = (it.printing || '').toUpperCase();
-                              const itPacking = it.packingMaterial || it.packaging || '';
-                              const itSize = it.size || it.defaultSize || '';
-                              const itBrand = it.brand || '';
-                              const itMat = it.materialCategory || it.material || '';
-                              const hasSpec = itSticker || itPrinting || itPacking || itSize || itBrand || itMat;
-                              return (
-                                <div key={i} style={{ padding: '10px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.15)' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                                    <Space size={6}>
-                                      <div style={{ width: 20, height: 20, borderRadius: '50%', background: 'linear-gradient(135deg,#722ed1,#9254de)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                        <span style={{ color: '#fff', fontSize: 9, fontWeight: 700 }}>{i + 1}</span>
-                                      </div>
-                                      <Text strong style={{ color: textColor, fontSize: 13 }}>{it.itemName || it.name || it.product || '—'}</Text>
-                                    </Space>
-                                    <Space size={4} wrap>
-                                      <Tag color="blue" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>×{it.qty}</Tag>
-                                      {it.unit && <Tag style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{it.unit}</Tag>}
-                                    </Space>
-                                  </div>
-                                  {hasSpec && (
-                                    <Space wrap size={4} style={{ marginTop: 6 }}>
-                                      {itSticker && <Tag color={itSticker === 'YES' ? 'green' : 'default'} style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Sticker: {itSticker === 'YES' ? 'Yes' : 'No'}</Tag>}
-                                      {itPrinting && <Tag color={itPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Printing: {itPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
-                                      {itPacking && <Tag color="orange" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{itPacking}</Tag>}
-                                      {itSize && <Tag color="geekblue" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{itSize}</Tag>}
-                                      {itBrand && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{itBrand}</Tag>}
-                                      {itMat && <Tag color="cyan" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{itMat}</Tag>}
-                                    </Space>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      )}
-                      {/* Kit specs row */}
-                      {(order.kitSticker || order.kitLogo || order.kitPrinting) && (
-                        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed rgba(114,46,209,0.15)' }}>
-                          <Space wrap size={6}>
-                            {order.kitSticker && <Tag color={order.kitSticker === 'YES' ? 'green' : 'default'} style={{ borderRadius: 10 }}>Sticker: {order.kitSticker === 'YES' ? 'Yes' : 'No'}</Tag>}
-                            {order.kitLogo && <Tag color={order.kitLogo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 10 }}>Logo: {order.kitLogo === 'YES' ? 'Yes' : 'No'}</Tag>}
-                            {order.kitPrinting && <Tag color={order.kitPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 10 }}>Printing: {order.kitPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
-                            {order.kitPrice > 0 && <Tag color="orange" style={{ borderRadius: 10 }}>₹{Number(order.kitPrice).toLocaleString()} per kit</Tag>}
-                          </Space>
-                        </div>
-                      )}
-                    </Card>
-                  );
-                })()}
-
-                {/* Display Unit Approval — kit orders only. Final dual sign-off (Sales + Ops)
-                    on the kit's display unit / packaging before Kit Packing can be assigned. */}
-                {isKitOrder && (
-                  <Card
-                    title={
-                      <Space wrap>
-                        <ExperimentOutlined style={{ color: '#B11E6A' }} />
-                        <Text strong style={{ color: textColor }}>Display Unit Approval</Text>
-                        {order.kitDisplayUnit && <Tag color="purple">{order.kitDisplayUnit}</Tag>}
-                        {displayUnitApproved ? (
-                          <Tag color="success" icon={<CheckCircleOutlined />}>Approved</Tag>
-                        ) : displayUnitSR && displayUnitSR.status !== 'Pending' ? (
-                          <Tag color="warning">Waiting for Approval</Tag>
-                        ) : (
-                          <Tag color="default">Not Sent</Tag>
-                        )}
-                      </Space>
-                    }
-                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginBottom: 16 }}
-                  >
-                    <Text type="secondary" style={{ display: 'block', marginBottom: 10, fontSize: 12 }}>
-                      Kit products only — after the product designs are approved, the kit's display unit must be
-                      approved by both Sales and Operations before Kit Packing can begin.
-                    </Text>
-
-                    {/* Stage 1: not sent yet — optional upload + send for approval */}
-                    {(!displayUnitSR || displayUnitSR.status === 'Pending') && (
-                      <Space wrap size={8} style={{ padding: '4px 0' }}>
-                        <Upload
-                          beforeUpload={(file) => { setDuDesignFile(file); return false; }}
-                          fileList={duDesignFile ? [duDesignFile] : []}
-                          onRemove={() => setDuDesignFile(null)}
-                          maxCount={1}
-                          accept="image/*,.pdf"
-                        >
-                          <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
-                            {duDesignFile ? 'Change Design' : 'Upload Display Unit Design (optional)'}
-                          </Button>
-                        </Upload>
-                        <Button
-                          type="primary"
-                          icon={<CheckCircleOutlined />}
-                          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 }}
-                          onClick={sendDisplayUnitForApproval}
-                        >
-                          Send Display Unit for Approval
-                        </Button>
-                      </Space>
-                    )}
-
-                    {/* Stage 2: sent, awaiting full approval */}
-                    {displayUnitSR && displayUnitSR.status !== 'Pending' && !displayUnitApproved && (
-                      <Space direction="vertical" size={10} style={{ width: '100%', padding: '4px 0' }}>
-                        <Space wrap size={8}>
-                          {displayUnitSR.designFileUrl ? (
-                            <Button size="small" icon={<EyeOutlined />} onClick={() => window.open(displayUnitSR.designFileUrl, '_blank')}>
-                              View Design
-                            </Button>
-                          ) : (
-                            <Tag color="default" style={{ fontSize: 11 }}>No design file</Tag>
-                          )}
-                          {displayUnitSR.salesApproved ? (
-                            <Tooltip title={`Sales approved by ${displayUnitSR.salesApprovedBy?.fullName || 'Sales'} on ${displayUnitSR.salesApprovedAt ? new Date(displayUnitSR.salesApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
-                              <Tag color="success" icon={<CheckCircleOutlined />} style={{ cursor: 'default' }}>Sales OK</Tag>
-                            </Tooltip>
-                          ) : (
-                            <Tag color="warning">Awaiting Sales</Tag>
-                          )}
-                          {displayUnitSR.opsHeadApproved ? (
-                            <Tooltip title={`Ops approved by ${displayUnitSR.opsHeadApprovedBy?.fullName || 'Ops'} on ${displayUnitSR.opsHeadApprovedAt ? new Date(displayUnitSR.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
-                              <Tag color="blue" icon={<CheckCircleOutlined />} style={{ cursor: 'default' }}>Ops OK</Tag>
-                            </Tooltip>
-                          ) : (
-                            <Button
-                              size="small"
-                              icon={<CheckCircleOutlined />}
-                              style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
-                              onClick={async () => {
-                                try {
-                                  const res = await approveStickerRequest({ id: displayUnitSR._id, role: 'opsHead' }).unwrap();
-                                  enqueueSnackbar(
-                                    res?.data?.status === 'Approved'
-                                      ? 'Display unit fully approved — Kit Packing can start!'
-                                      : 'Ops approval recorded — awaiting Sales approval',
-                                    { variant: 'success' },
-                                  );
-                                } catch (err) {
-                                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-                                }
-                              }}
-                            >
-                              Ops OK
-                            </Button>
-                          )}
-                        </Space>
-                        <Text type="secondary" style={{ fontSize: 11 }}>
-                          Sales approves from the Sales order detail · Operations approves here.
-                        </Text>
-                      </Space>
-                    )}
-
-                    {/* Stage 3: fully approved */}
-                    {displayUnitApproved && (
-                      <Space direction="vertical" size={4} style={{ padding: '4px 0' }}>
-                        <Space wrap>
-                          <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
-                          <Text style={{ color: '#52c41a', fontWeight: 600 }}>Display unit approved by Sales &amp; Operations</Text>
-                        </Space>
-                        <Text type="secondary" style={{ fontSize: 11 }}>
-                          Sales: {displayUnitSR.salesApprovedBy?.fullName || '—'} · {displayUnitSR.salesApprovedAt ? new Date(displayUnitSR.salesApprovedAt).toLocaleDateString('en-IN') : '—'}
-                          {'  |  '}
-                          Ops: {displayUnitSR.opsHeadApprovedBy?.fullName || '—'} · {displayUnitSR.opsHeadApprovedAt ? new Date(displayUnitSR.opsHeadApprovedAt).toLocaleDateString('en-IN') : '—'}
-                        </Text>
-                      </Space>
-                    )}
-                  </Card>
-                )}
-
-                {/* Kit Packing Task — shown only for kit orders */}
-                {isKitOrder && (
-                  <Card
-                    title={
-                      <Space>
-                        <ExperimentOutlined style={{ color: '#B11E6A' }} />
-                        <Text strong style={{ color: textColor }}>Kit Packing Task</Text>
-                        <Tag color="purple">{order.kitDisplayUnit}</Tag>
-                      </Space>
-                    }
-                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
-                  >
-                    {!allProductTasksDone && !kitPackingTask && (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0' }}>
-                        <div>
-                          <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-                            Kit Packing can only be assigned after all individual product tasks are completed.
-                          </Text>
-                          <Text style={{ fontSize: 12, color: '#faad14' }}>
-                            Product tasks done: {productTasks.filter((t) => t.status === 'Done').length} / {productTasks.length || '—'}
-                          </Text>
-                        </div>
-                        <Tooltip title="Complete all product tasks first to enable Kit Packing assignment">
-                          <Button
-                            type="primary"
-                            disabled
-                            icon={<TeamOutlined />}
-                            style={{ borderRadius: 8 }}
-                          >
-                            Assign Kit Packing Task
-                          </Button>
-                        </Tooltip>
-                      </div>
-                    )}
-
-                    {allProductTasksDone && !displayUnitApproved && !kitPackingTask && (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0' }}>
-                        <div>
-                          <Space>
-                            <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
-                            <Text style={{ color: '#52c41a', fontWeight: 600 }}>All product tasks completed!</Text>
-                          </Space>
-                          <Text style={{ display: 'block', marginTop: 4, fontSize: 12, color: '#faad14' }}>
-                            Waiting for display unit approval from Sales &amp; Operations before Kit Packing can be assigned.
-                          </Text>
-                        </div>
-                        <Tooltip title="Get the display unit approved by both Sales and Operations first">
-                          <Button type="primary" disabled icon={<TeamOutlined />} style={{ borderRadius: 8 }}>
-                            Assign Kit Packing Task
-                          </Button>
-                        </Tooltip>
-                      </div>
-                    )}
-
-                    {allProductTasksDone && displayUnitApproved && !kitPackingTask && (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0' }}>
-                        <div>
-                          <Space>
-                            <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
-                            <Text style={{ color: '#52c41a', fontWeight: 600 }}>All product tasks completed &amp; display unit approved!</Text>
-                          </Space>
-                          <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
-                            Assign the Kit Packing task to begin the final packaging step.
-                          </Text>
-                        </div>
-                        <Button
-                          type="primary"
-                          icon={<TeamOutlined />}
-                          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 }}
-                          onClick={() => {
-                            kitPackingForm.setFieldsValue({
-                              taskName: `Kit Packing — ${order.kitDisplayUnit}`,
-                              assignee: loggedInUser?.name || order.assignedEmployee,
-                            });
-                            setKitPackingModalOpen(true);
-                          }}
-                        >
-                          Assign Kit Packing Task
-                        </Button>
-                      </div>
-                    )}
-
-                    {kitPackingTask && (
-                      <Space direction="vertical" size={8} style={{ width: '100%', padding: '8px 0' }}>
-                        <Space wrap>
-                          <Text strong>Status:</Text>
-                          <Tag color={kitPackingTask.status === 'Done' ? 'success' : kitPackingTask.status === 'In Progress' ? 'processing' : 'default'}>
-                            {kitPackingTask.status}
-                          </Tag>
-                          {kitPackingTask.taskCode && <Tag color="default">{kitPackingTask.taskCode}</Tag>}
-                        </Space>
-                        {kitPackingTask.assigneeName && (
-                          <Space><Text strong>Assigned To:</Text><Text>{kitPackingTask.assigneeName}</Text></Space>
-                        )}
-                        {kitPackingTask.status === 'Done' && (
-                          <Space>
-                            <CheckCircleOutlined style={{ color: '#52c41a' }} />
-                            <Text style={{ color: '#52c41a', fontWeight: 600 }}>Kit Packing completed — order will proceed to Dispatch.</Text>
-                          </Space>
-                        )}
-                      </Space>
-                    )}
-                  </Card>
-                )}
-
               </Space>
             ),
           },
@@ -1866,6 +1493,8 @@ export default function OperationDetail() {
                 ? 'Box Team'
                 : printingModalType === 'frosted_ziplock'
                 ? 'Ziplock Team'
+                : printingModalType === 'butter_paper'
+                ? 'Butter Paper Team'
                 : 'Team'}
             </span>
             <Tag color="default">{printingTeamItems.length} Total</Tag>
@@ -1889,6 +1518,8 @@ export default function OperationDetail() {
                   ? 'Sticker Team'
                   : printingModalType === 'box'
                   ? 'Box Team'
+                  : printingModalType === 'butter_paper'
+                  ? 'Butter Paper Team'
                   : 'Ziplock Team';
               try {
                 await sendToStickerTeam({
@@ -1989,12 +1620,12 @@ export default function OperationDetail() {
         <Form form={assignModalForm} layout="vertical" style={{ marginTop: 16 }}>
           <Row gutter={16}>
             <Col xs={24} md={12}>
-              <Form.Item label="Task Name" name="taskName">
+              <Form.Item label="Task Name" name="taskName" rules={[{ required: true, message: 'Task name is required' }]}>
                 <Input placeholder="e.g. Box filling / sticker placing" style={{ borderRadius: 8 }} />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item label="Task Type" name="taskType">
+              <Form.Item label="Task Type" name="taskType" rules={[{ required: true, message: 'Task type is required' }]}>
                 <Select
                   placeholder="Select or add task type"
                   dropdownRender={(menu) => (
@@ -2034,8 +1665,8 @@ export default function OperationDetail() {
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item label="Assign To" name="assignee">
-                <Select>
+              <Form.Item label="Assign To" name="assignee" rules={[{ required: true, message: 'Please select an assignee' }]}>
+                <Select placeholder="Select employee">
                   {[...new Map(allOrders.filter((o) => o.assignedEmployee).map((o) => [o.assignedEmployee, { key: o.key, name: o.assignedEmployee }])).values()].map((emp) => (
                     <Option key={emp.key} value={emp.name}>{emp.name}</Option>
                   ))}

@@ -137,7 +137,7 @@ export default function VendorsSuppliers() {
   const { data: usersData } = useGetUsersQuery();
   const vendorUsers = useMemo(() => {
     const all = usersData?.data || [];
-    return all.filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock'].includes(u.role));
+    return all.filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper'].includes(u.role));
   }, [usersData]);
 
   /* ── Company settings (for automation vendors) ── */
@@ -512,6 +512,7 @@ export default function VendorsSuppliers() {
                               { value: 'Sticker', label: 'Sticker' },
                               { value: 'Box', label: 'Box' },
                               { value: 'Ziplock', label: 'Ziplock' },
+                              { value: 'Butter Paper', label: 'Butter Paper' },
                             ]}
                           />
                           <Button
@@ -534,12 +535,12 @@ export default function VendorsSuppliers() {
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 12 }}>
                             Select one automation vendor per type — tasks will be auto-assigned to them for Sticker / Box / Ziplock orders.
                           </Text>
-                          {['Sticker', 'Box', 'Ziplock'].map(type => {
+                          {['Sticker', 'Box', 'Ziplock', 'Butter Paper'].map(type => {
                             const typeUsers = vendorUsers.filter(u => u.role === type);
                             if (!typeUsers.length) return null;
                             return (
                               <div key={type} style={{ marginBottom: 10 }}>
-                                <Tag color={type === 'Sticker' ? 'blue' : type === 'Box' ? 'green' : 'orange'} style={{ marginBottom: 8, fontWeight: 600, borderRadius: 8 }}>{type}</Tag>
+                                <Tag color={type === 'Sticker' ? 'blue' : type === 'Box' ? 'green' : type === 'Butter Paper' ? 'gold' : 'orange'} style={{ marginBottom: 8, fontWeight: 600, borderRadius: 8 }}>{type}</Tag>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                                   {typeUsers.map(u => {
                                     const isAuto = automationVendors[type] === u._id;
@@ -683,6 +684,7 @@ export default function VendorsSuppliers() {
               <Option value="Sticker">Sticker</Option>
               <Option value="Box">Box</Option>
               <Option value="Ziplock">Ziplock</Option>
+              <Option value="Butter Paper">Butter Paper</Option>
             </Select>
           </Form.Item>
           <Row gutter={12}>

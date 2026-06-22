@@ -18,30 +18,54 @@ const buildDateFilter = (req) => {
 // ─── SALES REPORT ─────────────────────────────────────────────────────────────
 exports.getSalesReport = asyncHandler(async (req, res) => {
   const dateFilter = buildDateFilter(req);
-  const filter = { ...dateFilter };
+  const filter = { deletedAt: null, status: { $ne: 'Cancelled' }, ...dateFilter };
   if (req.query.product) filter['items.itemName'] = new RegExp(req.query.product, 'i');
-  if (req.query.customer) filter['partyId'] = req.query.customer;
+  if (req.query.customer) filter.clientName = new RegExp(req.query.customer, 'i');
 
-  const invoices = await Invoice.find(filter)
-    .populate('partyId', 'name gstNumber state')
-    .sort('-invoiceDate');
+  const orders = await Order.find(filter)
+    .populate('clientPartyId', 'name gstNumber state')
+    .sort('-createdAt');
 
-  // Monthly aggregation
   const monthlyMap = {};
-  invoices.forEach((inv) => {
-    const key = inv.invoiceDate?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
+  orders.forEach((o) => {
+    const key = o.createdAt?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
     if (!monthlyMap[key]) monthlyMap[key] = { month: key, amount: 0 };
-    monthlyMap[key].amount += inv.total;
+    monthlyMap[key].amount += Number(o.total) || Number(o.amount) || 0;
   });
 
-  const totalGst = invoices.reduce((s, i) => s + i.gstAmount, 0);
-  const totalTaxable = invoices.reduce((s, i) => s + i.subtotal, 0);
-  const totalValue = invoices.reduce((s, i) => s + i.total, 0);
+  const totalGst = orders.reduce((s, o) => s + (Number(o.gstAmount) || 0), 0);
+  const totalTaxable = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+  const totalValue = orders.reduce((s, o) => s + (Number(o.total) || Number(o.amount) || 0), 0);
+
+  const data = orders.map((o) => {
+    const gstAmt = Number(o.gstAmount) || 0;
+    const taxable = Number(o.amount) || 0;
+    const invValue = Number(o.total) || (taxable + gstAmt);
+    const mainProduct = o.items?.[0]?.itemName || o.product || '';
+
+    return {
+      key: String(o._id),
+      gst_no: o.gstNumber || o.clientPartyId?.gstNumber || '',
+      customer: o.clientName || o.clientPartyId?.name || '',
+      product: mainProduct,
+      state_code: '',
+      state_name: o.state || o.clientPartyId?.state || '',
+      inv_no: o.orderCode || '',
+      orig_inv_no: '',
+      inv_date: o.createdAt?.toISOString().slice(0, 10) || '',
+      inv_value: invValue,
+      total_tax: gstAmt,
+      taxable,
+      cgst: Math.round(gstAmt / 2),
+      sgst: Math.round(gstAmt / 2),
+      igst: 0,
+    };
+  });
 
   res.status(200).json({
     success: true,
-    data: invoices,
-    summary: { totalValue, totalTaxable, totalGst, count: invoices.length },
+    data,
+    summary: { totalValue, totalTaxable, totalGst, count: orders.length },
     chartData: Object.values(monthlyMap),
   });
 });
@@ -74,40 +98,101 @@ exports.getPurchaseReport = asyncHandler(async (req, res) => {
   });
 });
 
+// Expense category → P&L bucket mapping
+const EXPENSE_CAT_MAP = {
+  'Raw Material': 'other',
+  'Shipping / Transportation': 'transport',
+  'Utilities (Rent/Elec)': 'utilities',
+  'Other': 'other',
+  'Purchase': 'other',
+};
+const emptyExpenses = () => ({ rent: 0, salary: 0, utilities: 0, transport: 0, marketing: 0, other: 0 });
+
 // ─── PROFIT & LOSS ─────────────────────────────────────────────────────────────
 exports.getProfitLoss = asyncHandler(async (req, res) => {
   const dateFilter = buildDateFilter(req);
-  const [invoices, purchaseOrders, expenses] = await Promise.all([
-    Invoice.find(dateFilter),
-    PurchaseOrder.find({ paymentStatus: 'Paid', ...dateFilter }),
-    Expense.find({ paymentStatus: 'Paid', ...dateFilter }),
+  const [orders, purchaseOrders, expenses] = await Promise.all([
+    Order.find({ deletedAt: null, status: { $ne: 'Cancelled' }, ...dateFilter }),
+    PurchaseOrder.find(dateFilter),
+    Expense.find(dateFilter),
   ]);
 
-  const totalSales = invoices.reduce((s, i) => s + i.subtotal, 0);
-  const totalSalesGst = invoices.reduce((s, i) => s + i.gstAmount, 0);
-  const totalCogs = purchaseOrders.reduce((s, o) => s + (o.amount || 0), 0);
+  const totalSales = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+  const totalSalesGst = orders.reduce((s, o) => s + (Number(o.gstAmount) || 0), 0);
+  const totalCogs = purchaseOrders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
   const grossProfit = totalSales - totalCogs;
 
-  const expenseBreakdown = {};
+  const expenseBreakdown = emptyExpenses();
   expenses.forEach((e) => {
-    expenseBreakdown[e.category] = (expenseBreakdown[e.category] || 0) + e.amount;
+    const cat = EXPENSE_CAT_MAP[e.category] || 'other';
+    expenseBreakdown[cat] = (expenseBreakdown[cat] || 0) + e.amount;
   });
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
   const netProfit = grossProfit - totalExpenses;
   const netGstPayable = totalSalesGst;
 
-  // Monthly P&L
+  // Monthly P&L with per-category expense breakdown
   const monthlyMap = {};
-  invoices.forEach((inv) => {
-    const key = inv.invoiceDate?.toLocaleString('default', { month: 'short' }) || '';
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, cogs: 0, grossProfit: 0 };
-    monthlyMap[key].sales += inv.subtotal;
+  orders.forEach((o) => {
+    const key = o.createdAt?.toLocaleString('default', { month: 'short' }) || '';
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
+    monthlyMap[key].sales += Number(o.amount) || 0;
+    monthlyMap[key].salesGst += Number(o.gstAmount) || 0;
   });
   purchaseOrders.forEach((po) => {
     const key = po.createdAt?.toLocaleString('default', { month: 'short' }) || '';
-    if (monthlyMap[key]) monthlyMap[key].cogs += po.amount || 0;
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
+    const amt = Number(po.amount) || 0;
+    monthlyMap[key].cogs += amt;
+    monthlyMap[key].cogsGst += Math.round(amt - amt / 1.18);
   });
   Object.values(monthlyMap).forEach((m) => { m.grossProfit = m.sales - m.cogs; });
+  expenses.forEach((e) => {
+    const key = e.expenseDate?.toLocaleString('default', { month: 'short' }) || '';
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
+    const cat = EXPENSE_CAT_MAP[e.category] || 'other';
+    monthlyMap[key].expenses[cat] = (monthlyMap[key].expenses[cat] || 0) + e.amount;
+  });
+
+  // Product-wise P&L (from order items)
+  const productMap = {};
+  orders.forEach((o) => {
+    const items = o.items?.length
+      ? o.items
+      : [{ itemName: o.product || 'Unknown', lineTotal: Number(o.amount) || 0, qty: Number(o.qty) || 0 }];
+    items.forEach((item) => {
+      const name = item.itemName || 'Unknown';
+      if (!productMap[name]) productMap[name] = { product: name, sales: 0, cogs: 0, grossProfit: 0, soldQty: 0, stockQty: 0 };
+      const itemSales = Number(item.lineTotal) || (Number(item.price) * Number(item.qty)) || 0;
+      productMap[name].sales += itemSales;
+      productMap[name].soldQty += Number(item.qty) || 0;
+    });
+  });
+  Object.values(productMap).forEach((p) => {
+    p.cogs = Math.round(p.sales * 0.65);
+    p.grossProfit = p.sales - p.cogs;
+  });
+
+  // Per-product monthly breakdown
+  const productMonthlyData = {};
+  orders.forEach((o) => {
+    const month = o.createdAt?.toLocaleString('default', { month: 'short' }) || '';
+    const items = o.items?.length
+      ? o.items
+      : [{ itemName: o.product || 'Unknown', lineTotal: Number(o.amount) || 0, qty: Number(o.qty) || 0 }];
+    items.forEach((item) => {
+      const name = item.itemName || 'Unknown';
+      if (!productMonthlyData[name]) productMonthlyData[name] = {};
+      if (!productMonthlyData[name][month]) productMonthlyData[name][month] = { month, sales: 0, cogs: 0, grossProfit: 0 };
+      const sales = Number(item.lineTotal) || (Number(item.price) * Number(item.qty)) || 0;
+      productMonthlyData[name][month].sales += sales;
+    });
+  });
+  Object.keys(productMonthlyData).forEach((prod) => {
+    const byMonth = Object.values(productMonthlyData[prod]);
+    byMonth.forEach((m) => { m.cogs = Math.round(m.sales * 0.65); m.grossProfit = m.sales - m.cogs; });
+    productMonthlyData[prod] = byMonth;
+  });
 
   res.status(200).json({
     success: true,
@@ -115,6 +200,8 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
       summary: { totalSales, totalSalesGst, totalCogs, grossProfit, totalExpenses, netProfit, netGstPayable },
       expenseBreakdown,
       monthlyData: Object.values(monthlyMap),
+      productData: Object.values(productMap),
+      productMonthlyData,
     },
   });
 });

@@ -18,7 +18,7 @@ const packingMaterialConfigSchema = new mongoose.Schema({
   label: { type: String, required: true, trim: true },
   value: { type: String, required: true, trim: true },
   // Only for displayUnit entries: which Operations tab this unit maps to
-  tabMapping: { type: String, enum: ['Box', 'Ziplock', 'Sticker', null], default: null },
+  tabMapping: { type: String, enum: ['Box', 'Ziplock', 'Sticker', 'Butter Paper', null], default: null },
   subtypes: [subtypeSchema],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });

@@ -210,6 +210,11 @@ export default function Reports() {
     ? plBaseData.map(d => ({ ...d, netProfit: d.grossProfit - plSelectedExpenses.reduce((s, cat) => s + (d.expenses[cat] || 0), 0) }))
     : null;
 
+  // Dynamic filter options from real data
+  const salesProductOptions = useMemo(() => [...new Set(salesRawData.map(r => r.product).filter(Boolean))], [salesRawData]);
+  const plProductOptions = useMemo(() => activeProductPLData.map(p => p.product).filter(Boolean), [activeProductPLData]);
+  const plMonthOptions = useMemo(() => plMonthlyDataActive.map(d => d.month), [plMonthlyDataActive]);
+
   // Product distribution for sales pie
   const salesByProduct = Object.entries(
     filteredSalesData.reduce((acc, r) => {
@@ -259,7 +264,7 @@ export default function Reports() {
                     <FilterOutlined style={{ color: '#B11E6A' }} />
                     <Text strong style={{ color: textColor, fontSize: 13 }}>Filter by:</Text>
                     <Select allowClear placeholder="Select Product" value={salesProductFilter} onChange={setSalesProductFilter} style={{ width: 200 }}>
-                      {['Soap 50g', 'Shampoo 30ml', 'Dental Kit', 'Conditioner'].map(p => (
+                      {salesProductOptions.map(p => (
                         <Option key={p} value={p}>{p}</Option>
                       ))}
                     </Select>
@@ -637,13 +642,13 @@ export default function Reports() {
                         onChange={v => { setPlProductFilter(v || null); }}
                         style={{ width: 160 }}
                       >
-                        {['Soap 50g', 'Shampoo 30ml', 'Dental Kit', 'Conditioner'].map(p => (
+                        {plProductOptions.map(p => (
                           <Option key={p} value={p}>{p}</Option>
                         ))}
                       </Select>
                       <Select value={plSelectedMonth} onChange={setPlSelectedMonth} style={{ width: 140 }}>
                         <Option value="all">All Months</Option>
-                        {['Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb'].map(m => <Option key={m} value={m}>{m}</Option>)}
+                        {plMonthOptions.map(m => <Option key={m} value={m}>{m}</Option>)}
                       </Select>
                       <DatePicker.RangePicker onChange={setPlDateRange} style={{ width: 250 }} />
                       {(plProductFilter || plSelectedMonth !== 'all') && (

@@ -1568,7 +1568,7 @@ export default function Inventory() {
                         title: 'Operations Tab',
                         dataIndex: 'tabMapping',
                         render: v => v
-                          ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
+                          ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : v === 'Butter Paper' ? 'gold' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
                           : <Text type="secondary">—</Text>,
                       },
                       {
@@ -1647,6 +1647,7 @@ export default function Inventory() {
               <Option value="Sticker">Sticker</Option>
               <Option value="Box">Box</Option>
               <Option value="Ziplock">Ziplock (Frosted)</Option>
+              <Option value="Butter Paper">Butter Paper</Option>
             </Select>
           </Form.Item>
 

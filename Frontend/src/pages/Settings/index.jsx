@@ -64,7 +64,7 @@ const MODULE_PERM_TYPES = {
 // renders (and what useTabAccess() enforces).
 const MODULE_TABS = MODULE_TAB_DEFS;
 
-const VENDOR_ROLES = ['Sticker', 'Box', 'Ziplock'];
+const VENDOR_ROLES = ['Sticker', 'Box', 'Ziplock', 'Butter Paper'];
 
 const DEPT_ROLES = {
   Admin: ['Admin'],
@@ -73,7 +73,7 @@ const DEPT_ROLES = {
   'Task Management': ['Task Management Executive', 'Task Management Manager', 'Task Management Head'],
   Dispatch: ['Dispatch Executive', 'Dispatch Manager', 'Dispatch Head'],
   Finance: ['Finance Executive', 'Finance Manager', 'Finance Head'],
-  Vendors: ['Sticker', 'Box', 'Ziplock'],
+  Vendors: ['Sticker', 'Box', 'Ziplock', 'Butter Paper'],
 };
 
 const ALL_PERMS = { read: true, add: true, edit: true, delete: true };

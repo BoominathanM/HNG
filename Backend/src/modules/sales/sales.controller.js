@@ -310,11 +310,19 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     // Carry the full product composition (rich Sales UI + 3-bucket totals read these)
     products: req.body.products || lead.products || [],
     kitOrders: req.body.kitOrders || lead.kitOrders || [],
+    selectedKits: req.body.selectedKits || lead.selectedKits || [],
     productType: req.body.productType || lead.productType,
     kitDisplayUnit: req.body.kitDisplayUnit || lead.kitDisplayUnit || lead.displayUnit || '',
     displayUnit: req.body.displayUnit || lead.displayUnit || lead.kitDisplayUnit || '',
     kitSize: req.body.kitSize || lead.kitSize || '',
+    kitSticker: req.body.kitSticker || lead.kitSticker || undefined,
+    kitLogo: req.body.kitLogo || lead.kitLogo || undefined,
+    kitPrinting: req.body.kitPrinting || lead.kitPrinting || undefined,
+    kitPrice: req.body.kitPrice != null ? Number(req.body.kitPrice) : (lead.kitPrice != null ? Number(lead.kitPrice) : undefined),
+    kitOverallQty: req.body.kitOverallQty != null ? Number(req.body.kitOverallQty) : (lead.kitOverallQty != null ? Number(lead.kitOverallQty) : undefined),
     // Copy lead contact details so they flow through to the eventual order
+    hotelName: req.body.hotelName || lead.hotelName || '',
+    email: req.body.email || lead.email || '',
     location: lead.location || lead.locationCity,
     phone: lead.phone,
     contactPerson: lead.contactPerson,
@@ -429,7 +437,15 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     items: negotiation.items,
     products: negObj.products || lead?.products || [],
     kitOrders: negObj.kitOrders || lead?.kitOrders || [],
+    selectedKits: negObj.selectedKits || lead?.selectedKits || [],
     productType: resolveField(negObj.productType, lead?.productType),
+    kitSticker: resolveField(negObj.kitSticker, lead?.kitSticker),
+    kitLogo: resolveField(negObj.kitLogo, lead?.kitLogo),
+    kitPrinting: resolveField(negObj.kitPrinting, lead?.kitPrinting),
+    kitPrice: negObj.kitPrice != null ? negObj.kitPrice : (lead?.kitPrice != null ? lead.kitPrice : undefined),
+    kitOverallQty: negObj.kitOverallQty != null ? negObj.kitOverallQty : (lead?.kitOverallQty != null ? lead.kitOverallQty : undefined),
+    hotelName: resolveField(negObj.hotelName, lead?.hotelName, negotiation.clientName),
+    email: resolveField(negObj.email, lead?.email),
     // Contact & billing details copied from negotiation extras or lead
     location: resolveField(negObj.location, lead?.location, lead?.locationCity),
     clientPhone: resolveField(negObj.phone, negObj.clientPhone, lead?.phone),
@@ -514,7 +530,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [orders, total] = await Promise.all([
-    Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').populate('leadId', 'leadType').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').populate('leadId', 'leadType hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders kitSticker kitLogo kitPrinting kitPrice kitOverallQty productType splitDates isEmergency isUrgent').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     Order.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: orders });
@@ -524,7 +540,7 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null })
     .populate('clientPartyId')
     .populate('assignedTo', 'fullName email')
-    .populate('leadId', 'leadCode hotelName phone contactPerson location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode deliveryBy transportationBy forwardingCharge paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl displayUnit kitDisplayUnit kitSize selectedKit splitDates isEmergency isUrgent')
+    .populate('leadId', 'leadCode hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rooms occupancy deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders splitDates isEmergency isUrgent leadType')
     .populate('negotiationId', 'negCode')
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));

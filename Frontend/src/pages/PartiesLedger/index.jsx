@@ -1,16 +1,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Input, Select, Typography,
-  Space, Tabs, DatePicker, Spin
+  Space, Tabs, DatePicker, Spin, Descriptions
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
   SearchOutlined, EyeOutlined, LeftOutlined,
   BookOutlined, ShopOutlined, ArrowUpOutlined,
-  WalletOutlined, TeamOutlined,
+  WalletOutlined, TeamOutlined, DollarOutlined,
   PhoneOutlined, MailOutlined, EnvironmentOutlined,
   FileTextOutlined, PrinterOutlined, DownloadOutlined, DeleteOutlined, UserOutlined,
-  BankOutlined, HistoryOutlined
+  BankOutlined, HistoryOutlined, CreditCardOutlined, IdcardOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -64,7 +64,7 @@ export default function PartiesLedger() {
     name: p.name,
     type: p.type,
     phone: p.phone,
-    email: '',
+    email: p.email || '',
     address: [p.street, p.city, p.state, p.pincode].filter(Boolean).join(', '),
     gst: p.gstNumber,
     gstVerifiedData: p.gstVerifiedData || null,
@@ -317,20 +317,11 @@ export default function PartiesLedger() {
 
     return (
       <div>
+        {/* Back + Actions */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-          <Space>
-            <Button icon={<LeftOutlined />} onClick={() => { setViewParty(null); setDateRange(null); }}>
-              Back to Parties
-            </Button>
-            <div>
-              <Text strong style={{ color: PRIMARY, fontSize: 16 }}>{viewParty.name}</Text>
-              <Tag
-                style={{ marginLeft: 8, borderRadius: 10, border: `1px solid ${PRIMARY}33`, background: `${PRIMARY}10`, color: PRIMARY }}
-              >
-                {viewParty.type}
-              </Tag>
-            </div>
-          </Space>
+          <Button icon={<LeftOutlined />} onClick={() => { setViewParty(null); setDateRange(null); }}>
+            Back to Parties
+          </Button>
           <Space wrap>
             <DatePicker.RangePicker value={dateRange} onChange={setDateRange} style={{ width: 260 }} />
             <Button
@@ -346,28 +337,118 @@ export default function PartiesLedger() {
           </Space>
         </div>
 
-        <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '12px 16px', marginBottom: 16, border: `1px solid ${borderColor}` }}>
-          <Row gutter={[16, 8]} wrap>
-            {viewParty.phone && (
-              <Col><Space size={4}><PhoneOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>{viewParty.phone}</Text></Space></Col>
-            )}
-            {viewParty.email && (
-              <Col><Space size={4}><MailOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>{viewParty.email}</Text></Space></Col>
-            )}
-            {viewParty.address && (
-              <Col><Space size={4}><EnvironmentOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>{viewParty.address}</Text></Space></Col>
-            )}
+        {/* Hero Banner */}
+        <div style={{
+          background: isDark ? '#1E1E2E' : '#fff',
+          borderRadius: 16,
+          border: `2px solid ${PRIMARY}22`,
+          padding: '20px 24px',
+          marginBottom: 16,
+          boxShadow: '0 4px 20px rgba(177,30,106,0.08)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <Text strong style={{ fontSize: 22, color: PRIMARY, display: 'block', lineHeight: 1.2 }}>{viewParty.name}</Text>
+              <Space size={8} style={{ marginTop: 8 }} wrap>
+                <Tag style={{ borderRadius: 10, background: isSupplier ? 'rgba(24,144,255,0.1)' : 'rgba(114,46,209,0.1)', color: isSupplier ? '#1890ff' : '#722ed1', border: `1px solid ${isSupplier ? '#1890ff44' : '#722ed144'}`, fontWeight: 600 }}>
+                  {viewParty.type}
+                </Tag>
+                {viewParty.phone && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: textColor }}>
+                    <PhoneOutlined style={{ color: PRIMARY }} />{viewParty.phone}
+                  </span>
+                )}
+                {viewParty.email && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: textColor }}>
+                    <MailOutlined style={{ color: PRIMARY }} /><a href={`mailto:${viewParty.email}`} style={{ color: PRIMARY }}>{viewParty.email}</a>
+                  </span>
+                )}
+                {viewParty.contactPerson && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: textColor }}>
+                    <UserOutlined style={{ color: '#888' }} />{viewParty.contactPerson}
+                  </span>
+                )}
+              </Space>
+            </div>
+            <Space direction="vertical" size={4} style={{ textAlign: 'right' }}>
+              <Tag style={{ borderRadius: 12, fontSize: 13, padding: '2px 12px', background: netBalance > 0 ? 'rgba(255,77,79,0.1)' : 'rgba(82,196,26,0.1)', color: netBalance > 0 ? '#ff4d4f' : '#52c41a', border: `1px solid ${netBalance > 0 ? '#ff4d4f44' : '#52c41a44'}`, fontWeight: 700 }}>
+                ₹{Math.abs(netBalance).toLocaleString()} {netBalance < 0 ? 'Cr (Advance)' : 'Dr (Balance)'}
+              </Tag>
+              {(viewParty.creditLimit > 0) && (
+                <Tag style={{ borderRadius: 12, fontSize: 12, padding: '2px 10px', background: 'rgba(250,140,22,0.1)', color: '#fa8c16', border: '1px solid rgba(250,140,22,0.3)' }}>
+                  Credit Limit: ₹{Number(viewParty.creditLimit).toLocaleString()}
+                </Tag>
+              )}
+              {(viewParty.creditPeriod) && (
+                <Tag style={{ borderRadius: 12, fontSize: 12, padding: '2px 10px', background: 'rgba(250,140,22,0.08)', color: '#fa8c16', border: '1px solid rgba(250,140,22,0.2)' }}>
+                  Credit Period: {viewParty.creditPeriod} days
+                </Tag>
+              )}
+            </Space>
+          </div>
+        </div>
+
+        {/* Party Information Card */}
+        <Card
+          style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+          title={
+            <Space>
+              <div style={{ width: 4, height: 20, background: PRIMARY, borderRadius: 2, display: 'inline-block' }} />
+              <IdcardOutlined style={{ color: PRIMARY }} />
+              <span style={{ fontSize: FONT_SIZE }}>Party Information</span>
+            </Space>
+          }
+        >
+          <Descriptions size="small" column={{ xs: 1, sm: 2, md: 3 }} labelStyle={{ color: '#888', fontSize: 12, fontWeight: 500 }} contentStyle={{ fontSize: 13, fontWeight: 600, color: textColor }}>
+            <Descriptions.Item label="Party Name">{viewParty.name}</Descriptions.Item>
+            <Descriptions.Item label="Party Type">
+              <Tag style={{ borderRadius: 10, background: isSupplier ? 'rgba(24,144,255,0.08)' : 'rgba(114,46,209,0.08)', color: isSupplier ? '#1890ff' : '#722ed1', border: 'none', fontWeight: 600 }}>
+                {viewParty.type}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="Contact Person">
+              <Space size={4}><UserOutlined style={{ color: '#888' }} />{viewParty.contactPerson || <Text type="secondary">—</Text>}</Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="Phone">
+              <Space size={4}><PhoneOutlined style={{ color: PRIMARY }} />{viewParty.phone || <Text type="secondary">—</Text>}</Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="Email">
+              {viewParty.email
+                ? <Space size={4}><MailOutlined style={{ color: PRIMARY }} /><a href={`mailto:${viewParty.email}`} style={{ color: PRIMARY }}>{viewParty.email}</a></Space>
+                : <Text type="secondary">—</Text>}
+            </Descriptions.Item>
+            <Descriptions.Item label="Address">
+              <Space size={4}><EnvironmentOutlined style={{ color: '#888' }} />{viewParty.address || <Text type="secondary">—</Text>}</Space>
+            </Descriptions.Item>
             {viewParty.gst && (
-              <Col><Space size={4}><FileTextOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>Lic/GST: {viewParty.gst}</Text></Space></Col>
+              <Descriptions.Item label="GST Number">
+                <Space size={4}><BankOutlined style={{ color: '#722ed1' }} /><Text style={{ fontFamily: 'monospace', color: '#722ed1', fontWeight: 700 }}>{viewParty.gst}</Text></Space>
+              </Descriptions.Item>
             )}
             {viewParty.pan && (
-              <Col><Space size={4}><FileTextOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>PAN: {viewParty.pan}</Text></Space></Col>
+              <Descriptions.Item label="PAN">
+                <Space size={4}><CreditCardOutlined style={{ color: '#888' }} /><Text style={{ fontFamily: 'monospace', fontWeight: 600 }}>{viewParty.pan}</Text></Space>
+              </Descriptions.Item>
             )}
-            {viewParty.contactPerson && (
-              <Col><Space size={4}><UserOutlined style={{ color: PRIMARY }} /><Text style={{ fontSize: FONT_SIZE }}>Contact: {viewParty.contactPerson}</Text></Space></Col>
+            {viewParty.creditLimit > 0 && (
+              <Descriptions.Item label="Credit Limit">
+                <Text style={{ color: '#fa8c16', fontWeight: 700 }}>₹{Number(viewParty.creditLimit).toLocaleString()}</Text>
+              </Descriptions.Item>
             )}
-          </Row>
-        </div>
+            {viewParty.creditPeriod && (
+              <Descriptions.Item label="Credit Period">
+                <Text style={{ color: '#fa8c16', fontWeight: 600 }}>{viewParty.creditPeriod} days</Text>
+              </Descriptions.Item>
+            )}
+            {viewParty.openingBalance !== 0 && viewParty.openingBalance !== undefined && (
+              <Descriptions.Item label="Opening Balance">
+                <Text style={{ color: PRIMARY, fontWeight: 700 }}>
+                  ₹{Math.abs(Number(viewParty.openingBalance || 0)).toLocaleString()} {viewParty.openingBalDir || 'Dr'}
+                </Text>
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+        </Card>
 
         {/* GST API Details Card */}
         {viewParty.gst && (
@@ -447,16 +528,24 @@ export default function PartiesLedger() {
           </Card>
         )}
 
+        {/* Summary Stats */}
         <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
           {[
-            { label: isSupplier ? 'Total Purchases (Dr)' : 'Total Invoiced (Dr)', val: `₹${totalDebit.toLocaleString()}`, color: '#ff4d4f' },
-            { label: isSupplier ? 'Total Paid (Cr)' : 'Total Received (Cr)', val: `₹${totalCredit.toLocaleString()}`, color: '#52c41a' },
-            { label: 'Net Balance', val: `₹${Math.abs(netBalance).toLocaleString()}${netBalance < 0 ? ' (Adv)' : ''}`, color: PRIMARY },
+            { label: isSupplier ? 'Total Purchases (Dr)' : 'Total Invoiced (Dr)', val: `₹${totalDebit.toLocaleString()}`, color: '#ff4d4f', icon: <ArrowUpOutlined /> },
+            { label: isSupplier ? 'Total Paid (Cr)' : 'Total Received (Cr)', val: `₹${totalCredit.toLocaleString()}`, color: '#52c41a', icon: <WalletOutlined /> },
+            { label: 'Net Balance', val: `₹${Math.abs(netBalance).toLocaleString()}${netBalance < 0 ? ' (Adv)' : ''}`, color: PRIMARY, icon: <DollarOutlined /> },
           ].map(s => (
             <Col xs={8} key={s.label}>
-              <Card style={{ borderRadius: 10, border: 'none', background: `${s.color}10` }} styles={{ body: { padding: '10px 14px' } }}>
-                <Text style={{ fontSize: 11, color: '#888', display: 'block' }}>{s.label}</Text>
-                <Text strong style={{ color: s.color, fontSize: 16 }}>{s.val}</Text>
+              <Card style={{ borderRadius: 12, border: 'none', background: `${s.color}10`, boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }} styles={{ body: { padding: '14px 16px' } }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: `${s.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span style={{ color: s.color, fontSize: 16 }}>{s.icon}</span>
+                  </div>
+                  <div>
+                    <Text style={{ fontSize: 11, color: '#888', display: 'block', lineHeight: 1.3 }}>{s.label}</Text>
+                    <Text strong style={{ color: s.color, fontSize: 16 }}>{s.val}</Text>
+                  </div>
+                </div>
               </Card>
             </Col>
           ))}

@@ -86,7 +86,7 @@ const leadSchema = new mongoose.Schema({
   specifications: [mongoose.Schema.Types.Mixed],
   productType: mongoose.Schema.Types.Mixed,
   displayUnit: String,
-  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', ''], default: '' },
+  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', 'Butter Paper', ''], default: '' },
   packingMaterial: String,
   kitDisplayUnit: String,
   kitSize: String,

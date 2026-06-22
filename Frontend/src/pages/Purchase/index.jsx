@@ -115,7 +115,7 @@ export default function Purchase() {
   useEffect(() => {
     const mapped = (requestsData?.data || []).map((r) => ({
       key: r._id, item: r.itemId?.itemName || r.itemName,
-      supplier: r.vendorId?.name || '—', qty: r.qty, unit: r.unit,
+      supplier: r.vendorId?.name || '-', qty: r.qty, unit: r.unit,
       payment_terms: r.paymentTerms, date: r.createdAt?.slice(0, 10),
       status: r.status, notes: r.notes || [], financeNote: r.financeNote || '',
       requestType: r.requestType || 'individual', category: r.category || r.itemId?.category || 'Other',
@@ -128,7 +128,7 @@ export default function Purchase() {
     const mapped = (purchaseOrdersData?.data || []).map((o) => ({
       key: o._id, requestKey: o.requestId?._id?.toString() || o.requestId?.toString() || null,
       item: o.itemId?.itemName || o.itemName,
-      supplier: o.vendorId?.name || '—',
+      supplier: o.vendorId?.name || '-',
       qty: o.qty, unit: o.unit, amount: o.amount,
       payment_terms: o.paymentTerms, date: o.createdAt?.slice(0, 10),
       bill_no: o.billNo || '', inv_no: o.invNo || '',
@@ -283,7 +283,7 @@ export default function Purchase() {
   useEffect(() => {
     setDispatchTrackingOrders((dispatchTrackingData?.data || []).map((o) => ({
       key: o._id, orderId: o.poCode, date: o.createdAt?.slice(0, 10),
-      supplier: o.vendorId?.name || '—', item: o.itemId?.itemName || o.itemName,
+      supplier: o.vendorId?.name || '-', item: o.itemId?.itemName || o.itemName,
       qty: o.qty, unit: o.unit, amount: o.amount,
       lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
       lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
@@ -1073,9 +1073,9 @@ export default function Purchase() {
                             scroll={{ x: 'max-content' }}
                             columns={[
                               { title: 'Product Name', dataIndex: 'productName', key: 'productName', width: 180, render: v => <Text strong style={{ color: '#d46b08', fontSize: 13 }}>{v}</Text> },
-                              { title: 'Qty (from Sales)', dataIndex: 'qty', key: 'qty', render: (v) => v || '—' },
-                              { title: 'Hotel / Customer', dataIndex: 'hotelName', key: 'hotelName', render: v => v || '—' },
-                              { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', render: v => v || '—' },
+                              { title: 'Qty (from Sales)', dataIndex: 'qty', key: 'qty', render: (v) => v || '-' },
+                              { title: 'Hotel / Customer', dataIndex: 'hotelName', key: 'hotelName', render: v => v || '-' },
+                              { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', render: v => v || '-' },
                               { title: 'Quotation Ref', dataIndex: 'fromOrder', key: 'fromOrder', render: v => <Text style={{ color: '#B11E6A', fontSize: 11 }}>{v}</Text> },
                               { title: 'Date', dataIndex: 'date', key: 'date' },
                               {
@@ -1475,7 +1475,7 @@ export default function Purchase() {
                           },
                           {
                             title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', width: 200,
-                            render: v => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>
+                            render: v => <Text style={{ fontSize: 12 }}>{v || '-'}</Text>
                           },
                           {
                             title: 'Date', dataIndex: 'date', key: 'date', width: 100,
@@ -1960,7 +1960,7 @@ export default function Purchase() {
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                   {localPurchaseDetailView.lpCode && <div><Text type="secondary" style={{ fontSize: 12 }}>LP Code: </Text><Text strong style={{ color: '#B11E6A' }}>{localPurchaseDetailView.lpCode}</Text></div>}
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Vendor Name: </Text><Text strong>{localPurchaseDetailView.vendorName}</Text></div>
-                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Phone: </Text><Text>{localPurchaseDetailView.vendorPhone || '—'}</Text></div>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Phone: </Text><Text>{localPurchaseDetailView.vendorPhone || '-'}</Text></div>
                                 </div>
                               </Card>
                             </Col>
@@ -2921,7 +2921,7 @@ export default function Purchase() {
               <div style={{ display: 'flex', padding: '12px 14px', gap: 0 }}>
                 {[
                   { label: 'Stock Count', value: `${selectedProduct.current}`, color: selectedProduct.current <= selectedProduct.min ? '#ff4d4f' : '#52c41a' },
-                  { label: 'Product Qty', value: selectedProduct.unitValue ? `${selectedProduct.unitValue} ${selectedProduct.unit}` : (selectedProduct.unit || '—'), color: '#1890ff' },
+                  { label: 'Product Qty', value: selectedProduct.unitValue ? `${selectedProduct.unitValue} ${selectedProduct.unit}` : (selectedProduct.unit || '-'), color: '#1890ff' },
                   { label: 'Min. Required', value: `${selectedProduct.min}`, color: '#fa8c16' },
                   { label: 'Shortfall', value: selectedProduct.current < selectedProduct.min ? `${selectedProduct.min - selectedProduct.current}` : 'None', color: selectedProduct.current < selectedProduct.min ? '#ff4d4f' : '#52c41a' },
                 ].map((stat, i) => (
@@ -3050,7 +3050,7 @@ export default function Purchase() {
             </div>
             <div>
               <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Raise Request</div>
-              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Upload received quotation â†' AI extracts details â†' Send to Financial</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Upload received quotation → AI extracts details → Send to Financial</div>
             </div>
           </div>
         }
@@ -3478,7 +3478,7 @@ export default function Purchase() {
                         fontSize: 13,
                       }}
                     >
-                      {type === 'Immediate' ? 'âš¡ Immediate Payment' : 'ðŸ"… Credit Payment'}
+                      {type === 'Immediate' ? '⚡ Immediate Payment' : '📅 Credit Payment'}
                     </button>
                   ))}
                 </div>
@@ -3915,7 +3915,7 @@ export default function Purchase() {
             </div>
             <div>
               <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Bulk Purchase Request</div>
-              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Select supplier â†' pick low-stock products â†' raise multiple requests at once</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Select supplier → pick low-stock products → raise multiple requests at once</div>
             </div>
           </div>
         }
@@ -4353,8 +4353,8 @@ export default function Purchase() {
               value={financeDecision || undefined}
               onChange={v => setFinanceDecision(v)}
               options={[
-                { value: 'Approved', label: 'âœ…  Approved — proceed with order' },
-                { value: 'ModifyRequested', label: 'âš ï¸  Modify Requested — quantity needs revision' },
+                { value: 'Approved', label: '✅  Approved — proceed with order' },
+                { value: 'ModifyRequested', label: '⚠️  Modify Requested — quantity needs revision' },
               ]}
             />
           </div>
@@ -4704,7 +4704,7 @@ export default function Purchase() {
                     { title: 'Missing', dataIndex: 'missingQty', render: v => <Text strong style={{ color: '#ff4d4f' }}>{v}</Text> },
                     {
                       title: 'Reason', key: 'reason',
-                      render: (_, r) => <Text type="secondary" style={{ fontSize: 11 }}>{productNotes[r.key] || '—'}</Text>
+                      render: (_, r) => <Text type="secondary" style={{ fontSize: 11 }}>{productNotes[r.key] || '-'}</Text>
                     },
                   ]}
                 />

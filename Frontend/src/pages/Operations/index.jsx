@@ -30,6 +30,7 @@ import {
   AlertFilled,
   BoxPlotOutlined,
   CheckCircleOutlined,
+  ContainerOutlined,
   CopyOutlined,
   ExperimentOutlined,
   EyeOutlined,
@@ -130,6 +131,7 @@ export default function Operations() {
   const [stickerSearch, setStickerSearch] = useState('');
   const [boxSearch, setBoxSearch] = useState('');
   const [frostedSearch, setFrostedSearch] = useState('');
+  const [butterSearch, setButterSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
 
   // API-backed state — RTK Query
@@ -154,7 +156,7 @@ export default function Operations() {
   // Vendor users from Settings (department = Vendors, role = Sticker/Box/Ziplock)
   const { data: usersData } = useGetUsersQuery();
   const vendorUsers = useMemo(() => (usersData?.data || []).filter(
-    u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock'].includes(u.role)
+    u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper'].includes(u.role)
   ), [usersData]);
 
   // Packing config: resolve packingMaterial → Operations tab mapping
@@ -191,12 +193,13 @@ export default function Operations() {
       sticker: makeOpts('Sticker', 'Sticker'),
       box: makeOpts('Box', 'Box'),
       frosted: makeOpts('Ziplock', 'Ziplock'),
+      butter: makeOpts('Butter Paper', 'Butter Paper'),
     };
   }, [printingVendorData, vendorUsers]);
 
   const apiOrders = useMemo(() => (ordersData?.data || []).map((o) => ({
     key: o._id, id: o.orderCode || o._id,
-    hotelLogo: o.clientName || '—', salesPerson: o.salesPerson || o.assignedTo?.fullName || '—',
+    hotelLogo: o.clientName || '—',
     createdAt: o.createdAt, orderType: o.orderType || 'Sticker',
     orderCategory: (o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (o.orderCategory || 'ORDER'),
     clientApproval: o.clientApproval || 'Waiting',
@@ -204,10 +207,11 @@ export default function Operations() {
     printingStatus: o.printingStatus || 'Not Started',
     stockStatus: o.stockStatus || 'Not Received',
     operationStage: o.operationStage || '', taskStatus: o.taskStatus || 'Pending',
-    assignedEmployee: o.salesPerson || o.assignedTo?.fullName || '', printerSentTotal: o.printerSentTotal || 0,
+    assignedEmployee: o.salesPerson || o.assignedTo?.fullName || o.leadId?.salesPerson || '', printerSentTotal: o.printerSentTotal || 0,
     printerVerified: o.printerVerified || false, inventoryStock: o.inventoryStock || 0,
     orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
-    specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || '',
+    specsSummary: o.specsSummary || '',
+    paymentTerms: o.paymentTerms || o.leadId?.paymentTerms || '',
     totalAmount: o.total || 0, advance: o.advancePaid || 0,
     expectedDelivery: o.expectedDeliveryDate || o.leadId?.orderDeliveryDate || null,
     isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
@@ -225,6 +229,31 @@ export default function Operations() {
       const sds = (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []);
       return sds.some((sd) => (sd.products || []).some((ep) => ep.product) || !!sd.product);
     })(),
+    // Contact & billing — order doc first, then populated lead fallback
+    location: o.location || o.leadId?.location || o.leadId?.locationCity || '',
+    phone: o.clientPhone || o.phone || o.leadId?.phone || '',
+    email: o.email || o.leadId?.email || '',
+    contactPerson: o.contactPerson || o.leadId?.contactPerson || '',
+    alternativeName: o.alternativeName || o.leadId?.alternativeName || '',
+    alternativeRole: o.alternativeRole || o.leadId?.alternativeRole || '',
+    alternativePhone: o.alternativePhone || o.leadId?.alternativePhone || '',
+    billingName: o.billingName || o.leadId?.billingName || o.clientName || '',
+    gstNumber: o.gstNumber || o.leadId?.gstNumber || '',
+    gstPercent: o.gstPercent ?? o.leadId?.gstPercent,
+    billType: o.billType || o.type || o.leadId?.billType || 'GST',
+    salesPerson: o.salesPerson || o.assignedTo?.fullName || o.leadId?.salesPerson || '',
+    deliveryBy: o.deliveryBy || o.leadId?.deliveryBy || '',
+    transportationBy: o.transportationBy || o.leadId?.transportationBy || '',
+    forwardingCharge: o.forwardingCharge ?? o.leadId?.forwardingCharge ?? false,
+    forwardingChargeAmount: o.forwardingChargeAmount ?? o.leadId?.forwardingChargeAmount ?? 0,
+    destination: o.destination || o.leadId?.destination || '',
+    hotelType: o.hotelType || o.leadId?.hotelType || '',
+    rooms: o.rooms ?? o.leadId?.rooms,
+    occupancy: o.occupancy ?? o.leadId?.occupancy,
+    city: o.city || o.leadId?.city || '',
+    state: o.state || o.leadId?.state || '',
+    pincode: o.pincode || o.leadId?.pincode || '',
+    detailedAddress: o.detailedAddress || o.leadId?.detailedAddress || '',
     // Fall back to o.products when items is empty (legacy / sample orders that only stored products)
     items: (o.items?.length ? o.items : (o.products || [])).map(item => {
       // Normalize sticker/printing: old DB rows may store lowercase 'yes'/'no';
@@ -248,7 +277,6 @@ export default function Operations() {
       };
     }),
     readiness: o.readiness || {},
-    location: o.location || '', phone: o.clientPhone || '',
     paymentProofs: o.paymentProofs || [],
     // Kit display fields — fall back to the populated leadId fields for orders created
     // before kitDisplayUnit was copied onto the Order document itself.
@@ -308,6 +336,7 @@ export default function Operations() {
   const findStickerReq = (item) => {
     const stickerType = item.key?.endsWith('-box') ? 'Box'
       : item.key?.endsWith('-frosted') ? 'Frosted Ziplock'
+      : item.key?.endsWith('-butter') ? 'Butter Paper'
       : 'Sticker';
     const pLower = (item.product || '').toLowerCase();
     return stickerRequests.find(
@@ -356,6 +385,7 @@ export default function Operations() {
       Sticker: productionQueues.sticker,
       Box: productionQueues.box,
       'Frosted Ziplock': productionQueues.frosted,
+      'Butter Paper': productionQueues.butter,
     };
     const items = (queueMap[teamSendType] || []).map((item) => ({
       ...item,
@@ -666,7 +696,7 @@ export default function Operations() {
         dataIndex: 'packagingType',
         render: (val) => {
           const label = PACKAGING_TYPE_LABELS[val] || val || '—';
-          const color = val === 'box' ? 'green' : val === 'frosted' ? 'orange' : 'purple';
+          const color = val === 'box' ? 'green' : val === 'frosted' ? 'orange' : val === 'butter' ? 'gold' : 'purple';
           return <Tag color={color}>{label}</Tag>;
         },
       }] : []),
@@ -777,6 +807,7 @@ export default function Operations() {
                       try {
                         const queueType = record.key?.endsWith('-box') ? 'Box'
                           : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
+                          : record.key?.endsWith('-butter') ? 'Butter Paper'
                           : 'Sticker';
                         const existing = findStickerReq(record);
                         let stickerId;
@@ -909,6 +940,9 @@ export default function Operations() {
                         } else if (dest === 'frosted') {
                           setActiveTab('frosted');
                           enqueueSnackbar('Printing started — item moved to Frosted Ziplock tab', { variant: 'info' });
+                        } else if (dest === 'butter') {
+                          setActiveTab('butter_paper');
+                          enqueueSnackbar('Printing started — item moved to Butter Paper tab', { variant: 'info' });
                         }
                       } catch (err) {
                         enqueueSnackbar(err?.data?.message || err?.data || 'Failed to start printing', { variant: 'error' });
@@ -1012,7 +1046,7 @@ export default function Operations() {
     // shared parent row. Non-kit orders with multiple products stay as individual rows.
     let tableSource = activeRows;
     if (type !== 'Sticker') {
-      const typeKey = type === 'Box' ? 'box' : 'frosted';
+      const typeKey = type === 'Box' ? 'box' : type === 'Butter Paper' ? 'butter' : 'frosted';
       const orderMap = new Map();
       activeRows.forEach((row) => {
         if (!orderMap.has(row.orderId)) orderMap.set(row.orderId, []);
@@ -1028,7 +1062,8 @@ export default function Operations() {
         // each product as a standalone row with its own upload — no shared parent row.
         const displayUnitMatchesTab =
           (typeKey === 'box' && order?.displayUnitTab === 'Box') ||
-          (typeKey === 'frosted' && order?.displayUnitTab === 'Ziplock');
+          (typeKey === 'frosted' && order?.displayUnitTab === 'Ziplock') ||
+          (typeKey === 'butter' && order?.displayUnitTab === 'Butter Paper');
         const shouldGroupAsKit = isKitOrder && displayUnitMatchesTab;
         if (!shouldGroupAsKit || group.length === 1) {
           // Non-kit, single-product, or individual-packing kit items: shown individually.
@@ -1359,6 +1394,11 @@ export default function Operations() {
             label: <Space><InboxOutlined />Frosted Ziplock</Space>,
             children: renderQueueCard('Frosted Ziplock', productionQueues.frosted, 'Frosted Ziplock Queue', frostedSearch, setFrostedSearch),
           },
+          {
+            key: 'butter_paper',
+            label: <Space><ContainerOutlined />Butter Paper</Space>,
+            children: renderQueueCard('Butter Paper', productionQueues.butter, 'Butter Paper Queue', butterSearch, setButterSearch),
+          },
         ])}
         activeKey={activeKeyFor(activeTab)}
       />
@@ -1455,6 +1495,7 @@ export default function Operations() {
               options={(printingVendorsByType[
                 requestType === 'Sticker' ? 'sticker'
                 : requestType === 'Box' ? 'box'
+                : requestType === 'Butter Paper' ? 'butter'
                 : 'frosted'
               ] || []).map(opt => ({
                 value: opt.value,

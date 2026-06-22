@@ -6,10 +6,11 @@
 // (item.sticker === 'YES') and enum validators require uppercase.
 export const normYNOps = (v) => { const s = String(v ?? '').trim().toLowerCase(); return s === 'yes' ? 'YES' : s === 'no' ? 'NO' : ''; };
 
-// Resolve a packing material string → Operations tab ('Box'|'Ziplock'|'') by keyword match.
+// Resolve a packing material string → Operations tab ('Box'|'Ziplock'|'Butter Paper'|'') by keyword match.
 // Used as a fallback when the item has no config-map entry (old orders, unregistered names).
 export const packTabFromString = (pm) => {
   const p = (pm || '').toLowerCase();
+  if (p.includes('butter')) return 'Butter Paper';
   if (p.includes('ziplock') || p.includes('frosted') || p.includes('pouch')) return 'Ziplock';
   if (p.includes('box')) return 'Box';
   return '';
@@ -21,9 +22,11 @@ export const inferItemLogoType = (sticker, printing, pmRaw, packingMaterialTab, 
   if (existing) return existing;
   if (sticker === 'YES' || printing === 'YES') return 'Sticker';
   const hay = (pmRaw || '').toLowerCase();
+  if (hay.includes('butter')) return 'Butter Paper';
   if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
   if (hay.includes('box')) return 'Box';
   if (sticker !== 'NO' && hay.includes('sticker')) return 'Sticker';
+  if (packingMaterialTab === 'Butter Paper') return 'Butter Paper';
   if (packingMaterialTab === 'Ziplock') return 'Frosted Ziplock';
   if (packingMaterialTab === 'Box') return 'Box';
   return '';
@@ -133,6 +136,24 @@ const hasFrostedPackaging = (item, order) => {
   return false;
 };
 
+// Returns true when the item's physical packaging is butter paper — regardless of whether
+// the item also needs sticker printing. Mirrors hasFrostedPackaging.
+// Priority: (1) explicit displayUnitTab from config, (2) packingMaterialTab, (3) logoType,
+// (4) string-match fallback on display unit / packing material names.
+const hasButterPaperPackaging = (item, order) => {
+  const isKitItem = !!(item.isKit || item.kitType);
+  if (isKitItem && order.displayUnitTab === 'Butter Paper') return true;
+  if (item.packingMaterialTab === 'Butter Paper') return true;
+  if (item.logoType === 'Butter Paper') return true;
+  const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
+  if (pm.includes('butter')) return true;
+  if (isKitItem) {
+    const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+    return du.includes('butter');
+  }
+  return false;
+};
+
 const isFrostedZiplock = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
   // Kit items: display unit determines final tab; sticker flag still respected
@@ -166,21 +187,26 @@ const itemNeedsPrintStep = (item) => itemNeedsSticker(item) || itemNeedsPrinting
 const getItemPackagingType = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
   // Kit items: display unit tab is the final packaging destination (overrides packing material).
+  if (isKitItem && order.displayUnitTab === 'Butter Paper') return 'butter';
   if (isKitItem && order.displayUnitTab === 'Ziplock') return 'frosted';
   if (isKitItem && order.displayUnitTab === 'Box') return 'box';
   // Standalone products with sticker=YES stay in the Sticker tab after printing — they do
-  // NOT move on to a Box/Ziplock tab regardless of packingMaterialTab.
+  // NOT move on to a Box/Ziplock/Butter Paper tab regardless of packingMaterialTab.
   if (!isKitItem && itemNeedsSticker(item)) return 'sticker';
   // Standalone products without sticker: their own config-resolved packingMaterial tab.
+  if (item.packingMaterialTab === 'Butter Paper') return 'butter';
   if (item.packingMaterialTab === 'Ziplock') return 'frosted';
   if (item.packingMaterialTab === 'Box') return 'box';
+  if (hasButterPaperPackaging(item, order)) return 'butter';
   if (hasFrostedPackaging(item, order)) return 'frosted';
   if (item.logoType === 'Box') return 'box';
   const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
+  if (pm.includes('butter')) return 'butter';
   if (pm.includes('box')) return 'box';
   // Kit items only: fall back to display unit name for box routing.
   if (isKitItem) {
     const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+    if (du.includes('butter')) return 'butter';
     if (du.includes('box')) return 'box';
     if (du.includes('ziplock') || du.includes('frosted') || du.includes('pouch')) return 'frosted';
   }
@@ -192,6 +218,7 @@ export const PACKAGING_TYPE_LABELS = {
   sticker: 'Sticker Only',
   box: 'Box',
   frosted: 'Frosted Ziplock',
+  butter: 'Butter Paper',
 };
 
 // Statuses that indicate the item has moved ON from sticker to box/frosted manufacturing.
@@ -287,11 +314,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             // Sticker/Print tab. Items with no print step and an explicit Box/Ziplock packing tab
             // skip the Print tab entirely.
             const needsPrintStandalone = itemNeedsPrintStep(item);
-            if (!needsPrintStandalone && (item.packingMaterialTab === 'Box' || item.packingMaterialTab === 'Ziplock')) return false;
+            if (!needsPrintStandalone && (item.packingMaterialTab === 'Box' || item.packingMaterialTab === 'Ziplock' || item.packingMaterialTab === 'Butter Paper')) return false;
           } else {
             // Kit items: Sticker=Yes / Printing=Yes still goes through the Print tab first even if
-            // displayUnitTab is Box/Ziplock. Only kit items with no print step skip it.
-            if ((order.displayUnitTab === 'Box' || order.displayUnitTab === 'Ziplock') &&
+            // displayUnitTab is Box/Ziplock/Butter Paper. Only kit items with no print step skip it.
+            if ((order.displayUnitTab === 'Box' || order.displayUnitTab === 'Ziplock' || order.displayUnitTab === 'Butter Paper') &&
                 !itemNeedsPrintStep(item)) return false;
           }
           // Sticker=Yes or Printing=Yes → route to the Sticker/Print tab regardless of Logo / Packing Material.
@@ -502,6 +529,82 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           }
         } else {
           result.push(makeFrostedRow(itemQty, '', false, emergencyQtyMap.size > 0 && !emergencyAllDone));
+        }
+      });
+      // Emergency products first within this order
+      return result.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
+    }),
+
+    // Butter Paper queue: items wrapped in butter paper.
+    // Same sticker-first rule applies — only appears here after the sticker is printed.
+    // Within each order: emergency products (from splitDates) appear first; remaining items
+    // carry isEmergencyGated=true until all emergency items for that order are done.
+    butter: orders.flatMap((order) => {
+      const emergencyQtyMap = getEmergencyProductQtyMap(order);
+      const emergencyAllDone = areAllEmergencyItemsDone(order);
+      const result = [];
+      (order.items || []).forEach((item, idx) => {
+        const isKitItem = !!(item.isKit || item.kitType);
+        const packType = getItemPackagingType(item, order);
+        // Kit items can appear in multiple packaging tabs simultaneously (dual-step flow):
+        // when a kit item has packingMaterialTab='Butter Paper' but the display unit routes
+        // elsewhere, include it here for the individual packing step.
+        const needsButterPacking = packType === 'butter' ||
+          (isKitItem && item.packingMaterialTab === 'Butter Paper' && order.displayUnitTab !== 'Butter Paper');
+        if (!needsButterPacking) return;
+        const product = item.product || item.itemName;
+        // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before butter paper.
+        const needsPrint = itemNeedsPrintStep(item);
+        // "Belongs in Butter Paper" — used for the no-logo exclusion check and active-SR gate.
+        const hasExplicitButterTab = (isKitItem && order.displayUnitTab === 'Butter Paper') || item.packingMaterialTab === 'Butter Paper';
+        // "Can bypass print gate" — only standalone items that DON'T need a print step show in
+        // Butter Paper directly. Items needing Sticker/Printing always clear the Print tab first.
+        const canBypassButterSticker = !isKitItem && item.packingMaterialTab === 'Butter Paper' && !needsPrint;
+        // Gate on an active Sticker-type SR so that print items alongside butter packaging
+        // still wait in the print tab until printed.
+        const sr = findSR(order.id, product, 'Sticker');
+        const hasActiveSR = sr && !STICKER_MOVED_ON_STATUSES.has(sr.status);
+        if (needsPrint && !canBypassButterSticker && !isStickerPrinted(order.id, product, idx)) return;
+        // Active SR from the print tab blocks display even when no print step is explicitly set.
+        if (!needsPrint && hasActiveSR && !hasExplicitButterTab && !isStickerPrinted(order.id, product, idx)) return;
+        // No print step, Logo Required = No → no routing to Butter Paper tab, unless explicit Butter Paper tab is set.
+        if (!needsPrint && !order.logoRequired && !hasExplicitButterTab) return;
+        const pKey = (product || '').toLowerCase();
+        const eQty = emergencyQtyMap.get(pKey);
+        const itemQty = Number(item.qty) || 0;
+        const butterNote = needsPrint ? 'Print approved — now in butter paper queue' : 'Butter paper packing';
+
+        const makeButterRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
+          key: `${order.id}-${idx}-butter${keySuffix}`,
+          orderId: order.id,
+          orderCategory: order.orderCategory || 'ORDER',
+          category: itemCategoryOf(item),
+          hotelLogo: order.hotelLogo || order.clientName,
+          product,
+          qty,
+          size: item.size,
+          status: order.designStatus,
+          sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
+          verified: order.stockStatus === 'Received',
+          note: butterNote,
+          stickerPrinting: needsPrint ? 'Yes' : 'No',
+          packagingType: 'butter',
+          isUrgent: order.isUrgent || false,
+          isEmergencyProduct,
+          isEmergencyGated,
+          logoRequired: order.logoRequired || false,
+          logoUrl: order.logoUrl || '',
+        });
+
+        if (eQty !== undefined) {
+          if (eQty === null || itemQty <= eQty) {
+            result.push(makeButterRow(itemQty, '', true, false));
+          } else {
+            result.push(makeButterRow(eQty, '-emg', true, false));
+            result.push(makeButterRow(itemQty - eQty, '-rem', false, !emergencyAllDone));
+          }
+        } else {
+          result.push(makeButterRow(itemQty, '', false, emergencyQtyMap.size > 0 && !emergencyAllDone));
         }
       });
       // Emergency products first within this order

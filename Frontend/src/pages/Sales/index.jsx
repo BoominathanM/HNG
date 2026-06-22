@@ -510,6 +510,27 @@ function computeRecordGrandTotal(rec = {}) {
   return computeRecordBuckets(rec).grand;
 }
 
+// Composition-aware grand total: when packagingIncludes is present, uses
+// computePersonalizedComposition so that the grand total matches the ORDER COMPOSITION BREAKDOWN:
+//   totalPersonalized (A) + separateKit remaining (B) + separateProduct remaining (C) + fwd
+function computeCompositionGrandTotal(formData = {}, kitsData = []) {
+  const piRaw = formData.packagingIncludes || [];
+  const hasIncludes = Array.isArray(piRaw) && piRaw.length > 0;
+  if (!hasIncludes || !kitsData.length) return computeRecordGrandTotal(formData);
+  const comp = computePersonalizedComposition(formData, kitsData);
+  const kitOrders = (formData.kitOrders || []).filter(Boolean);
+  // Exclude kit orders whose category is PERSONALIZED (already counted in totalPersonalized)
+  const separateKitTotal = (comp.separateKits || [])
+    .filter(sk => {
+      const ko = kitOrders.find(k => k?.kitId === sk.kitId);
+      return !ko || ko.category !== ORDER_CATEGORIES.PERSONALIZED;
+    })
+    .reduce((s, sk) => s + (sk.remainingValue || 0), 0);
+  const separateProdTotal = (comp.sepProdsList || []).reduce((s, sp) => s + (sp.remainingValue || 0), 0);
+  const fwd = formData.forwardingCharge ? Math.round(Number(formData.forwardingChargeAmount) || 0) : 0;
+  return Math.round(comp.totalPersonalized + separateKitTotal + separateProdTotal + fwd);
+}
+
 // Combine kitIncludes (id[]) + kitIncludesQty ({id:qty}) into [{id,qty}] for persistence.
 function normalizeKitOrdersForSave(kitOrders = [], productType) {
   return (kitOrders || []).map(o => {
@@ -567,7 +588,7 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
       return { name: p.name || p.kitType || '—', qtyPerKit: q, rate: r, subtotalPerKit: subPer, totalQty: q * totalConsumed, totalValue: subPer * totalConsumed };
     });
     const prodsTotalPerKit = prodLines.reduce((s, pl) => s + pl.subtotalPerKit, 0);
-    const kitValuePerKit = kitPkgPrice + prodsTotalPerKit;
+    const kitValuePerKit = prodsTotalPerKit;
     const kitTotal = kitValuePerKit * totalConsumed;
     const remaining = Math.max(0, kitOrderQty - totalConsumed);
     const isOver = kitOrderQty > 0 && totalConsumed > kitOrderQty;
@@ -591,7 +612,18 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
 
   const inclKitTotal = includedKits.reduce((s, ik) => s + ik.kitTotal, 0);
   const inclSepTotal = includedSepProds.reduce((s, sp) => s + sp.totalValue, 0);
-  const totalPersonalized = Math.round(pkgTotal + inclKitTotal + inclSepTotal);
+
+  // Outer kit's own products — only computed when something IS selected in packagingIncludes,
+  // so the PRODUCTS row only appears when there's an inclusion context to give it meaning.
+  // When packagingIncludes is empty the per-kit "Order Details" card already covers the kit's products.
+  const ownKitProdsPerPers = piIds.length > 0
+    ? allProds
+        .filter(p => (p.isKit || p.kitType) && p.kitId && !piIds.includes(p.kitId))
+        .reduce((s, p) => s + Math.round((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)), 0)
+    : 0;
+  const ownKitProdsTotal = ownKitProdsPerPers * persQty;
+
+  const totalPersonalized = Math.round(pkgTotal + ownKitProdsTotal + inclKitTotal + inclSepTotal);
   const totalPerPersKit = persQty > 0 ? Math.round(totalPersonalized / persQty) : totalPersonalized;
 
   const separateKits = kitOrders.map(ko => {
@@ -620,7 +652,7 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
     return { name, origQty, consumed, remaining, isOver, rate: r, unitRate, origValue: Math.round(origQty * unitRate), remainingValue: Math.round(remaining * unitRate), includedInPersonalized: piIds.includes(name) };
   });
 
-  return { persQty, persPrice, pkgTotal, includedKits, includedSepProds, inclKitTotal, inclSepTotal, totalPerPersKit, totalPersonalized, separateKits, sepProdsList };
+  return { persQty, persPrice, pkgTotal, includedKits, includedSepProds, inclKitTotal, inclSepTotal, ownKitProdsTotal, ownKitProdsPerPers, totalPerPersKit, totalPersonalized, separateKits, sepProdsList };
 }
 
 function PersonalizedCompositionPanel({ comp, isDark }) {
@@ -652,12 +684,6 @@ function PersonalizedCompositionPanel({ comp, isDark }) {
                 <Text strong>{ik.kitName} — {ik.totalConsumed} kit{ik.totalConsumed !== 1 ? 's' : ''} in personalized</Text>
                 <Text strong style={{ color: '#722ed1' }}>&#8377;{ik.kitTotal.toLocaleString()}</Text>
               </div>
-              {ik.kitPkgPrice > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', paddingLeft: 4 }}>
-                  <span>Kit packaging &times; {ik.totalConsumed}</span>
-                  <span>&#8377;{ik.kitPkgPrice} &times; {ik.totalConsumed} = &#8377;{ik.kitPkgTotal.toLocaleString()}</span>
-                </div>
-              )}
               {ik.prodLines.map((pl, pi) => (
                 <div key={pi} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', paddingLeft: 4 }}>
                   <span>{pl.name} &times; {pl.totalQty} pcs</span>
@@ -949,6 +975,8 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const selectedName = Form.useWatch([fieldName, name, 'name']);
 
   const form = Form.useFormInstance();
+  const selectedKitIds = Form.useWatch('selectedKits', form) || [];
+  const currentKitId = Form.useWatch([fieldName, name, 'kitId'], form);
   const [isLocalEdit, setIsLocalEdit] = React.useState(true);
   const isItemDisabled = disabled || !isLocalEdit;
 
@@ -1057,9 +1085,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
         background: isDark ? '#1a1a2e' : '#fff',
       }}
     >
-      {/* Hidden fields to register so Form can read them */}
+      {/* Hidden fields to register so Form can read them — kitId MUST be registered
+          so AntD Form.List preserves it in the store, enabling per-kit product filtering */}
       <Form.Item {...rest} name={[name, 'isKit']} hidden noStyle><Input /></Form.Item>
       <Form.Item {...rest} name={[name, 'kitName']} hidden noStyle><Input /></Form.Item>
+      <Form.Item {...rest} name={[name, 'kitId']} hidden noStyle><Input /></Form.Item>
       {/* Card Header (Editable) */}
       <div style={{
         background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)',
@@ -1201,6 +1231,26 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
               </div>
             )}
           </Col>
+
+          {/* Kit assignment selector — shown for kit products when 2+ kits are in the order */}
+          {isKit && selectedKitIds.length > 1 && (
+            <Col flex="none" style={{ minWidth: 130 }}>
+              <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>KIT</Text>
+              <Select
+                size="small"
+                placeholder="Select Kit"
+                disabled={isItemDisabled}
+                value={currentKitId}
+                style={{ width: '100%' }}
+                options={kits.filter(k => selectedKitIds.includes(k._id)).map(k => ({ value: k._id, label: k.kitName }))}
+                onChange={(val) => {
+                  form.setFieldValue([fieldName, name, 'kitId'], val);
+                  const kitDef = kits.find(k => k._id === val);
+                  if (kitDef) form.setFieldValue([fieldName, name, 'kitName'], kitDef.kitName);
+                }}
+              />
+            </Col>
+          )}
 
           {/* Brand & other specs are now shown only as inventory-driven product attributes below */}
 
@@ -1821,11 +1871,21 @@ export default function Sales() {
       billingName: order.billingName || order.clientName || '',
       contactPerson: order.contactPerson || '',
       phone: order.phone || '',
+      email: order.email || '',
+      alternativeName: order.alternativeName || '',
+      alternativeRole: order.alternativeRole || '',
+      alternativePhone: order.alternativePhone || '',
       detailedAddress: order.detailedAddress || '',
       city: order.city || '',
       state: order.state || '',
       pincode: order.pincode || '',
       gstNumber: order.gstNumber || '',
+      hotelType: order.hotelType || undefined,
+      rooms: order.rooms || undefined,
+      occupancy: order.occupancy || undefined,
+      location: order.location || '',
+      destination: order.destination || '',
+      salesPerson: order.salesPerson || '',
     });
     setOrderEditPaymentProofs(
       (order.paymentProofs || []).map((f, i) => ({
@@ -1922,11 +1982,21 @@ export default function Sales() {
         billingName: vals.billingName || orderEditTarget.billingName,
         contactPerson: vals.contactPerson || orderEditTarget.contactPerson,
         phone: vals.phone || orderEditTarget.phone,
+        email: vals.email || orderEditTarget.email,
+        alternativeName: vals.alternativeName || orderEditTarget.alternativeName,
+        alternativeRole: vals.alternativeRole || orderEditTarget.alternativeRole,
+        alternativePhone: vals.alternativePhone || orderEditTarget.alternativePhone,
         detailedAddress: vals.detailedAddress || orderEditTarget.detailedAddress,
         city: vals.city || orderEditTarget.city,
         state: vals.state || orderEditTarget.state,
         pincode: vals.pincode || orderEditTarget.pincode,
         gstNumber: vals.gstNumber || orderEditTarget.gstNumber,
+        hotelType: vals.hotelType || orderEditTarget.hotelType,
+        rooms: vals.rooms ?? orderEditTarget.rooms,
+        occupancy: vals.occupancy ?? orderEditTarget.occupancy,
+        location: vals.location || orderEditTarget.location,
+        destination: vals.destination || orderEditTarget.destination,
+        salesPerson: vals.salesPerson || orderEditTarget.salesPerson,
         kitDisplayUnit: vals.kitDisplayUnit || orderEditTarget.kitDisplayUnit,
         kitSize: vals.kitSize || orderEditTarget.kitSize,
         kitSticker: vals.kitSticker || orderEditTarget.kitSticker,
@@ -1963,11 +2033,21 @@ export default function Sales() {
           billingName: updated.billingName,
           contactPerson: updated.contactPerson,
           clientPhone: updated.phone,
+          email: updated.email || undefined,
+          alternativeName: updated.alternativeName || undefined,
+          alternativeRole: updated.alternativeRole || undefined,
+          alternativePhone: updated.alternativePhone || undefined,
           detailedAddress: updated.detailedAddress,
           city: updated.city,
           state: updated.state,
           pincode: updated.pincode,
           gstNumber: updated.gstNumber,
+          hotelType: updated.hotelType || undefined,
+          rooms: updated.rooms || undefined,
+          occupancy: updated.occupancy || undefined,
+          location: updated.location || undefined,
+          destination: updated.destination || undefined,
+          salesPerson: updated.salesPerson || undefined,
           kitDisplayUnit: updated.kitDisplayUnit || undefined,
           kitSize: updated.kitSize || undefined,
           kitSticker: updated.kitSticker || undefined,
@@ -2266,6 +2346,9 @@ export default function Sales() {
   const watchedSelectedKits = Form.useWatch('selectedKits', leadForm) || [];
   const watchedSingleKit = Form.useWatch('selectedKit', leadForm);
   const watchedKitOrders = Form.useWatch('kitOrders', leadForm) || [];
+  const watchedPackagingIncludes = Form.useWatch('packagingIncludes', leadForm) || [];
+  const watchedPackagingIncludesQty = Form.useWatch('packagingIncludesQty', leadForm) || {};
+  const watchedKitOverallQty = Form.useWatch('kitOverallQty', leadForm);
   const watchedPriority = Form.useWatch('priority', leadForm);
   const watchedStatus = Form.useWatch('status', leadForm);
   const watchedSoftwareInterest = Form.useWatch('interestedInSoftware', leadForm);
@@ -2274,6 +2357,7 @@ export default function Sales() {
   const watchedNegotiationProducts = Form.useWatch('products', negotiationForm);
   const watchedOrderEditSelKits = Form.useWatch('selectedKits', orderEditForm) || [];
   const watchedOrderEditKitOrds = Form.useWatch('kitOrders', orderEditForm) || [];
+  const watchedOrderEditProds = Form.useWatch('editProducts', orderEditForm) || [];
   const watchedNegRoundValue = Form.useWatch('useRoundedTotal', negotiationForm);
   const watchedLeadPaymentTerms = Form.useWatch('paymentTerms', leadForm);
   const watchedLeadPaymentCollection = Form.useWatch('paymentCollection', leadForm);
@@ -2531,36 +2615,62 @@ export default function Sales() {
   // Sum of the GST-inclusive subtotals of the product rows belonging to one specific kit card.
   const computeKitPriceForKit = (kitId, kitIndex) => {
     const prods = leadForm.getFieldValue('products') || [];
-    return prods.filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && kitIndex === 0)))
+    const selKitsNow = leadForm.getFieldValue('selectedKits') || [];
+    const isSingleKit = selKitsNow.length <= 1;
+    return prods.filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (isSingleKit && !p.kitId && kitIndex === 0)))
       .reduce((s, p) => s + productLineSubtotal(p), 0);
   };
 
-  // Auto-sync the Kit Price field(s) with the sum of their products' subtotals whenever the
-  // product rows change — so the price stays correct without clicking "Σ Use sum of products".
+  // Auto-sync the shared top-level kitPrice with the sum of all kit product subtotals.
+  // Per-kit kitOrders[i].kitPrice is NOT auto-synced — it represents the packaging/display
+  // unit cost (set from packing config sellingPrice or manually by user) so it stays separate
+  // from the product cost shown in the PRODUCTS row of the calculation card.
   useEffect(() => {
     const prods = leadForm.getFieldValue('products') || [];
     if (!prods.some(p => p && (p.isKit || p.kitType))) return;
-
-    // Shared kit price (Products adding card)
     const sharedSum = computeKitPriceSum();
     if (Number(leadForm.getFieldValue('kitPrice')) !== sharedSum) {
       leadForm.setFieldValue('kitPrice', sharedSum);
     }
-
-    // Per-kit Order Details prices
-    const selKits = leadForm.getFieldValue('selectedKits') || [];
-    const singleKit = leadForm.getFieldValue('selectedKit');
-    const ids = selKits.length > 0 ? selKits : (singleKit ? [singleKit] : []);
-    if (ids.length > 0) {
-      const kitOrders = leadForm.getFieldValue('kitOrders') || [];
-      const next = ids.map((kitId, i) => {
-        const existing = kitOrders.find(o => o?.kitId === kitId) || kitOrders[i] || { kitId };
-        return { ...existing, kitId, kitPrice: computeKitPriceForKit(kitId, i) };
-      });
-      const changed = next.some((o, i) => Number(kitOrders[i]?.kitPrice) !== o.kitPrice);
-      if (changed) leadForm.setFieldValue('kitOrders', next);
-    }
   }, [watchedLeadProducts]);
+
+  // Track previously-consumed counts so we can undo them when packagingIncludes changes.
+  const prevKitConsumedRef = React.useRef({});
+
+  // When packagingIncludes/Qty or outerQty changes, auto-update each included kit's
+  // overallQty = max(0, currentQty + prevConsumed - newConsumed) so the per-kit card
+  // reflects the standalone (not-packaged) count.
+  useEffect(() => {
+    const piRaw = leadForm.getFieldValue('packagingIncludes') || [];
+    const piQtyMap = leadForm.getFieldValue('packagingIncludesQty') || {};
+    const outerQty = Number(leadForm.getFieldValue('kitOverallQty')) || 1;
+    const kitOrds = leadForm.getFieldValue('kitOrders') || [];
+    const selKits = leadForm.getFieldValue('selectedKits') || [];
+
+    // Build map: kitId → new consumed count
+    const piIds = Array.isArray(piRaw) && piRaw.length && typeof piRaw[0] === 'object'
+      ? piRaw.map(p => p.id) : piRaw;
+    const newConsumed = {};
+    piIds.forEach(id => { newConsumed[id] = (Number(piQtyMap[id]) || 1) * outerQty; });
+
+    // Also clear consumed for kits no longer in packagingIncludes
+    Object.keys(prevKitConsumedRef.current).forEach(id => { if (!piIds.includes(id)) newConsumed[id] = 0; });
+
+    const prev = prevKitConsumedRef.current;
+    const updatedOrds = kitOrds.map(ko => {
+      if (!ko || !ko.kitId) return ko;
+      const prevC = prev[ko.kitId] || 0;
+      const newC = newConsumed[ko.kitId] ?? prevC; // no change if not in map
+      if (prevC === newC) return ko;
+      const currentQty = Number(ko.overallQty) || 0;
+      return { ...ko, overallQty: Math.max(0, currentQty + prevC - newC) };
+    });
+
+    const hasChange = updatedOrds.some((ko, i) => ko?.overallQty !== kitOrds[i]?.overallQty);
+    if (hasChange) leadForm.setFieldValue('kitOrders', updatedOrds);
+
+    prevKitConsumedRef.current = { ...prev, ...newConsumed };
+  }, [watchedPackagingIncludes, watchedPackagingIncludesQty, watchedKitOverallQty]);
 
   const [createLeadMutation] = useCreateLeadMutation();
   const [createPartyMutation] = useCreatePartyMutation();
@@ -2767,20 +2877,33 @@ export default function Sales() {
         ...o,
         key: o._id,
         oid: o.orderCode,
-        hotelName: o.clientName,
+        hotelName: o.hotelName || o.clientName,
         status: o.status,
         paymentStatus,
-        location: o.location || o.locationCity,
-        phone: o.clientPhone || o.phone,
-        contactPerson: o.contactPerson,
-        billingName: o.billingName || o.clientName,
-        gstNumber: o.gstNumber,
-        gstPercent: o.gstPercent,
-        salesPerson: o.salesPerson || o.assignedTo?.fullName,
-        detailedAddress: o.detailedAddress,
-        city: o.city,
-        state: o.state,
-        pincode: o.pincode,
+        location: o.location || o.locationCity || o.leadId?.location || o.leadId?.locationCity,
+        phone: o.clientPhone || o.phone || o.leadId?.phone,
+        email: o.email || o.leadId?.email,
+        contactPerson: o.contactPerson || o.leadId?.contactPerson,
+        alternativeName: o.alternativeName || o.leadId?.alternativeName,
+        alternativeRole: o.alternativeRole || o.leadId?.alternativeRole,
+        alternativePhone: o.alternativePhone || o.leadId?.alternativePhone,
+        billingName: o.billingName || o.leadId?.billingName || o.clientName,
+        gstNumber: o.gstNumber || o.leadId?.gstNumber,
+        gstPercent: o.gstPercent ?? o.leadId?.gstPercent,
+        salesPerson: o.salesPerson || o.assignedTo?.fullName || o.leadId?.salesPerson,
+        detailedAddress: o.detailedAddress || o.leadId?.detailedAddress,
+        city: o.city || o.leadId?.city,
+        state: o.state || o.leadId?.state,
+        pincode: o.pincode || o.leadId?.pincode,
+        destination: o.destination || o.leadId?.destination,
+        hotelType: o.hotelType || o.leadId?.hotelType,
+        rooms: o.rooms ?? o.leadId?.rooms,
+        occupancy: o.occupancy ?? o.leadId?.occupancy,
+        deliveryBy: o.deliveryBy || o.leadId?.deliveryBy,
+        transportationBy: o.transportationBy || o.leadId?.transportationBy,
+        forwardingCharge: o.forwardingCharge ?? o.leadId?.forwardingCharge,
+        forwardingChargeAmount: o.forwardingChargeAmount ?? o.leadId?.forwardingChargeAmount,
+        paymentTerms: o.paymentTerms || o.leadId?.paymentTerms,
         totalAmount: total,
         gstAmount: effectiveGst,
         paidAmount: paidTotal,
@@ -2791,6 +2914,22 @@ export default function Sales() {
         billType: o.billType || (o.type === 'GST' ? 'GST' : o.type === 'Non-GST' ? 'NON_GST' : o.type),
         products: normalizedProducts,
         itemCount: (normalizedProducts.length || 0),
+        // Kit fields: prefer order-level (stored by backend), fall back to populated leadId
+        kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
+        kitSize: o.kitSize || o.leadId?.kitSize || '',
+        selectedKit: o.selectedKit || o.leadId?.selectedKit || '',
+        selectedKits: (Array.isArray(o.selectedKits) && o.selectedKits.length > 0 ? o.selectedKits : null)
+          || (Array.isArray(o.leadId?.selectedKits) && o.leadId.selectedKits.length > 0 ? o.leadId.selectedKits : null)
+          || (o.selectedKit ? [o.selectedKit] : []),
+        kitOrders: (Array.isArray(o.kitOrders) && o.kitOrders.length > 0 ? o.kitOrders : null)
+          || (Array.isArray(o.leadId?.kitOrders) && o.leadId.kitOrders.length > 0 ? o.leadId.kitOrders : null)
+          || [],
+        kitSticker: o.kitSticker || o.leadId?.kitSticker,
+        kitLogo: o.kitLogo || o.leadId?.kitLogo,
+        kitPrinting: o.kitPrinting || o.leadId?.kitPrinting,
+        kitPrice: o.kitPrice ?? o.leadId?.kitPrice,
+        kitOverallQty: o.kitOverallQty ?? o.leadId?.kitOverallQty,
+        productType: o.productType || o.leadId?.productType,
         splitDates: o.splitDates || [],
         isEmergency: o.isEmergency || false,
         isUrgent: o.isUrgent || false,
@@ -3567,12 +3706,15 @@ export default function Sales() {
           city: values.city || src.city,
           state: values.state || src.state,
           pincode: values.pincode || src.pincode,
-          contactPerson: src.contactPerson,
-          phone: src.phone,
-          email: src.email,
+          contactPerson: values.contactPerson || src.contactPerson,
+          phone: values.phone || src.phone,
+          email: values.email || src.email,
+          alternativeName: values.alternativeName || src.alternativeName || src.altName,
+          alternativeRole: values.alternativeRole || src.alternativeRole || src.altRole,
+          alternativePhone: values.alternativePhone || src.alternativePhone || src.altNumber,
           salesPerson: src.salesPerson || src.assignedTo?.fullName,
           hotelType: values.hotelType || src.hotelType,
-          gstNumber: src.gstNumber,
+          gstNumber: values.gstNumber || src.gstNumber,
           gstPercent: src.gstPercent,
           gstVerifiedData: src.gstVerifiedData || undefined,
           // Order details
@@ -3636,6 +3778,7 @@ export default function Sales() {
     // including the kit-level display unit (e.g. ZIPLOCK_POUCH).
     if (p?.sticker === 'YES') return 'Sticker';
     const hay = `${p?.printing || ''} ${p?.packingMaterial || ''} ${p?.materialCategory || ''} ${p?.logoType || ''} ${kitDisplayUnit}`.toLowerCase();
+    if (hay.includes('butter')) return 'Butter Paper';
     if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
     if (hay.includes('box')) return 'Box';
     // When sticker is explicitly No, don't infer 'Sticker' from keyword matching — the packing
@@ -4002,6 +4145,17 @@ export default function Sales() {
     }));
     const payload = {
       clientName: values.hotelName || values.billingName || orderFromQuotation?.hotelName || 'Client',
+      hotelName: values.hotelName || orderFromQuotation?.hotelName,
+      billingName: values.billingName || orderFromQuotation?.billingName,
+      contactPerson: values.contactPerson || orderFromQuotation?.contactPerson,
+      clientPhone: values.phone || orderFromQuotation?.phone,
+      email: values.email || orderFromQuotation?.email,
+      gstNumber: values.gstNumber || orderFromQuotation?.gstNumber,
+      location: values.location || orderFromQuotation?.location,
+      detailedAddress: values.detailedAddress || orderFromQuotation?.detailedAddress,
+      city: values.city || orderFromQuotation?.city,
+      state: values.state || orderFromQuotation?.state,
+      pincode: values.pincode || orderFromQuotation?.pincode,
       amount: subtotal,
       gstAmount,
       total,
@@ -4772,7 +4926,7 @@ export default function Sales() {
             const kLogo = ko.logo || kitLogo;
             const kPrinting = ko.printing || kitPrinting;
             const overallQty = Number(kQty) || 0;
-            const thisKitProds = products.filter(p => (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && idx === 0)));
+            const thisKitProds = products.filter(p => (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && selectedKits.length <= 1 && idx === 0)));
             return (
               <div key={kitId} style={{ padding: '12px 16px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.2)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
@@ -4992,21 +5146,92 @@ export default function Sales() {
               {/* Customer info */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1e3799', borderRadius: 2, display: 'inline-block' }} /><BankOutlined style={{ color: '#1e3799' }} /><span>Customer Information</span></Space>}>
-                <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 2 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }}>
-                  <Descriptions.Item label="Hotel / Company">{q.hotelName}</Descriptions.Item>
-                  <Descriptions.Item label="Billing Name">{q.billingName || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Location">{q.location}</Descriptions.Item>
-                  <Descriptions.Item label="Contact Person">{q.contactPerson || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Phone"><a href={`tel:${q.phone}`}>{q.phone || '—'}</a></Descriptions.Item>
-                  <Descriptions.Item label="Assigned To">{q.salesPerson}</Descriptions.Item>
-                  {q.billType === 'GST' && (
-                    <>
-                      <Descriptions.Item label="GSTIN"><Text fontFamily="monospace">{q.gstNumber || '—'}</Text></Descriptions.Item>
-                      <Descriptions.Item label="GST Rate"><Text style={{ color: '#B11E6A', margin: 0 }}>{q.gstPercent ? `${q.gstPercent}%` : '—'}</Text></Descriptions.Item>
-                    </>
-                  )}
-                </Descriptions>
+                {(() => {
+                  const qLeadIdCI = String(q.leadId?._id || q.leadId || '');
+                  const qLeadCI = qLeadIdCI ? leadsData.find(l => String(l.key) === qLeadIdCI || String(l._id) === qLeadIdCI) : null;
+                  const qEmail = q.email || qLeadCI?.email;
+                  const qAltName = q.alternativeName || qLeadCI?.altName || qLeadCI?.alternativeName;
+                  const qAltRole = q.alternativeRole || qLeadCI?.altRole || qLeadCI?.alternativeRole;
+                  const qAltPhone = q.alternativePhone || qLeadCI?.altNumber || qLeadCI?.alternativePhone;
+                  const qDest = q.destination || qLeadCI?.destination;
+                  const qBranch = q.branch || qLeadCI?.branch;
+                  const qRooms = q.rooms || qLeadCI?.rooms;
+                  const qOcc = q.occupancy || qLeadCI?.occupancy;
+                  return (
+                    <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 2 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }}>
+                      <Descriptions.Item label="Hotel / Company">{q.hotelName}</Descriptions.Item>
+                      <Descriptions.Item label="Billing Name">{q.billingName || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Location">{q.location}</Descriptions.Item>
+                      <Descriptions.Item label="Contact Person">{q.contactPerson || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Phone"><a href={`tel:${q.phone}`}>{q.phone || '—'}</a></Descriptions.Item>
+                      {qEmail && <Descriptions.Item label="Email"><a href={`mailto:${qEmail}`}>{qEmail}</a></Descriptions.Item>}
+                      <Descriptions.Item label="Assigned To">{q.salesPerson}</Descriptions.Item>
+                      {qDest && <Descriptions.Item label="Destination">{qDest}</Descriptions.Item>}
+                      {qBranch && <Descriptions.Item label="Branch">{qBranch}</Descriptions.Item>}
+                      {qRooms && <Descriptions.Item label="Rooms">{qRooms}</Descriptions.Item>}
+                      {qOcc && <Descriptions.Item label="Occupancy">{qOcc}</Descriptions.Item>}
+                      {(q.city || q.state || q.pincode) && (
+                        <Descriptions.Item label="City / State / Pincode" span={2}>
+                          {[q.city, q.state, q.pincode].filter(Boolean).join(', ')}
+                        </Descriptions.Item>
+                      )}
+                      {q.detailedAddress && <Descriptions.Item label="Detailed Address" span={2}>{q.detailedAddress}</Descriptions.Item>}
+                      {q.billType === 'GST' && (
+                        <>
+                          <Descriptions.Item label="GSTIN"><Text fontFamily="monospace">{q.gstNumber || '—'}</Text></Descriptions.Item>
+                          <Descriptions.Item label="GST Rate"><Text style={{ color: '#B11E6A', margin: 0 }}>{q.gstPercent ? `${q.gstPercent}%` : '—'}</Text></Descriptions.Item>
+                        </>
+                      )}
+                      {qAltName && <Descriptions.Item label="Alt. Contact">{qAltName}{qAltRole ? ` (${qAltRole})` : ''}</Descriptions.Item>}
+                      {qAltPhone && <Descriptions.Item label="Alt. Phone"><a href={`tel:${qAltPhone}`}>{qAltPhone}</a></Descriptions.Item>}
+                    </Descriptions>
+                  );
+                })()}
               </Card>
+
+              {/* Products adding — kit config summary */}
+              {(() => {
+                const qLeadIdPA = String(q.leadId?._id || q.leadId || '');
+                const qLeadPA = qLeadIdPA ? leadsData.find(l => String(l.key) === qLeadIdPA || String(l._id) === qLeadIdPA) : null;
+                const qProdType = q.productType || qLeadPA?.productType;
+                const qSelKitsPA = (Array.isArray(q.selectedKits) && q.selectedKits.length > 0 ? q.selectedKits : null)
+                  || (Array.isArray(qLeadPA?.selectedKits) && qLeadPA.selectedKits.length > 0 ? qLeadPA.selectedKits : null)
+                  || (q.selectedKit ? [q.selectedKit] : (qLeadPA?.selectedKit ? [qLeadPA.selectedKit] : []));
+                const qKitDUPA = q.kitDisplayUnit || q.displayUnit || qLeadPA?.kitDisplayUnit || qLeadPA?.displayUnit;
+                const qKitNamePA = qSelKitsPA.length > 0 ? qSelKitsPA.map(id => kits.find(k => k._id === id)?.kitName || id).join(', ') : null;
+                const qKitPrice = q.kitPrice || qLeadPA?.kitPrice;
+                const qKitQty = q.kitOverallQty || qLeadPA?.kitOverallQty;
+                const qKitSize = q.kitSize || qLeadPA?.kitSize;
+                const qKitSticker = q.kitSticker || qLeadPA?.kitSticker;
+                const qKitLogo = q.kitLogo || qLeadPA?.kitLogo;
+                const qKitPrinting = q.kitPrinting || qLeadPA?.kitPrinting;
+                if (!qProdType && qSelKitsPA.length === 0 && !qKitDUPA && !qKitPrice) return null;
+                const normYN = v => (v === 'YES' || v === true ? 'Yes' : v === 'NO' || v === false ? 'No' : v || '—');
+                return (
+                  <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
+                    <Row gutter={[12, 8]}>
+                      {qProdType && (
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Product Selection</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>
+                            {Array.isArray(qProdType) ? qProdType.map(productTypeLabel).join(', ') : productTypeLabel(qProdType)}
+                          </Text>
+                        </Col>
+                      )}
+                      {qKitNamePA && <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Kit Selected</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitNamePA}</Text></Col>}
+                      {qKitDUPA && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Display Unit</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{(qKitDUPA || '').replace(/_/g, ' ')}</Text></Col>}
+                      {qKitSize && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Size</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitSize}</Text></Col>}
+                      {qKitSticker && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Sticker</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitSticker)}</Text></Col>}
+                      {qKitLogo && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Logo</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitLogo)}</Text></Col>}
+                      {qKitPrinting && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Printing</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitPrinting)}</Text></Col>}
+                      {(qKitPrice != null && qKitPrice !== '') && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Price (single)</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(qKitPrice).toLocaleString()}</Text></Col>}
+                      {Number(qKitQty) > 0 && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitQty} kit{Number(qKitQty) > 1 ? 's' : ''}</Text></Col>}
+                      {(qKitPrice != null && qKitPrice !== '' && Number(qKitQty) > 0) && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{(Number(qKitPrice) * Number(qKitQty)).toLocaleString()}</Text></Col>}
+                    </Row>
+                  </Card>
+                );
+              })()}
 
               {/* Products */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -5420,6 +5645,90 @@ export default function Sales() {
                 </Card>
               )}
 
+              {/* Customer Information */}
+              {(() => {
+                const nLeadIdCI = String(n.leadId?._id || n.leadId || '');
+                const nLeadCI = nLeadIdCI ? leadsData.find(l => String(l.key) === nLeadIdCI || String(l._id) === nLeadIdCI) : null;
+                const nEmail = n.email || nLeadCI?.email;
+                const nAltName = n.alternativeName || nLeadCI?.altName || nLeadCI?.alternativeName;
+                const nAltRole = n.alternativeRole || nLeadCI?.altRole || nLeadCI?.alternativeRole;
+                const nAltPhone = n.alternativePhone || nLeadCI?.altNumber || nLeadCI?.alternativePhone;
+                const nDest = n.destination || nLeadCI?.destination;
+                return (
+                  <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#1e3799', borderRadius: 2, display: 'inline-block' }} /><BankOutlined style={{ color: '#1e3799' }} /><span>Customer Information</span></Space>}>
+                    <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 2 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }}>
+                      <Descriptions.Item label="Hotel / Company">{n.hotelName}</Descriptions.Item>
+                      <Descriptions.Item label="Billing Name">{n.billingName || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Location">{n.location}</Descriptions.Item>
+                      <Descriptions.Item label="Contact Person">{n.contactPerson || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Phone"><a href={`tel:${n.phone}`}>{n.phone || '—'}</a></Descriptions.Item>
+                      {nEmail && <Descriptions.Item label="Email"><a href={`mailto:${nEmail}`}>{nEmail}</a></Descriptions.Item>}
+                      <Descriptions.Item label="Assigned To">{n.salesPerson}</Descriptions.Item>
+                      {nDest && <Descriptions.Item label="Destination">{nDest}</Descriptions.Item>}
+                      {(n.city || n.state || n.pincode) && (
+                        <Descriptions.Item label="City / State / Pincode" span={2}>
+                          {[n.city, n.state, n.pincode].filter(Boolean).join(', ')}
+                        </Descriptions.Item>
+                      )}
+                      {n.detailedAddress && <Descriptions.Item label="Detailed Address" span={2}>{n.detailedAddress}</Descriptions.Item>}
+                      {n.billType === 'GST' && (
+                        <>
+                          <Descriptions.Item label="GSTIN"><Text fontFamily="monospace">{n.gstNumber || '—'}</Text></Descriptions.Item>
+                          <Descriptions.Item label="GST Rate"><Text style={{ color: '#B11E6A', margin: 0 }}>{n.gstPercent ? `${n.gstPercent}%` : '—'}</Text></Descriptions.Item>
+                        </>
+                      )}
+                      {nAltName && <Descriptions.Item label="Alt. Contact">{nAltName}{nAltRole ? ` (${nAltRole})` : ''}</Descriptions.Item>}
+                      {nAltPhone && <Descriptions.Item label="Alt. Phone"><a href={`tel:${nAltPhone}`}>{nAltPhone}</a></Descriptions.Item>}
+                    </Descriptions>
+                  </Card>
+                );
+              })()}
+
+              {/* Products adding — kit config summary */}
+              {(() => {
+                const nLeadIdPA = String(n.leadId?._id || n.leadId || '');
+                const nLeadPA = nLeadIdPA ? leadsData.find(l => String(l.key) === nLeadIdPA || String(l._id) === nLeadIdPA) : null;
+                const nProdType = n.productType || nLeadPA?.productType;
+                const nSelKitsPA = (Array.isArray(n.selectedKits) && n.selectedKits.length > 0 ? n.selectedKits : null)
+                  || (Array.isArray(nLeadPA?.selectedKits) && nLeadPA.selectedKits.length > 0 ? nLeadPA.selectedKits : null)
+                  || (n.selectedKit ? [n.selectedKit] : (nLeadPA?.selectedKit ? [nLeadPA.selectedKit] : []));
+                const nKitDUPA = n.kitDisplayUnit || n.displayUnit || nLeadPA?.kitDisplayUnit || nLeadPA?.displayUnit;
+                const nKitNamePA = nSelKitsPA.length > 0 ? nSelKitsPA.map(id => kits.find(k => k._id === id)?.kitName || id).join(', ') : null;
+                const nKitPrice = n.kitPrice || nLeadPA?.kitPrice;
+                const nKitQty = n.kitOverallQty || nLeadPA?.kitOverallQty;
+                const nKitSize = n.kitSize || nLeadPA?.kitSize;
+                const nKitSticker = n.kitSticker || nLeadPA?.kitSticker;
+                const nKitLogo = n.kitLogo || nLeadPA?.kitLogo;
+                const nKitPrinting = n.kitPrinting || nLeadPA?.kitPrinting;
+                if (!nProdType && nSelKitsPA.length === 0 && !nKitDUPA && !nKitPrice) return null;
+                const normYN = v => (v === 'YES' || v === true ? 'Yes' : v === 'NO' || v === false ? 'No' : v || '—');
+                return (
+                  <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
+                    <Row gutter={[12, 8]}>
+                      {nProdType && (
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Product Selection</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>
+                            {Array.isArray(nProdType) ? nProdType.map(productTypeLabel).join(', ') : productTypeLabel(nProdType)}
+                          </Text>
+                        </Col>
+                      )}
+                      {nKitNamePA && <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Kit Selected</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitNamePA}</Text></Col>}
+                      {nKitDUPA && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Display Unit</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{(nKitDUPA || '').replace(/_/g, ' ')}</Text></Col>}
+                      {nKitSize && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Size</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitSize}</Text></Col>}
+                      {nKitSticker && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Sticker</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitSticker)}</Text></Col>}
+                      {nKitLogo && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Logo</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitLogo)}</Text></Col>}
+                      {nKitPrinting && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Printing</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitPrinting)}</Text></Col>}
+                      {(nKitPrice != null && nKitPrice !== '') && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Price (single)</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(nKitPrice).toLocaleString()}</Text></Col>}
+                      {Number(nKitQty) > 0 && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitQty} kit{Number(nKitQty) > 1 ? 's' : ''}</Text></Col>}
+                      {(nKitPrice != null && nKitPrice !== '' && Number(nKitQty) > 0) && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{(Number(nKitPrice) * Number(nKitQty)).toLocaleString()}</Text></Col>}
+                    </Row>
+                  </Card>
+                );
+              })()}
+
               {/* Products */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Agreed Products & Rates</span></Space>}>
@@ -5714,10 +6023,25 @@ export default function Sales() {
           || (base.paymentProofs?.length ? base.paymentProofs : null)
           || [],
         // Kit display fields — prefer order-level, then populated lead (fallback for orders
-        // created before displayUnit was copied to the Order document)
+        // created before these fields were copied to the Order document)
+        hotelName: base.hotelName || full.hotelName || lead.hotelName || base.clientName || full.clientName || '',
         kitDisplayUnit: base.kitDisplayUnit || base.displayUnit || full.kitDisplayUnit || full.displayUnit || lead.kitDisplayUnit || lead.displayUnit || '',
         kitSize: base.kitSize || full.kitSize || lead.kitSize || '',
         selectedKit: base.selectedKit || full.selectedKit || lead.selectedKit || '',
+        selectedKits: (Array.isArray(base.selectedKits) && base.selectedKits.length > 0 ? base.selectedKits : null)
+          || (Array.isArray(full.selectedKits) && full.selectedKits.length > 0 ? full.selectedKits : null)
+          || (Array.isArray(lead?.selectedKits) && lead.selectedKits.length > 0 ? lead.selectedKits : null)
+          || (base.selectedKit || full.selectedKit || lead?.selectedKit ? [base.selectedKit || full.selectedKit || lead?.selectedKit] : []),
+        kitOrders: (Array.isArray(base.kitOrders) && base.kitOrders.length > 0 ? base.kitOrders : null)
+          || (Array.isArray(full.kitOrders) && full.kitOrders.length > 0 ? full.kitOrders : null)
+          || (Array.isArray(lead?.kitOrders) && lead.kitOrders.length > 0 ? lead.kitOrders : null)
+          || [],
+        kitSticker: base.kitSticker || full.kitSticker || lead?.kitSticker,
+        kitLogo: base.kitLogo || full.kitLogo || lead?.kitLogo,
+        kitPrinting: base.kitPrinting || full.kitPrinting || lead?.kitPrinting,
+        kitPrice: base.kitPrice ?? full.kitPrice ?? lead?.kitPrice,
+        kitOverallQty: base.kitOverallQty ?? full.kitOverallQty ?? lead?.kitOverallQty,
+        productType: base.productType || full.productType || lead?.productType,
         // splitDates: order doc first, then populated lead (backend now includes it),
         // then leadsData lookup (fallback for orders created before the fix)
         splitDates: (full.splitDates?.length ? full.splitDates : null)
@@ -5727,6 +6051,14 @@ export default function Sales() {
           || [],
         isEmergency: !!(full.isEmergency || base.isEmergency || lead.isEmergency || orderLeadFull?.isEmergency || orderLeadFull?.splitDates?.length),
         isUrgent: !!(full.isUrgent || base.isUrgent || lead.isUrgent || orderLeadFull?.isUrgent || orderLeadFull?.splitDates?.length),
+        email: base.email || full.email || lead.email,
+        alternativeName: base.alternativeName || full.alternativeName || lead.alternativeName || lead.altName,
+        alternativeRole: base.alternativeRole || full.alternativeRole || lead.alternativeRole || lead.altRole,
+        alternativePhone: base.alternativePhone || full.alternativePhone || lead.alternativePhone || lead.altNumber,
+        destination: base.destination || full.destination || lead.destination,
+        hotelType: base.hotelType || full.hotelType || lead.hotelType,
+        rooms: base.rooms || full.rooms || lead.rooms,
+        occupancy: base.occupancy || full.occupancy || lead.occupancy,
       };
       const ORDER_STEPS = [
         { title: 'Confirmed', description: 'Order placed' },
@@ -5831,7 +6163,10 @@ export default function Sales() {
                 <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                   {o.contactPerson && <span style={{ color: '#B11E6A', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined />{o.contactPerson}</span>}
                   {o.phone && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ color: '#B11E6A' }} />{o.phone}</span>}
+                  {o.email && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><MailOutlined style={{ color: '#B11E6A' }} /><a href={`mailto:${o.email}`} style={{ color: 'inherit' }}>{o.email}</a></span>}
                   {o.salesPerson && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><TeamOutlined style={{ color: '#B11E6A' }} />{o.salesPerson}</span>}
+                  {o.alternativeName && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><UserOutlined style={{ color: '#888' }} />{o.alternativeName}{o.alternativeRole ? ` (${o.alternativeRole})` : ''}</span>}
+                  {o.alternativePhone && <span style={{ color: isDark ? '#ccc' : '#555', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}><PhoneOutlined style={{ color: '#888' }} />{o.alternativePhone}</span>}
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
@@ -6012,6 +6347,50 @@ export default function Sales() {
               </Card>
             );
           })()}
+
+          {/* Hotel / Company Information — mirrors Lead detail layout */}
+          {!isOrderEditing && (
+            <Card
+              style={{ borderRadius: 14, marginBottom: 20, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+              title={
+                <Space>
+                  <div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} />
+                  <BankOutlined style={{ color: '#B11E6A' }} />
+                  <span>Hotel / Company Information</span>
+                </Space>
+              }
+            >
+              <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ background: isDark ? 'transparent' : '#fff' }}>
+                <Descriptions.Item label="Hotel / Company">{o.hotelName || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Billing Name">{o.billingName || '—'}</Descriptions.Item>
+                {o.hotelType && (
+                  <Descriptions.Item label="Hotel Type">
+                    <Tag color={o.hotelType === 'OLD' ? 'blue' : 'green'}>{o.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}</Tag>
+                  </Descriptions.Item>
+                )}
+                {o.rooms && <Descriptions.Item label="No. of Rooms">{o.rooms}</Descriptions.Item>}
+                {o.occupancy && <Descriptions.Item label="Occupancy (%)">{`${o.occupancy}%`}</Descriptions.Item>}
+                <Descriptions.Item label="Contact Person">{o.contactPerson || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Phone">{o.phone || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Email">{o.email || '—'}</Descriptions.Item>
+                {o.alternativeName && <Descriptions.Item label="Alt. Name">{o.alternativeName}</Descriptions.Item>}
+                {o.alternativeRole && <Descriptions.Item label="Alt. Role">{o.alternativeRole}</Descriptions.Item>}
+                {o.alternativePhone && <Descriptions.Item label="Alt. Number">{o.alternativePhone}</Descriptions.Item>}
+                <Descriptions.Item label="Location / City">{o.location || '—'}</Descriptions.Item>
+                {o.destination && <Descriptions.Item label="Destination">{o.destination}</Descriptions.Item>}
+                {o.salesPerson && <Descriptions.Item label="Assigned To">{o.salesPerson}</Descriptions.Item>}
+                <Descriptions.Item label="Bill Type">
+                  <Tag color={o.billType === 'GST' ? 'volcano' : 'default'} style={{ borderRadius: 12, margin: 0 }}>{o.billType === 'GST' ? 'GST Invoice' : 'Non-GST'}</Tag>
+                </Descriptions.Item>
+                {o.billType === 'GST' && <Descriptions.Item label="GSTIN">{o.gstNumber || '—'}</Descriptions.Item>}
+                {o.billType === 'GST' && o.gstPercent && <Descriptions.Item label="GST Rate">{`${o.gstPercent}%`}</Descriptions.Item>}
+                {o.city && <Descriptions.Item label="City">{o.city}</Descriptions.Item>}
+                {o.state && <Descriptions.Item label="State">{o.state}</Descriptions.Item>}
+                {o.pincode && <Descriptions.Item label="Pincode">{o.pincode}</Descriptions.Item>}
+                {o.detailedAddress && <Descriptions.Item label="Address" span={3}>{o.detailedAddress}</Descriptions.Item>}
+              </Descriptions>
+            </Card>
+          )}
 
           {!isOrderEditing && (<Row gutter={20}>
             <Col xs={24} lg={16}>
@@ -6535,11 +6914,28 @@ export default function Sales() {
                   <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Name on invoice" /></Form.Item></Col>
                   <Col xs={24} sm={12}><Form.Item label="Contact Person" name="contactPerson"><Input placeholder="Contact name" /></Form.Item></Col>
                   <Col xs={24} sm={12}><Form.Item label="Phone" name="phone"><Input placeholder="Phone number" /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="Email" name="email"><Input placeholder="Email address" /></Form.Item></Col>
                   <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
                   <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
                   <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
                   <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
                   <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Street / detailed address" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Alt. Contact Name" name="alternativeName"><Input placeholder="Alternative contact name" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Alt. Contact Role" name="alternativeRole"><Input placeholder="Role / designation" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Alt. Phone" name="alternativePhone"><Input placeholder="Alternative phone" /></Form.Item></Col>
+                  <Col xs={24} sm={8}>
+                    <Form.Item label="Hotel Type" name="hotelType">
+                      <Select placeholder="Hotel Type" allowClear>
+                        <Option value="OLD">Old Hotel</Option>
+                        <Option value="NEW">New Hotel</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} sm={8}><Form.Item label="No. of Rooms" name="rooms"><InputNumber placeholder="50" style={{ width: '100%' }} min={0} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Occupancy (%)" name="occupancy"><InputNumber placeholder="75" style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Location / City" name="location"><Input placeholder="e.g. Coimbatore" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Destination" name="destination"><Input placeholder="e.g. Chennai" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Assigned To (Sales)" name="salesPerson"><Input placeholder="Sales person name" /></Form.Item></Col>
                 </Row>
               </Card>
 
@@ -6555,6 +6951,9 @@ export default function Sales() {
                       const kitDef = kits.find(k => k._id === kitId);
                       const kitLabel = kitDef?.kitName || 'Personalized Kit';
                       const otherKitOpts = editKitIds.map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; }).filter(Boolean);
+                      const sepProdOptsEdit1 = (watchedOrderEditProds).filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName)).map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' })).filter(o => o.value);
+                      const groupedKitOptsEdit1 = [...(otherKitOpts.length > 0 ? [{ label: 'Kits', options: otherKitOpts }] : []), ...(sepProdOptsEdit1.length > 0 ? [{ label: 'Separate Products', options: sepProdOptsEdit1 }] : [])];
+                      const flatKitOptsEdit1 = [...otherKitOpts, ...sepProdOptsEdit1];
                       return (
                         <div key={kitId} style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.16)', marginBottom: 10 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -6602,7 +7001,7 @@ export default function Sales() {
                             </Form.Item></Col>
                             {ptHasPersonalized(orderEditTarget?.productType) && (<>
                             <Col xs={24} sm={16}><Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 4 }}>
-                              <Select mode="multiple" allowClear placeholder="Select items inside this kit" options={otherKitOpts} />
+                              <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder={flatKitOptsEdit1.length > 0 ? 'Select kits / products inside this kit' : 'Add other kits or products first'} options={groupedKitOptsEdit1} />
                             </Form.Item>
                             <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
                               {({ getFieldValue }) => {
@@ -6612,10 +7011,10 @@ export default function Sales() {
                                   <div style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
                                     <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
                                     {sel.map(id => {
-                                      const kMatch = kits.find(k => k._id === id);
+                                      const optLabel = flatKitOptsEdit1.find(o => o.value === id)?.label || id;
                                       return (
                                         <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
-                                          <Col flex="1"><Text style={{ fontSize: 12 }}>{kMatch?.kitName || id}</Text></Col>
+                                          <Col flex="1"><Text style={{ fontSize: 12 }}>{optLabel}</Text></Col>
                                           <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
                                         </Row>
                                       );
@@ -6930,7 +7329,10 @@ export default function Sales() {
                   {editKitIds.length > 0 ? editKitIds.map((kitId, kitIndex) => {
                     const kitDef = kits.find(k => k._id === kitId);
                     const kitLabel = kitDef?.kitName || 'Personalized Kit';
-                    const otherKitOpts = editKitIds.map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; }).filter(Boolean);
+                    const otherKitOpts2 = editKitIds.map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; }).filter(Boolean);
+                    const sepProdOptsEdit2 = (watchedOrderEditProds).filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName)).map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' })).filter(o => o.value);
+                    const groupedKitOptsEdit2 = [...(otherKitOpts2.length > 0 ? [{ label: 'Kits', options: otherKitOpts2 }] : []), ...(sepProdOptsEdit2.length > 0 ? [{ label: 'Separate Products', options: sepProdOptsEdit2 }] : [])];
+                    const flatKitOptsEdit2 = [...otherKitOpts2, ...sepProdOptsEdit2];
                     return (
                       <div key={kitId} style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.16)', marginBottom: 10 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -6978,7 +7380,7 @@ export default function Sales() {
                           </Form.Item></Col>
                           {ptHasPersonalized(orderEditTarget?.productType) && (<>
                           <Col xs={24} sm={16}><Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 4 }} tooltip="Items physically inside this kit's packaging">
-                            <Select mode="multiple" allowClear placeholder="Select items inside this kit" options={otherKitOpts} />
+                            <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder={flatKitOptsEdit2.length > 0 ? 'Select kits / products inside this kit' : 'Add other kits or products first'} options={groupedKitOptsEdit2} />
                           </Form.Item>
                           <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
                             {({ getFieldValue }) => {
@@ -6988,10 +7390,10 @@ export default function Sales() {
                                 <div style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
                                   <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
                                   {sel.map(id => {
-                                    const kMatch = kits.find(k => k._id === id);
+                                    const optLabel2 = flatKitOptsEdit2.find(o => o.value === id)?.label || id;
                                     return (
                                       <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
-                                        <Col flex="1"><Text style={{ fontSize: 12 }}>{kMatch?.kitName || id}</Text></Col>
+                                        <Col flex="1"><Text style={{ fontSize: 12 }}>{optLabel2}</Text></Col>
                                         <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
                                       </Row>
                                     );
@@ -7328,11 +7730,18 @@ export default function Sales() {
                   <Row gutter={12}>
                     <Col xs={24} sm={12}><Form.Item label="Hotel Name" name="hotelName" rules={[{ required: true }]}><Input /></Form.Item></Col>
                     <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Name on quotation" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Contact Person" name="contactPerson"><Input placeholder="Contact name" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Phone" name="phone"><Input placeholder="Phone number" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Email" name="email"><Input placeholder="Email address" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
                     <Col xs={24} sm={12}><Form.Item label="Location" name="location" rules={[{ required: true }]}><Input /></Form.Item></Col>
                     <Col xs={24} sm={12}><Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true, message: 'Detailed Address is required' }]}><Input.TextArea rows={1} /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="City" name="city"><Input /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="State" name="state"><Input /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="Pincode" name="pincode"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="Alt. Contact Name" name="alternativeName"><Input placeholder="Alternative contact" /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="Alt. Contact Role" name="alternativeRole"><Input placeholder="Role / designation" /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="Alt. Phone" name="alternativePhone"><Input placeholder="Alt. phone number" /></Form.Item></Col>
                   </Row>
                 </Card>
 
@@ -7380,6 +7789,18 @@ export default function Sales() {
           <Form form={negotiationForm} layout="vertical">
             <Row gutter={20}>
               <Col xs={24} lg={16}>
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#1e3799', borderRadius: 2, display: 'inline-block' }} /><BankOutlined style={{ color: '#1e3799' }} /><span>Customer Details</span></Space>}>
+                  <Row gutter={12}>
+                    <Col xs={24} sm={12}><Form.Item label="Contact Person" name="contactPerson"><Input placeholder="Contact name" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Phone" name="phone"><Input placeholder="Phone number" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Email" name="email"><Input placeholder="Email address" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Location" name="location"><Input placeholder="Location" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Billing name" /></Form.Item></Col>
+                  </Row>
+                </Card>
+
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><span>Products & Revised Rates</span></Space>}>
                   <ProductHeaders />
@@ -7492,8 +7913,15 @@ export default function Sales() {
                   <Row gutter={12}>
                     <Col xs={24} sm={12}><Form.Item label="Hotel Name" name="hotelName" rules={[{ required: true }]}><Input /></Form.Item></Col>
                     <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Contact Person" name="contactPerson"><Input placeholder="Contact name" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Phone" name="phone"><Input placeholder="Phone number" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="Email" name="email"><Input placeholder="Email address" /></Form.Item></Col>
+                    <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
                     <Col xs={24} sm={12}><Form.Item label="Location" name="location" rules={[{ required: true }]}><Input /></Form.Item></Col>
                     <Col xs={24} sm={12}><Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true }]}><Input.TextArea rows={1} /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="City" name="city"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="State" name="state"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="Pincode" name="pincode"><Input /></Form.Item></Col>
                   </Row>
                 </Card>
 
@@ -8833,9 +9261,15 @@ export default function Sales() {
                                         Min: ₹{minPrice} (₹{st.purchasePrice||0} purchase + ₹{st.marginAmount||0} margin) | Sell: ₹{st.sellingPrice||0}
                                       </Text>
                                     )}
-                                    <Button type="link" size="small" style={{ padding: 0, marginTop: 2, height: 'auto', fontSize: 12 }} onClick={() => leadForm.setFieldValue('kitPrice', computeKitPriceSum())}>
-                                      Σ Use sum of kit products (₹{computeKitPriceSum().toLocaleString()})
-                                    </Button>
+                                    {(() => {
+                                      const prodSum = computeKitPriceSum();
+                                      const curKit = Number(leadForm.getFieldValue('kitPrice') || 0);
+                                      return (
+                                        <Button type="link" size="small" style={{ padding: 0, marginTop: 2, height: 'auto', fontSize: 12 }} onClick={() => leadForm.setFieldValue('kitPrice', prodSum)}>
+                                          Σ Products: ₹{prodSum.toLocaleString()} · Kit ₹{curKit.toLocaleString()} + Products ₹{prodSum.toLocaleString()} = ₹{(curKit + prodSum).toLocaleString()}
+                                        </Button>
+                                      );
+                                    })()}
                                   </>
                                 );
                               }}
@@ -8863,11 +9297,21 @@ export default function Sales() {
                                       <Text strong style={{ fontSize: 15, color: '#722ed1' }}>₹{kitAmt.toLocaleString()}</Text>
                                       <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
                                     </div>
-                                    {(comp.includedKits.length > 0 || comp.includedSepProds.length > 0) && (
+                                    {comp.ownKitProdsTotal > 0 && (
                                       <>
                                         <div style={{ borderTop: '1px solid rgba(114,46,209,0.15)', margin: '5px 0' }} />
                                         <div>
-                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.6, display: 'block' }}>TOTAL PERSONALIZED</Text>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#B11E6A', letterSpacing: 0.6, display: 'block' }}>PRODUCTS (×{qty})</Text>
+                                          <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>₹{comp.ownKitProdsTotal.toLocaleString()}</Text>
+                                          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{comp.ownKitProdsPerPers.toLocaleString()} per kit × {qty}</Text>
+                                        </div>
+                                      </>
+                                    )}
+                                    {(comp.ownKitProdsTotal > 0 || comp.includedKits.length > 0 || comp.includedSepProds.length > 0) && (
+                                      <>
+                                        <div style={{ borderTop: '1px solid rgba(114,46,209,0.15)', margin: '5px 0' }} />
+                                        <div>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#52c41a', letterSpacing: 0.6, display: 'block' }}>TOTAL PERSONALIZED</Text>
                                           <Text strong style={{ fontSize: 17, color: '#52c41a' }}>₹{comp.totalPersonalized.toLocaleString()}</Text>
                                           <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{comp.totalPerPersKit.toLocaleString()} per kit × {qty}</Text>
                                         </div>
@@ -8919,14 +9363,14 @@ export default function Sales() {
                                       </Text>
                                       {sel.map(id => {
                                         const kMatch = kits.find(k => k._id === id);
-                                        const sProd = (watchedLeadProducts || []).find(p => (p.name || p.itemName) === id);
+                                        const sProd = (watchedLeadProducts || []).find(p => p && (p.name || p.itemName) === id);
                                         const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
                                         const isKit = Boolean(kMatch);
                                         // totalInside = exact count entered (total across ALL personalized kits)
                                         const totalInside = Number(getFieldValue(['packagingIncludesQty', id])) || 1;
                                         const standaloneQty = isKit
                                           ? (Number(watchedKitOrders.find(ko => ko?.kitId === id)?.overallQty) || 0)
-                                          : (Number((watchedLeadProducts || []).find(p => (p.name || p.itemName) === id)?.qty) || 0);
+                                          : (Number((watchedLeadProducts || []).find(p => p && (p.name || p.itemName) === id)?.qty) || 0);
                                         const netQty = Math.max(0, standaloneQty - totalInside);
                                         const isOver = standaloneQty > 0 && totalInside > standaloneQty;
                                         return (
@@ -9143,7 +9587,7 @@ export default function Sales() {
                                               <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM (inside each kit)</Text>
                                               {sel.map(id => {
                                                 const kMatch = kits.find(k => k._id === id);
-                                                const sProd = (watchedLeadProducts || []).find(p => (p.name || p.itemName) === id);
+                                                const sProd = (watchedLeadProducts || []).find(p => p && (p.name || p.itemName) === id);
                                                 const label = kMatch?.kitName || sProd?.name || sProd?.itemName || flatOptsInline.find(o => o.value === id)?.label || id;
                                                 const perKitQty = Number(getFieldValue(['kitOrders', kitIndex, 'kitIncludesQty', id])) || 1;
                                                 const totalIncluded = perKitQty * overallQty;
@@ -9175,35 +9619,42 @@ export default function Sales() {
                                     </Col>
                                     </>)}
                                   </Row>
-                                  {/* ── Kit total price summary (kit × qty + products × qty + included items) ── */}
+                                  {/* ── Kit total price summary (kit price × qty + included items) ── */}
                                   <Form.Item noStyle shouldUpdate>
                                     {({ getFieldValue }) => {
                                       const kPrice = Number(getFieldValue(['kitOrders', kitIndex, 'kitPrice'])) || 0;
                                       const kQty = Number(getFieldValue(['kitOrders', kitIndex, 'overallQty'])) || 1;
                                       const kAmt = kPrice * kQty;
-                                      const kitProds = (watchedLeadProducts || []).filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && kitIndex === 0)));
-                                      const kProdSub = kitProds.reduce((s, p) => s + Math.round((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)), 0);
-                                      const kProdAmt = kProdSub * kQty;
                                       const kIncludes = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
                                       const kIncludesQty = getFieldValue(['kitOrders', kitIndex, 'kitIncludesQty']) || {};
                                       const kSepProds = (watchedLeadProducts || []).filter(p => p && !p.isKit && !p.kitType);
                                       const kIncludedBreakdown = kIncludes.map(id => {
-                                        const p = kSepProds.find(pp => (pp.name || pp.itemName) === id);
-                                        if (!p) return null;
+                                        const kDefMatch = kits.find(k => k._id === id);
+                                        const koMatch = kDefMatch ? watchedKitOrders.find(ko => ko?.kitId === id) : null;
+                                        const pMatch = !kDefMatch ? kSepProds.find(pp => (pp.name || pp.itemName) === id) : null;
+                                        if (!kDefMatch && !pMatch) return null;
                                         const incQPK = Number(kIncludesQty[id]) || 1;
                                         const totalInc = incQPK * kQty;
-                                        const unitRate = (Number(p.rate)||0) * (1 + (Number(p.gst)||0)/100);
+                                        let unitRate, totalPQ, itemName;
+                                        if (kDefMatch) {
+                                          unitRate = Number(koMatch?.kitPrice) || 0;
+                                          totalPQ = Number(koMatch?.overallQty) || 0;
+                                          itemName = kDefMatch.kitName || id;
+                                        } else {
+                                          unitRate = (Number(pMatch.rate)||0) * (1 + (Number(pMatch.gst)||0)/100);
+                                          totalPQ = Number(pMatch.qty) || 0;
+                                          itemName = pMatch.name || pMatch.itemName || id;
+                                        }
                                         const incAmt = Math.round(totalInc * unitRate);
-                                        const totalPQ = Number(p.qty) || 0;
                                         const remQty = Math.max(0, totalPQ - totalInc);
                                         const remAmt = Math.round(remQty * unitRate);
                                         const isOver = totalPQ > 0 && totalInc > totalPQ;
-                                        return { id, name: p.name || p.itemName || id, incQPK, totalInc, incAmt, remQty, remAmt, isOver, totalPQ };
+                                        return { id, name: itemName, isKit: !!kDefMatch, incQPK, totalInc, incAmt, remQty, remAmt, isOver, totalPQ };
                                       }).filter(Boolean);
                                       const totalIncAmt = kIncludedBreakdown.reduce((s, r) => s + r.incAmt, 0);
                                       const totalSepAmt = kIncludedBreakdown.reduce((s, r) => s + r.remAmt, 0);
-                                      const totalKitPrice = kAmt + kProdAmt + totalIncAmt;
-                                      if (!kPrice && !kProdAmt && !totalIncAmt) return null;
+                                      const totalKitPrice = kAmt + totalIncAmt;
+                                      if (!kPrice && !totalIncAmt) return null;
                                       return (
                                         <div style={{ marginTop: 10, padding: '8px 14px', background: isDark ? 'rgba(24,144,255,0.08)' : 'rgba(24,144,255,0.05)', borderRadius: 10, border: '1px solid rgba(24,144,255,0.18)' }}>
                                           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
@@ -9214,20 +9665,20 @@ export default function Sales() {
                                                 <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>₹{kPrice.toLocaleString()} × {kQty}</Text>
                                               </div>
                                             )}
-                                            {kProdAmt > 0 && (
-                                              <div>
-                                                <Text style={{ fontSize: 10, fontWeight: 700, color: '#B11E6A', letterSpacing: 0.5, display: 'block' }}>PRODUCTS (×{kQty})</Text>
-                                                <Text strong style={{ fontSize: 13, color: '#B11E6A' }}>₹{kProdAmt.toLocaleString()}</Text>
-                                                <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>₹{kProdSub.toLocaleString()} × {kQty}</Text>
-                                              </div>
-                                            )}
                                             {kIncludedBreakdown.map(r => (
                                               <div key={r.id}>
-                                                <Text style={{ fontSize: 10, fontWeight: 700, color: '#722ed1', letterSpacing: 0.5, display: 'block' }}>INCL: {r.name}</Text>
+                                                <Text style={{ fontSize: 10, fontWeight: 700, color: '#722ed1', letterSpacing: 0.5, display: 'block' }}>INCL: {r.name}{r.isKit ? ' (Kit)' : ''}</Text>
                                                 <Text strong style={{ fontSize: 13, color: '#722ed1' }}>₹{r.incAmt.toLocaleString()}</Text>
-                                                <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{r.incQPK}/kit × {kQty} = {r.totalInc}{r.totalPQ > 0 ? ` of ${r.totalPQ}` : ''}</Text>
-                                                {r.isOver && <Text style={{ fontSize: 10, color: '#ff4d4f', display: 'block' }}>⚠ Over by {r.totalInc - r.totalPQ}</Text>}
-                                                {r.remQty > 0 && <Text style={{ fontSize: 10, color: '#fa8c16', display: 'block' }}>Sep: {r.remQty} pcs → ₹{r.remAmt.toLocaleString()}</Text>}
+                                                {r.totalPQ > 0 ? (
+                                                  <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>
+                                                    {r.totalPQ} total → <Text strong style={{ color: '#722ed1' }}>{r.totalInc} personalized</Text> + <Text strong style={{ color: r.remQty > 0 ? '#fa8c16' : '#8c8c8c' }}>{r.remQty} separate</Text>
+                                                    {` (${r.incQPK}×${kQty})`}
+                                                  </Text>
+                                                ) : (
+                                                  <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{r.incQPK}/kit × {kQty} = {r.totalInc}</Text>
+                                                )}
+                                                {r.isOver && <Text style={{ fontSize: 10, color: '#ff4d4f', display: 'block' }}>⚠ Over-allocated by {r.totalInc - r.totalPQ}</Text>}
+                                                {r.remQty > 0 && <Text style={{ fontSize: 10, color: '#fa8c16', display: 'block' }}>Separate price → ₹{r.remAmt.toLocaleString()}</Text>}
                                               </div>
                                             ))}
                                             <div style={{ borderLeft: '2px solid rgba(82,196,26,0.3)', paddingLeft: 12 }}>
@@ -9276,7 +9727,11 @@ export default function Sales() {
                                 {hasKit && (
                                   <Button
                                     type="dashed"
-                                    onClick={() => add({ qty: undefined, rate: undefined, isKit: true })}
+                                    onClick={() => {
+                                      const defaultKitId = inlineKitIds.length > 0 ? inlineKitIds[0] : undefined;
+                                      const defaultKitName = defaultKitId ? kits.find(k => k._id === defaultKitId)?.kitName : undefined;
+                                      add({ qty: undefined, rate: undefined, isKit: true, kitId: defaultKitId, kitName: defaultKitName });
+                                    }}
                                     icon={<PlusOutlined />}
                                     block
                                     style={{ borderRadius: 10, height: 40, borderColor: '#722ed155', color: '#722ed1' }}
@@ -9730,9 +10185,15 @@ export default function Sales() {
                                           Min: ₹{minPrice} (₹{st.purchasePrice||0} purchase + ₹{st.marginAmount||0} margin) | Sell: ₹{st.sellingPrice||0}
                                         </Text>
                                       )}
-                                      <Button type="link" size="small" style={{ padding: 0, marginTop: 2, height: 'auto', fontSize: 12 }} onClick={() => leadForm.setFieldValue(['kitOrders', kitIndex, 'kitPrice'], computeKitPriceForKit(kitId, kitIndex))}>
-                                        Σ Use sum of products (₹{computeKitPriceForKit(kitId, kitIndex).toLocaleString()})
-                                      </Button>
+                                      {(() => {
+                                        const prodSum = computeKitPriceForKit(kitId, kitIndex);
+                                        const curKitPrice = Number(leadForm.getFieldValue(['kitOrders', kitIndex, 'kitPrice']) || 0);
+                                        return (
+                                          <Button type="link" size="small" style={{ padding: 0, marginTop: 2, height: 'auto', fontSize: 12 }} onClick={() => leadForm.setFieldValue(['kitOrders', kitIndex, 'kitPrice'], prodSum)}>
+                                            Σ Products: ₹{prodSum.toLocaleString()} · Kit ₹{curKitPrice.toLocaleString()} + Products ₹{prodSum.toLocaleString()} = ₹{(curKitPrice + prodSum).toLocaleString()}
+                                          </Button>
+                                        );
+                                      })()}
                                     </>
                                   );
                                 }}
@@ -9744,32 +10205,35 @@ export default function Sales() {
                                 const single = Number(ko.kitPrice) || 0;
                                 const qty = Number(ko.overallQty) || 1;
                                 const kitAmt = single * qty;
-                                // Kit products (isKit) — scale by overallQty
-                                const thisKitProds = (watchedLeadProducts || [])
-                                  .filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && kitIndex === 0)));
-                                const prodSubtotal = thisKitProds.reduce((s, p) => s + Math.round((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100)), 0);
-                                const prodAmt = prodSubtotal * qty;
-                                // kitIncludes: separate products selected to go inside this kit's packaging
                                 const kitIncludes = ko.kitIncludes || [];
                                 const kitIncludesQty = ko.kitIncludesQty || {};
                                 const sepProds = (watchedLeadProducts || []).filter(p => p && !p.isKit && !p.kitType);
                                 const includedBreakdown = kitIncludes.map(id => {
-                                  const p = sepProds.find(pp => (pp.name || pp.itemName) === id);
-                                  if (!p) return null;
+                                  const kDefMatch = kits.find(k => k._id === id);
+                                  const koMatch = kDefMatch ? (watchedKitOrders || []).find(ko => ko?.kitId === id) : null;
+                                  const pMatch = !kDefMatch ? sepProds.find(pp => (pp.name || pp.itemName) === id) : null;
+                                  if (!kDefMatch && !pMatch) return null;
                                   const incQtyPerKit = Number(kitIncludesQty[id]) || 1;
                                   const totalIncluded = incQtyPerKit * qty;
-                                  const unitRate = (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100);
+                                  let unitRate, totalProdQty, itemName;
+                                  if (kDefMatch) {
+                                    unitRate = Number(koMatch?.kitPrice) || 0;
+                                    totalProdQty = Number(koMatch?.overallQty) || 0;
+                                    itemName = kDefMatch.kitName || id;
+                                  } else {
+                                    unitRate = (Number(pMatch.rate) || 0) * (1 + (Number(pMatch.gst) || 0) / 100);
+                                    totalProdQty = Number(pMatch.qty) || 0;
+                                    itemName = pMatch.name || pMatch.itemName || id;
+                                  }
                                   const includedAmt = Math.round(totalIncluded * unitRate);
-                                  const totalProdQty = Number(p.qty) || 0;
                                   const remainingQty = Math.max(0, totalProdQty - totalIncluded);
                                   const remainingAmt = Math.round(remainingQty * unitRate);
                                   const isOver = totalProdQty > 0 && totalIncluded > totalProdQty;
-                                  return { id, name: p.name || p.itemName || id, incQtyPerKit, totalIncluded, includedAmt, remainingQty, remainingAmt, isOver, totalProdQty };
+                                  return { id, name: itemName, isKit: !!kDefMatch, incQtyPerKit, totalIncluded, includedAmt, remainingQty, remainingAmt, isOver, totalProdQty };
                                 }).filter(Boolean);
                                 const totalIncludedAmt = includedBreakdown.reduce((s, r) => s + r.includedAmt, 0);
                                 const totalSeparateAmt = includedBreakdown.reduce((s, r) => s + r.remainingAmt, 0);
-                                const totalKitPrice = kitAmt + prodAmt + totalIncludedAmt;
-                                const hasProd = prodAmt > 0;
+                                const totalKitPrice = kitAmt + totalIncludedAmt;
                                 const hasIncludes = includedBreakdown.length > 0;
                                 return (
                                   <div style={{ padding: '8px 14px', background: isDark ? 'rgba(24,144,255,0.1)' : 'rgba(24,144,255,0.06)', borderRadius: 10, border: '1px solid rgba(24,144,255,0.2)' }}>
@@ -9778,31 +10242,26 @@ export default function Sales() {
                                       <Text strong style={{ fontSize: 15, color: '#1890ff' }}>₹{kitAmt.toLocaleString()}</Text>
                                       <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
                                     </div>
-                                    {hasProd && (
-                                      <>
-                                        <div style={{ borderTop: '1px solid rgba(24,144,255,0.15)', margin: '5px 0' }} />
-                                        <div>
-                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#B11E6A', letterSpacing: 0.6, display: 'block' }}>PRODUCTS (×{qty})</Text>
-                                          <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>₹{prodAmt.toLocaleString()}</Text>
-                                          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{prodSubtotal.toLocaleString()} per kit × {qty}</Text>
-                                        </div>
-                                      </>
-                                    )}
                                     {includedBreakdown.map(r => (
                                       <React.Fragment key={r.id}>
                                         <div style={{ borderTop: '1px solid rgba(24,144,255,0.15)', margin: '5px 0' }} />
                                         <div>
-                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.6, display: 'block' }}>INCL: {r.name}</Text>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.6, display: 'block' }}>INCL: {r.name}{r.isKit ? ' (Kit)' : ''}</Text>
                                           <Text strong style={{ fontSize: 13, color: '#722ed1' }}>₹{r.includedAmt.toLocaleString()}</Text>
-                                          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
-                                            {r.incQtyPerKit}/kit × {qty} = {r.totalIncluded} pcs{r.totalProdQty > 0 ? ` (of ${r.totalProdQty})` : ''}
-                                          </Text>
-                                          {r.isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over-allocated by {r.totalIncluded - r.totalProdQty} pcs</Text>}
-                                          {r.remainingQty > 0 && <Text style={{ fontSize: 11, color: '#fa8c16', display: 'block' }}>Separate pack: {r.remainingQty} pcs → ₹{r.remainingAmt.toLocaleString()}</Text>}
+                                          {r.totalProdQty > 0 ? (
+                                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                                              {r.totalProdQty} total → <Text strong style={{ color: '#722ed1' }}>{r.totalIncluded} personalized</Text> + <Text strong style={{ color: r.remainingQty > 0 ? '#fa8c16' : '#8c8c8c' }}>{r.remainingQty} separate</Text>
+                                              {` (${r.incQtyPerKit}×${qty})`}
+                                            </Text>
+                                          ) : (
+                                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{r.incQtyPerKit}/kit × {qty} = {r.totalIncluded}</Text>
+                                          )}
+                                          {r.isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over-allocated by {r.totalIncluded - r.totalProdQty}</Text>}
+                                          {r.remainingQty > 0 && <Text style={{ fontSize: 11, color: '#fa8c16', display: 'block' }}>Separate price → ₹{r.remainingAmt.toLocaleString()}</Text>}
                                         </div>
                                       </React.Fragment>
                                     ))}
-                                    {(hasProd || hasIncludes) && (
+                                    {hasIncludes && (
                                       <>
                                         <div style={{ borderTop: '1px solid rgba(24,144,255,0.15)', margin: '5px 0' }} />
                                         <div>
@@ -9867,7 +10326,7 @@ export default function Sales() {
                                   {(() => {
                                     const overallQty = Number(watchedKitOrders[kitIndex]?.overallQty) || 0;
                                     const thisKitProds = (watchedLeadProducts || []).filter(p =>
-                                      p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && kitIndex === 0))
+                                      p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && effectiveKitIds.length <= 1 && kitIndex === 0))
                                     );
                                     if (!overallQty || overallQty <= 1 || thisKitProds.length === 0) return null;
                                     return (
@@ -10121,7 +10580,7 @@ export default function Sales() {
                             );
                           })()}
                           {(() => {
-                            const recTotal = Math.round(computeRecordGrandTotal(record)) || Number(record.totalAmount) || 0;
+                            const recTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || 0;
                             const recCollected = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
                             const recPaid = recCollected > 0 ? recCollected : (Number(record.paidAmount) || Number(record.advancePaid) || 0);
                             const recBalance = Math.max(0, recTotal - recPaid);
@@ -10428,8 +10887,8 @@ export default function Sales() {
                     const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                     const totalColl = existingColl + newColl;
                     const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
-                    const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'forwardingCharge', 'forwardingChargeAmount']);
-                    const recordTotal = Math.round(computeRecordGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, forwardingCharge: fvKit.forwardingCharge, forwardingChargeAmount: fvKit.forwardingChargeAmount }));
+                    const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'packagingIncludes', 'packagingIncludesQty', 'forwardingCharge', 'forwardingChargeAmount']);
+                    const recordTotal = computeCompositionGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, packagingIncludes: fvKit.packagingIncludes, packagingIncludesQty: fvKit.packagingIncludesQty, forwardingCharge: fvKit.forwardingCharge, forwardingChargeAmount: fvKit.forwardingChargeAmount }, kits);
                     const balance = Math.max(0, recordTotal - totalColl);
                     if (recordTotal === 0) return null;
                     return (
@@ -10522,8 +10981,8 @@ export default function Sales() {
                     const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                     const totalColl = existingColl + newColl;
                     const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
-                    const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'forwardingCharge', 'forwardingChargeAmount']);
-                    const recordTotal = Math.round(computeRecordGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, forwardingCharge: fvKit.forwardingCharge, forwardingChargeAmount: fvKit.forwardingChargeAmount }));
+                    const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'packagingIncludes', 'packagingIncludesQty', 'forwardingCharge', 'forwardingChargeAmount']);
+                    const recordTotal = computeCompositionGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, packagingIncludes: fvKit.packagingIncludes, packagingIncludesQty: fvKit.packagingIncludesQty, forwardingCharge: fvKit.forwardingCharge, forwardingChargeAmount: fvKit.forwardingChargeAmount }, kits);
                     const balance = Math.max(0, recordTotal - totalColl);
                     const status = recordTotal > 0 && totalColl >= recordTotal ? 'Paid' : totalColl > 0 ? 'Partially Paid' : 'Unpaid';
                     const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';

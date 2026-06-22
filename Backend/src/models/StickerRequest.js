@@ -6,7 +6,7 @@ const stickerRequestSchema = new mongoose.Schema({
   hotelName: String,
   product: String,
   // queue this request belongs to ('Display Unit' = kit packaging approval, not a sticker)
-  stickerType: { type: String, enum: ['Product', 'Sticker', 'Box', 'Frosted Ziplock', 'Display Unit'], default: 'Sticker' },
+  stickerType: { type: String, enum: ['Product', 'Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'Display Unit'], default: 'Sticker' },
   quantity: Number,
   stickerSize: String,
   designFileUrl: String,

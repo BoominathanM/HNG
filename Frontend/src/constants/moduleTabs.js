@@ -26,6 +26,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'sticker', label: 'Sticker Printing' },
     { key: 'box', label: 'Box' },
     { key: 'frosted', label: 'Frosted Ziplock' },
+    { key: 'butter_paper', label: 'Butter Paper' },
   ],
   'Task Management': [
     { key: 'current', label: 'Current Task' },

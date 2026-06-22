@@ -436,7 +436,7 @@ export default function WhatsAppIntegration() {
           )}
 
           <div style={{ marginTop: 16, padding: '10px 14px', background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 14 }}>ðŸ”’</span>
+            <span style={{ fontSize: 14 }}>🔒</span>
             <Text style={{ color: subText, fontSize: 13 }}>All sensitive data is encrypted at rest. Disconnect removes all saved config so you can enter new credentials.</Text>
           </div>
         </>
