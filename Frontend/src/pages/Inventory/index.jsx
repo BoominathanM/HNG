@@ -73,6 +73,7 @@ const PRODUCT_FIELD_DEFS = {
     { key: 'size', label: 'Sizes (gram)', field: 'soap_size', options: SIZES_SOAP, mode: 'multiple' },
     { key: 'stickerShape', label: 'Sticker Shape', field: 'soap_stickerShape', options: SOAP_SHAPES },
     { key: 'fragrance', label: 'Fragrance', field: 'soap_fragrance', options: [] },
+    { key: 'packingMaterial', label: 'Packing Material', field: 'soap_packingMaterial', usePackingConfig: true, options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'soap_stickerPrinting', options: YES_NO },
     { key: 'printing', label: 'Printing', field: 'soap_printing', options: YES_NO },
   ],
@@ -243,6 +244,7 @@ export default function Inventory() {
     unit: i.unit,
     unitValue: i.unitValue,
     value: i.purchasePrice,
+    marginAmount: i.marginAmount,
     sellingPrice: i.sellingPrice,
     defaultSize: i.defaultSize,
     current: i.currentStock,
@@ -661,6 +663,7 @@ export default function Inventory() {
         unit: vals.unit || 'Pcs',
         minStock: Number(vals.min) || 0,
         purchasePrice: Number(String(vals.purchase_price ?? '').replace(/[^0-9.]/g, '')) || 0,
+        marginAmount: Number(String(vals.margin_amount ?? '').replace(/[^0-9.]/g, '')) || 0,
         sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         gstPercent: Number(vals.gstPercent) || 0,
         hsnCode: vals.hsn || '',
@@ -921,7 +924,7 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
-          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
+          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
         </Space>
@@ -2148,7 +2151,21 @@ export default function Inventory() {
         width={Math.min(560, window.innerWidth - 24)} centered
         styles={{ body: { paddingTop: 8 } }}
       >
-        <Form form={addItemForm} layout="vertical" style={{ marginTop: 16 }}>
+        <Form
+          form={addItemForm}
+          layout="vertical"
+          style={{ marginTop: 16 }}
+          onValuesChange={(changed) => {
+            // Selling Price auto-fills to Purchase Price + Margin Amount whenever either changes,
+            // so it can never start below the floor. The validator below blocks manual reductions.
+            if ('purchase_price' in changed || 'margin_amount' in changed) {
+              const pp = Number(String(addItemForm.getFieldValue('purchase_price') ?? '').replace(/[^0-9.]/g, '')) || 0;
+              const mm = Number(String(addItemForm.getFieldValue('margin_amount') ?? '').replace(/[^0-9.]/g, '')) || 0;
+              addItemForm.setFieldValue('selling_price', String(pp + mm));
+              addItemForm.validateFields(['selling_price']).catch(() => {});
+            }
+          }}
+        >
           <Row gutter={16}>
             <Col xs={24} sm={12}><Form.Item label="Item Name" name="name" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} sm={12}>
@@ -2168,7 +2185,27 @@ export default function Inventory() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item label="Selling Price" name="selling_price">
+              <Form.Item label="Margin Amount" name="margin_amount" tooltip="Added on top of Purchase Price to set the Selling Price.">
+                <Input prefix="₹" placeholder="0" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                label="Selling Price"
+                name="selling_price"
+                tooltip="Auto-calculated as Purchase Price + Margin Amount. Cannot be reduced below that floor."
+                extra={<Text style={{ fontSize: 11, color: '#999' }}>= Purchase Price + Margin Amount</Text>}
+                rules={[{
+                  validator: (_, val) => {
+                    const pp = Number(String(addItemForm.getFieldValue('purchase_price') ?? '').replace(/[^0-9.]/g, '')) || 0;
+                    const mm = Number(String(addItemForm.getFieldValue('margin_amount') ?? '').replace(/[^0-9.]/g, '')) || 0;
+                    const sp = Number(String(val ?? '').replace(/[^0-9.]/g, '')) || 0;
+                    const floor = pp + mm;
+                    if (sp < floor) return Promise.reject(new Error(`Cannot be below ₹${floor} (Purchase + Margin)`));
+                    return Promise.resolve();
+                  },
+                }]}
+              >
                 <Input prefix="₹" addonAfter={<Form.Item name="selling_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
               </Form.Item>
             </Col>

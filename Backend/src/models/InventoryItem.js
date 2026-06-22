@@ -11,6 +11,7 @@ const inventoryItemSchema = new mongoose.Schema({
   currentStock: { type: Number, default: 0 },
   minStock: { type: Number, default: 0 },
   purchasePrice: { type: Number, default: 0 },
+  marginAmount: { type: Number, default: 0 },
   sellingPrice: { type: Number, default: 0 },
   hsnCode: String,
   gstPercent: { type: Number, default: 0 },

@@ -873,6 +873,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'size', label: 'Sizes (gram)', field: 'soap_size', options: _SIZES_SOAP },
     { key: 'stickerShape', label: 'Sticker Shape', field: 'soap_stickerShape', options: _SOAP_SHAPES },
     { key: 'fragrance', label: 'Fragrance', field: 'soap_fragrance', options: [] },
+    { key: 'packingMaterial', label: 'Packing Material', field: 'soap_packingMaterial', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'soap_stickerPrinting', options: _YES_NO },
     { key: 'printing', label: 'Printing', field: 'soap_printing', options: _YES_NO },
   ],
@@ -1277,8 +1278,25 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 </Col>
                 <Col span={8}>
                   <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>RATE ₹</Text>
-                  <Form.Item {...rest} name={[name, 'rate']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
-                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={0} step={0.01} disabled={isItemDisabled} size="small" />
+                  <Form.Item
+                    {...rest}
+                    name={[name, 'rate']}
+                    style={{ marginBottom: 0 }}
+                    tooltip={invItem?.sellingPrice > 0 ? `Selling Price: ₹${invItem.sellingPrice} (min)` : undefined}
+                    rules={[
+                      { required: true, message: '!' },
+                      {
+                        validator: (_, val) => {
+                          const minRate = invItem?.sellingPrice || 0;
+                          if (minRate > 0 && (Number(val) || 0) < minRate) {
+                            return Promise.reject(new Error(`Min ₹${minRate}`));
+                          }
+                          return Promise.resolve();
+                        },
+                      },
+                    ]}
+                  >
+                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={invItem?.sellingPrice || 0} step={0.01} disabled={isItemDisabled} size="small" />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
