@@ -1364,28 +1364,19 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 return (
                   <div key={fd.key} style={{ flex: '1 1 120px', minWidth: 100 }}>
                     <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fd.label}</span>} style={{ marginBottom: 0 }}>
-                      {isYesNo ? (
-                        <Select
-                          allowClear
-                          showSearch
-                          optionFilterProp="label"
-                          placeholder={fd.label}
-                          disabled={isItemDisabled}
-                          size="small"
-                          options={opts}
-                        />
-                      ) : (
-                        <SelectWithAdd
-                          field={fd.field}
-                          defaultOptions={opts}
-                          placeholder={fd.label}
-                          disabled={isItemDisabled}
-                          size="small"
-                          allowClear
-                          showSearch
-                          optionFilterProp="label"
-                        />
-                      )}
+                      {/* Spec values come purely from inventory — no inline "Add" option here.
+                          Yes/No toggles offer both choices; everything else lists only the values
+                          stored on matching inventory items. */}
+                      <Select
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        placeholder={invItem ? fd.label : 'Select a product first'}
+                        disabled={isItemDisabled || (!isYesNo && !invItem)}
+                        size="small"
+                        options={opts}
+                        notFoundContent={isYesNo ? undefined : 'No values in inventory for this spec'}
+                      />
                     </Form.Item>
                   </div>
                 );

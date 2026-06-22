@@ -59,6 +59,7 @@ const YES_NO = [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
 const KIT_PACKING = [{ value: 'Box', label: 'Box' }, { value: 'Butter paper pouch', label: 'Butter paper pouch' }];
 const SOAP_SHAPES = [{ value: 'Square', label: 'Square' }, { value: 'Round', label: 'Round' }];
 const BOTTLE_TYPES = [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }];
+const CAP_TYPES = [{ value: 'Golden cap', label: 'Golden cap' }, { value: 'Normal cap', label: 'Normal cap' }];
 const BRUSH_TYPES = [{ value: 'Wooden', label: 'Wooden' }, { value: 'Plastic', label: 'Plastic' }];
 const SIZES_SOAP = ['15', '20', '30'].map(v => ({ value: v, label: `${v}g` }));
 const SIZES_LIQUID = ['15', '20', '25', '30'].map(v => ({ value: v, label: `${v}ml` }));
@@ -77,6 +78,7 @@ const PRODUCT_FIELD_DEFS = {
   ],
   shampoo: [
     { key: 'bottleType', label: 'Bottle Type', field: 'shampoo_bottleType', options: BOTTLE_TYPES },
+    { key: 'capType', label: 'Cap Type', field: 'shampoo_capType', options: CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'shampoo_size', options: SIZES_LIQUID, mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'shampoo_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'shampoo_color', options: [] },
@@ -84,6 +86,7 @@ const PRODUCT_FIELD_DEFS = {
   ],
   moisturizer: [
     { key: 'bottleType', label: 'Bottle Type', field: 'moisturizer_bottleType', options: BOTTLE_TYPES },
+    { key: 'capType', label: 'Cap Type', field: 'moisturizer_capType', options: CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'moisturizer_size', options: SIZES_LIQUID, mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'moisturizer_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'moisturizer_color', options: [] },
@@ -91,6 +94,7 @@ const PRODUCT_FIELD_DEFS = {
   ],
   shower_gel: [
     { key: 'bottleType', label: 'Bottle Type', field: 'shower_gel_bottleType', options: BOTTLE_TYPES },
+    { key: 'capType', label: 'Cap Type', field: 'shower_gel_capType', options: CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'shower_gel_size', options: SIZES_LIQUID, mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'shower_gel_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'shower_gel_color', options: [] },
