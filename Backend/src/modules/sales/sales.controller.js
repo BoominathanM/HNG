@@ -178,7 +178,7 @@ exports.getReminders = asyncHandler(async (req, res) => {
     const _subtotal = _items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
     const _gstFromItems = _items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
     const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(o.gstAmount) || 0);
-    const orderTotal = _subtotal > 0 ? Math.round(_subtotal + _gst) : (Number(o.total) || Number(o.amount) || 0);
+    const orderTotal = _subtotal > 0 ? Math.round((_subtotal + _gst) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
     const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const paidAmt = collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
     const liveBalance = Math.max(0, orderTotal - paidAmt);

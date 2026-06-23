@@ -41,6 +41,9 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 // All billing data loaded from API
+// Round money to 2 decimals (strip float noise) without collapsing genuine paise to whole rupees.
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
 const quotStatusColor = { 'In Process': '#7c3aed', Paid: '#6b1240', 'Partially Paid': '#B11E6A', Unpaid: '#C94F8A' };
 
@@ -82,7 +85,7 @@ export default function Billing() {
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
 
   const invoiceList = useMemo(() => (invoicesData?.data || []).map((inv) => {
-    const halfGst = Math.round((inv.gstAmount || 0) / 2);
+    const halfGst = r2((inv.gstAmount || 0) / 2);
     return {
       key: inv._id,
       inv: inv.invoiceNumber,
@@ -135,7 +138,7 @@ export default function Billing() {
   }), [invoicesData]);
 
   const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => {
-    const halfGst = Math.round((q.gstAmount || 0) / 2);
+    const halfGst = r2((q.gstAmount || 0) / 2);
     // leadId is now populated — prefer lead's hotel name over stored clientName
     const lead = q.leadId && typeof q.leadId === 'object' ? q.leadId : null;
     const clientDisplay = lead?.hotelName || q.clientName || '—';
@@ -221,19 +224,19 @@ export default function Billing() {
       rate: Number(i.price || i.rate) || 0,
       gst: Number(i.gst) || 0,
     }));
-    const subtotal = Math.round(rawItems.reduce((s, i) => s + i.qty * i.rate, 0));
-    const gstFromItems = Math.round(rawItems.reduce((s, i) => s + i.qty * i.rate * i.gst / 100, 0));
+    const subtotal = r2(rawItems.reduce((s, i) => s + i.qty * i.rate, 0));
+    const gstFromItems = r2(rawItems.reduce((s, i) => s + i.qty * i.rate * i.gst / 100, 0));
     const effectiveGst = gstFromItems > 0 ? gstFromItems : (Number(o.gstAmount) || 0);
     const total = subtotal > 0 ? subtotal + effectiveGst : (Number(o.total) || 0);
     const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const paid = Number(o.paidAmount) || collTotal || Number(o.advancePaid) || Number(o.advancePaidAmount) || 0;
     const balance = Math.max(0, total - paid);
-    const halfGst = Math.round(effectiveGst / 2);
+    const halfGst = r2(effectiveGst / 2);
     const status = total > 0
       ? (paid >= total ? 'Paid' : paid > 0 ? 'Partially Paid' : 'Unpaid')
       : (o.paymentStatus || 'Unpaid');
     const taxAmt = rawItems.map(i => {
-      const ta = Math.round(i.qty * i.rate * i.gst / 100);
+      const ta = r2(i.qty * i.rate * i.gst / 100);
       return { name: i.name, qty: i.qty, unit: i.unit, rate: i.rate, taxRate: i.gst, taxAmt: ta, amount: i.qty * i.rate + ta };
     });
     return {

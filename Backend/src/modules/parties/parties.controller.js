@@ -77,7 +77,7 @@ exports.getParties = asyncHandler(async (req, res) => {
         const _sub = _items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
         const _gstFromItems = _items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
         const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(o.gstAmount) || 0);
-        const t = _sub > 0 ? Math.round(_sub + _gst) : (Number(o.total) || Number(o.amount) || 0);
+        const t = _sub > 0 ? Math.round((_sub + _gst) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
         return s + t;
       }, 0);
       const received = partyOrders.reduce((s, o) => {

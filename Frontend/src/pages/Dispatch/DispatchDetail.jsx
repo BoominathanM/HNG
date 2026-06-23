@@ -94,7 +94,7 @@ export default function DispatchDetail() {
       return;
     }
     const inv = rawInvoices[0];
-    const halfGst = Math.round((inv.gstAmount || 0) / 2);
+    const halfGst = Math.round((inv.gstAmount || 0) / 2 * 100) / 100;
     const invoiceData = {
       inv: inv.invoiceNumber,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',

@@ -359,7 +359,7 @@ export default function Purchase() {
     if (!receivedTarget) return;
     setInvoiceScanLoading(true);
     setTimeout(() => {
-      const products = [{ key: 1, name: receivedTarget.item, hsn: '3401', gst: '18%', originalQty: receivedTarget.qty, unit: receivedTarget.unit, rate: receivedTarget.qty ? Math.round(receivedTarget.amount / receivedTarget.qty) : 0, amount: receivedTarget.amount }];
+      const products = [{ key: 1, name: receivedTarget.item, hsn: '3401', gst: '18%', originalQty: receivedTarget.qty, unit: receivedTarget.unit, rate: receivedTarget.qty ? Math.round(receivedTarget.amount / receivedTarget.qty * 100) / 100 : 0, amount: receivedTarget.amount }];
       setInvoiceProducts(products);
       const qtys = {};
       products.forEach(p => { qtys[p.key] = p.originalQty; });

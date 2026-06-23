@@ -466,6 +466,11 @@ function prepareFormValues(data) {
   return processed;
 }
 
+// Round money to 2 decimals — strips floating-point noise (e.g. 35.400000001 → 35.4)
+// WITHOUT collapsing genuine decimals to whole rupees. Used everywhere we previously
+// did r2() on a currency value so prices/totals keep their exact decimal value.
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 function calcTotal(products = []) {
   return products.filter(Boolean).reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
 }
@@ -503,11 +508,11 @@ const koCategory = (ko) => (ko && ko.category) || ORDER_CATEGORIES.SEPARATE_KIT;
 function kitOrderValue(ko, kitRows = []) {
   const price = Number(ko?.kitPrice) || 0;
   const qty = Number(ko?.overallQty) || 0;
-  if (price > 0) return Math.round(price * (qty || 1));
+  if (price > 0) return r2(price * (qty || 1));
   const rows = kitRows.filter(p => p && p.kitId === ko?.kitId);
   const sub = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0), 0);
   const gst = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
-  return Math.round((sub + gst) * (qty || 1));
+  return r2((sub + gst) * (qty || 1));
 }
 
 // Stamp every product row with its order-composition category. Kit rows follow their
@@ -527,7 +532,7 @@ function tagProductCategories(products = [], kitOrders = []) {
 function sumProductRows(rows = []) {
   const sub = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0), 0);
   const gst = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
-  return Math.round(sub + gst);
+  return r2(sub + gst);
 }
 
 // Single source of truth for category buckets shown across detail/payment views.
@@ -553,12 +558,12 @@ function computeRecordBuckets(rec = {}) {
     // Legacy records (no kitOrders): value kit rows as one standalone-kit bucket.
     const topPrice = Number(rec.kitPrice) || 0;
     const topQty = Number(rec.kitOverallQty) || 0;
-    separateKit += topPrice > 0 ? Math.round(topPrice * (topQty || 1)) : sumProductRows(kitRows);
+    separateKit += topPrice > 0 ? r2(topPrice * (topQty || 1)) : sumProductRows(kitRows);
   }
 
   const personalized = personalizedKit + sumProductRows(persProdRows);
   const separateProduct = sumProductRows(sepProdRows);
-  const fwd = rec.forwardingCharge ? Math.round(Number(rec.forwardingChargeAmount) || 0) : 0;
+  const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
   const grand = personalized + separateKit + separateProduct + fwd;
   return { personalized, separateKit, separateProduct, fwd, grand };
 }
@@ -602,7 +607,7 @@ function normalizeKitOrdersForSave(kitOrders = [], productType) {
   });
 }
 
-const fmtINR = (n) => `₹${Math.round(Number(n) || 0).toLocaleString()}`;
+const fmtINR = (n) => `₹${r2(Number(n) || 0).toLocaleString()}`;
 
 function computePersonalizedComposition(formData = {}, kitsData = []) {
   const piRaw = formData.packagingIncludes || [];
@@ -637,7 +642,7 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
       const q = Number(p.qty) || 0;
       const r = Number(p.rate) || 0;
       const g = Number(p.gst) || 0;
-      const subPer = Math.round(q * r * (1 + g / 100));
+      const subPer = r2(q * r * (1 + g / 100));
       return { name: p.name || p.kitType || '—', qtyPerKit: q, rate: r, subtotalPerKit: subPer, totalQty: q * totalConsumed, totalValue: subPer * totalConsumed };
     });
     const prodsTotalPerKit = prodLines.reduce((s, pl) => s + pl.subtotalPerKit, 0);
@@ -660,7 +665,7 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
     const totalOrderQty = Number(p.qty) || 0;
     const remaining = Math.max(0, totalOrderQty - totalConsumed);
     const isOver = totalOrderQty > 0 && totalConsumed > totalOrderQty;
-    return { name: id, totalConsumed, rate: r, unitRate, totalValue: Math.round(totalConsumed * unitRate), totalOrderQty, remaining, remainingValue: Math.round(remaining * unitRate), isOver };
+    return { name: id, totalConsumed, rate: r, unitRate, totalValue: r2(totalConsumed * unitRate), totalOrderQty, remaining, remainingValue: r2(remaining * unitRate), isOver };
   }).filter(Boolean);
 
   const inclKitTotal = includedKits.reduce((s, ik) => s + ik.kitTotal, 0);
@@ -672,12 +677,12 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
   const ownKitProdsPerPers = piIds.length > 0
     ? allProds
         .filter(p => (p.isKit || p.kitType) && p.kitId && !piIds.includes(p.kitId))
-        .reduce((s, p) => s + Math.round((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)), 0)
+        .reduce((s, p) => s + r2((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)), 0)
     : 0;
   const ownKitProdsTotal = ownKitProdsPerPers * persQty;
 
-  const totalPersonalized = Math.round(pkgTotal + ownKitProdsTotal + inclKitTotal + inclSepTotal);
-  const totalPerPersKit = persQty > 0 ? Math.round(totalPersonalized / persQty) : totalPersonalized;
+  const totalPersonalized = r2(pkgTotal + ownKitProdsTotal + inclKitTotal + inclSepTotal);
+  const totalPerPersKit = persQty > 0 ? r2(totalPersonalized / persQty) : totalPersonalized;
 
   const separateKits = kitOrders.map(ko => {
     if (!ko || !ko.kitId) return null;
@@ -687,10 +692,10 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
     const remaining = Math.max(0, origQty - consumed);
     const isOver = origQty > 0 && consumed > origQty;
     const kitProds = allProds.filter(p => (p.isKit || p.kitType) && p.kitId === ko.kitId);
-    const prodsSub = kitProds.reduce((s, p) => s + Math.round((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)), 0);
+    const prodsSub = kitProds.reduce((s, p) => s + r2((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)), 0);
     const kitPkgPrice = Number(ko.kitPrice) || 0;
     const valuePerKit = kitPkgPrice + prodsSub;
-    return { kitId: ko.kitId, kitName: kDef?.kitName || ko.kitId, origQty, consumed, remaining, isOver, kitPkgPrice, prodsSub, valuePerKit, remainingValue: Math.round(remaining * valuePerKit), includedInPersonalized: piIds.includes(ko.kitId) };
+    return { kitId: ko.kitId, kitName: kDef?.kitName || ko.kitId, origQty, consumed, remaining, isOver, kitPkgPrice, prodsSub, valuePerKit, remainingValue: r2(remaining * valuePerKit), includedInPersonalized: piIds.includes(ko.kitId) };
   }).filter(Boolean);
 
   const sepProdsList = allProds.filter(p => p && !p.isKit && !p.kitType).map(p => {
@@ -702,7 +707,7 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
     const g = Number(p.gst) || 0;
     const unitRate = r * (1 + g / 100);
     const isOver = origQty > 0 && consumed > origQty;
-    return { name, origQty, consumed, remaining, isOver, rate: r, unitRate, origValue: Math.round(origQty * unitRate), remainingValue: Math.round(remaining * unitRate), includedInPersonalized: piIds.includes(name) };
+    return { name, origQty, consumed, remaining, isOver, rate: r, unitRate, origValue: r2(origQty * unitRate), remainingValue: r2(remaining * unitRate), includedInPersonalized: piIds.includes(name) };
   });
 
   return { persQty, persPrice, pkgTotal, includedKits, includedSepProds, inclKitTotal, inclSepTotal, ownKitProdsTotal, ownKitProdsPerPers, totalPerPersKit, totalPersonalized, separateKits, sepProdsList };
@@ -1425,7 +1430,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           <Col flex="none" style={{ textAlign: 'right', minWidth: 100 }}>
             <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>SUBTOTAL</Text>
             <Text strong style={{ display: 'block', fontSize: 16, color: '#B11E6A', lineHeight: 1.2 }}>
-              ₹{(Math.round((qty || 0) * (rate || 0) * (1 + (gst || 0) / 100))).toLocaleString()}
+              ₹{(r2((qty || 0) * (rate || 0) * (1 + (gst || 0) / 100))).toLocaleString()}
             </Text>
             {(gst || 0) > 0 && (
               <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>
@@ -1905,7 +1910,7 @@ export default function Sales() {
       const qty = Number(p.qty) || 0;
       const rate = Number(p.rate) || 0;
       const taxRate = Number(p.gstPercent ?? p.gst ?? 0);
-      const taxAmt = Math.round(qty * rate * taxRate / 100);
+      const taxAmt = r2(qty * rate * taxRate / 100);
       return { name: p.name || '', qty, unit: p.unit || 'PCS', rate, taxRate, taxAmt, amount: qty * rate + taxAmt };
     });
     const data = {
@@ -2089,9 +2094,9 @@ export default function Sales() {
       );
       const newSubtotal = editedProds.reduce((s, p) => s + p.qty * p.rate, 0);
       const newGstAmount = editedProds.reduce((s, p) => s + p.qty * p.rate * (p.gst / 100), 0);
-      const computedTotal = Math.round(newSubtotal + newGstAmount);
+      const computedTotal = r2(newSubtotal + newGstAmount);
       // Kit-aware grand total so the balance/amount-to-pay accounts for kitPrice × overallQty + forwarding
-      const kitAwareTotal = Math.round(computeRecordGrandTotal({
+      const kitAwareTotal = r2(computeRecordGrandTotal({
         ...orderEditTarget,
         products: editedProds.length > 0 ? editedProds : orderEditTarget.products,
       }));
@@ -2128,7 +2133,7 @@ export default function Sales() {
         paymentCollection: newCollection,
         paymentProofs: mergedProofs,
         paymentStatus,
-        ...(editedProds.length > 0 && { products: editedProds, totalAmount: orderTotal, total: orderTotal, gstAmount: Math.round(newGstAmount) }),
+        ...(editedProds.length > 0 && { products: editedProds, totalAmount: orderTotal, total: orderTotal, gstAmount: r2(newGstAmount) }),
         hotelName: vals.hotelName || orderEditTarget.hotelName,
         billingName: vals.billingName || orderEditTarget.billingName,
         contactPerson: vals.contactPerson || orderEditTarget.contactPerson,
@@ -2188,7 +2193,7 @@ export default function Sales() {
             products: editedProds,
             items: editedProds.map(p => mapOrderItem(p, updated.kitDisplayUnit || updated.displayUnit || '')),
             total: orderTotal,
-            gstAmount: Math.round(newGstAmount),
+            gstAmount: r2(newGstAmount),
           }),
           clientName: updated.hotelName,
           billingName: updated.billingName,
@@ -2269,7 +2274,7 @@ export default function Sales() {
       const newCollection = [...(record.paymentCollection || []), newEntry];
       const newPaidAmount = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const recProducts = record.products?.length ? record.products : itemsToProducts(record.items);
-      const recTotal = Math.round(computeRecordGrandTotal({ ...record, products: recProducts }));
+      const recTotal = r2(computeRecordGrandTotal({ ...record, products: recProducts }));
       const newBalance = Math.max(0, recTotal - newPaidAmount);
       const newStatus = recTotal > 0 && newPaidAmount >= recTotal
         ? 'Paid' : newPaidAmount > 0 ? 'Partially Paid' : 'Unpaid';
@@ -2318,7 +2323,7 @@ export default function Sales() {
     );
     const rec = payEntryTarget.record;
     const recProducts = rec.products?.length ? rec.products : itemsToProducts(rec.items || []);
-    const recTotal = Math.round(computeRecordGrandTotal({ ...rec, products: recProducts }));
+    const recTotal = r2(computeRecordGrandTotal({ ...rec, products: recProducts }));
     const alreadyPaid = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0) || Number(rec.paidAmount) || 0;
     const balance = Math.max(0, recTotal - alreadyPaid);
     return (
@@ -2723,7 +2728,7 @@ export default function Sales() {
         });
         const gstPct = p.gstPercent || Number(String(p.gst || '').replace('%', '')) || invItem?.gstPercent || 0;
         // Seed with the GST-inclusive per-line subtotal so the kit price matches the product SUBTOTALs.
-        kitPriceById[kitId] = (kitPriceById[kitId] || 0) + Math.round((Number(p.qty) || 0) * (Number(rate) || 0) * (1 + (Number(gstPct) || 0) / 100));
+        kitPriceById[kitId] = (kitPriceById[kitId] || 0) + r2((Number(p.qty) || 0) * (Number(rate) || 0) * (1 + (Number(gstPct) || 0) / 100));
       });
     });
 
@@ -2732,7 +2737,7 @@ export default function Sales() {
     const newKitOrders = kitIds.map(kitId => {
       const kit = kits.find(k => k._id === kitId);
       const existing = existingKitOrders.find(o => o.kitId === kitId);
-      const computedPrice = Math.round(kitPriceById[kitId] || 0);
+      const computedPrice = r2(kitPriceById[kitId] || 0);
       if (existing) {
         return {
           ...existing,
@@ -2753,7 +2758,7 @@ export default function Sales() {
 
     const existing = leadForm.getFieldValue('products') || [];
     const nonKit = existing.filter(p => p && !(p.isKit || p.kitType));
-    const totalKitPrice = Math.round(Object.values(kitPriceById).reduce((s, v) => s + v, 0));
+    const totalKitPrice = r2(Object.values(kitPriceById).reduce((s, v) => s + v, 0));
     const currentTopPrice = leadForm.getFieldValue('kitPrice');
 
     leadForm.setFieldsValue({
@@ -2771,7 +2776,7 @@ export default function Sales() {
   // Per-line subtotal incl. GST — matches the SUBTOTAL shown on each product row
   // (qty × rate × (1 + gst%), rounded per line so the kit price equals the sum the user sees).
   const productLineSubtotal = (p) =>
-    Math.round((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100));
+    r2((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100));
 
   // Sum of the GST-inclusive subtotals of all kit-flagged product rows currently in the lead form.
   const computeKitPriceSum = () => {
@@ -2919,7 +2924,7 @@ export default function Sales() {
       const backendPaid = Number(l.paidAmount) || Number(l.totalPaid) || 0;
       const paidTotal = collected > 0 ? collected : (backendPaid || Number(l.advancePaid || 0));
       const lProducts = l.products?.length ? l.products : itemsToProducts(l.items);
-      const kitAwareTotal = Math.round(computeRecordGrandTotal({ ...l, products: lProducts }));
+      const kitAwareTotal = r2(computeRecordGrandTotal({ ...l, products: lProducts }));
       const total = kitAwareTotal > 0 ? kitAwareTotal : Number(l.total || 0);
       const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
@@ -2950,7 +2955,7 @@ export default function Sales() {
       const qProducts = q.products?.length ? q.products : itemsToProducts(q.items);
       // Kit-aware grand total so the table/balance/status match the detail payment panel
       // (kit bucket = kitPrice × overallQty + separate + forwarding); fall back to stored total.
-      const kitAwareTotal = Math.round(computeRecordGrandTotal({ ...q, products: qProducts }));
+      const kitAwareTotal = r2(computeRecordGrandTotal({ ...q, products: qProducts }));
       const total = kitAwareTotal > 0 ? kitAwareTotal : Number(q.total || 0);
       const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
@@ -2983,7 +2988,7 @@ export default function Sales() {
       const paidTotal = collected > 0 ? collected : (backendPaid || Number(n.advancePaid || 0));
       const nProducts = n.products?.length ? n.products : itemsToProducts(n.items);
       // Kit-aware grand total so the table/balance/status match the detail payment panel.
-      const kitAwareTotal = Math.round(computeRecordGrandTotal({ ...n, products: nProducts }));
+      const kitAwareTotal = r2(computeRecordGrandTotal({ ...n, products: nProducts }));
       const total = kitAwareTotal > 0 ? kitAwareTotal : Number(n.total || 0);
       const computedStatus = total > 0
         ? (paidTotal >= total ? 'Paid' : paidTotal > 0 ? 'Partially Paid' : 'Unpaid')
@@ -3022,8 +3027,8 @@ export default function Sales() {
       const paidTotal = backendPaid > 0 ? backendPaid : (collectionTotal > 0 ? collectionTotal : advance);
       // Compute subtotal from products (qty*rate, always reliable).
       // For GST: prefer per-product % if set; fall back to stored gstAmount (handles converted/legacy orders).
-      const subtotal = Math.round(calcTotal(normalizedProducts));
-      const gstFromProducts = Math.round(calcGstAmount(normalizedProducts));
+      const subtotal = r2(calcTotal(normalizedProducts));
+      const gstFromProducts = r2(calcGstAmount(normalizedProducts));
       const storedGst = Number(o.gstAmount) || 0;
       const effectiveGst = gstFromProducts > 0 ? gstFromProducts : storedGst;
       const rawTotal = subtotal + effectiveGst;
@@ -3032,7 +3037,7 @@ export default function Sales() {
       // separate products + their GST, plus forwarding. Using it here makes the table total,
       // balance and payment status agree with what Payment Collection shows (raw subtotal+GST
       // under-counts kit orders because it never multiplies by the kit's overall quantity).
-      const kitAwareTotal = Math.round(computeRecordGrandTotal({ ...o, products: normalizedProducts }));
+      const kitAwareTotal = r2(computeRecordGrandTotal({ ...o, products: normalizedProducts }));
       const total = kitAwareTotal > 0 ? kitAwareTotal : (rawTotal > 0 ? rawTotal : Number(o.total) || 0);
       // Compute from what we have; if list API omits paymentCollection, fall back to backend status
       const computedStatus = total > 0
@@ -3131,14 +3136,14 @@ export default function Sales() {
     const adv = Number(full.advancePaidAmount ?? full.advancePaid ?? 0);
     const paidFull = Number(full.paidAmount) || 0;
     const paidTotal = paidFull > 0 ? paidFull : (collTotal > 0 ? collTotal : adv);
-    const subtotalFull = Math.round(calcTotal(prods));
-    const gstFromProdsFull = Math.round(calcGstAmount(prods));
+    const subtotalFull = r2(calcTotal(prods));
+    const gstFromProdsFull = r2(calcGstAmount(prods));
     const storedGstFull = Number(full.gstAmount) || 0;
     const effectiveGstFull = gstFromProdsFull > 0 ? gstFromProdsFull : storedGstFull;
     const rawTotalFull = subtotalFull + effectiveGstFull;
     // Kit-aware grand total (mirrors the list normalization above) so the synced-back
     // balance/status match the payment-collection panels for kit + separate orders.
-    const kitAwareFull = Math.round(computeRecordGrandTotal({ ...full, products: prods }));
+    const kitAwareFull = r2(computeRecordGrandTotal({ ...full, products: prods }));
     const total = kitAwareFull > 0 ? kitAwareFull : (rawTotalFull > 0 ? rawTotalFull : Number(full.total) || 0);
     const newStatus = paidTotal > 0 && total > 0 ? (paidTotal >= total ? 'Paid' : 'Partially Paid') : undefined;
     const quotCode = full.quotationId?.quotCode || full.quotationCode;
@@ -3321,7 +3326,7 @@ export default function Sales() {
         const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
         const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
         if (collectionTotal > 0) {
-          const recordTotal = Math.round(computeRecordGrandTotal({ ...values, products: srcProducts, kitOrders: srcKitOrders, kitPrice: pickKit('kitPrice'), kitOverallQty: pickKit('kitOverallQty') }));
+          const recordTotal = r2(computeRecordGrandTotal({ ...values, products: srcProducts, kitOrders: srcKitOrders, kitPrice: pickKit('kitPrice'), kitOverallQty: pickKit('kitOverallQty') }));
           return recordTotal > 0 && collectionTotal >= recordTotal ? 'Paid' : 'Partially Paid';
         }
         const proofs = paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []);
@@ -3566,7 +3571,7 @@ export default function Sales() {
     if (section === 'delivery') {
       const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
       const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-      const recordTotal = Math.round(computeRecordGrandTotal(selectedRecord));
+      const recordTotal = r2(computeRecordGrandTotal(selectedRecord));
       if (collectionTotal > 0) {
         values.advancePaid = collectionTotal;
         values.paidAmount = collectionTotal;
@@ -3741,8 +3746,8 @@ export default function Sales() {
     }
     try {
       const sampleProducts = validProducts.map(p => ({ ...p, qty: 1, amount: Number(p.rate) || 0 }));
-      const subtotal = Math.round(calcTotal(sampleProducts));
-      const gstAmt = Math.round(calcGstAmount(sampleProducts));
+      const subtotal = r2(calcTotal(sampleProducts));
+      const gstAmt = r2(calcGstAmount(sampleProducts));
       const payload = {
         clientName: lead.hotelName || lead.billingName,
         clientPartyId: lead.clientPartyId?._id || lead.clientPartyId,
@@ -3827,7 +3832,7 @@ export default function Sales() {
         const pickArrQ = (...vals) => { for (const v of vals) if (Array.isArray(v)) return v; return []; };
         const qProducts = pickArrQ(values.products, qStore.products, editingQuotation.products);
         const qKitOrders = pickArrQ(values.kitOrders, qStore.kitOrders, editingQuotation.kitOrders);
-        const qKitAware = Math.round(computeRecordGrandTotal({ ...editingQuotation, ...values, products: qProducts, kitOrders: qKitOrders }));
+        const qKitAware = r2(computeRecordGrandTotal({ ...editingQuotation, ...values, products: qProducts, kitOrders: qKitOrders }));
         const qTotal = qKitAware > 0 ? qKitAware : (Number(editingQuotation.total || editingQuotation.totalAmount) || total);
         const newRevision = { version: `v${(editingQuotation.revisionHistory?.length || 0) + 1}`, date: now, by: 'Sales Team', note: 'Products / terms updated' };
         const updated = {
@@ -3880,7 +3885,7 @@ export default function Sales() {
           if (fv != null && fv !== '' && !(Array.isArray(fv) && fv.length === 0)) return fv;
           return src[k];
         };
-        const kitAwareTotal = Math.round(computeRecordGrandTotal({
+        const kitAwareTotal = r2(computeRecordGrandTotal({
           ...values,
           products: values.products || [],
           kitOrders: normalizeKitOrdersForSave(values.kitOrders || [], values.productType),
@@ -4239,8 +4244,8 @@ export default function Sales() {
         qty: 1,
         amount: Number(p.rate) || 0,
       }));
-      const subtotal = Math.round(calcTotal(sampleProducts));
-      const gstAmt = Math.round(calcGstAmount(sampleProducts));
+      const subtotal = r2(calcTotal(sampleProducts));
+      const gstAmt = r2(calcGstAmount(sampleProducts));
       const payload = {
         clientName: order.clientName || order.hotelName,
         clientPartyId: order.clientPartyId?._id || order.clientPartyId,
@@ -4530,7 +4535,7 @@ export default function Sales() {
       const roundedTotal = Math.round(exactTotal / 100) * 100;
       const nonKitTotal = values.useRoundedTotal ? roundedTotal : exactTotal;
       // Kit-aware grand total (kit bucket + separate + forwarding) so it matches the table/detail.
-      const nKitAware = Math.round(computeRecordGrandTotal({ ...editingNegotiation, ...values, products: nProducts, kitOrders: nKitOrders }));
+      const nKitAware = r2(computeRecordGrandTotal({ ...editingNegotiation, ...values, products: nProducts, kitOrders: nKitOrders }));
       const total = nKitAware > 0 ? nKitAware : nonKitTotal;
       const nextStep = Math.min((editingNegotiation.flowStep || 0) + 1, 3);
       const nextStatus = ['Initial', 'Counter Offer', 'Final Terms', 'Approved'][nextStep] || 'Final Terms';
@@ -5050,7 +5055,7 @@ export default function Sales() {
         const unitLabel       = p.unit || (isKitItem ? (kitDisplayUnit || '').replace(/_/g, ' ') : '') || '';
         const sizeLabel       = p.size || (isKitItem ? kitSize || '' : '') || '';
         const gstVal          = Number(p.gst) || 0;
-        const lineTotal       = Math.round((p.qty || 0) * (p.rate || 0) * (1 + gstVal / 100));
+        const lineTotal       = r2((p.qty || 0) * (p.rate || 0) * (1 + gstVal / 100));
         const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel || extraAttrs.length || prodAttrEntries.length || pAttachments.length;
         return (
           <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
@@ -5271,7 +5276,7 @@ export default function Sales() {
 
     const DetailDeliveryPayment = ({ rec, grandTotal, showPaymentSummary = true }) => {
       const isSample = rec.orderCategory === 'SAMPLE' || rec.leadType === 'SAMPLE';
-      const recTotal = Math.round(Number(grandTotal) || computeRecordGrandTotal(rec)) || Number(rec.totalAmount) || 0;
+      const recTotal = r2(Number(grandTotal) || computeRecordGrandTotal(rec)) || Number(rec.totalAmount) || 0;
       const recCollected = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const recPaid = recCollected > 0 ? recCollected : (Number(rec.paidAmount) || Number(rec.advancePaid) || 0);
       const recBalance = Math.max(0, recTotal - recPaid);
@@ -6330,8 +6335,8 @@ export default function Sales() {
       ];
       const orderStepMap = { 'In Production': 1, 'Quality Check': 2, 'Dispatch Ready': 3, 'Delivered': 4 };
       const orderCurrentStep = orderStepMap[o.status] ?? 0;
-      const oSubtotal = Math.round(calcTotal(o.products));
-      const oGstFromProducts = Math.round(calcGstAmount(o.products));
+      const oSubtotal = r2(calcTotal(o.products));
+      const oGstFromProducts = r2(calcGstAmount(o.products));
       // Prefer per-product GST if set; fall back to backend-stored gstAmount (for converted/legacy orders)
       const oBackendGst = Number(full.gstAmount ?? base.gstAmount ?? o.gstAmount) || 0;
       const oGstAmount = oGstFromProducts > 0 ? oGstFromProducts : oBackendGst;
@@ -6340,7 +6345,7 @@ export default function Sales() {
       const oLeadForTotal = o.leadCode ? leadsData.find(l => l.leadCode === o.leadCode || l.leadId === o.leadCode) : null;
       const oKitOrdersForTotal = (Array.isArray(o.kitOrders) && o.kitOrders.length > 0 ? o.kitOrders : null)
         || (Array.isArray(oLeadForTotal?.kitOrders) && oLeadForTotal.kitOrders.length > 0 ? oLeadForTotal.kitOrders : null) || [];
-      const oKitAwareTotal = Math.round(computeRecordGrandTotal({
+      const oKitAwareTotal = r2(computeRecordGrandTotal({
         ...o,
         kitOrders: oKitOrdersForTotal,
         kitPrice: o.kitPrice || oLeadForTotal?.kitPrice,
@@ -7358,7 +7363,7 @@ export default function Sales() {
                             <Col xs={8} sm={4}><Form.Item {...rest} name={[name, 'qty']} label="Qty" style={{ marginBottom: 0 }}><InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="0" /></Form.Item></Col>
                             <Col xs={8} sm={4}><Form.Item {...rest} name={[name, 'rate']} label="Rate (₹)" style={{ marginBottom: 0 }}><InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="0" /></Form.Item></Col>
                             <Col xs={8} sm={4}><Form.Item {...rest} name={[name, 'gst']} label="GST %" style={{ marginBottom: 0 }}><InputNumber size="small" style={{ width: '100%' }} min={0} max={100} placeholder="0" /></Form.Item></Col>
-                            <Col xs={20} sm={3}><Form.Item noStyle shouldUpdate>{({ getFieldValue }) => { const prods = getFieldValue('editProducts') || []; const p = prods[name] || {}; const amt = Math.round((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)); return <div style={{ paddingTop: 22, fontSize: 12, color: '#B11E6A', fontWeight: 600, textAlign: 'right' }}>₹{amt.toLocaleString()}</div>; }}</Form.Item></Col>
+                            <Col xs={20} sm={3}><Form.Item noStyle shouldUpdate>{({ getFieldValue }) => { const prods = getFieldValue('editProducts') || []; const p = prods[name] || {}; const amt = r2((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)); return <div style={{ paddingTop: 22, fontSize: 12, color: '#B11E6A', fontWeight: 600, textAlign: 'right' }}>₹{amt.toLocaleString()}</div>; }}</Form.Item></Col>
                             <Col xs={4} sm={1} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 2 }}><Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} /></Col>
                           </Row>
                           <Form.Item noStyle shouldUpdate>{({ getFieldValue }) => renderOrderEditProductSpecs((getFieldValue('editProducts') || [])[name])}</Form.Item>
@@ -7382,14 +7387,14 @@ export default function Sales() {
                           const sepProds = prods.filter(p => p && !p.isKit && !p.kitType);
                           const subtotal = sepProds.reduce((s, p) => s + (Number(p?.qty)||0)*(Number(p?.rate)||0), 0);
                           const gstAmt = sepProds.reduce((s, p) => s + (Number(p?.qty)||0)*(Number(p?.rate)||0)*((Number(p?.gst)||0)/100), 0);
-                          const total = Math.round(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
+                          const total = r2(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
                           if (total === 0) return null;
-                          const kitPortion = Math.max(0, total - Math.round(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? Math.round(Number(orderEditTarget?.forwardingChargeAmount)||0) : 0));
+                          const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount)||0) : 0));
                           return (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8, flexWrap: 'wrap' }}>
                               {kitPortion > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Kit: <strong>₹{kitPortion.toLocaleString()}</strong></Text>}
-                              {subtotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Separate: <strong>₹{Math.round(subtotal).toLocaleString()}</strong></Text>}
-                              {gstAmt > 0 && <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{Math.round(gstAmt).toLocaleString()}</strong></Text>}
+                              {subtotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Separate: <strong>₹{r2(subtotal).toLocaleString()}</strong></Text>}
+                              {gstAmt > 0 && <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{r2(gstAmt).toLocaleString()}</strong></Text>}
                               <Text style={{ fontSize: 13, color: '#B11E6A', fontWeight: 700 }}>Total: ₹{total.toLocaleString()}</Text>
                             </div>
                           );
@@ -7407,11 +7412,11 @@ export default function Sales() {
                 {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
                   <Select onChange={(val) => {
                     const prods = orderEditForm.getFieldValue('editProducts') || [];
-                    const computedTot = Math.round(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: orderEditForm.getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: orderEditForm.getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: orderEditForm.getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
+                    const computedTot = r2(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: orderEditForm.getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: orderEditForm.getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: orderEditForm.getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
                     const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                     let suggestedAdvance = 0;
                     if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
-                    else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') suggestedAdvance = Math.round(orderTotal * 0.5);
+                    else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') suggestedAdvance = r2(orderTotal * 0.5);
                     else if (val === 'CREDIT_10_30') suggestedAdvance = 0;
                     orderEditForm.setFieldValue('advance', suggestedAdvance);
                   }}>
@@ -7422,12 +7427,12 @@ export default function Sales() {
                   {({ getFieldValue }) => {
                     const pt = getFieldValue('paymentTerms');
                     const prods = getFieldValue('editProducts') || [];
-                    const computedTot = Math.round(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
+                    const computedTot = r2(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
                     const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                     let adviceText = '';
                     if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
-                    else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
-                    else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
+                    else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${r2(orderTotal * 0.5).toLocaleString()}`;
+                    else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${r2(orderTotal * 0.5).toLocaleString()}`;
                     else if (pt === 'CREDIT_10_30') adviceText = 'Credit terms — advance: ₹0';
                     return adviceText ? (<div style={{ marginTop: -10, marginBottom: 12, padding: '6px 10px', background: 'rgba(177,30,106,0.06)', borderRadius: 6, border: '1px solid rgba(177,30,106,0.15)' }}><Text type="secondary" style={{ fontSize: 12, color: '#B11E6A' }}>{adviceText}</Text></div>) : null;
                   }}
@@ -7475,7 +7480,7 @@ export default function Sales() {
                       const uncapturedPaid = Math.max(0, Number(orderEditTarget?.paidAmount || 0) - existingCollTotal);
                       const effectivePaid = collTotal + uncapturedPaid;
                       const prods = getFieldValue('editProducts') || [];
-                      const computedTot = Math.round(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
+                      const computedTot = r2(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
                       const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                       const amountToPay = Math.max(0, orderTotal - effectivePaid);
                       const status = orderTotal > 0 && effectivePaid >= orderTotal ? 'Paid' : effectivePaid > 0 ? 'Partially Paid' : 'Unpaid';
@@ -7778,7 +7783,7 @@ export default function Sales() {
                               {({ getFieldValue }) => {
                                 const prods = getFieldValue('editProducts') || [];
                                 const p = prods[name] || {};
-                                const amt = Math.round((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100));
+                                const amt = r2((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100));
                                 return <div style={{ paddingTop: 22, fontSize: 12, color: '#B11E6A', fontWeight: 600, textAlign: 'right' }}>₹{amt.toLocaleString()}</div>;
                               }}
                             </Form.Item>
@@ -7812,7 +7817,7 @@ export default function Sales() {
                         const sepProds = prods.filter(p => p && !p.isKit && !p.kitType);
                         const subtotal = sepProds.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0), 0);
                         const gstAmt = sepProds.reduce((s, p) => s + (Number(p?.qty) || 0) * (Number(p?.rate) || 0) * ((Number(p?.gst) || 0) / 100), 0);
-                        const total = Math.round(computeRecordGrandTotal({
+                        const total = r2(computeRecordGrandTotal({
                           ...orderEditTarget,
                           products: prods,
                           kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
@@ -7820,12 +7825,12 @@ export default function Sales() {
                           kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
                         }));
                         if (total === 0) return null;
-                        const kitPortion = Math.max(0, total - Math.round(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? Math.round(Number(orderEditTarget?.forwardingChargeAmount) || 0) : 0));
+                        const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount) || 0) : 0));
                         return (
                           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8, flexWrap: 'wrap' }}>
                             {kitPortion > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Kit: <strong>₹{kitPortion.toLocaleString()}</strong></Text>}
-                            {subtotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Separate: <strong>₹{Math.round(subtotal).toLocaleString()}</strong></Text>}
-                            {gstAmt > 0 && <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{Math.round(gstAmt).toLocaleString()}</strong></Text>}
+                            {subtotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Separate: <strong>₹{r2(subtotal).toLocaleString()}</strong></Text>}
+                            {gstAmt > 0 && <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{r2(gstAmt).toLocaleString()}</strong></Text>}
                             <Text style={{ fontSize: 13, color: '#B11E6A', fontWeight: 700 }}>Total: ₹{total.toLocaleString()}</Text>
                           </div>
                         );
@@ -7845,7 +7850,7 @@ export default function Sales() {
               {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
                 <Select onChange={(val) => {
                   const prods = orderEditForm.getFieldValue('editProducts') || [];
-                  const computedTot = Math.round(computeRecordGrandTotal({
+                  const computedTot = r2(computeRecordGrandTotal({
                     ...orderEditTarget,
                     products: prods,
                     kitOrders: orderEditForm.getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
@@ -7855,7 +7860,7 @@ export default function Sales() {
                   const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                   let suggestedAdvance = 0;
                   if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
-                  else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') suggestedAdvance = Math.round(orderTotal * 0.5);
+                  else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') suggestedAdvance = r2(orderTotal * 0.5);
                   else if (val === 'CREDIT_10_30') suggestedAdvance = 0;
                   orderEditForm.setFieldValue('advance', suggestedAdvance);
                 }}>
@@ -7866,7 +7871,7 @@ export default function Sales() {
                 {({ getFieldValue }) => {
                   const pt = getFieldValue('paymentTerms');
                   const prods = getFieldValue('editProducts') || [];
-                  const computedTot = Math.round(computeRecordGrandTotal({
+                  const computedTot = r2(computeRecordGrandTotal({
                     ...orderEditTarget,
                     products: prods,
                     kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
@@ -7876,8 +7881,8 @@ export default function Sales() {
                   const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                   let adviceText = '';
                   if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
-                  else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
-                  else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${Math.round(orderTotal * 0.5).toLocaleString()}`;
+                  else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${r2(orderTotal * 0.5).toLocaleString()}`;
+                  else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${r2(orderTotal * 0.5).toLocaleString()}`;
                   else if (pt === 'CREDIT_10_30') adviceText = 'Credit terms — advance: ₹0';
                   return adviceText ? (
                     <div style={{ marginTop: -10, marginBottom: 12, padding: '6px 10px', background: 'rgba(177,30,106,0.06)', borderRadius: 6, border: '1px solid rgba(177,30,106,0.15)' }}>
@@ -7968,7 +7973,7 @@ export default function Sales() {
                     const uncapturedPaid = Math.max(0, Number(orderEditTarget?.paidAmount || 0) - existingCollTotal);
                     const effectivePaid = collTotal + uncapturedPaid;
                     const prods = getFieldValue('editProducts') || [];
-                    const computedTot = Math.round(computeRecordGrandTotal({
+                    const computedTot = r2(computeRecordGrandTotal({
                       ...orderEditTarget,
                       products: prods,
                       kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
@@ -8327,7 +8332,7 @@ export default function Sales() {
                       const total = subtot + gstAmt;
                       let adv = 0;
                       if (val === 'BEFORE_100') adv = total;
-                      else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') adv = Math.round(total * 0.5);
+                      else if (val === 'ON_DISPATCH' || val === '50_ADVANCE_50_AFTER') adv = r2(total * 0.5);
                       orderForm.setFieldValue('advance', adv);
                     }}>{PAYMENT_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}</Select>
                   </Form.Item>
@@ -8340,8 +8345,8 @@ export default function Sales() {
                       const total = subtot + gstAmt;
                       let adviceText = '';
                       if (pt === 'BEFORE_100') adviceText = `100% — expected: ₹${total.toLocaleString()}`;
-                      else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${Math.round(total * 0.5).toLocaleString()}`;
-                      else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${Math.round(total * 0.5).toLocaleString()}`;
+                      else if (pt === 'ON_DISPATCH') adviceText = `50% advance — expected: ₹${r2(total * 0.5).toLocaleString()}`;
+                      else if (pt === '50_ADVANCE_50_AFTER') adviceText = `50% advance — expected: ₹${r2(total * 0.5).toLocaleString()}`;
                       else if (pt === 'CREDIT_10_30') adviceText = 'Credit terms — advance: ₹0';
                       return adviceText ? (
                         <div style={{ marginTop: -10, marginBottom: 12, padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 6, border: '1px solid rgba(82,196,26,0.2)' }}>
@@ -9962,9 +9967,9 @@ export default function Sales() {
                                           totalPQ = Number(pMatch.qty) || 0;
                                           itemName = pMatch.name || pMatch.itemName || id;
                                         }
-                                        const incAmt = Math.round(totalInc * unitRate);
+                                        const incAmt = r2(totalInc * unitRate);
                                         const remQty = Math.max(0, totalPQ - totalInc);
-                                        const remAmt = Math.round(remQty * unitRate);
+                                        const remAmt = r2(remQty * unitRate);
                                         const isOver = totalPQ > 0 && totalInc > totalPQ;
                                         return { id, name: itemName, isKit: !!kDefMatch, incQPK, totalInc, incAmt, remQty, remAmt, isOver, totalPQ };
                                       }).filter(Boolean);
@@ -10139,7 +10144,7 @@ export default function Sales() {
                                 </div>
                                 <div style={{ textAlign: 'right' }}>
                                   <Text strong style={{ display: 'block', fontSize: 20, color: '#B11E6A', lineHeight: 1.2 }}>
-                                    ₹{Math.round((p.qty || 0) * (p.rate || 0) * (1 + (Number(p.gst) || 0) / 100)).toLocaleString()}
+                                    ₹{r2((p.qty || 0) * (p.rate || 0) * (1 + (Number(p.gst) || 0) / 100)).toLocaleString()}
                                   </Text>
                                   <Text type="secondary" style={{ fontSize: 12 }}>
                                     {p.qty || 0} pcs × ₹{p.rate || 0}{(Number(p.gst) || 0) > 0 ? ` +${p.gst}% GST` : ''}
@@ -10565,9 +10570,9 @@ export default function Sales() {
                                     totalProdQty = Number(pMatch.qty) || 0;
                                     itemName = pMatch.name || pMatch.itemName || id;
                                   }
-                                  const includedAmt = Math.round(totalIncluded * unitRate);
+                                  const includedAmt = r2(totalIncluded * unitRate);
                                   const remainingQty = Math.max(0, totalProdQty - totalIncluded);
-                                  const remainingAmt = Math.round(remainingQty * unitRate);
+                                  const remainingAmt = r2(remainingQty * unitRate);
                                   const isOver = totalProdQty > 0 && totalIncluded > totalProdQty;
                                   return { id, name: itemName, isKit: !!kDefMatch, incQtyPerKit, totalIncluded, includedAmt, remainingQty, remainingAmt, isOver, totalProdQty };
                                 }).filter(Boolean);
@@ -12171,7 +12176,7 @@ function ExpandedPartyOrders({ hotelName, onView, onEdit }) {
           const _subtotal = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
           const _gstFromItems = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
           const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(order.gstAmount) || 0);
-          const amount = _subtotal > 0 ? Math.round(_subtotal + _gst) : (Number(order.total) || Number(order.amount) || 0);
+          const amount = _subtotal > 0 ? r2(_subtotal + _gst) : (Number(order.total) || Number(order.amount) || 0);
           const orderWithKey = { ...order, key: order._id, oid: order.orderCode };
           return (
             <div
