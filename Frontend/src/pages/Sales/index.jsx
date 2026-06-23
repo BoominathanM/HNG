@@ -2297,7 +2297,8 @@ export default function Sales() {
       const newCollection = [...(record.paymentCollection || []), newEntry];
       const newPaidAmount = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const recProducts = record.products?.length ? record.products : itemsToProducts(record.items);
-      const recTotal = r2(computeRecordGrandTotal({ ...record, products: recProducts }));
+      const recEnrichedSave = { ...record, products: recProducts };
+      const recTotal = r2(computeCompositionGrandTotal(recEnrichedSave, kits)) || r2(computeRecordGrandTotal(recEnrichedSave));
       const newBalance = Math.max(0, recTotal - newPaidAmount);
       const newStatus = recTotal > 0 && newPaidAmount >= recTotal
         ? 'Paid' : newPaidAmount > 0 ? 'Partially Paid' : 'Unpaid';
@@ -2346,7 +2347,8 @@ export default function Sales() {
     );
     const rec = payEntryTarget.record;
     const recProducts = rec.products?.length ? rec.products : itemsToProducts(rec.items || []);
-    const recTotal = r2(computeRecordGrandTotal({ ...rec, products: recProducts }));
+    const recEnriched = { ...rec, products: recProducts };
+    const recTotal = r2(computeCompositionGrandTotal(recEnriched, kits)) || r2(computeRecordGrandTotal(recEnriched));
     const alreadyPaid = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0) || Number(rec.paidAmount) || 0;
     const balance = Math.max(0, recTotal - alreadyPaid);
     return (
@@ -4662,29 +4664,55 @@ export default function Sales() {
     },
     {
       title: 'Amount', dataIndex: 'totalAmount', width: 110, responsive: ['sm'],
-      render: (v) => v > 0 ? <Text strong style={{ fontSize: 13 }}>₹{v.toLocaleString()}</Text> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>,
+      render: (v, r) => {
+        const linkedOrder = ordersData.find(o =>
+          (o.leadCode && o.leadCode === r.leadId) ||
+          (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
+        );
+        const compTotal = r2(computeCompositionGrandTotal(r, kits));
+        const displayAmount = compTotal || linkedOrder?.totalAmount || v;
+        return displayAmount > 0
+          ? <Text strong style={{ fontSize: 13 }}>₹{displayAmount.toLocaleString()}</Text>
+          : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>;
+      },
     },
     {
       title: 'Collected', key: 'leadCollected', width: 110, responsive: ['sm'],
-      render: (_, r) => (
-        <Text strong style={{ fontSize: 13, color: r.paidAmount > 0 ? '#52c41a' : textColor }}>
-          {r.paidAmount > 0 ? `₹${r.paidAmount.toLocaleString()}` : '—'}
-        </Text>
-      ),
+      render: (_, r) => {
+        const linkedOrder = ordersData.find(o =>
+          (o.leadCode && o.leadCode === r.leadId) ||
+          (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
+        );
+        const paid = linkedOrder?.paidAmount ?? r.paidAmount;
+        return (
+          <Text strong style={{ fontSize: 13, color: paid > 0 ? '#52c41a' : textColor }}>
+            {paid > 0 ? `₹${paid.toLocaleString()}` : '—'}
+          </Text>
+        );
+      },
     },
     {
       title: 'Payment', key: 'leadPayStatus', width: 140,
       render: (_, r) => {
-        if (!r.totalAmount) return <Tag color="default" style={{ borderRadius: 20, fontSize: 12, fontWeight: 600 }}>No Amount</Tag>;
-        const color = r.paymentStatus === 'Paid' ? 'success' : r.paymentStatus === 'Partially Paid' ? 'warning' : 'error';
+        const linkedOrder = ordersData.find(o =>
+          (o.leadCode && o.leadCode === r.leadId) ||
+          (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
+        );
+        const compTotal = r2(computeCompositionGrandTotal(r, kits));
+        const totalAmt = compTotal || linkedOrder?.totalAmount || r.totalAmount;
+        const paidAmt = linkedOrder?.paidAmount ?? r.paidAmount;
+        const balanceAmt = totalAmt > 0 ? Math.max(0, totalAmt - paidAmt) : (linkedOrder?.balance ?? r.balance);
+        const payStatus = totalAmt > 0 && paidAmt >= totalAmt ? 'Paid' : paidAmt > 0 ? 'Partially Paid' : (linkedOrder?.paymentStatus || r.paymentStatus);
+        if (!totalAmt) return <Tag color="default" style={{ borderRadius: 20, fontSize: 12, fontWeight: 600 }}>No Amount</Tag>;
+        const color = payStatus === 'Paid' ? 'success' : payStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
-            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{r.paymentStatus}</Tag>
-            {r.paidAmount > 0 && (
-              <Text type="secondary" style={{ fontSize: 11 }}>₹{r.paidAmount.toLocaleString()} / ₹{(r.totalAmount || 0).toLocaleString()}</Text>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{payStatus}</Tag>
+            {paidAmt > 0 && (
+              <Text type="secondary" style={{ fontSize: 11 }}>₹{paidAmt.toLocaleString()} / ₹{(totalAmt || 0).toLocaleString()}</Text>
             )}
-            {r.paidAmount > 0 && r.balance > 0 && (
-              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{r.balance.toLocaleString()} due</Text>
+            {paidAmt > 0 && balanceAmt > 0 && (
+              <Text style={{ fontSize: 10, color: '#fa8c16' }}>₹{balanceAmt.toLocaleString()} due</Text>
             )}
           </Space>
         );
@@ -4736,17 +4764,24 @@ export default function Sales() {
     { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
       title: 'Amount', key: 'negAmt', width: 120, responsive: ['sm'],
-      render: (_, r) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{(r.totalAmount || 0).toLocaleString()}</Text>,
+      render: (_, r) => {
+        const compTotal = r2(computeCompositionGrandTotal(r, kits));
+        const displayAmount = compTotal || r.totalAmount || 0;
+        return <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{displayAmount.toLocaleString()}</Text>;
+      },
     },
     {
       title: 'Payment Status', key: 'payStatus', width: 150,
       render: (_, r) => {
         const linkedOrder = ordersData.find(o => o.negotiationCode === r.nid || o.hotelName === r.hotelName);
-        const effectiveStatus = (r.status && r.status !== 'Unpaid') ? r.status
+        const compTotal = r2(computeCompositionGrandTotal(r, kits));
+        const effectiveTotal = compTotal || r.totalAmount || linkedOrder?.totalAmount || 0;
+        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedOrder?.paidAmount || 0);
+        const effectiveStatus = effectiveTotal > 0 && effectivePaid >= effectiveTotal ? 'Paid'
+          : effectivePaid > 0 ? 'Partially Paid'
+          : (r.status && r.status !== 'Unpaid') ? r.status
           : (linkedOrder?.paymentStatus && linkedOrder.paymentStatus !== 'Unpaid') ? linkedOrder.paymentStatus
           : 'Unpaid';
-        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedOrder?.paidAmount || 0);
-        const effectiveTotal = r.totalAmount || linkedOrder?.totalAmount || 0;
         const color = effectiveStatus === 'Paid' ? 'success' : effectiveStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
@@ -4784,12 +4819,16 @@ export default function Sales() {
     { title: 'GST Number', dataIndex: 'gstNumber', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
       title: 'Items / Amount', key: 'amt', width: 160, responsive: ['sm'],
-      render: (_, r) => (
-        <div>
-          <Text style={{ fontSize: 13 }}>{r.itemCount ?? r.products?.length ?? 0} items</Text><br />
-          <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{(r.totalAmount || calcTotal(r.products)).toLocaleString()}</Text>
-        </div>
-      ),
+      render: (_, r) => {
+        const compTotal = r2(computeCompositionGrandTotal(r, kits));
+        const displayAmount = compTotal || r.totalAmount || calcTotal(r.products);
+        return (
+          <div>
+            <Text style={{ fontSize: 13 }}>{r.itemCount ?? r.products?.length ?? 0} items</Text><br />
+            <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{displayAmount.toLocaleString()}</Text>
+          </div>
+        );
+      },
     },
     {
       title: 'Bill', dataIndex: 'billType', width: 90, responsive: ['md'],
@@ -4799,11 +4838,14 @@ export default function Sales() {
       title: 'Payment Status', key: 'payStatus', width: 150,
       render: (_, r) => {
         const linkedOrder = ordersData.find(o => o.quotationCode === r.qid || o.hotelName === r.hotelName);
-        const effectiveStatus = (r.status && r.status !== 'Unpaid') ? r.status
+        const compTotal = r2(computeCompositionGrandTotal(r, kits));
+        const effectiveTotal = compTotal || r.totalAmount || linkedOrder?.totalAmount || 0;
+        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedOrder?.paidAmount || 0);
+        const effectiveStatus = effectiveTotal > 0 && effectivePaid >= effectiveTotal ? 'Paid'
+          : effectivePaid > 0 ? 'Partially Paid'
+          : (r.status && r.status !== 'Unpaid') ? r.status
           : (linkedOrder?.paymentStatus && linkedOrder.paymentStatus !== 'Unpaid') ? linkedOrder.paymentStatus
           : 'Unpaid';
-        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedOrder?.paidAmount || 0);
-        const effectiveTotal = r.totalAmount || linkedOrder?.totalAmount || 0;
         const color = effectiveStatus === 'Paid' ? 'success' : effectiveStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
@@ -4890,7 +4932,13 @@ export default function Sales() {
     { title: 'GST Number', dataIndex: 'gstNumber', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
       title: 'Amount', dataIndex: 'totalAmount', width: 120, responsive: ['sm'],
-      render: (v) => <Text strong style={{ fontSize: 13 }}>₹{(v || 0).toLocaleString()}</Text>,
+      render: (v, r) => {
+        const oLinkedLead = r.leadCode
+          ? leadsData.find(l => l.leadCode === r.leadCode || l.leadId === r.leadCode)
+          : leadsData.find(l => String(l.key) === String(r.leadId?._id || r.leadId));
+        const compTotal = r2(computeCompositionGrandTotal(oLinkedLead || r, kits));
+        return <Text strong style={{ fontSize: 13 }}>₹{(compTotal || v || 0).toLocaleString()}</Text>;
+      },
     },
     {
       title: 'Collected', key: 'collected', width: 110, responsive: ['sm'],
@@ -4915,7 +4963,11 @@ export default function Sales() {
         const linkedNeg = negotiationsData.find(n => String(n.key) === String(r.negotiationId));
         const linkedQuot = findLinkedQuotation(r);
         const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || linkedQuot?.paidAmount || 0);
-        const effectiveTotal = r.totalAmount || 0;
+        const oLinkedLead = r.leadCode
+          ? leadsData.find(l => l.leadCode === r.leadCode || l.leadId === r.leadCode)
+          : leadsData.find(l => String(l.key) === String(r.leadId?._id || r.leadId));
+        const compTotal = r2(computeCompositionGrandTotal(oLinkedLead || r, kits));
+        const effectiveTotal = compTotal || r.totalAmount || 0;
         const effectiveStatus = effectiveTotal > 0 && effectivePaid >= effectiveTotal ? 'Paid'
           : effectivePaid > 0 ? 'Partially Paid'
           : (r.paymentStatus && r.paymentStatus !== 'Unpaid' ? r.paymentStatus : 'Unpaid');
@@ -5299,7 +5351,7 @@ export default function Sales() {
 
     const DetailDeliveryPayment = ({ rec, grandTotal, showPaymentSummary = true }) => {
       const isSample = rec.orderCategory === 'SAMPLE' || rec.leadType === 'SAMPLE';
-      const recTotal = r2(Number(grandTotal) || computeRecordGrandTotal(rec)) || Number(rec.totalAmount) || 0;
+      const recTotal = r2(Number(grandTotal) || computeCompositionGrandTotal(rec, kits) || computeRecordGrandTotal(rec)) || Number(rec.totalAmount) || 0;
       const recCollected = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const recPaid = recCollected > 0 ? recCollected : (Number(rec.paidAmount) || Number(rec.advancePaid) || 0);
       const recBalance = Math.max(0, recTotal - recPaid);
@@ -5364,6 +5416,16 @@ export default function Sales() {
     // ── Quotation detail ───────────────────────────────────────────
     if (viewMode === 'quotation-detail') {
       const q = selectedRecord || {};
+      const qLeadId = String(q.leadId?._id || q.leadId || '');
+      const qLead = qLeadId ? leadsData.find(l => String(l.key) === qLeadId || String(l._id) === qLeadId) : null;
+      const qKitOrders = (Array.isArray(q.kitOrders) && q.kitOrders.length > 0 ? q.kitOrders : null)
+        || (Array.isArray(qLead?.kitOrders) && qLead.kitOrders.length > 0 ? qLead.kitOrders : null) || [];
+      const qEnriched = {
+        ...q,
+        kitOrders: qKitOrders,
+        kitPrice: q.kitPrice || qLead?.kitPrice,
+        kitOverallQty: q.kitOverallQty || qLead?.kitOverallQty,
+      };
       const QUOT_STEPS = [
         { title: 'Draft', description: 'Created' },
         { title: 'Sent', description: 'Sent to client' },
@@ -5607,7 +5669,7 @@ export default function Sales() {
                     kitPrice: q.kitPrice || qLead?.kitPrice,
                     kitOverallQty: q.kitOverallQty || qLead?.kitOverallQty,
                   };
-                  return <DetailDeliveryPayment rec={qEnriched} grandTotal={computeRecordGrandTotal(qEnriched)} />;
+                  return <DetailDeliveryPayment rec={qEnriched} grandTotal={computeCompositionGrandTotal(qEnriched, kits) || computeRecordGrandTotal(qEnriched)} />;
                 })()}
                 {(q.paymentCollection || []).length > 0 && (
                   <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
@@ -5648,7 +5710,7 @@ export default function Sales() {
                   </div>
                 )}
                 <div style={{ marginTop: 12 }}>
-                  <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('quotation', q)}>
+                  <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('quotation', qEnriched)}>
                     Add Payment Entry
                   </Button>
                 </div>
@@ -5790,6 +5852,16 @@ export default function Sales() {
     // ── Negotiation detail ─────────────────────────────────────────
     if (viewMode === 'negotiation-detail') {
       const n = selectedRecord || {};
+      const nLeadId = String(n.leadId?._id || n.leadId || '');
+      const nLead = nLeadId ? leadsData.find(l => String(l.key) === nLeadId || String(l._id) === nLeadId) : null;
+      const nKitOrders = (Array.isArray(n.kitOrders) && n.kitOrders.length > 0 ? n.kitOrders : null)
+        || (Array.isArray(nLead?.kitOrders) && nLead.kitOrders.length > 0 ? nLead.kitOrders : null) || [];
+      const nEnriched = {
+        ...n,
+        kitOrders: nKitOrders,
+        kitPrice: n.kitPrice || nLead?.kitPrice,
+        kitOverallQty: n.kitOverallQty || nLead?.kitOverallQty,
+      };
       const NEG_STEPS = [
         { title: 'Initial', description: 'Quotation reviewed' },
         { title: 'Counter Offer', description: 'Terms proposed' },
@@ -6103,7 +6175,7 @@ export default function Sales() {
                     kitPrice: n.kitPrice || nLead?.kitPrice,
                     kitOverallQty: n.kitOverallQty || nLead?.kitOverallQty,
                   };
-                  return <DetailDeliveryPayment rec={nEnriched} grandTotal={computeRecordGrandTotal(nEnriched)} />;
+                  return <DetailDeliveryPayment rec={nEnriched} grandTotal={computeCompositionGrandTotal(nEnriched, kits) || computeRecordGrandTotal(nEnriched)} />;
                 })()}
                 {(n.paymentCollection || []).length > 0 && (
                   <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
@@ -6144,7 +6216,7 @@ export default function Sales() {
                   </div>
                 )}
                 <div style={{ marginTop: 12 }}>
-                  <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('negotiation', n)}>
+                  <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('negotiation', nEnriched)}>
                     Add Payment Entry
                   </Button>
                 </div>
@@ -6976,7 +7048,7 @@ export default function Sales() {
                     </div>
                   )}
                   <div style={{ marginTop: 14 }}>
-                    <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('order', o)}>
+                    <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('order', oEnrichedForBreakdown)}>
                       Add Payment Entry
                     </Button>
                   </div>
