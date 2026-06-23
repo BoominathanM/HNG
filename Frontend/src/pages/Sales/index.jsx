@@ -6446,21 +6446,23 @@ export default function Sales() {
       const oLeadForTotal = o.leadCode ? leadsData.find(l => l.leadCode === o.leadCode || l.leadId === o.leadCode) : null;
       const oKitOrdersForTotal = (Array.isArray(o.kitOrders) && o.kitOrders.length > 0 ? o.kitOrders : null)
         || (Array.isArray(oLeadForTotal?.kitOrders) && oLeadForTotal.kitOrders.length > 0 ? oLeadForTotal.kitOrders : null) || [];
-      const oKitAwareTotal = r2(computeRecordGrandTotal({
-        ...o,
-        kitOrders: oKitOrdersForTotal,
-        kitPrice: o.kitPrice || oLeadForTotal?.kitPrice,
-        kitOverallQty: o.kitOverallQty || oLeadForTotal?.kitOverallQty,
-      }));
-      const oTotal = oKitAwareTotal > 0 ? oKitAwareTotal : (oSubtotal + oGstAmount);
-      const oHasKitProducts = (o.products || []).some(p => p && (p.isKit || p.kitType));
-      // Enriched rec for CategoryTotalsBreakdown in Payment Summary (matches what computeRecordGrandTotal uses)
-      const oEnrichedForBreakdown = {
+      const oRecForTotal = {
         ...o,
         kitOrders: oKitOrdersForTotal,
         kitPrice: o.kitPrice || oLeadForTotal?.kitPrice,
         kitOverallQty: o.kitOverallQty || oLeadForTotal?.kitOverallQty,
       };
+      const oKitAwareTotal = r2(computeCompositionGrandTotal(oLeadForTotal || oRecForTotal, kits)) || r2(computeRecordGrandTotal(oRecForTotal));
+      const oTotal = oKitAwareTotal > 0 ? oKitAwareTotal : (oSubtotal + oGstAmount);
+      const oHasKitProducts = (o.products || []).some(p => p && (p.isKit || p.kitType));
+      // Enriched rec for CategoryTotalsBreakdown in Payment Summary (uses same data as oKitAwareTotal)
+      const oEnrichedForBreakdown = oLeadForTotal ? {
+        ...oLeadForTotal,
+        paymentCollection: o.paymentCollection,
+        paidAmount: o.paidAmount,
+        forwardingCharge: o.forwardingCharge ?? oLeadForTotal.forwardingCharge,
+        forwardingChargeAmount: o.forwardingChargeAmount ?? oLeadForTotal.forwardingChargeAmount,
+      } : oRecForTotal;
       // o.paymentCollection is now the best-available source (merged above)
       const detailCollectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const detailAdvance = Number(full.advancePaidAmount ?? full.advancePaid ?? base.advance ?? 0);
@@ -7488,7 +7490,8 @@ export default function Sales() {
                           const sepProds = prods.filter(p => p && !p.isKit && !p.kitType);
                           const subtotal = sepProds.reduce((s, p) => s + (Number(p?.qty)||0)*(Number(p?.rate)||0), 0);
                           const gstAmt = sepProds.reduce((s, p) => s + (Number(p?.qty)||0)*(Number(p?.rate)||0)*((Number(p?.gst)||0)/100), 0);
-                          const total = r2(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
+                          const _editRec0 = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [] };
+                          const total = r2(computeCompositionGrandTotal(_editRec0, kits)) || r2(computeRecordGrandTotal(_editRec0));
                           if (total === 0) return null;
                           const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount)||0) : 0));
                           return (
@@ -7513,7 +7516,8 @@ export default function Sales() {
                 {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
                   <Select onChange={(val) => {
                     const prods = orderEditForm.getFieldValue('editProducts') || [];
-                    const computedTot = r2(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: orderEditForm.getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: orderEditForm.getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: orderEditForm.getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
+                    const _ptRec = { ...orderEditTarget, products: prods, kitOrders: orderEditForm.getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: orderEditForm.getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: orderEditForm.getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: orderEditForm.getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [] };
+                    const computedTot = r2(computeCompositionGrandTotal(_ptRec, kits)) || r2(computeRecordGrandTotal(_ptRec));
                     const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                     let suggestedAdvance = 0;
                     if (val === 'BEFORE_100') suggestedAdvance = orderTotal;
@@ -7528,7 +7532,8 @@ export default function Sales() {
                   {({ getFieldValue }) => {
                     const pt = getFieldValue('paymentTerms');
                     const prods = getFieldValue('editProducts') || [];
-                    const computedTot = r2(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
+                    const _advRec = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [] };
+                    const computedTot = r2(computeCompositionGrandTotal(_advRec, kits)) || r2(computeRecordGrandTotal(_advRec));
                     const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                     let adviceText = '';
                     if (pt === 'BEFORE_100') adviceText = `Full payment — expected: ₹${orderTotal.toLocaleString()}`;
@@ -7581,7 +7586,8 @@ export default function Sales() {
                       const uncapturedPaid = Math.max(0, Number(orderEditTarget?.paidAmount || 0) - existingCollTotal);
                       const effectivePaid = collTotal + uncapturedPaid;
                       const prods = getFieldValue('editProducts') || [];
-                      const computedTot = r2(computeRecordGrandTotal({ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }));
+                      const editRec = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [], packagingIncludesQty: getFieldValue('packagingIncludesQty') || orderEditTarget?.packagingIncludesQty || {} };
+                      const computedTot = r2(computeCompositionGrandTotal(editRec, kits)) || r2(computeRecordGrandTotal(editRec));
                       const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                       const amountToPay = Math.max(0, orderTotal - effectivePaid);
                       const status = orderTotal > 0 && effectivePaid >= orderTotal ? 'Paid' : effectivePaid > 0 ? 'Partially Paid' : 'Unpaid';
@@ -7593,7 +7599,7 @@ export default function Sales() {
                             <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
                             <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
                           </div>
-                          <div style={{ marginTop: 8 }}><CategoryTotalsBreakdown rec={{ ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty }} isDark={isDark} /></div>
+                          <div style={{ marginTop: 8 }}><CategoryTotalsBreakdown rec={editRec} isDark={isDark} /></div>
                           {effectivePaid > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><Text type="secondary" style={{ fontSize: 12 }}>Collected</Text><Text strong style={{ fontSize: 13, color: '#52c41a' }}>₹{effectivePaid.toLocaleString()}</Text></div>}
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
                             <Text style={{ fontSize: 12, fontWeight: 700 }}>Amount to Pay</Text>
@@ -8074,13 +8080,8 @@ export default function Sales() {
                     const uncapturedPaid = Math.max(0, Number(orderEditTarget?.paidAmount || 0) - existingCollTotal);
                     const effectivePaid = collTotal + uncapturedPaid;
                     const prods = getFieldValue('editProducts') || [];
-                    const computedTot = r2(computeRecordGrandTotal({
-                      ...orderEditTarget,
-                      products: prods,
-                      kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
-                      kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
-                      kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
-                    }));
+                    const editRec2 = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [], packagingIncludesQty: getFieldValue('packagingIncludesQty') || orderEditTarget?.packagingIncludesQty || {} };
+                    const computedTot = r2(computeCompositionGrandTotal(editRec2, kits)) || r2(computeRecordGrandTotal(editRec2));
                     const orderTotal = computedTot > 0 ? computedTot : (orderEditTarget?.total || orderEditTarget?.totalAmount || 0);
                     const amountToPay = Math.max(0, orderTotal - effectivePaid);
                     const status = orderTotal > 0 && effectivePaid >= orderTotal ? 'Paid' : effectivePaid > 0 ? 'Partially Paid' : 'Unpaid';
@@ -8093,13 +8094,7 @@ export default function Sales() {
                           <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
                         </div>
                         <div style={{ marginTop: 8 }}>
-                          <CategoryTotalsBreakdown rec={{
-                            ...orderEditTarget,
-                            products: prods,
-                            kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [],
-                            kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice,
-                            kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
-                          }} isDark={isDark} />
+                          <CategoryTotalsBreakdown rec={editRec2} isDark={isDark} />
                         </div>
                         {effectivePaid > 0 && (
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
@@ -12273,11 +12268,13 @@ function ExpandedPartyOrders({ hotelName, onView, onEdit }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {orders.map((order, i) => {
           const items = order.items?.length ? order.items : (order.products || []);
-          // Compute total from per-item gst% to avoid trusting a potentially double-counted stored total
+          // Kit-aware total: use computeRecordGrandTotal so kitPrice×overallQty is honoured for kit orders
+          const kitAwareAmt = r2(computeRecordGrandTotal(order));
           const _subtotal = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
           const _gstFromItems = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
           const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(order.gstAmount) || 0);
-          const amount = _subtotal > 0 ? r2(_subtotal + _gst) : (Number(order.total) || Number(order.amount) || 0);
+          const rawAmt = _subtotal > 0 ? r2(_subtotal + _gst) : 0;
+          const amount = kitAwareAmt > 0 ? kitAwareAmt : (rawAmt > 0 ? rawAmt : (Number(order.total) || Number(order.totalAmount) || Number(order.amount) || 0));
           const orderWithKey = { ...order, key: order._id, oid: order.orderCode };
           return (
             <div

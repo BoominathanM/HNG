@@ -44,6 +44,81 @@ const { Option } = Select;
 // Round money to 2 decimals (strip float noise) without collapsing genuine paise to whole rupees.
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// Mirror of Sales/index.jsx itemsToProducts — converts flat items[] to products[] shape.
+// Needed when a lead/order only has items (older records) rather than the products[] array.
+const itemsToProducts = (items = []) =>
+  (items || []).filter(Boolean).map((i) => ({
+    ...i,
+    name: i.name || i.itemName || '',
+    qty: i.qty,
+    rate: Number(i.price) || Number(i.rate) || 0,
+    gst: i.gst || 0,
+    isKit: i.isKit || false,
+    kitId: i.kitId || '',
+    kitType: i.kitType || '',
+    category: i.category || '',
+  }));
+
+// Kit-aware grand total — mirrors computeRecordGrandTotal / computeRecordBuckets in Sales/index.jsx.
+// Uses products[] + kitOrders[] from the quotation/order document.
+// Returns 0 when no composition data is present so callers can fall back to the stored total.
+const computeKitAwareTotal = (rec) => {
+  const products = (rec.products || []).filter(Boolean);
+  const kitOrders = (rec.kitOrders || []).filter(Boolean);
+  if (!products.length && !kitOrders.length) return 0;
+
+  const catOf = (p) => {
+    if (p.category) return p.category;
+    if (p.isKit || p.kitType) return 'separate_kit';
+    return 'separate_product';
+  };
+
+  // GST-inclusive subtotal of non-kit product rows.
+  // Accepts both 'rate' (Sales form field) and 'price' (quotation item schema field).
+  const sumProds = (rows) => r2(rows.reduce((s, p) => {
+    const qty = Number(p.qty) || 0;
+    const rate = Number(p.rate) || Number(p.price) || 0;
+    const gst = Number(p.gst) || 0;
+    return s + qty * rate + qty * rate * gst / 100;
+  }, 0));
+
+  const kitRowsAll = products.filter(p => p.isKit || p.kitType);
+  const nonKitProds = products.filter(p => !(p.isKit || p.kitType));
+  const persProds = nonKitProds.filter(p => catOf(p) === 'personalized');
+  const sepProds = nonKitProds.filter(p => catOf(p) === 'separate_product');
+
+  // Value of one kit order — mirrors Sales kitOrderValue exactly:
+  // kitPrice × overallQty when a price is set, else component-row subtotal × overallQty.
+  const kitVal = (ko) => {
+    const price = Number(ko.kitPrice) || 0;
+    const qty = Number(ko.overallQty) || 0;
+    if (price > 0) return r2(price * (qty || 1));
+    const rows = kitRowsAll.filter(r => r.kitId === ko.kitId);
+    const sub = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || Number(p.price) || 0), 0);
+    const gst = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || Number(p.price) || 0) * ((Number(p.gst) || 0) / 100), 0);
+    return r2((sub + gst) * (qty || 1));
+  };
+
+  let personalizedKit = 0, separateKit = 0;
+  if (kitOrders.length) {
+    kitOrders.forEach(ko => {
+      const val = kitVal(ko);
+      if ((ko.category || 'separate_kit') === 'personalized') personalizedKit += val;
+      else separateKit += val;
+    });
+  } else if (kitRowsAll.length) {
+    // Legacy: no kitOrders array — use top-level kitPrice if set
+    const topPrice = Number(rec.kitPrice) || 0;
+    const topQty = Number(rec.kitOverallQty) || 0;
+    separateKit = topPrice > 0 ? r2(topPrice * (topQty || 1)) : sumProds(kitRowsAll);
+  }
+
+  const personalized = r2(personalizedKit + sumProds(persProds));
+  const separateProduct = sumProds(sepProds);
+  const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
+  return r2(personalized + separateKit + separateProduct + fwd);
+};
+
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
 const quotStatusColor = { 'In Process': '#7c3aed', Paid: '#6b1240', 'Partially Paid': '#B11E6A', Unpaid: '#C94F8A' };
 
@@ -86,26 +161,52 @@ export default function Billing() {
 
   const invoiceList = useMemo(() => (invoicesData?.data || []).map((inv) => {
     const halfGst = r2((inv.gstAmount || 0) / 2);
+    // orderId is populated with products/kitOrders and a nested leadId (with full lead fields)
+    const linkedOrder = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const linkedLead = linkedOrder?.leadId && typeof linkedOrder.leadId === 'object' ? linkedOrder.leadId : null;
+    // The ORDER is the source of truth for the billed "Amount to Pay" (its kitOrders carry
+    // the resolved kitPrice; the lead's kitPrice is often stale). Fall back to lead, then invoice.
+    const fwdSrc = linkedOrder || linkedLead;
+    const fwdEnabled = !!(fwdSrc?.forwardingCharge ?? linkedLead?.forwardingCharge);
+    const fwdAmt = fwdEnabled ? r2(Number(fwdSrc?.forwardingChargeAmount ?? linkedLead?.forwardingChargeAmount) || 0) : 0;
+    // Kit composition: prefer the source that actually has kitOrders/products
+    const srcProds = fwdSrc?.products?.length
+      ? fwdSrc.products
+      : (linkedLead?.products?.length
+          ? linkedLead.products
+          : itemsToProducts(fwdSrc?.items?.length ? fwdSrc.items : (linkedLead?.items?.length ? linkedLead.items : (inv.items || []))));
+    const srcKitOrders = fwdSrc?.kitOrders?.length ? fwdSrc.kitOrders : (linkedLead?.kitOrders || []);
+    const srcRec = (srcProds.length || srcKitOrders.length)
+      ? { products: srcProds, kitOrders: srcKitOrders, forwardingCharge: fwdEnabled, forwardingChargeAmount: fwdAmt }
+      : null;
+    const kitTotal = srcRec ? computeKitAwareTotal(srcRec) : 0;
+    // Chain: kitAwareTotal > order.total > lead.total > invoice.total
+    const invTotal = r2(kitTotal > 0 ? kitTotal : (Number(linkedOrder?.total) || Number(linkedLead?.total) || Number(inv.total) || 0));
+    const invPaid = r2(Number(inv.advanceAmount) || 0);
+    const invBalance = r2(Math.max(0, invTotal - invPaid));
+    const invStatus = invTotal > 0
+      ? (invPaid >= invTotal ? 'Paid' : invPaid > 0 ? 'Partially Paid' : 'Unpaid')
+      : (inv.status || 'Unpaid');
     return {
       key: inv._id,
       inv: inv.invoiceNumber,
       client: inv.partyId?.name || '—',
       partyPhone: inv.partyId?.phone || '',
       partyGst: inv.partyId?.gstNumber || '',
-      order: inv.orderId?.orderCode || '—',
-      orderCategory: (inv.orderId?.orderCategory === 'SAMPLE' || inv.orderId?.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (inv.orderId?.orderCategory || 'ORDER'),
-      isEmergency: !!(inv.orderId?.isEmergency),
+      order: linkedOrder?.orderCode || '—',
+      orderCategory: (linkedOrder?.orderCategory === 'SAMPLE' || linkedLead?.leadType === 'SAMPLE') ? 'SAMPLE' : (linkedOrder?.orderCategory || 'ORDER'),
+      isEmergency: !!(linkedOrder?.isEmergency),
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
       amount: inv.subtotal,
       gst: inv.gstAmount,
       gstPercent: inv.gstPercent,
-      total: inv.total,
-      advance: inv.advanceAmount,
-      balance: inv.balanceDue,
+      total: invTotal,
+      advance: invPaid,
+      balance: invBalance,
       previousBalance: inv.previousBalance || 0,
       type: inv.invoiceType,
-      status: inv.status,
+      status: invStatus,
       note: inv.note || '',
       isComplementary: inv.isComplementary,
       complementaryNote: inv.complementaryNote || '',
@@ -113,7 +214,8 @@ export default function Billing() {
       taxableAmount: inv.subtotal || 0,
       cgst: halfGst,
       sgst: halfGst,
-      forwardingCharge: 0,
+      forwardingCharge: fwdEnabled,
+      forwardingChargeAmount: fwdAmt,
       // DocumentTemplate customer block
       customer: {
         name: inv.partyId?.name || '—',
@@ -134,14 +236,56 @@ export default function Billing() {
         taxAmt: i.taxAmt || 0,
         amount: i.lineTotal ?? ((i.price || 0) * (i.qty || 0)),
       })),
+      // Kit composition for category-aware document rendering — order is source of truth
+      products: srcProds,
+      kitOrders: srcKitOrders,
     };
   }), [invoicesData]);
+
+  // Map each lead id → its converted sales order (the order carries the resolved kitPrice
+  // that produces the "Amount to Pay" Sales shows; the lead's kitPrice is often stale).
+  const orderByLead = useMemo(() => {
+    const m = {};
+    (salesOrdersRaw?.data || []).forEach((o) => {
+      const lid = o.leadId && typeof o.leadId === 'object' ? o.leadId._id : o.leadId;
+      if (lid) m[String(lid)] = o;
+    });
+    return m;
+  }, [salesOrdersRaw]);
 
   const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => {
     const halfGst = r2((q.gstAmount || 0) / 2);
     // leadId is now populated — prefer lead's hotel name over stored clientName
     const lead = q.leadId && typeof q.leadId === 'object' ? q.leadId : null;
+    const leadId = lead?._id || (typeof q.leadId === 'string' ? q.leadId : null);
+    const linkedOrder = leadId ? orderByLead[String(leadId)] : null;
     const clientDisplay = lead?.hotelName || q.clientName || '—';
+    // Order is source of truth for the billed total (resolved kitPrice) → lead → quotation
+    const fwdSrc = linkedOrder || lead;
+    const fwdEnabled = !!(fwdSrc?.forwardingCharge ?? lead?.forwardingCharge ?? q.forwardingCharge);
+    const fwdAmt = fwdEnabled ? r2(Number(fwdSrc?.forwardingChargeAmount ?? lead?.forwardingChargeAmount ?? q.forwardingChargeAmount) || 0) : 0;
+    // Products: order's items → lead's products → quotation items
+    const lProds = linkedOrder?.products?.length
+      ? linkedOrder.products
+      : (linkedOrder?.items?.length
+          ? itemsToProducts(linkedOrder.items)
+          : (lead?.products?.length
+              ? lead.products
+              : itemsToProducts(lead?.items?.length ? lead.items : (q.items || []))));
+    const lKitOrders = linkedOrder?.kitOrders?.length ? linkedOrder.kitOrders : (lead?.kitOrders || q.kitOrders || []);
+    const sourceRec = { products: lProds, kitOrders: lKitOrders, forwardingCharge: fwdEnabled, forwardingChargeAmount: fwdAmt };
+    const kitTotal = computeKitAwareTotal(sourceRec);
+    // Chain: kitAwareTotal > order.total > lead.total > q.total (stale snapshot)
+    const total = r2(kitTotal > 0 ? kitTotal : (Number(linkedOrder?.total) || Number(lead?.total) || Number(q.total) || 0));
+    // paymentCollection from lead is authoritative (Sales reads the same source)
+    const leadColl = r2((lead?.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0));
+    const quotColl = r2((q.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0));
+    const collTotal = leadColl || quotColl;
+    const paid = r2(collTotal || Number(q.advancePaid) || 0);
+    const balance = r2(Math.max(0, total - paid));
+    const qStatus = total > 0
+      ? (r2(paid) >= r2(total) ? 'Paid' : paid > 0 ? 'Partially Paid' : 'Unpaid')
+      : (q.status || 'Unpaid');
     return {
       key: q._id,
       docType: 'Quotation',
@@ -153,16 +297,18 @@ export default function Billing() {
       date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
       amount: q.amount,
       gst: q.gstAmount,
-      total: q.total,
-      advance: q.advancePaid,
-      balance: q.balance,
+      total,
+      advance: paid,
+      balance,
       type: q.type,
-      status: q.status,
+      status: qStatus,
       note: q.note || '',
       taxableAmount: q.amount || 0,
       cgst: halfGst,
       sgst: halfGst,
-      forwardingCharge: 0,
+      // Boolean flag + amount (matches Order model pattern; DocumentTemplate understands both)
+      forwardingCharge: fwdEnabled,
+      forwardingChargeAmount: fwdAmt,
       customer: {
         name: clientDisplay,
         mobile: lead?.phone || '',
@@ -182,8 +328,11 @@ export default function Billing() {
         taxAmt: i.taxAmt || 0,
         amount: i.lineTotal ?? ((i.price || 0) * (i.qty || 0)),
       })),
+      // Kit composition data for category-aware document rendering — order is source of truth
+      products: lProds,
+      kitOrders: lKitOrders,
     };
-  }), [quotationsData]);
+  }), [quotationsData, orderByLead]);
 
   const partiesList = useMemo(() => (partiesData?.data || []).map((p) => ({
     key: p._id,
@@ -227,9 +376,13 @@ export default function Billing() {
     const subtotal = r2(rawItems.reduce((s, i) => s + i.qty * i.rate, 0));
     const gstFromItems = r2(rawItems.reduce((s, i) => s + i.qty * i.rate * i.gst / 100, 0));
     const effectiveGst = gstFromItems > 0 ? gstFromItems : (Number(o.gstAmount) || 0);
-    const total = subtotal > 0 ? subtotal + effectiveGst : (Number(o.total) || 0);
-    const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-    const paid = Number(o.paidAmount) || collTotal || Number(o.advancePaid) || Number(o.advancePaidAmount) || 0;
+    const fwdEnabled = !!o.forwardingCharge;
+    const fwdAmt = fwdEnabled ? r2(Number(o.forwardingChargeAmount) || 0) : 0;
+    // Kit-aware total takes priority; fall back to stored o.total then item-computed
+    const kitTotal = computeKitAwareTotal(o);
+    const total = r2(kitTotal > 0 ? kitTotal : (Number(o.total) || (subtotal + effectiveGst + fwdAmt)));
+    const collTotal = r2((o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0));
+    const paid = r2(collTotal || Number(o.paidAmount) || Number(o.advancePaid) || Number(o.advancePaidAmount) || 0);
     const balance = Math.max(0, total - paid);
     const halfGst = r2(effectiveGst / 2);
     const status = total > 0
@@ -261,7 +414,9 @@ export default function Billing() {
       taxableAmount: subtotal,
       cgst: halfGst,
       sgst: halfGst,
-      forwardingCharge: 0,
+      // Boolean + amount (DocumentTemplate understands this pattern)
+      forwardingCharge: fwdEnabled,
+      forwardingChargeAmount: fwdAmt,
       customer: {
         name: o.billingName || o.clientName || '—',
         address: o.detailedAddress || '',
@@ -273,6 +428,9 @@ export default function Billing() {
       },
       items: taxAmt,
       paymentCollection: o.paymentCollection || [],
+      // Kit composition data for category-aware document rendering
+      products: o.products || [],
+      kitOrders: o.kitOrders || [],
     };
   }), [salesOrdersRaw]);
 

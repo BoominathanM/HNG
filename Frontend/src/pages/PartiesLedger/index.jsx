@@ -55,6 +55,8 @@ function PartyAttachmentLinks({ files }) {
 }
 
 // Keys shown as their own labelled tags / handled separately — excluded from the generic spec sweep.
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 const PARTY_SPEC_SKIP = new Set([
   'itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent',
   'unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory',
@@ -86,6 +88,16 @@ function PartyOrdersSection({ orders = [], isDark, cardBg }) {
         {orders.map((o) => {
           const items = (Array.isArray(o.items) && o.items.length ? o.items : (o.products || [])).filter(Boolean);
           const kitOrders = Array.isArray(o.kitOrders) ? o.kitOrders : [];
+          // Kit-aware total: kitPrice×overallQty per kit, else items subtotal+GST, else stored total
+          const koTotal = kitOrders.reduce((s, ko) => {
+            const p = Number(ko.kitPrice) || 0;
+            const q = Number(ko.overallQty) || 0;
+            return p > 0 ? s + r2(p * (q || 1)) : s;
+          }, 0);
+          const fwd = o.forwardingCharge ? (Number(o.forwardingChargeAmount) || 0) : 0;
+          const itemSub = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0), 0);
+          const itemGst = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0) * ((Number(p.gst) || 0) / 100), 0);
+          const displayTotal = koTotal > 0 ? r2(koTotal + fwd) : (itemSub > 0 ? r2(itemSub + itemGst + fwd) : (Number(o.totalAmount) || Number(o.total) || 0));
           return (
             <div key={o._id} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`, borderRadius: 12, overflow: 'hidden' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '10px 14px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.04)' }}>
@@ -95,11 +107,12 @@ function PartyOrdersSection({ orders = [], isDark, cardBg }) {
                   {o.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ borderRadius: 10 }}>Sample</Tag>}
                   {o.createdAt && <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(o.createdAt).format('DD MMM YYYY')}</Text>}
                 </Space>
-                {o.total != null && <Text strong style={{ fontSize: 15, color: PRIMARY }}>₹{Number(o.total).toLocaleString()}</Text>}
+                {displayTotal > 0 && <Text strong style={{ fontSize: 15, color: PRIMARY }}>₹{displayTotal.toLocaleString()}</Text>}
               </div>
               <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {kitOrders.map((ko, ki) => {
                   const atts = (Array.isArray(ko.attachments) ? ko.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+                  const kitIncludes = Array.isArray(ko.kitIncludes) ? ko.kitIncludes : [];
                   return (
                     <div key={ko.kitId || ki} style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.18)' }}>
                       <Space wrap size={6}>
@@ -110,9 +123,25 @@ function PartyOrdersSection({ orders = [], isDark, cardBg }) {
                         {ko.sticker && <Tag color={yn(ko.sticker) ? 'green' : 'default'} style={{ borderRadius: 12 }}>Sticker: {yn(ko.sticker) ? 'Yes' : 'No'}</Tag>}
                         {ko.logo && <Tag color={yn(ko.logo) ? 'cyan' : 'default'} style={{ borderRadius: 12 }}>Logo: {yn(ko.logo) ? 'Yes' : 'No'}</Tag>}
                         {ko.printing && <Tag color={yn(ko.printing) ? 'magenta' : 'default'} style={{ borderRadius: 12 }}>Printing: {yn(ko.printing) ? 'Yes' : 'No'}</Tag>}
-                        {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 12 }}>₹{Number(ko.kitPrice).toLocaleString()}</Tag>}
+                        {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 12 }}>₹{Number(ko.kitPrice).toLocaleString()}{Number(ko.overallQty) > 0 ? ` × ${ko.overallQty} = ₹${r2(Number(ko.kitPrice) * Number(ko.overallQty)).toLocaleString()}` : ''}</Tag>}
                       </Space>
                       {ko.specification && <div style={{ marginTop: 6, fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Specification: </Text>{ko.specification}</div>}
+                      {kitIncludes.length > 0 && (
+                        <div style={{ marginTop: 6 }}>
+                          <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 4 }}>INCLUDED IN KIT</Text>
+                          <Space wrap size={4}>
+                            {kitIncludes.map((v, i) => {
+                              const id = typeof v === 'object' ? v.id : v;
+                              const qty = typeof v === 'object' ? v.qty : null;
+                              return (
+                                <Tag key={i} color="purple" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>
+                                  {id}{qty && qty > 1 ? ` ×${qty}` : ''}
+                                </Tag>
+                              );
+                            })}
+                          </Space>
+                        </div>
+                      )}
                       {atts.length > 0 && <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Kit Files</Text><PartyAttachmentLinks files={atts} /></div>}
                     </div>
                   );

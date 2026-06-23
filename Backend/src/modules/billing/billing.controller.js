@@ -88,7 +88,7 @@ exports.getInvoices = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [invoices, total] = await Promise.all([
-    Invoice.find(filter).populate('partyId', 'name phone').populate({ path: 'orderId', select: 'orderCode orderCategory isEmergency leadId', populate: { path: 'leadId', select: 'leadType' } }).sort('-invoiceDate').skip((page - 1) * limit).limit(limit),
+    Invoice.find(filter).populate('partyId', 'name phone').populate({ path: 'orderId', select: 'orderCode orderCategory isEmergency leadId products kitOrders forwardingCharge forwardingChargeAmount items', populate: { path: 'leadId', select: 'leadType products kitOrders forwardingCharge forwardingChargeAmount total paymentCollection items' } }).sort('-invoiceDate').skip((page - 1) * limit).limit(limit),
     Invoice.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: invoices });
@@ -234,7 +234,7 @@ exports.getQuotationsInProcess = asyncHandler(async (req, res) => {
   // Return all non-deleted quotations regardless of status so newly created
   // (Unpaid / In Process) quotations appear immediately in the Billing tab.
   const quotations = await Quotation.find({ deletedAt: null })
-    .populate('leadId', 'hotelName contactPerson phone locationCity gstNumber leadType')
+    .populate('leadId', 'hotelName contactPerson phone locationCity gstNumber leadType products kitOrders forwardingCharge forwardingChargeAmount paymentCollection total kitPrice kitOverallQty items')
     .sort('-createdAt');
 
   // Exclude quotations already converted to a billing invoice.
