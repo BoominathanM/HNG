@@ -302,6 +302,62 @@ function normalizeProducts(products) {
   });
 }
 
+// ─── Per-product / per-kit file attachments ───────────────────────────
+// Bridge AntD Upload fileList ↔ persisted [{ name, url, public_id, uid }].
+// On save we strip File objects so only Cloudinary URLs persist; on edit/view we
+// rehydrate to a "done" fileList so previously uploaded files show again.
+function normalizeAttachments(fileList) {
+  return (Array.isArray(fileList) ? fileList : [])
+    .map((f) => (typeof f === 'string'
+      ? { url: f, name: f.split('/').pop() }
+      : {
+          name: f.name || f.originFileObj?.name || f.fileName,
+          url: f.url || f.response?.url,
+          public_id: f.cloudPublicId || f.public_id || f.response?.public_id,
+          uid: f.uid,
+        }))
+    .filter((f) => f.url);
+}
+
+function attachmentsToFileList(arr) {
+  return (Array.isArray(arr) ? arr : [])
+    .filter(Boolean)
+    .map((f, i) => (typeof f === 'string'
+      ? { uid: `att-${i}-${f}`, name: f.split('/').pop() || `Attachment ${i + 1}`, status: 'done', url: f, thumbUrl: f }
+      : {
+          uid: f.uid || `att-${i}-${f.url || f.name || ''}`,
+          name: f.name || `Attachment ${i + 1}`,
+          status: 'done',
+          url: f.url,
+          thumbUrl: f.url,
+          cloudPublicId: f.public_id || f.cloudPublicId,
+        }))
+    .filter((f) => f.url);
+}
+
+// Render saved attachments as image thumbnails (images) or file-name tags (others), each
+// linking to its Cloudinary URL. Reused across every product/kit detail view.
+function AttachmentLinks({ files }) {
+  const list = (Array.isArray(files) ? files : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+  if (!list.length) return null;
+  return (
+    <Space wrap size={8}>
+      {list.map((a, i) => {
+        const url = typeof a === 'string' ? a : a.url;
+        const nm = typeof a === 'string' ? (url.split('/').pop()) : (a.name || `File ${i + 1}`);
+        const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)(\?|$)/i.test(url || '');
+        return (
+          <a key={i} href={url} target="_blank" rel="noreferrer" title={nm} style={{ display: 'inline-block' }}>
+            {isImg
+              ? <img src={url} alt={nm} style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 6, border: '1px solid rgba(0,0,0,0.12)' }} />
+              : <Tag icon={<FileTextOutlined />} color="blue" style={{ borderRadius: 12, fontSize: 11, cursor: 'pointer', margin: 0 }}>{nm}</Tag>}
+          </a>
+        );
+      })}
+    </Space>
+  );
+}
+
 function prepareFormValues(data) {
   if (!data) return data;
   const processed = { ...data };
@@ -337,7 +393,8 @@ function prepareFormValues(data) {
     }));
   }
 
-  if (processed.products) processed.products = normalizeProducts(processed.products);
+  if (processed.products) processed.products = normalizeProducts(processed.products).map((p) =>
+    (p && typeof p === 'object' && !Array.isArray(p)) ? { ...p, attachments: attachmentsToFileList(p.attachments) } : p);
   // Convert legacy single-kit format → multi-kit format
   if (processed.selectedKit && !processed.selectedKits) {
     processed.selectedKits = [processed.selectedKit];
@@ -378,6 +435,7 @@ function prepareFormValues(data) {
         kitPrice: pickVal(ko.kitPrice, processed.kitPrice),
         kitIncludes,
         kitIncludesQty,
+        attachments: attachmentsToFileList(ko.attachments),
       };
     });
     // Backfill the shared top-level fields from the first kit so the "Products adding" card
@@ -391,7 +449,7 @@ function prepareFormValues(data) {
     processed.kitOverallQty = pickVal(processed.kitOverallQty, first.overallQty);
     processed.kitPrice = pickVal(processed.kitPrice, first.kitPrice);
   } else if (existingKitOrders.length > 0) {
-    processed.kitOrders = existingKitOrders;
+    processed.kitOrders = existingKitOrders.map((ko) => ({ ...ko, attachments: attachmentsToFileList(ko.attachments) }));
   }
 
   // Normalize packagingIncludes: backend may store [{id,qty}] → convert to [id] + {id:qty}
@@ -510,25 +568,19 @@ function computeRecordGrandTotal(rec = {}) {
   return computeRecordBuckets(rec).grand;
 }
 
-// Composition-aware grand total: when packagingIncludes is present, uses
-// computePersonalizedComposition so that the grand total matches the ORDER COMPOSITION BREAKDOWN:
-//   totalPersonalized (A) + separateKit remaining (B) + separateProduct remaining (C) + fwd
-function computeCompositionGrandTotal(formData = {}, kitsData = []) {
-  const piRaw = formData.packagingIncludes || [];
-  const hasIncludes = Array.isArray(piRaw) && piRaw.length > 0;
-  if (!hasIncludes || !kitsData.length) return computeRecordGrandTotal(formData);
-  const comp = computePersonalizedComposition(formData, kitsData);
-  const kitOrders = (formData.kitOrders || []).filter(Boolean);
-  // Exclude kit orders whose category is PERSONALIZED (already counted in totalPersonalized)
-  const separateKitTotal = (comp.separateKits || [])
-    .filter(sk => {
-      const ko = kitOrders.find(k => k?.kitId === sk.kitId);
-      return !ko || ko.category !== ORDER_CATEGORIES.PERSONALIZED;
-    })
-    .reduce((s, sk) => s + (sk.remainingValue || 0), 0);
-  const separateProdTotal = (comp.sepProdsList || []).reduce((s, sp) => s + (sp.remainingValue || 0), 0);
-  const fwd = formData.forwardingCharge ? Math.round(Number(formData.forwardingChargeAmount) || 0) : 0;
-  return Math.round(comp.totalPersonalized + separateKitTotal + separateProdTotal + fwd);
+// Grand total = Personalized (A) + Separate Kit (B) + Separate Product (C) + forwarding, each
+// billed at its OWN price × qty (via computeRecordBuckets / computeRecordGrandTotal).
+//
+// IMPORTANT: this must NOT subtract a "consumed/included" quantity. "Select Kit(s) to Include"
+// (packagingIncludes) is a physical packing instruction — what physically goes inside the
+// personalized kit — NOT a price discount, so included kits/products are still charged in full.
+// The previous "remaining" math made B and C collapse to ₹0 once they were included in A, which
+// is why the total read correctly on ADD (packagingIncludes still empty) but dropped to just
+// A + forwarding on EDIT/VIEW (prepareFormValues repopulates packagingIncludes on reload).
+// Keeping it bucket-based makes add / edit / view / stored totals all agree, and matches the
+// A/B/C CategoryTotalsBreakdown and the downstream quotation/negotiation/order totals.
+function computeCompositionGrandTotal(formData = {}, _kitsData = []) {
+  return computeRecordGrandTotal(formData);
 }
 
 // Combine kitIncludes (id[]) + kitIncludesQty ({id:qty}) into [{id,qty}] for persistence.
@@ -545,6 +597,7 @@ function normalizeKitOrdersForSave(kitOrders = [], productType) {
       overallQty: Number(o.overallQty) || undefined,
       kitPrice: o.kitPrice != null ? Number(o.kitPrice) : undefined,
       category: o.category || defaultKitCategory(productType),
+      attachments: normalizeAttachments(o.attachments),
     };
   });
 }
@@ -859,6 +912,7 @@ const normYesNo = (v) => {
 };
 const _SOAP_SHAPES = [{ value: 'Square', label: 'Square' }, { value: 'Round', label: 'Round' }];
 const _BOTTLE_TYPES = [{ value: 'Fliptop bottle', label: 'Fliptop bottle' }, { value: 'Screw type', label: 'Screw type' }];
+const _CAP_TYPES = [{ value: 'Golden cap', label: 'Golden cap' }, { value: 'Normal cap', label: 'Normal cap' }];
 const _BRUSH_TYPES = [{ value: 'Wooden', label: 'Wooden' }, { value: 'Plastic', label: 'Plastic' }];
 const _SIZES_SOAP = ['15', '20', '30'].map(v => ({ value: v, label: `${v}g` }));
 const _SIZES_LIQUID = ['15', '20', '25', '30'].map(v => ({ value: v, label: `${v}ml` }));
@@ -879,6 +933,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
   ],
   shampoo: [
     { key: 'bottleType', label: 'Bottle Type', field: 'shampoo_bottleType', options: _BOTTLE_TYPES },
+    { key: 'capType', label: 'Cap Type', field: 'shampoo_capType', options: _CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'shampoo_size', options: _SIZES_LIQUID },
     { key: 'fragrance', label: 'Fragrance', field: 'shampoo_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'shampoo_color', options: [] },
@@ -886,6 +941,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
   ],
   moisturizer: [
     { key: 'bottleType', label: 'Bottle Type', field: 'moisturizer_bottleType', options: _BOTTLE_TYPES },
+    { key: 'capType', label: 'Cap Type', field: 'moisturizer_capType', options: _CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'moisturizer_size', options: _SIZES_LIQUID },
     { key: 'fragrance', label: 'Fragrance', field: 'moisturizer_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'moisturizer_color', options: [] },
@@ -893,6 +949,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
   ],
   shower_gel: [
     { key: 'bottleType', label: 'Bottle Type', field: 'shower_gel_bottleType', options: _BOTTLE_TYPES },
+    { key: 'capType', label: 'Cap Type', field: 'shower_gel_capType', options: _CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'shower_gel_size', options: _SIZES_LIQUID },
     { key: 'fragrance', label: 'Fragrance', field: 'shower_gel_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'shower_gel_color', options: [] },
@@ -966,6 +1023,42 @@ const getLeadProductTypeKey = (name) => {
 };
 
 // ─── Sub-components ───────────────────────────────────────────────────
+// Reusable per-product / per-kit attachment uploader. Self-contained (owns its upload
+// mutation) so it can be dropped into any product/kit form row without prop-drilling.
+// Binds to a form path holding an AntD fileList; normalize/rehydrate via the helpers above.
+function ItemAttachmentsUpload({ namePath, restField = {}, disabled = false, label = 'Attachments', folder = 'product-attachments' }) {
+  const [uploadFilesMutation] = useUploadFilesMutation();
+  const customRequest = async ({ file, onSuccess, onError }) => {
+    const formData = new FormData();
+    formData.append('files', file);
+    try {
+      const res = await uploadFilesMutation({ formData, folder }).unwrap();
+      const uploaded = res.data?.[0];
+      if (uploaded) { file.url = uploaded.url; file.cloudPublicId = uploaded.public_id; file.thumbUrl = uploaded.url; onSuccess(uploaded, file); }
+      else onError(new Error('Upload failed'));
+    } catch (err) { onError(err); }
+  };
+  return (
+    <Form.Item
+      {...restField}
+      name={namePath}
+      label={<span style={{ fontSize: 11, fontWeight: 600, color: '#888' }}>{label}</span>}
+      valuePropName="fileList"
+      getValueFromEvent={(e) => (Array.isArray(e) ? e : e?.fileList)}
+      style={{ marginBottom: 0 }}
+    >
+      <Upload multiple listType="picture-card" customRequest={customRequest} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" disabled={disabled}>
+        {!disabled && (
+          <div style={{ fontSize: 11 }}>
+            <UploadOutlined />
+            <div style={{ marginTop: 2 }}>Upload</div>
+          </div>
+        )}
+      </Upload>
+    </Form.Item>
+  );
+}
+
 function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], inventoryItemsData = [], kits = [], packingMaterialOptions = PACKING_MATERIAL_OPTIONS }) {
   const { name, key, ...rest } = field;
   const isKit = Form.useWatch([fieldName, name, 'isKit']);
@@ -1408,6 +1501,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
             )
           )}
 
+          {/* Free-text spec / instructions for this product — editable in every form (lead/quotation/negotiation/order) */}
+          <Form.Item {...rest} name={[name, 'specification']} label={<span style={{ fontSize: 11, fontWeight: 600, color: '#888' }}>Specification / Instructions</span>} style={{ marginTop: 12, marginBottom: 0 }}>
+            <Input.TextArea rows={2} placeholder="Specification / instructions for this product..." disabled={isItemDisabled} />
+          </Form.Item>
+
           {isKit && (() => {
             const kitNameFromRow = form.getFieldValue([fieldName, name, 'kitName']);
             const selectedKit = kits.find((k) => k.kitName === (kitNameFromRow || kitType));
@@ -1431,6 +1529,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
               </div>
             );
           })()}
+
+          {/* Per-product reference files (spec sheets, design images) — round-trip to view/edit + Operations */}
+          <div style={{ marginTop: 14 }}>
+            <ItemAttachmentsUpload namePath={[name, 'attachments']} restField={rest} disabled={isItemDisabled} label="Product Files / Attachments" />
+          </div>
         </div>
       )}
     </div>
@@ -1835,9 +1938,33 @@ export default function Sales() {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
   };
 
+  // Resolve an order's kit / composition fields, falling back to the linked
+  // negotiation → quotation → lead. Orders created before kit fields were stored on the order
+  // (or when an upstream conversion dropped them) otherwise show no kit details. This makes the
+  // order edit/view surface the same kit info as the originating lead, per spec.
+  const resolveOrderKitSource = (order) => {
+    if (!order) return { lead: null, pick: () => undefined };
+    const leadIdStr = String(order.leadId?._id || order.leadId || '');
+    const lead = leadIdStr ? leadsData.find(l => String(l._id || l.key) === leadIdStr) : null;
+    const negIdStr = String(order.negotiationId?._id || order.negotiationId || '');
+    const neg = negIdStr ? negotiationsData.find(n => String(n._id || n.key) === negIdStr) : null;
+    const quot = findLinkedQuotation({ quotationId: order.quotationId, quotationCode: order.quotationCode });
+    const isEmpty = (v) => v == null || v === '' || (Array.isArray(v) && v.length === 0);
+    // order is authoritative; fall back to negotiation → quotation → lead.
+    const pick = (...keys) => {
+      for (const src of [order, neg, quot, lead]) {
+        if (!src) continue;
+        for (const k of keys) { if (!isEmpty(src[k])) return src[k]; }
+      }
+      return undefined;
+    };
+    return { lead, neg, quot, pick };
+  };
+
   const openOrderEditModal = (order) => {
     if (!requireAccess('edit')) return;
     setOrderEditTarget(order);
+    const { pick: pickKit } = resolveOrderKitSource(order);
     // Resolve expected delivery date: use the order's own value first, then fall back to the
     // tentative date on the linked lead / quotation / negotiation (covers orders that predate
     // the expectedDeliveryDate field or were created without it being explicitly set).
@@ -1859,7 +1986,8 @@ export default function Sales() {
       paymentCollection: order.paymentCollection || [],
       // Preserve EVERY product field (specs, kit flags, dynamic inventory attributes) so they
       // survive the edit round-trip and can be displayed — only the editable numerics are coerced.
-      editProducts: (order.products || []).filter(Boolean).map(p => ({
+      // Fall back to the linked lead's products when the order itself stored none.
+      editProducts: ((order.products && order.products.length ? order.products : pickKit('products')) || []).filter(Boolean).map(p => ({
         ...p,
         name: p.name || p.itemName || '',
         qty: Number(p.qty) || 0,
@@ -1867,15 +1995,25 @@ export default function Sales() {
         gst: Number(p.gst || p.gstPercent) || 0,
       })),
       // Carry kit display-unit details so the Kit Details block renders on edit, same as Add/Lead.
-      kitDisplayUnit: order.kitDisplayUnit || order.displayUnit || undefined,
-      kitSize: order.kitSize || undefined,
-      kitSticker: order.kitSticker || undefined,
-      kitLogo: order.kitLogo || undefined,
-      kitPrinting: order.kitPrinting || undefined,
-      kitOverallQty: order.kitOverallQty || undefined,
-      kitPrice: order.kitPrice || undefined,
-      selectedKits: Array.isArray(order.selectedKits) ? order.selectedKits : (order.selectedKit ? [order.selectedKit] : []),
-      kitOrders: Array.isArray(order.kitOrders) ? order.kitOrders : [],
+      // Each pulls from the order first, then the linked negotiation/quotation/lead.
+      productType: pickKit('productType'),
+      kitDisplayUnit: pickKit('kitDisplayUnit', 'displayUnit'),
+      kitDisplayUnitType: pickKit('kitDisplayUnitType'),
+      kitSize: pickKit('kitSize'),
+      kitSticker: pickKit('kitSticker'),
+      kitLogo: pickKit('kitLogo'),
+      kitPrinting: pickKit('kitPrinting'),
+      kitOverallQty: pickKit('kitOverallQty'),
+      kitPrice: pickKit('kitPrice'),
+      packagingIncludes: pickKit('packagingIncludes'),
+      packagingIncludesQty: pickKit('packagingIncludesQty'),
+      selectedKits: (() => {
+        const sk = pickKit('selectedKits');
+        if (Array.isArray(sk) && sk.length) return sk;
+        const single = pickKit('selectedKit');
+        return single ? [single] : [];
+      })(),
+      kitOrders: pickKit('kitOrders') || [],
       hotelName: order.hotelName || order.clientName || '',
       billingName: order.billingName || order.clientName || '',
       contactPerson: order.contactPerson || '',
@@ -1916,6 +2054,10 @@ export default function Sales() {
 
   const saveOrderEdit = () => {
     orderEditForm.validateFields().then(async vals => {
+      // Some kit fields (selectedKits, productType, kitOrders) aren't bound to a visible Form.Item,
+      // so validateFields() omits them — read the full form store so values loaded into the edit
+      // form (including those resolved from the linked lead) are persisted, not dropped.
+      const editStore = orderEditForm.getFieldsValue(true);
       const newAdvance = vals.advance ?? orderEditTarget.advance ?? 0;
       const newCollection = (vals.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }));
       const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
@@ -2006,16 +2148,26 @@ export default function Sales() {
         location: vals.location || orderEditTarget.location,
         destination: vals.destination || orderEditTarget.destination,
         salesPerson: vals.salesPerson || orderEditTarget.salesPerson,
-        kitDisplayUnit: vals.kitDisplayUnit || orderEditTarget.kitDisplayUnit,
-        kitSize: vals.kitSize || orderEditTarget.kitSize,
-        kitSticker: vals.kitSticker || orderEditTarget.kitSticker,
-        kitLogo: vals.kitLogo || orderEditTarget.kitLogo,
-        kitPrinting: vals.kitPrinting || orderEditTarget.kitPrinting,
-        kitOverallQty: vals.kitOverallQty || orderEditTarget.kitOverallQty,
-        kitPrice: vals.kitPrice || orderEditTarget.kitPrice,
+        kitDisplayUnit: editStore.kitDisplayUnit || orderEditTarget.kitDisplayUnit,
+        kitDisplayUnitType: editStore.kitDisplayUnitType || orderEditTarget.kitDisplayUnitType,
+        kitSize: editStore.kitSize || orderEditTarget.kitSize,
+        kitSticker: editStore.kitSticker || orderEditTarget.kitSticker,
+        kitLogo: editStore.kitLogo || orderEditTarget.kitLogo,
+        kitPrinting: editStore.kitPrinting || orderEditTarget.kitPrinting,
+        kitOverallQty: editStore.kitOverallQty || orderEditTarget.kitOverallQty,
+        kitPrice: editStore.kitPrice || orderEditTarget.kitPrice,
+        // Persist the kit composition (selection + type) so the order is self-contained and the
+        // kit details survive without depending on the linked-lead fallback. These come from the
+        // form store (editStore) since they have no visible Form.Item.
+        productType: editStore.productType || orderEditTarget.productType,
+        selectedKits: (Array.isArray(editStore.selectedKits) && editStore.selectedKits.length > 0)
+          ? editStore.selectedKits
+          : (orderEditTarget.selectedKits || (orderEditTarget.selectedKit ? [orderEditTarget.selectedKit] : [])),
+        packagingIncludes: editStore.packagingIncludes || orderEditTarget.packagingIncludes,
+        packagingIncludesQty: editStore.packagingIncludesQty || orderEditTarget.packagingIncludesQty,
         kitOrders: normalizeKitOrdersForSave(
-          vals.kitOrders?.length > 0 ? vals.kitOrders : (orderEditTarget.kitOrders || []),
-          orderEditTarget?.productType
+          (vals.kitOrders?.length > 0 ? vals.kitOrders : (editStore.kitOrders?.length > 0 ? editStore.kitOrders : (orderEditTarget.kitOrders || []))),
+          editStore.productType || orderEditTarget?.productType
         ),
       };
       try {
@@ -2058,12 +2210,17 @@ export default function Sales() {
           destination: updated.destination || undefined,
           salesPerson: updated.salesPerson || undefined,
           kitDisplayUnit: updated.kitDisplayUnit || undefined,
+          kitDisplayUnitType: updated.kitDisplayUnitType || undefined,
           kitSize: updated.kitSize || undefined,
           kitSticker: updated.kitSticker || undefined,
           kitLogo: updated.kitLogo || undefined,
           kitPrinting: updated.kitPrinting || undefined,
           kitOverallQty: updated.kitOverallQty || undefined,
           kitPrice: updated.kitPrice || undefined,
+          productType: updated.productType || undefined,
+          selectedKits: (updated.selectedKits && updated.selectedKits.length > 0) ? updated.selectedKits : undefined,
+          packagingIncludes: updated.packagingIncludes || undefined,
+          packagingIncludesQty: updated.packagingIncludesQty || undefined,
           kitOrders: updated.kitOrders?.length > 0 ? updated.kitOrders : undefined,
         };
         await updateSalesOrderMutation(backendPatch).unwrap();
@@ -2370,6 +2527,8 @@ export default function Sales() {
   const watchedNegRoundValue = Form.useWatch('useRoundedTotal', negotiationForm);
   const watchedLeadPaymentTerms = Form.useWatch('paymentTerms', leadForm);
   const watchedLeadPaymentCollection = Form.useWatch('paymentCollection', leadForm);
+  const watchedLeadForwardingCharge = Form.useWatch('forwardingCharge', leadForm);
+  const watchedLeadForwardingAmount = Form.useWatch('forwardingChargeAmount', leadForm);
 
   // GST state for order-detail view
   const [gstApiData, setGstApiData] = useState(null);
@@ -2630,16 +2789,19 @@ export default function Sales() {
       .reduce((s, p) => s + productLineSubtotal(p), 0);
   };
 
-  // Auto-sync the shared top-level kitPrice with the sum of all kit product subtotals.
-  // Per-kit kitOrders[i].kitPrice is NOT auto-synced — it represents the packaging/display
-  // unit cost (set from packing config sellingPrice or manually by user) so it stays separate
-  // from the product cost shown in the PRODUCTS row of the calculation card.
+  // Seed the shared top-level kitPrice from the sum of all kit product subtotals — but ONLY
+  // when the user hasn't entered one yet. We must NOT overwrite an existing value: selecting a
+  // product specification (or editing any other product field) mutates the products array and
+  // re-fires this effect, and force-syncing here was wiping out the user's personalized kit
+  // price. Users can re-sync on demand via the "Σ Products" button next to the Kit Price field.
+  // Per-kit kitOrders[i].kitPrice is likewise seed-only (it represents the packaging/display
+  // unit cost) so it stays separate from the product cost shown in the PRODUCTS row.
   useEffect(() => {
     const prods = leadForm.getFieldValue('products') || [];
     if (!prods.some(p => p && (p.isKit || p.kitType))) return;
-    const sharedSum = computeKitPriceSum();
-    if (Number(leadForm.getFieldValue('kitPrice')) !== sharedSum) {
-      leadForm.setFieldValue('kitPrice', sharedSum);
+    const cur = leadForm.getFieldValue('kitPrice');
+    if (cur == null || cur === '') {
+      leadForm.setFieldValue('kitPrice', computeKitPriceSum());
     }
   }, [watchedLeadProducts]);
 
@@ -3076,6 +3238,22 @@ export default function Sales() {
     // Get billing fields explicitly from the form store to ensure they're captured
     // even when the billing section card is in read/collapsed mode
     const formStore = leadForm.getFieldsValue(true);
+    // Products & kit data live in cards that may be collapsed/unmounted during an edit
+    // (e.g. when the user jumps straight to the payment section). validateFields() then OMITS
+    // them (→ undefined), which would wipe the kits/products already on the lead on every
+    // edit/payment-save. Prefer the validated value (authoritative when mounted, and an
+    // intentional "clear all" stays as []); fall back to the full form store, then to the
+    // record being edited — so saving a payment never deletes the line items (and the grand
+    // total keeps its A/B/C buckets).
+    const pickArr = (...vals) => {
+      for (const v of vals) if (Array.isArray(v)) return v;
+      return [];
+    };
+    const srcProducts = pickArr(values.products, formStore.products, editingLead?.products, selectedRecord?.products);
+    const srcKitOrders = pickArr(values.kitOrders, formStore.kitOrders, editingLead?.kitOrders, selectedRecord?.kitOrders);
+    const srcSelectedKits = pickArr(values.selectedKits, formStore.selectedKits, editingLead?.selectedKits, selectedRecord?.selectedKits);
+    const srcPackagingIncludes = pickArr(values.packagingIncludes, formStore.packagingIncludes, editingLead?.packagingIncludes, selectedRecord?.packagingIncludes);
+    const pickKit = (key) => values[key] ?? formStore[key] ?? editingLead?.[key] ?? selectedRecord?.[key];
     const billType = values.billType || formStore.billType || 'GST';
     const detailedAddress = values.detailedAddress || formStore.detailedAddress;
     const city = values.city || formStore.city;
@@ -3091,7 +3269,8 @@ export default function Sales() {
     })).filter(f => f.url);
     return {
       ...values,
-      products: tagProductCategories(normalizeProducts(values.products || []), values.kitOrders || []),
+      products: tagProductCategories(normalizeProducts(srcProducts), srcKitOrders)
+        .map((p) => ({ ...p, attachments: normalizeAttachments(p.attachments) })),
       billType,
       detailedAddress,
       city,
@@ -3115,20 +3294,22 @@ export default function Sales() {
       followupTime: values.followUpTime,
       followUpDate: toStr(values.followUpDate),
       followUpTime: values.followUpTime,
-      displayUnit: values.kitDisplayUnit || values.displayUnit,
+      displayUnit: pickKit('kitDisplayUnit') || pickKit('displayUnit'),
       displayUnitTab: (() => {
-        const du = values.kitDisplayUnit || values.displayUnit;
+        const du = pickKit('kitDisplayUnit') || pickKit('displayUnit');
         const cfg = configDisplayUnitOptions.find(o => o.value === du);
         return cfg?.tabMapping || '';
       })(),
-      kitDisplayUnitType: values.kitDisplayUnitType || undefined,
-      selectedKits: values.selectedKits || [],
-      kitSticker: values.kitSticker || undefined,
-      kitLogo: values.kitLogo || undefined,
-      kitPrinting: values.kitPrinting || undefined,
-      kitPrice: values.kitPrice != null ? Number(values.kitPrice) : undefined,
-      kitOverallQty: Number(values.kitOverallQty) || undefined,
-      kitOrders: normalizeKitOrdersForSave(values.kitOrders || [], values.productType),
+      kitDisplayUnitType: pickKit('kitDisplayUnitType') || undefined,
+      selectedKits: srcSelectedKits,
+      kitSticker: pickKit('kitSticker') || undefined,
+      kitLogo: pickKit('kitLogo') || undefined,
+      kitPrinting: pickKit('kitPrinting') || undefined,
+      kitPrice: pickKit('kitPrice') != null ? Number(pickKit('kitPrice')) : undefined,
+      kitOverallQty: Number(pickKit('kitOverallQty')) || undefined,
+      kitOrders: normalizeKitOrdersForSave(srcKitOrders, values.productType),
+      packagingIncludes: srcPackagingIncludes,
+      packagingIncludesQty: values.packagingIncludesQty ?? formStore.packagingIncludesQty ?? editingLead?.packagingIncludesQty ?? selectedRecord?.packagingIncludesQty,
       packingMaterial: values.packingMaterial || '',
       hotelLogoUrl: hotelLogoUrl || undefined,
       paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
@@ -3140,8 +3321,7 @@ export default function Sales() {
         const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
         const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
         if (collectionTotal > 0) {
-          const prods = values.products || formStore.products || [];
-          const recordTotal = Math.round(computeRecordGrandTotal({ ...values, products: prods }));
+          const recordTotal = Math.round(computeRecordGrandTotal({ ...values, products: srcProducts, kitOrders: srcKitOrders, kitPrice: pickKit('kitPrice'), kitOverallQty: pickKit('kitOverallQty') }));
           return recordTotal > 0 && collectionTotal >= recordTotal ? 'Paid' : 'Partially Paid';
         }
         const proofs = paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []);
@@ -3639,19 +3819,35 @@ export default function Sales() {
       const total = calcTotal(values.products);
       const now = new Date().toISOString().split('T')[0];
       if (editingQuotation) {
+        // Collapse-safe: the products/kit cards may be unmounted while editing terms or payment,
+        // so validateFields() can omit them. Pull from the full form store, then the record being
+        // edited, so an edit never wipes items/kitOrders or zeroes the total. Total is kit-aware
+        // (kit bucket + separate + forwarding) so it matches the table/detail.
+        const qStore = quotationForm.getFieldsValue(true);
+        const pickArrQ = (...vals) => { for (const v of vals) if (Array.isArray(v)) return v; return []; };
+        const qProducts = pickArrQ(values.products, qStore.products, editingQuotation.products);
+        const qKitOrders = pickArrQ(values.kitOrders, qStore.kitOrders, editingQuotation.kitOrders);
+        const qKitAware = Math.round(computeRecordGrandTotal({ ...editingQuotation, ...values, products: qProducts, kitOrders: qKitOrders }));
+        const qTotal = qKitAware > 0 ? qKitAware : (Number(editingQuotation.total || editingQuotation.totalAmount) || total);
         const newRevision = { version: `v${(editingQuotation.revisionHistory?.length || 0) + 1}`, date: now, by: 'Sales Team', note: 'Products / terms updated' };
         const updated = {
           ...editingQuotation,
           ...values,
-          totalAmount: total,
+          products: qProducts,
+          kitOrders: qKitOrders,
+          totalAmount: qTotal,
+          total: qTotal,
           revisionHistory: [...(editingQuotation.revisionHistory || []), newRevision],
         };
         try {
           await updateSalesQuotationMutation({
             id: editingQuotation._id || editingQuotation.key,
             ...values,
-            totalAmount: total,
-            items: (values.products || []).map((p) => ({
+            products: qProducts,
+            kitOrders: qKitOrders,
+            totalAmount: qTotal,
+            total: qTotal,
+            items: qProducts.map((p) => ({
               itemName: p.name,
               unit: p.unit,
               price: Number(p.rate) || 0,
@@ -3674,6 +3870,16 @@ export default function Sales() {
           (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
         const itemsTotal = subtotal + gstAmount;
         const src = quotationFromLead || {};
+        // Kit details are entered/edited in the quotation form (kitOrders, display unit, kit
+        // price, …). validateFields() can omit fields whose cards are collapsed/unmounted, so
+        // read the full form store and prefer it over the raw lead — otherwise the quotation
+        // shows "only products" with the kit summary missing. pickKitField(): form store → lead.
+        const qStore = quotationForm.getFieldsValue(true);
+        const pickKitField = (k) => {
+          const fv = qStore[k];
+          if (fv != null && fv !== '' && !(Array.isArray(fv) && fv.length === 0)) return fv;
+          return src[k];
+        };
         const kitAwareTotal = Math.round(computeRecordGrandTotal({
           ...values,
           products: values.products || [],
@@ -3738,18 +3944,22 @@ export default function Sales() {
           deliveryBy: values.deliveryBy || src.deliveryBy,
           transportationBy: values.transportationBy || src.transportationBy,
           paymentTerms: values.paymentTerms || src.paymentTerms,
-          // Kit fields carried from lead
-          productType: src.productType,
-          selectedKit: src.selectedKit,
-          selectedKits: src.selectedKits || [],
-          kitOrders: src.kitOrders || [],
-          kitDisplayUnit: src.kitDisplayUnit || src.displayUnit,
-          kitSize: src.kitSize,
-          kitSticker: src.kitSticker,
-          kitLogo: src.kitLogo,
-          kitPrinting: src.kitPrinting,
-          kitOverallQty: src.kitOverallQty,
-          kitPrice: src.kitPrice,
+          // Kit fields carried from the form (user's edits) with fallback to the lead
+          productType: pickKitField('productType'),
+          selectedKit: pickKitField('selectedKit'),
+          selectedKits: pickKitField('selectedKits') || [],
+          kitOrders: pickKitField('kitOrders') || [],
+          displayUnit: pickKitField('displayUnit') || pickKitField('kitDisplayUnit'),
+          kitDisplayUnit: pickKitField('kitDisplayUnit') || pickKitField('displayUnit'),
+          kitDisplayUnitType: pickKitField('kitDisplayUnitType'),
+          kitSize: pickKitField('kitSize'),
+          kitSticker: pickKitField('kitSticker'),
+          kitLogo: pickKitField('kitLogo'),
+          kitPrinting: pickKitField('kitPrinting'),
+          kitOverallQty: pickKitField('kitOverallQty'),
+          kitPrice: pickKitField('kitPrice'),
+          packagingIncludes: pickKitField('packagingIncludes'),
+          packagingIncludesQty: pickKitField('packagingIncludesQty'),
         };
         if (src.key || src._id) payload.leadId = src._id || src.key;
         try {
@@ -4307,11 +4517,21 @@ export default function Sales() {
   const saveNegotiation = async () => {
     try {
       const values = await negotiationForm.validateFields();
-      const subtotal = calcTotal(values.products);
-      const gstAmt = calcGstAmount(values.products);
+      // Collapse-safe: products/kit cards may be unmounted while editing terms/payment, so
+      // validateFields() can omit them. Pull from the form store, then the record being edited,
+      // so an edit never wipes items/kitOrders or zeroes the total.
+      const nStore = negotiationForm.getFieldsValue(true);
+      const pickArrN = (...vals) => { for (const v of vals) if (Array.isArray(v)) return v; return []; };
+      const nProducts = pickArrN(values.products, nStore.products, editingNegotiation.products);
+      const nKitOrders = pickArrN(values.kitOrders, nStore.kitOrders, editingNegotiation.kitOrders);
+      const subtotal = calcTotal(nProducts);
+      const gstAmt = calcGstAmount(nProducts);
       const exactTotal = subtotal + gstAmt;
       const roundedTotal = Math.round(exactTotal / 100) * 100;
-      const total = values.useRoundedTotal ? roundedTotal : exactTotal;
+      const nonKitTotal = values.useRoundedTotal ? roundedTotal : exactTotal;
+      // Kit-aware grand total (kit bucket + separate + forwarding) so it matches the table/detail.
+      const nKitAware = Math.round(computeRecordGrandTotal({ ...editingNegotiation, ...values, products: nProducts, kitOrders: nKitOrders }));
+      const total = nKitAware > 0 ? nKitAware : nonKitTotal;
       const nextStep = Math.min((editingNegotiation.flowStep || 0) + 1, 3);
       const nextStatus = ['Initial', 'Counter Offer', 'Final Terms', 'Approved'][nextStep] || 'Final Terms';
       const updatedRounds = [
@@ -4330,6 +4550,8 @@ export default function Sales() {
       const { useRoundedTotal: _round, negotiationNote: _note, ...patchValues } = values;
       const patch = {
         ...patchValues,
+        products: nProducts,
+        kitOrders: nKitOrders,
         total,
         amount: subtotal,
         gstAmount: gstAmt,
@@ -4337,7 +4559,7 @@ export default function Sales() {
         flowStep: nextStep,
         status: nextStatus,
         rounds: updatedRounds,
-        items: (values.products || []).map(mapOrderItem),
+        items: nProducts.map(mapOrderItem),
         // dayjs objects from form DatePickers must be converted to strings before
         // going into local state — React can't render Date/dayjs objects directly
         paymentReminderDate: toDateStr(values.paymentReminderDate),
@@ -4813,17 +5035,23 @@ export default function Sales() {
         const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','stickerPrinting','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
         const extraAttrs = Object.entries(p || {}).filter(([k, v]) => {
           if (SHOWN_ATTR_KEYS.has(k)) return false;
+          if (k === 'productAttributes' || k === 'attachments' || k === 'kitIncludes' || k === 'kitIncludesQty') return false;
           if (v == null || v === '') return false;
-          if (Array.isArray(v)) return v.length > 0;
+          if (Array.isArray(v)) return v.length > 0 && v.every((x) => x == null || typeof x !== 'object');
           return typeof v !== 'object';
         });
+        // Inventory attributes nested under p.productAttributes ({ shape:'Round', fragrance:'Rose', … })
+        const prodAttrEntries = (p.productAttributes && typeof p.productAttributes === 'object' && !Array.isArray(p.productAttributes))
+          ? Object.entries(p.productAttributes).filter(([, v]) => v != null && v !== '' && (!Array.isArray(v) || v.length > 0))
+          : [];
+        const pAttachments = (Array.isArray(p.attachments) ? p.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
         const isKitItem       = p.isKit || !!p.kitType;
         const kitLabel        = p.kitName || p.kitType || '';
         const unitLabel       = p.unit || (isKitItem ? (kitDisplayUnit || '').replace(/_/g, ' ') : '') || '';
         const sizeLabel       = p.size || (isKitItem ? kitSize || '' : '') || '';
         const gstVal          = Number(p.gst) || 0;
         const lineTotal       = Math.round((p.qty || 0) * (p.rate || 0) * (1 + gstVal / 100));
-        const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel || extraAttrs.length;
+        const hasSpecs        = logo || sticker || packingMaterial || materialCategory || brand || otherSpecs || unitLabel || sizeLabel || extraAttrs.length || prodAttrEntries.length || pAttachments.length;
         return (
           <div key={i} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(177,30,106,0.12)'}`, borderRadius: 12, overflow: 'hidden' }}>
             {/* ── Header row ── */}
@@ -4905,12 +5133,24 @@ export default function Sales() {
                       <Text strong style={{ fontSize: 12 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
                     </Col>
                   ))}
+                  {prodAttrEntries.map(([k, v]) => (
+                    <Col xs={12} sm={8} key={`pa-${k}`}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>{prettyAttrKeyLead(k)}</Text>
+                      <Text strong style={{ fontSize: 12 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
+                    </Col>
+                  ))}
                   {otherSpecs && (
                     <Col xs={24} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.03)' }}>
                       <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Other Specifications</Text>
                       <div style={{ padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.03)' : '#f8f9fa', borderRadius: 8, fontSize: 12, color: isDark ? '#ccc' : '#444' }}>
                         {otherSpecs}
                       </div>
+                    </Col>
+                  )}
+                  {pAttachments.length > 0 && (
+                    <Col xs={24} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.03)' }}>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>Attachments / Files</Text>
+                      <AttachmentLinks files={pAttachments} />
                     </Col>
                   )}
                 </Row>
@@ -4949,6 +5189,18 @@ export default function Sales() {
                   {kPrinting && <Tag color={kPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Printing: {kPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
                   {kPrice > 0 && <Tag color="orange" style={{ borderRadius: 12, fontSize: 11 }}>₹{Number(kPrice).toLocaleString()}{kQty > 0 ? ` × ${kQty} = ₹${(Number(kPrice) * kQty).toLocaleString()}` : ''}</Tag>}
                 </div>
+                {ko.specification && (
+                  <div style={{ marginBottom: 8, fontSize: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Specification: </Text>
+                    <Text style={{ fontSize: 12 }}>{ko.specification}</Text>
+                  </div>
+                )}
+                {Array.isArray(ko.attachments) && ko.attachments.filter((a) => a && (typeof a === 'string' ? a : a.url)).length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Kit Files / Attachments</Text>
+                    <AttachmentLinks files={ko.attachments} />
+                  </div>
+                )}
                 {thisKitProds.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
                     {thisKitProds.map((p, j) => renderDetailProdCard(p, j))}
@@ -6405,15 +6657,31 @@ export default function Sales() {
             <Col xs={24} lg={16}>
               {/* ── Products adding — personalized kit summary (mirrors Lead detail) ── */}
               {(() => {
-                const oSelKitIdsPA = Array.isArray(o.selectedKits) && o.selectedKits.length > 0
-                  ? o.selectedKits : (o.selectedKit ? [o.selectedKit] : []);
+                // Resolve kit fields from the order, falling back to the linked
+                // negotiation/quotation/lead so kit details always show (same as Lead view).
+                const { pick: oPickPA } = resolveOrderKitSource(o);
+                const paProductType = oPickPA('productType');
+                const paDisplayUnit = oPickPA('kitDisplayUnit', 'displayUnit');
+                const paKitSize = oPickPA('kitSize');
+                const paKitSticker = oPickPA('kitSticker');
+                const paKitLogo = oPickPA('kitLogo');
+                const paKitPrinting = oPickPA('kitPrinting');
+                const paKitPrice = oPickPA('kitPrice');
+                const paKitQty = oPickPA('kitOverallQty');
+                const paProducts = (o.products && o.products.length ? o.products : oPickPA('products')) || [];
+                const oSelKitIdsPA = (() => {
+                  const sk = oPickPA('selectedKits');
+                  if (Array.isArray(sk) && sk.length) return sk;
+                  const single = oPickPA('selectedKit');
+                  return single ? [single] : [];
+                })();
                 const kitNamePA = oSelKitIdsPA.length > 0
                   ? oSelKitIdsPA.map(id => kits.find(k => k._id === id)?.kitName || id).join(', ')
                   : null;
-                const kitPsPA = (o.products || []).filter(p => p && (p.isKit || p.kitType));
-                const isKitTypePA = ptHasKitUI(o.productType);
-                const hasKitInfoPA = oSelKitIdsPA.length > 0 || o.kitDisplayUnit || o.kitPrice || o.kitOverallQty || kitPsPA.length > 0;
-                if (!hasKitInfoPA && !o.productType) return null;
+                const kitPsPA = paProducts.filter(p => p && (p.isKit || p.kitType));
+                const isKitTypePA = ptHasKitUI(paProductType);
+                const hasKitInfoPA = oSelKitIdsPA.length > 0 || paDisplayUnit || paKitPrice || paKitQty || kitPsPA.length > 0;
+                if (!hasKitInfoPA && !paProductType) return null;
                 const kitProductsToShowPA = kitPsPA.length > 0
                   ? kitPsPA.map(p => ({
                       productName: p.name || p.kitType || p.itemName || '',
@@ -6442,12 +6710,12 @@ export default function Sales() {
                     title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                       <Row gutter={[16, 12]}>
-                        {o.productType && (
+                        {paProductType && (
                           <Col xs={24} sm={12}>
                             <OIR label="Product Selection" value={
-                              Array.isArray(o.productType)
-                                ? o.productType.map(productTypeLabel).join(', ')
-                                : productTypeLabel(o.productType)
+                              Array.isArray(paProductType)
+                                ? paProductType.map(productTypeLabel).join(', ')
+                                : productTypeLabel(paProductType)
                             } />
                           </Col>
                         )}
@@ -6456,44 +6724,44 @@ export default function Sales() {
                             <OIR label="Kit Selected" value={kitNamePA} />
                           </Col>
                         )}
-                        {(o.kitDisplayUnit || o.displayUnit) && (
+                        {paDisplayUnit && (
                           <Col xs={12} sm={6}>
-                            <OIR label="Display Unit" value={(o.kitDisplayUnit || o.displayUnit || '').replace(/_/g, ' ')} />
+                            <OIR label="Display Unit" value={(paDisplayUnit || '').replace(/_/g, ' ')} />
                           </Col>
                         )}
-                        {o.kitSize && (
+                        {paKitSize && (
                           <Col xs={12} sm={6}>
-                            <OIR label="Kit Size" value={o.kitSize} />
+                            <OIR label="Kit Size" value={paKitSize} />
                           </Col>
                         )}
-                        {o.kitSticker && (
+                        {paKitSticker && (
                           <Col xs={12} sm={6}>
-                            <OIR label="Sticker" value={o.kitSticker === 'YES' ? 'Yes' : 'No'} />
+                            <OIR label="Sticker" value={paKitSticker === 'YES' ? 'Yes' : 'No'} />
                           </Col>
                         )}
-                        {o.kitLogo && (
+                        {paKitLogo && (
                           <Col xs={12} sm={6}>
-                            <OIR label="Logo" value={o.kitLogo === 'YES' ? 'Yes' : 'No'} />
+                            <OIR label="Logo" value={paKitLogo === 'YES' ? 'Yes' : 'No'} />
                           </Col>
                         )}
-                        {o.kitPrinting && (
+                        {paKitPrinting && (
                           <Col xs={12} sm={6}>
-                            <OIR label="Printing" value={o.kitPrinting === 'YES' ? 'Yes' : 'No'} />
+                            <OIR label="Printing" value={paKitPrinting === 'YES' ? 'Yes' : 'No'} />
                           </Col>
                         )}
-                        {(o.kitPrice != null && o.kitPrice !== '') && (
+                        {(paKitPrice != null && paKitPrice !== '') && (
                           <Col xs={12} sm={6}>
-                            <OIR label="Kit Price (single)" value={`₹${Number(o.kitPrice).toLocaleString()}`} />
+                            <OIR label="Kit Price (single)" value={`₹${Number(paKitPrice).toLocaleString()}`} />
                           </Col>
                         )}
-                        {Number(o.kitOverallQty) > 0 && (
+                        {Number(paKitQty) > 0 && (
                           <Col xs={12} sm={6}>
-                            <OIR label="Overall Qty" value={`${Number(o.kitOverallQty)} kit${Number(o.kitOverallQty) > 1 ? 's' : ''}`} />
+                            <OIR label="Overall Qty" value={`${Number(paKitQty)} kit${Number(paKitQty) > 1 ? 's' : ''}`} />
                           </Col>
                         )}
-                        {(o.kitPrice != null && o.kitPrice !== '') && (
+                        {(paKitPrice != null && paKitPrice !== '') && (
                           <Col xs={12} sm={6}>
-                            <OIR label="Kit Amount" value={`₹${(Number(o.kitPrice) * (Number(o.kitOverallQty) || 1)).toLocaleString()}`} />
+                            <OIR label="Kit Amount" value={`₹${(Number(paKitPrice) * (Number(paKitQty) || 1)).toLocaleString()}`} />
                           </Col>
                         )}
                       </Row>
@@ -7074,7 +7342,16 @@ export default function Sales() {
                 <Form.List name="editProducts">
                   {(fields, { add, remove }) => (
                     <>
-                      {fields.map(({ key, name, ...rest }) => (
+                      {(() => {
+                        const prodsW = watchedOrderEditProds || [];
+                        const isKitRow = (n) => { const p = prodsW[n]; return !!(p && (p.isKit || p.kitType)); };
+                        const grpHdr = (label, color) => (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 0' }}>
+                            <span style={{ width: 16, height: 16, borderRadius: 4, background: color, color: '#fff', fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{label[0]}</span>
+                            <Text strong style={{ fontSize: 12, color }}>{label}</Text>
+                          </div>
+                        );
+                        const renderRow = ({ key, name, ...rest }) => (
                         <div key={key} style={{ background: 'rgba(177,30,106,0.02)', border: '1px solid rgba(177,30,106,0.12)', borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
                           <Row gutter={[6, 0]} align="middle">
                             <Col xs={24} sm={8}><Form.Item {...rest} name={[name, 'name']} label="Product Name" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Name required' }]}><Input size="small" placeholder="Product name" /></Form.Item></Col>
@@ -7086,7 +7363,18 @@ export default function Sales() {
                           </Row>
                           <Form.Item noStyle shouldUpdate>{({ getFieldValue }) => renderOrderEditProductSpecs((getFieldValue('editProducts') || [])[name])}</Form.Item>
                         </div>
-                      ))}
+                        );
+                        const kitFields = fields.filter(f => isKitRow(f.name));
+                        const sepFields = fields.filter(f => !isKitRow(f.name));
+                        return (
+                          <>
+                            {kitFields.length > 0 && grpHdr('Kit Products', '#722ed1')}
+                            {kitFields.map(renderRow)}
+                            {sepFields.length > 0 && grpHdr('Separate Products', '#B11E6A')}
+                            {sepFields.map(renderRow)}
+                          </>
+                        );
+                      })()}
                       <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ name: '', qty: 1, rate: 0, gst: 0 })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>+ Add Product</Button>
                       <Form.Item noStyle shouldUpdate>
                         {({ getFieldValue }) => {
@@ -7453,7 +7741,16 @@ export default function Sales() {
               <Form.List name="editProducts">
                 {(fields, { add, remove }) => (
                   <>
-                    {fields.map(({ key, name, ...rest }) => (
+                    {(() => {
+                      const prodsW = watchedOrderEditProds || [];
+                      const isKitRow = (n) => { const p = prodsW[n]; return !!(p && (p.isKit || p.kitType)); };
+                      const grpHdr = (label, color) => (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 0' }}>
+                          <span style={{ width: 16, height: 16, borderRadius: 4, background: color, color: '#fff', fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{label[0]}</span>
+                          <Text strong style={{ fontSize: 12, color }}>{label}</Text>
+                        </div>
+                      );
+                      const renderRow = ({ key, name, ...rest }) => (
                       <div key={key} style={{ background: 'rgba(177,30,106,0.02)', border: '1px solid rgba(177,30,106,0.12)', borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
                         <Row gutter={[6, 0]} align="middle">
                           <Col xs={24} sm={8}>
@@ -7494,7 +7791,18 @@ export default function Sales() {
                           {({ getFieldValue }) => renderOrderEditProductSpecs((getFieldValue('editProducts') || [])[name])}
                         </Form.Item>
                       </div>
-                    ))}
+                      );
+                      const kitFields = fields.filter(f => isKitRow(f.name));
+                      const sepFields = fields.filter(f => !isKitRow(f.name));
+                      return (
+                        <>
+                          {kitFields.length > 0 && grpHdr('Kit Products', '#722ed1')}
+                          {kitFields.map(renderRow)}
+                          {sepFields.length > 0 && grpHdr('Separate Products', '#B11E6A')}
+                          {sepFields.map(renderRow)}
+                        </>
+                      );
+                    })()}
                     <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ name: '', qty: 1, rate: 0, gst: 0 })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
                       + Add Product
                     </Button>
@@ -7937,7 +8245,7 @@ export default function Sales() {
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Quantities</span></Space>}>
                   <ProductHeaders />
-                  <ProductFormList fieldName="products" inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} packingMaterialOptions={configPackingMaterialOptions} />
+                  <ProductFormList fieldName="products" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} packingMaterialOptions={configPackingMaterialOptions} />
                 </Card>
 
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
@@ -9802,13 +10110,18 @@ export default function Sales() {
                           const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
                           const pExtraAttrs = Object.entries(p || {}).filter(([k, v]) => {
                             if (SHOWN_ATTR_KEYS.has(k)) return false;
+                            if (k === 'productAttributes' || k === 'attachments' || k === 'kitIncludes' || k === 'kitIncludesQty' || k === 'specification') return false;
                             if (v == null || v === '') return false;
-                            if (Array.isArray(v)) return v.length > 0;
+                            if (Array.isArray(v)) return v.length > 0 && v.every((x) => x == null || typeof x !== 'object');
                             return typeof v !== 'object';
                           });
+                          const pProdAttrEntries = (p.productAttributes && typeof p.productAttributes === 'object' && !Array.isArray(p.productAttributes))
+                            ? Object.entries(p.productAttributes).filter(([, v]) => v != null && v !== '' && (!Array.isArray(v) || v.length > 0))
+                            : [];
+                          const pAttachments = (Array.isArray(p.attachments) ? p.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
                           const pSize = p.size || '';
                           const pUnit = p.unit || '';
-                          const hasSpecs = p.logo || p.sticker || p.stickerPrinting || p.printing || p.packingMaterial || p.materialCategory || p.brand || p.gst || p.otherSpecs || pSize || pUnit || pExtraAttrs.length > 0;
+                          const hasSpecs = p.logo || p.sticker || p.stickerPrinting || p.printing || p.packingMaterial || p.materialCategory || p.brand || p.gst || p.otherSpecs || pSize || pUnit || pExtraAttrs.length > 0 || pProdAttrEntries.length > 0 || pAttachments.length > 0 || p.specification;
                           return (
                             <div key={globalIndex} style={{ border: `1px solid ${isDark ? (p.isKit || p.kitType ? 'rgba(114,46,209,0.3)' : 'rgba(255,255,255,0.08)') : (p.isKit || p.kitType ? 'rgba(114,46,209,0.2)' : 'rgba(177,30,106,0.12)')}`, borderRadius: 12, overflow: 'hidden' }}>
                               <div style={{ background: isDark ? (p.isKit || p.kitType ? 'rgba(114,46,209,0.12)' : 'rgba(177,30,106,0.1)') : (p.isKit || p.kitType ? 'rgba(114,46,209,0.06)' : 'rgba(177,30,106,0.04)'), padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
@@ -9902,6 +10215,12 @@ export default function Sales() {
                                         <Text strong style={{ fontSize: 13 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
                                       </Col>
                                     ))}
+                                    {pProdAttrEntries.map(([k, v]) => (
+                                      <Col xs={12} sm={8} key={`pa-${k}`}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>{prettyAttrKeyLead(k)}</Text>
+                                        <Text strong style={{ fontSize: 13 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
+                                      </Col>
+                                    ))}
                                     {p.otherSpecs && (
                                       <Col xs={12} sm={8}>
                                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Other Specs</Text>
@@ -9912,6 +10231,12 @@ export default function Sales() {
                                       <Col xs={24}>
                                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Specification</Text>
                                         <Text style={{ fontSize: 13 }}>{p.specification}</Text>
+                                      </Col>
+                                    )}
+                                    {pAttachments.length > 0 && (
+                                      <Col xs={24} style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.04)' }}>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>Attachments / Files</Text>
+                                        <AttachmentLinks files={pAttachments} />
                                       </Col>
                                     )}
                                   </Row>
@@ -9991,6 +10316,12 @@ export default function Sales() {
                                             return <Tag key={i} color={kMatch ? 'purple' : 'orange'} style={{ borderRadius: 12, fontSize: 11 }}>{label}{qty && qty > 1 ? ` ×${qty}` : ''}</Tag>;
                                           })}
                                         </Space>
+                                      </div>
+                                    )}
+                                    {Array.isArray(kCfg.attachments) && kCfg.attachments.filter((a) => a && (typeof a === 'string' ? a : a.url)).length > 0 && (
+                                      <div style={{ padding: '6px 12px', background: isDark ? 'rgba(24,144,255,0.06)' : 'rgba(24,144,255,0.04)', borderRadius: 6, border: '1px dashed rgba(24,144,255,0.25)' }}>
+                                        <Text type="secondary" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, display: 'block', marginBottom: 4 }}>KIT FILES / ATTACHMENTS</Text>
+                                        <AttachmentLinks files={kCfg.attachments} />
                                       </div>
                                     )}
                                     {thisKitProds.map((p, i) => renderProductCard(p, i, i))}
@@ -10298,6 +10629,10 @@ export default function Sales() {
                             <Input.TextArea rows={2} placeholder="Kit specifications, customization notes, or packing instructions..." />
                           </Form.Item>
 
+                          <div style={{ marginBottom: 10 }}>
+                            <ItemAttachmentsUpload namePath={['kitOrders', kitIndex, 'attachments']} folder="kit-attachments" label="Kit Reference Files / Attachments" />
+                          </div>
+
                           <Form.List name="products">
                             {(fields, { add, remove }) => {
                               const kitFields = fields.filter(f => {
@@ -10457,9 +10792,7 @@ export default function Sales() {
                                       kits={kits}
                                       packingMaterialOptions={configPackingMaterialOptions}
                                     />
-                                    <Form.Item name={[field.name, 'specification']} style={{ marginTop: 2, marginBottom: 10 }}>
-                                      <Input prefix={<FileTextOutlined style={{ color: '#bbb' }} />} placeholder="Specification / instructions for this product..." size="small" />
-                                    </Form.Item>
+                                    {/* per-product specification + attachments now render inside ProductItem's spec block */}
                                   </div>
                                 ))}
                                 <Button type="dashed" onClick={() => add({ qty: undefined, rate: undefined, isKit: false })} icon={<PlusOutlined />} block
@@ -10897,7 +11230,7 @@ export default function Sales() {
                     const totalColl = existingColl + newColl;
                     const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
                     const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'packagingIncludes', 'packagingIncludesQty', 'forwardingCharge', 'forwardingChargeAmount']);
-                    const recordTotal = computeCompositionGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, packagingIncludes: fvKit.packagingIncludes, packagingIncludesQty: fvKit.packagingIncludesQty, forwardingCharge: fvKit.forwardingCharge, forwardingChargeAmount: fvKit.forwardingChargeAmount }, kits);
+                    const recordTotal = computeCompositionGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, packagingIncludes: fvKit.packagingIncludes, packagingIncludesQty: fvKit.packagingIncludesQty, forwardingCharge: watchedLeadForwardingCharge ?? fvKit.forwardingCharge, forwardingChargeAmount: watchedLeadForwardingAmount ?? fvKit.forwardingChargeAmount }, kits);
                     const balance = Math.max(0, recordTotal - totalColl);
                     if (recordTotal === 0) return null;
                     return (
@@ -10991,7 +11324,7 @@ export default function Sales() {
                     const totalColl = existingColl + newColl;
                     const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
                     const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'packagingIncludes', 'packagingIncludesQty', 'forwardingCharge', 'forwardingChargeAmount']);
-                    const recordTotal = computeCompositionGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, packagingIncludes: fvKit.packagingIncludes, packagingIncludesQty: fvKit.packagingIncludesQty, forwardingCharge: fvKit.forwardingCharge, forwardingChargeAmount: fvKit.forwardingChargeAmount }, kits);
+                    const recordTotal = computeCompositionGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, packagingIncludes: fvKit.packagingIncludes, packagingIncludesQty: fvKit.packagingIncludesQty, forwardingCharge: watchedLeadForwardingCharge ?? fvKit.forwardingCharge, forwardingChargeAmount: watchedLeadForwardingAmount ?? fvKit.forwardingChargeAmount }, kits);
                     const balance = Math.max(0, recordTotal - totalColl);
                     const status = recordTotal > 0 && totalColl >= recordTotal ? 'Paid' : totalColl > 0 ? 'Partially Paid' : 'Unpaid';
                     const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';

@@ -251,6 +251,12 @@ exports.convertToNegotiation = asyncHandler(async (req, res, next) => {
   const extraFields = {};
   const knownFields = ['_id','__v','quotCode','leadId','clientName','quoteDate','amount','gstAmount','total','advancePaid','balance','type','status','items','note','deletedAt','createdBy','createdAt','updatedAt'];
   Object.keys(qObj).forEach(k => { if (!knownFields.includes(k)) extraFields[k] = qObj[k]; });
+  // Resolve kit/product details from the quotation, falling back to the originating lead, so the
+  // negotiation never loses the kit summary (display unit, kit price, kit orders, …) even when the
+  // quotation was created before these fields were captured. Mirrors convertToOrder's mapping.
+  let lead = null;
+  if (quotation.leadId) lead = await Lead.findById(quotation.leadId).lean();
+  const resolveField = (...sources) => sources.find(v => v != null && v !== '');
   const negotiation = await Negotiation.create({
     ...extraFields,
     negCode,
@@ -265,6 +271,23 @@ exports.convertToNegotiation = asyncHandler(async (req, res, next) => {
     balance: (req.body.total || quotation.total || 0) - (req.body.advancePaid || quotation.advancePaid || 0),
     type: quotation.type,
     items: quotation.items,
+    // ─── Kit / product composition (explicit so it survives even if not on the quotation) ───
+    products: (qObj.products && qObj.products.length ? qObj.products : lead?.products) || [],
+    kitOrders: (qObj.kitOrders && qObj.kitOrders.length ? qObj.kitOrders : lead?.kitOrders) || [],
+    selectedKits: (qObj.selectedKits && qObj.selectedKits.length ? qObj.selectedKits : lead?.selectedKits) || [],
+    selectedKit: resolveField(qObj.selectedKit, lead?.selectedKit),
+    productType: resolveField(qObj.productType, lead?.productType),
+    displayUnit: resolveField(qObj.displayUnit, lead?.displayUnit, qObj.kitDisplayUnit, lead?.kitDisplayUnit),
+    kitDisplayUnit: resolveField(qObj.kitDisplayUnit, lead?.kitDisplayUnit, qObj.displayUnit, lead?.displayUnit),
+    kitDisplayUnitType: resolveField(qObj.kitDisplayUnitType, lead?.kitDisplayUnitType),
+    kitSize: resolveField(qObj.kitSize, lead?.kitSize),
+    kitSticker: resolveField(qObj.kitSticker, lead?.kitSticker),
+    kitLogo: resolveField(qObj.kitLogo, lead?.kitLogo),
+    kitPrinting: resolveField(qObj.kitPrinting, lead?.kitPrinting),
+    kitPrice: qObj.kitPrice != null ? qObj.kitPrice : (lead?.kitPrice != null ? lead.kitPrice : undefined),
+    kitOverallQty: qObj.kitOverallQty != null ? qObj.kitOverallQty : (lead?.kitOverallQty != null ? lead.kitOverallQty : undefined),
+    packagingIncludes: resolveField(qObj.packagingIncludes, lead?.packagingIncludes),
+    packagingIncludesQty: resolveField(qObj.packagingIncludesQty, lead?.packagingIncludesQty),
     createdBy: req.user._id,
   });
   res.status(201).json({ success: true, data: negotiation });
@@ -276,6 +299,11 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
   if (!lead) return next(new AppError('Lead not found', 404));
   const negCode = await generateCode('NEG');
   const items = (req.body.items || req.body.products || []).map((p) => ({
+    // Spread the full product first so dynamic specs (shape, fragrance, stickerShape,
+    // productAttributes, attachments, specification, …) survive the conversion. The
+    // negotiation item sub-schema is strict:false, so everything round-trips to the order
+    // and on to Operations. (Previously this hand-picked map silently dropped them.)
+    ...p,
     itemName: p.itemName || p.name,
     unit: p.unit,
     price: Number(p.price ?? p.rate) || 0,

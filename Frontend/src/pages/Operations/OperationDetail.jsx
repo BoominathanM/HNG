@@ -705,6 +705,30 @@ export default function OperationDetail() {
   const readyToAssign = canAssignTaskFromChecks(checks);
   const progressPercent = getProgressFromChecks(checks);
 
+  // Render saved per-product / per-kit attachments (uploaded in Sales) as image thumbnails
+  // or file tags, each linking to its Cloudinary URL.
+  const renderAttachmentLinks = (files) => {
+    const list = (Array.isArray(files) ? files : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+    if (!list.length) return null;
+    return (
+      <Space wrap size={6}>
+        {list.map((a, i) => {
+          const url = typeof a === 'string' ? a : a.url;
+          const nm = typeof a === 'string' ? (url.split('/').pop()) : (a.name || `File ${i + 1}`);
+          const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)(\?|$)/i.test(url || '');
+          const isPdf = /\.pdf(\?|$)/i.test(url || '');
+          return (
+            <a key={i} href={url} target="_blank" rel="noreferrer" title={nm} style={{ display: 'inline-block' }}>
+              {isImg
+                ? <img src={url} alt={nm} style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 6, border: '1px solid rgba(0,0,0,0.12)' }} />
+                : <Tag icon={isPdf ? <FilePdfOutlined /> : <FileTextOutlined />} color="blue" style={{ borderRadius: 12, fontSize: 11, margin: 0, cursor: 'pointer' }}>{nm}</Tag>}
+            </a>
+          );
+        })}
+      </Space>
+    );
+  };
+
   const productColumns = [
     {
       title: 'Product',
@@ -886,39 +910,50 @@ export default function OperationDetail() {
       title: 'Product Attributes',
       key: 'productAttrs',
       render: (_, record) => {
-        // Keys already displayed as dedicated columns — skip them here
+        // Keys already displayed as dedicated columns OR structural (objects/arrays) — skip here
         const SKIP_KEYS = new Set([
           'itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent',
           'unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory',
           'hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize',
           'specs','displayType','itemId','_id','key','amount','rateValue','total','inventoryStock',
           'printing','stickerPrinting','product','isEmergencyProduct','isEmergencyGated',
+          'productAttributes','attachments','category','kitIncludes','kitIncludesQty','verified','overallQty','kitPrice','displayUnit',
         ]);
         const attrs = Object.entries(record).filter(([k, v]) => {
           if (SKIP_KEYS.has(k)) return false;
           if (v == null || v === '') return false;
-          if (typeof v === 'object' && !Array.isArray(v)) return false;
-          if (Array.isArray(v) && v.length === 0) return false;
+          if (typeof v === 'object') return false; // objects/arrays handled explicitly below
           return true;
         });
-        // Also check inventory item for extra known attrs
+        // Inventory item's stored attribute defaults
         const invName = record.itemName || record.name || record.kitType;
         const inv = invMap[invName];
         const invAttrs = inv ? Object.entries(inv.productAttributes || {}).filter(([k, v]) => {
           if (SKIP_KEYS.has(k)) return false;
           return v != null && v !== '' && typeof v !== 'object';
         }) : [];
-        // Merge: prefer order-level values over inventory defaults
-        const merged = new Map([...invAttrs, ...attrs]);
-        if (merged.size === 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        // The item's OWN nested productAttributes ({ shape:'Round', fragrance:'Rose', … })
+        const recAttrs = (record.productAttributes && typeof record.productAttributes === 'object' && !Array.isArray(record.productAttributes))
+          ? Object.entries(record.productAttributes).filter(([k, v]) => !SKIP_KEYS.has(k) && v != null && v !== '' && typeof v !== 'object')
+          : [];
+        // Merge precedence: order-item flat attrs > its productAttributes > inventory defaults
+        const merged = new Map([...invAttrs, ...recAttrs, ...attrs]);
+        // Per-product reference files (spec sheets / design images) uploaded in Sales
+        const atts = (Array.isArray(record.attachments) ? record.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+        if (merged.size === 0 && atts.length === 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
         const prettyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
         return (
-          <Space wrap size={3} style={{ maxWidth: 220 }}>
-            {[...merged.entries()].map(([k, v]) => (
-              <Tag key={k} style={{ fontSize: 10, borderRadius: 4, margin: 0, whiteSpace: 'normal' }}>
-                {prettyKey(k)}: {Array.isArray(v) ? v.join(', ') : String(v)}
-              </Tag>
-            ))}
+          <Space direction="vertical" size={5} style={{ maxWidth: 240 }}>
+            {merged.size > 0 && (
+              <Space wrap size={3}>
+                {[...merged.entries()].map(([k, v]) => (
+                  <Tag key={k} style={{ fontSize: 10, borderRadius: 4, margin: 0, whiteSpace: 'normal' }}>
+                    {prettyKey(k)}: {Array.isArray(v) ? v.join(', ') : String(v)}
+                  </Tag>
+                ))}
+              </Space>
+            )}
+            {atts.length > 0 && renderAttachmentLinks(atts)}
           </Space>
         );
       },
@@ -1422,6 +1457,59 @@ export default function OperationDetail() {
             label: 'Overview',
             children: (
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                {Array.isArray(order.kitOrders) && order.kitOrders.length > 0 && (
+                  <Card
+                    title={<Space><GiftOutlined style={{ color: '#722ed1' }} /><Text strong style={{ color: '#722ed1' }}>Kit / Display Unit Personalization</Text></Space>}
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(114,46,209,0.06)' }}
+                    styles={{ body: { padding: 16 } }}
+                  >
+                    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                      {order.kitOrders.map((ko, ki) => {
+                        const atts = (Array.isArray(ko.attachments) ? ko.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+                        const inc = Array.isArray(ko.kitIncludes) ? ko.kitIncludes : [];
+                        const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
+                        return (
+                          <div key={ko.kitId || ki} style={{ padding: '12px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.18)' }}>
+                            <Space wrap size={6}>
+                              <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{ko.kitName || ko.kitType || `Kit ${ki + 1}`}</Text>
+                              {ko.displayUnit && <Tag color="purple" style={{ borderRadius: 12 }}>{String(ko.displayUnit).replace(/_/g, ' ')}</Tag>}
+                              {ko.size && <Tag color="geekblue" style={{ borderRadius: 12 }}>{ko.size}</Tag>}
+                              {Number(ko.overallQty) > 0 && <Tag color="blue" style={{ borderRadius: 12 }}>Qty: {ko.overallQty}</Tag>}
+                              {ko.sticker && <Tag color={yn(ko.sticker) ? 'green' : 'default'} style={{ borderRadius: 12 }}>Sticker: {yn(ko.sticker) ? 'Yes' : 'No'}</Tag>}
+                              {ko.logo && <Tag color={yn(ko.logo) ? 'cyan' : 'default'} style={{ borderRadius: 12 }}>Logo: {yn(ko.logo) ? 'Yes' : 'No'}</Tag>}
+                              {ko.printing && <Tag color={yn(ko.printing) ? 'magenta' : 'default'} style={{ borderRadius: 12 }}>Printing: {yn(ko.printing) ? 'Yes' : 'No'}</Tag>}
+                              {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 12 }}>₹{Number(ko.kitPrice).toLocaleString()}</Tag>}
+                            </Space>
+                            {ko.specification && (
+                              <div style={{ marginTop: 8 }}>
+                                <Text type="secondary" style={{ fontSize: 11 }}>Specification: </Text>
+                                <Text style={{ fontSize: 12 }}>{ko.specification}</Text>
+                              </div>
+                            )}
+                            {inc.length > 0 && (
+                              <div style={{ marginTop: 8 }}>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Included in Packaging</Text>
+                                <Space wrap size={4}>
+                                  {inc.map((v, i) => {
+                                    const id = typeof v === 'object' ? v.id : v;
+                                    const qty = typeof v === 'object' ? v.qty : null;
+                                    return <Tag key={i} color="purple" style={{ borderRadius: 12, fontSize: 11 }}>{String(id)}{qty && qty > 1 ? ` ×${qty}` : ''}</Tag>;
+                                  })}
+                                </Space>
+                              </div>
+                            )}
+                            {atts.length > 0 && (
+                              <div style={{ marginTop: 8 }}>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Kit Files / Attachments</Text>
+                                {renderAttachmentLinks(atts)}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </Space>
+                  </Card>
+                )}
                 <Card
                   title={
                     <Space>

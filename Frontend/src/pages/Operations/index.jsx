@@ -1060,10 +1060,13 @@ export default function Operations() {
         // order's display unit matches this tab's packaging type. When products land in this
         // tab via their own individual packingMaterialTab (not the kit display unit), show
         // each product as a standalone row with its own upload — no shared parent row.
+        // Match by the display unit NAME too, so kit orders whose display unit has no
+        // packing-config tabMapping (displayUnitTab unresolved) still group like Box does.
+        const duNameLc = (order?.kitDisplayUnit || order?.displayUnit || '').toLowerCase();
         const displayUnitMatchesTab =
-          (typeKey === 'box' && order?.displayUnitTab === 'Box') ||
-          (typeKey === 'frosted' && order?.displayUnitTab === 'Ziplock') ||
-          (typeKey === 'butter' && order?.displayUnitTab === 'Butter Paper');
+          (typeKey === 'box' && (order?.displayUnitTab === 'Box' || duNameLc.includes('box'))) ||
+          (typeKey === 'frosted' && (order?.displayUnitTab === 'Ziplock' || (!duNameLc.includes('butter') && (duNameLc.includes('ziplock') || duNameLc.includes('frosted') || duNameLc.includes('pouch'))))) ||
+          (typeKey === 'butter' && (order?.displayUnitTab === 'Butter Paper' || duNameLc.includes('butter')));
         const shouldGroupAsKit = isKitOrder && displayUnitMatchesTab;
         if (!shouldGroupAsKit || group.length === 1) {
           // Non-kit, single-product, or individual-packing kit items: shown individually.

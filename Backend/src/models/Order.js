@@ -1,5 +1,84 @@
 const mongoose = require('mongoose');
 
+// Per-item sub-schema. strict:false so dynamic product specifications
+// (shape, fragrance, stickerShape, productAttributes, attachments, etc.) and any
+// future field survive the lead → quotation → negotiation → order pipeline and
+// reach Operations. (An inline array sub-schema is implicitly strict:true even when
+// the parent doc is strict:false — that silently stripped these fields before.)
+const orderItemSchema = new mongoose.Schema({
+  itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },
+  itemName: String,
+  unit: String,
+  price: Number,
+  qty: Number,
+  lineTotal: Number,
+  // ─── Operations / packaging fields ───
+  logoType: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'None', ''], default: '' },
+  // Normalize legacy/lowercase values (e.g. 'yes'/'no') to the enum BEFORE validation runs,
+  // so converting older quotations/negotiations whose items stored 'yes' doesn't 500.
+  sticker: {
+    type: String,
+    enum: ['YES', 'NO', ''],
+    default: '',
+    set: (v) => {
+      const s = String(v ?? '').trim().toUpperCase();
+      return s === 'YES' || s === 'NO' ? s : '';
+    },
+  },
+  // Direct printing flag (separate from sticker). Drives Operations routing: a printing item
+  // goes through the Sticker/Print tab first, then to its Box/Ziplock packaging tab.
+  printing: {
+    type: String,
+    enum: ['YES', 'NO', ''],
+    default: '',
+    set: (v) => {
+      const s = String(v ?? '').trim().toUpperCase();
+      return s === 'YES' || s === 'NO' ? s : '';
+    },
+  },
+  size: String,
+  packaging: String,
+  packingMaterial: String,
+  material: String,
+  rate: Number,
+  gst: Number,
+  boxes: Number,
+  inventoryStock: { type: Number, default: 0 },
+  verified: { type: Boolean, default: false },
+  // ─── Order-composition category (drives 3-bucket totals + Operations grouping) ───
+  // 'personalized'  = kit + extra products customized together as one unit
+  // 'separate_kit'  = a kit purchased as-is, standalone
+  // 'separate_product' = an individual non-kit product
+  category: { type: String, default: '' },
+  // Kit identity — kept on order items so Operations can group/route kit vs. separate.
+  isKit: { type: Boolean, default: false },
+  kitId: String,
+  kitName: String,
+  kitType: String,
+  // ─── Dynamic product specifications (carried so Operations & all downstream views see full detail) ───
+  shape: String,
+  stickerShape: String,
+  fragrance: String,
+  stickerPrinting: String,
+  color: String,
+  bottleType: String,
+  brand: String,
+  hsnCode: String,
+  discountPercent: Number,
+  logo: String,
+  materialCategory: String,
+  specification: String,
+  otherSpecs: mongoose.Schema.Types.Mixed,
+  productAttributes: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // Per-product / per-kit file attachments (reference images, spec sheets)
+  attachments: [mongoose.Schema.Types.Mixed],
+  // Kit personalization (so Operations can render full kit detail per item)
+  displayUnit: String,
+  kitPrice: Number,
+  overallQty: Number,
+  kitIncludes: [mongoose.Schema.Types.Mixed],
+}, { strict: false });
+
 const orderSchema = new mongoose.Schema({
   orderCode: { type: String, unique: true },
   leadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lead' },
@@ -24,57 +103,7 @@ const orderSchema = new mongoose.Schema({
   paymentReminderDate: Date,
   advancePaidAmount: { type: Number, default: 0 },
   expectedDeliveryDate: Date,
-  items: [{
-    itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },
-    itemName: String,
-    unit: String,
-    price: Number,
-    qty: Number,
-    lineTotal: Number,
-    // ─── Operations / packaging fields ───
-    logoType: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'None', ''], default: '' },
-    // Normalize legacy/lowercase values (e.g. 'yes'/'no') to the enum BEFORE validation runs,
-    // so converting older quotations/negotiations whose items stored 'yes' doesn't 500.
-    sticker: {
-      type: String,
-      enum: ['YES', 'NO', ''],
-      default: '',
-      set: (v) => {
-        const s = String(v ?? '').trim().toUpperCase();
-        return s === 'YES' || s === 'NO' ? s : '';
-      },
-    },
-    // Direct printing flag (separate from sticker). Drives Operations routing: a printing item
-    // goes through the Sticker/Print tab first, then to its Box/Ziplock packaging tab.
-    printing: {
-      type: String,
-      enum: ['YES', 'NO', ''],
-      default: '',
-      set: (v) => {
-        const s = String(v ?? '').trim().toUpperCase();
-        return s === 'YES' || s === 'NO' ? s : '';
-      },
-    },
-    size: String,
-    packaging: String,
-    packingMaterial: String,
-    material: String,
-    rate: Number,
-    gst: Number,
-    boxes: Number,
-    inventoryStock: { type: Number, default: 0 },
-    verified: { type: Boolean, default: false },
-    // ─── Order-composition category (drives 3-bucket totals + Operations grouping) ───
-    // 'personalized'  = kit + extra products customized together as one unit
-    // 'separate_kit'  = a kit purchased as-is, standalone
-    // 'separate_product' = an individual non-kit product
-    category: { type: String, default: '' },
-    // Kit identity — kept on order items so Operations can group/route kit vs. separate.
-    isKit: { type: Boolean, default: false },
-    kitId: String,
-    kitName: String,
-    kitType: String,
-  }],
+  items: [orderItemSchema],
   // Resolved from selected display unit's tabMapping (Box | Ziplock | Sticker | Butter Paper)
   displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', 'Butter Paper', ''], default: '' },
   // Logo branding

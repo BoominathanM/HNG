@@ -405,8 +405,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const needsSticker = itemNeedsSticker(item);
         // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before box.
         const needsPrint = itemNeedsPrintStep(item);
-        // "Belongs in Box" — used for the no-logo exclusion check.
-        const hasExplicitBoxTab = (isKitItem && order.displayUnitTab === 'Box') || item.packingMaterialTab === 'Box';
+        // "Belongs in Box" — used for the no-logo exclusion check. Recognize the kit's display
+        // unit by NAME too (mirrors getItemPackagingType's fallback) so kit orders route even
+        // when the display unit has no packing-config tabMapping (displayUnitTab unresolved).
+        const duNameLc = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+        const hasExplicitBoxTab = (isKitItem && (order.displayUnitTab === 'Box' || duNameLc.includes('box'))) || item.packingMaterialTab === 'Box';
         // "Can bypass print gate" — only standalone items that DON'T need a print step show in
         // Box directly. Items needing Sticker/Printing always clear the Print tab first.
         const canBypassBoxSticker = !isKitItem && hasExplicitBoxTab && !needsPrint;
@@ -479,7 +482,13 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before frosted.
         const needsPrint = itemNeedsPrintStep(item);
         // "Belongs in Frosted" — used for the no-logo exclusion check and active-SR gate.
-        const hasExplicitZiplockTab = (isKitItem && order.displayUnitTab === 'Ziplock') || item.packingMaterialTab === 'Ziplock';
+        // Recognize the kit's display unit by NAME too (mirrors getItemPackagingType's fallback)
+        // so kit orders route even when the display unit has no packing-config tabMapping.
+        // Exclude 'butter' so a "Butter paper pouch" display unit isn't misread as ziplock.
+        const duNameLc = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+        const duIsZiplockName = !duNameLc.includes('butter') &&
+          (duNameLc.includes('ziplock') || duNameLc.includes('frosted') || duNameLc.includes('pouch'));
+        const hasExplicitZiplockTab = (isKitItem && (order.displayUnitTab === 'Ziplock' || duIsZiplockName)) || item.packingMaterialTab === 'Ziplock';
         // "Can bypass print gate" — only standalone items that DON'T need a print step show in
         // Frosted directly. Items needing Sticker/Printing always clear the Print tab first.
         const canBypassZiplockSticker = !isKitItem && item.packingMaterialTab === 'Ziplock' && !needsPrint;
@@ -556,7 +565,10 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before butter paper.
         const needsPrint = itemNeedsPrintStep(item);
         // "Belongs in Butter Paper" — used for the no-logo exclusion check and active-SR gate.
-        const hasExplicitButterTab = (isKitItem && order.displayUnitTab === 'Butter Paper') || item.packingMaterialTab === 'Butter Paper';
+        // Recognize the kit's display unit by NAME too (mirrors getItemPackagingType's fallback)
+        // so kit orders route even when the display unit has no packing-config tabMapping.
+        const duNameLc = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+        const hasExplicitButterTab = (isKitItem && (order.displayUnitTab === 'Butter Paper' || duNameLc.includes('butter'))) || item.packingMaterialTab === 'Butter Paper';
         // "Can bypass print gate" — only standalone items that DON'T need a print step show in
         // Butter Paper directly. Items needing Sticker/Printing always clear the Print tab first.
         const canBypassButterSticker = !isKitItem && item.packingMaterialTab === 'Butter Paper' && !needsPrint;

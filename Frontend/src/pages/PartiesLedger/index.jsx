@@ -10,7 +10,7 @@ import {
   WalletOutlined, TeamOutlined, DollarOutlined,
   PhoneOutlined, MailOutlined, EnvironmentOutlined,
   FileTextOutlined, PrinterOutlined, DownloadOutlined, DeleteOutlined, UserOutlined,
-  BankOutlined, HistoryOutlined, CreditCardOutlined, IdcardOutlined
+  BankOutlined, HistoryOutlined, CreditCardOutlined, IdcardOutlined, GiftOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -21,6 +21,7 @@ import dayjs from 'dayjs';
 import {
   useGetPartiesQuery,
   useGetPartyLedgerQuery,
+  useGetPartyOrdersQuery,
   useDeletePartyMutation,
   useLazyVerifyGstinQuery,
 } from '../../store/api/apiSlice';
@@ -30,6 +31,132 @@ const { Option } = Select;
 
 const PRIMARY = '#B11E6A';
 const FONT_SIZE = 13;
+
+// Render saved per-product / per-kit attachments as image thumbnails or file tags.
+function PartyAttachmentLinks({ files }) {
+  const list = (Array.isArray(files) ? files : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+  if (!list.length) return null;
+  return (
+    <Space wrap size={6}>
+      {list.map((a, i) => {
+        const url = typeof a === 'string' ? a : a.url;
+        const nm = typeof a === 'string' ? (url.split('/').pop()) : (a.name || `File ${i + 1}`);
+        const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)(\?|$)/i.test(url || '');
+        return (
+          <a key={i} href={url} target="_blank" rel="noreferrer" title={nm} style={{ display: 'inline-block' }}>
+            {isImg
+              ? <img src={url} alt={nm} style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 6, border: '1px solid rgba(0,0,0,0.12)' }} />
+              : <Tag icon={<FileTextOutlined />} color="blue" style={{ borderRadius: 12, fontSize: 11, margin: 0, cursor: 'pointer' }}>{nm}</Tag>}
+          </a>
+        );
+      })}
+    </Space>
+  );
+}
+
+// Keys shown as their own labelled tags / handled separately — excluded from the generic spec sweep.
+const PARTY_SPEC_SKIP = new Set([
+  'itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent',
+  'unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory',
+  'hsnCode','discountPercent','discount','logo','sticker','brand','size','defaultSize',
+  'specs','displayType','itemId','_id','key','amount','rateValue','total','inventoryStock',
+  'printing','stickerPrinting','product','category','isEmergencyProduct','isEmergencyGated',
+  'productAttributes','attachments','kitIncludes','kitIncludesQty','verified','specification','otherSpecs',
+]);
+const prettyPartyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, (s) => s.toUpperCase()).trim();
+
+// Lists every order placed by the party, each with full product + kit specifications,
+// notes and attachments — mirrors the richness of the Sales / Operations detail views.
+function PartyOrdersSection({ orders = [], isDark, cardBg }) {
+  if (!orders.length) return null;
+  const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
+  const specTags = (src) => {
+    const flat = Object.entries(src || {}).filter(([k, v]) => !PARTY_SPEC_SKIP.has(k) && v != null && v !== '' && typeof v !== 'object');
+    const nested = (src?.productAttributes && typeof src.productAttributes === 'object' && !Array.isArray(src.productAttributes))
+      ? Object.entries(src.productAttributes).filter(([k, v]) => !PARTY_SPEC_SKIP.has(k) && v != null && v !== '' && typeof v !== 'object')
+      : [];
+    return [...new Map([...nested, ...flat]).entries()];
+  };
+  return (
+    <Card
+      style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+      title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ fontSize: FONT_SIZE }}>Orders & Products ({orders.length})</span></Space>}
+    >
+      <Space direction="vertical" size={14} style={{ width: '100%' }}>
+        {orders.map((o) => {
+          const items = (Array.isArray(o.items) && o.items.length ? o.items : (o.products || [])).filter(Boolean);
+          const kitOrders = Array.isArray(o.kitOrders) ? o.kitOrders : [];
+          return (
+            <div key={o._id} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`, borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '10px 14px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.04)' }}>
+                <Space size={8} wrap>
+                  <Text strong style={{ fontSize: 14, color: PRIMARY }}>{o.orderCode || 'Order'}</Text>
+                  {o.status && <Tag color="blue" style={{ borderRadius: 10 }}>{o.status}</Tag>}
+                  {o.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ borderRadius: 10 }}>Sample</Tag>}
+                  {o.createdAt && <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(o.createdAt).format('DD MMM YYYY')}</Text>}
+                </Space>
+                {o.total != null && <Text strong style={{ fontSize: 15, color: PRIMARY }}>₹{Number(o.total).toLocaleString()}</Text>}
+              </div>
+              <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {kitOrders.map((ko, ki) => {
+                  const atts = (Array.isArray(ko.attachments) ? ko.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+                  return (
+                    <div key={ko.kitId || ki} style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.18)' }}>
+                      <Space wrap size={6}>
+                        <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{ko.kitName || ko.kitType || `Kit ${ki + 1}`}</Text>
+                        {ko.displayUnit && <Tag color="purple" style={{ borderRadius: 12 }}>{String(ko.displayUnit).replace(/_/g, ' ')}</Tag>}
+                        {ko.size && <Tag color="geekblue" style={{ borderRadius: 12 }}>{ko.size}</Tag>}
+                        {Number(ko.overallQty) > 0 && <Tag color="blue" style={{ borderRadius: 12 }}>Qty: {ko.overallQty}</Tag>}
+                        {ko.sticker && <Tag color={yn(ko.sticker) ? 'green' : 'default'} style={{ borderRadius: 12 }}>Sticker: {yn(ko.sticker) ? 'Yes' : 'No'}</Tag>}
+                        {ko.logo && <Tag color={yn(ko.logo) ? 'cyan' : 'default'} style={{ borderRadius: 12 }}>Logo: {yn(ko.logo) ? 'Yes' : 'No'}</Tag>}
+                        {ko.printing && <Tag color={yn(ko.printing) ? 'magenta' : 'default'} style={{ borderRadius: 12 }}>Printing: {yn(ko.printing) ? 'Yes' : 'No'}</Tag>}
+                        {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 12 }}>₹{Number(ko.kitPrice).toLocaleString()}</Tag>}
+                      </Space>
+                      {ko.specification && <div style={{ marginTop: 6, fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Specification: </Text>{ko.specification}</div>}
+                      {atts.length > 0 && <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Kit Files</Text><PartyAttachmentLinks files={atts} /></div>}
+                    </div>
+                  );
+                })}
+                {items.map((it, idx) => {
+                  const tags = specTags(it);
+                  const atts = (Array.isArray(it.attachments) ? it.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+                  const nm = it.itemName || it.name || it.kitType || `Item ${idx + 1}`;
+                  const hasChips = tags.length > 0 || it.size || it.packingMaterial || it.packaging || it.materialCategory || it.material || it.brand || it.sticker || it.printing || it.logo;
+                  return (
+                    <div key={it._id || idx} style={{ padding: '10px 12px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fafafa', borderRadius: 10, border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                        <Space size={6} wrap>
+                          <Text strong style={{ fontSize: 13 }}>{nm}</Text>
+                          {(it.isKit || it.kitType) && <Tag color="purple" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>KIT</Tag>}
+                        </Space>
+                        <Text type="secondary" style={{ fontSize: 12 }}>{Number(it.qty) || 0} × ₹{Number(it.price || it.rate) || 0}</Text>
+                      </div>
+                      {hasChips && (
+                        <Space wrap size={4} style={{ marginTop: 6 }}>
+                          {it.size && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Size: {it.size}</Tag>}
+                          {(it.packingMaterial || it.packaging) && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Packing: {it.packingMaterial || it.packaging}</Tag>}
+                          {(it.materialCategory || it.material) && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Material: {it.materialCategory || it.material}</Tag>}
+                          {it.brand && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Brand: {it.brand}</Tag>}
+                          {it.sticker && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Sticker: {yn(it.sticker) ? 'Yes' : String(it.sticker)}</Tag>}
+                          {it.printing && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Printing: {yn(it.printing) ? 'Yes' : String(it.printing)}</Tag>}
+                          {it.logo && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Logo: {yn(it.logo) ? 'Yes' : String(it.logo)}</Tag>}
+                          {tags.map(([k, v]) => <Tag key={k} style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{prettyPartyKey(k)}: {Array.isArray(v) ? v.join(', ') : String(v)}</Tag>)}
+                        </Space>
+                      )}
+                      {it.specification && <div style={{ marginTop: 6, fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Specification: </Text>{it.specification}</div>}
+                      {atts.length > 0 && <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Files</Text><PartyAttachmentLinks files={atts} /></div>}
+                    </div>
+                  );
+                })}
+                {items.length === 0 && kitOrders.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>No product details recorded on this order.</Text>}
+              </div>
+            </div>
+          );
+        })}
+      </Space>
+    </Card>
+  );
+}
 
 export default function PartiesLedger() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -92,6 +219,10 @@ export default function PartiesLedger() {
     { skip: !viewParty }
   );
   const partyLedgerData = ledgerData?.data || [];
+
+  // RTK Query — load this party's orders (with full product/kit specs + attachments)
+  const { data: partyOrdersData } = useGetPartyOrdersQuery(viewParty?.key, { skip: !viewParty });
+  const partyOrders = partyOrdersData?.data || [];
 
   const deleteParty = async (party) => {
     try {
@@ -527,6 +658,9 @@ export default function PartiesLedger() {
             )}
           </Card>
         )}
+
+        {/* Orders & Products placed by this party — full specs, kit personalization & attachments */}
+        <PartyOrdersSection orders={partyOrders} isDark={isDark} cardBg={cardBg} />
 
         {/* Summary Stats */}
         <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>

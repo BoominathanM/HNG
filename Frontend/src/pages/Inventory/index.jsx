@@ -2232,11 +2232,17 @@ export default function Inventory() {
                   <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>Product Attributes</Text>
                 </Divider>
                 <Row gutter={16}>
-                  {activeDefs.map((fd) => (
+                  {activeDefs.map((fd) => {
+                    // Persist user-added dropdown values per item name (not just per product type),
+                    // so values you add while editing a specific item are remembered for that item.
+                    // Falls back to the type-level field until an item name is entered.
+                    const nameKey = String(watchedItemName || '').trim().toLowerCase();
+                    const scopedField = nameKey ? `item__${nameKey}__${fd.key}` : fd.field;
+                    return (
                     <Col xs={24} sm={12} key={fd.key}>
                       <Form.Item label={fd.label} name={['productAttrs', fd.key]}>
                         <SelectWithAdd
-                          field={fd.field}
+                          field={scopedField}
                           mode={fd.mode}
                           defaultOptions={fd.usePackingConfig ? packingMaterials.map(c => ({ value: c.value, label: c.label })) : fd.options}
                           placeholder={`Select / Add ${fd.label.toLowerCase()}`}
@@ -2244,7 +2250,8 @@ export default function Inventory() {
                         />
                       </Form.Item>
                     </Col>
-                  ))}
+                    );
+                  })}
                 </Row>
               </>
             );
