@@ -660,7 +660,7 @@ function computePersonalizedComposition(formData = {}, kitsData = []) {
       return { name: p.name || p.kitType || '—', qtyPerKit: q, rate: r, subtotalPerKit: subPer, totalQty: q * totalConsumed, totalValue: subPer * totalConsumed };
     });
     const prodsTotalPerKit = prodLines.reduce((s, pl) => s + pl.subtotalPerKit, 0);
-    const kitValuePerKit = prodsTotalPerKit;
+    const kitValuePerKit = kitPkgPrice + prodsTotalPerKit;
     const kitTotal = kitValuePerKit * totalConsumed;
     const remaining = Math.max(0, kitOrderQty - totalConsumed);
     const isOver = kitOrderQty > 0 && totalConsumed > kitOrderQty;
@@ -756,6 +756,12 @@ function PersonalizedCompositionPanel({ comp, isDark }) {
                 <Text strong>{ik.kitName} — {ik.totalConsumed} kit{ik.totalConsumed !== 1 ? 's' : ''} in personalized</Text>
                 <Text strong style={{ color: '#722ed1' }}>&#8377;{ik.kitTotal.toLocaleString()}</Text>
               </div>
+              {ik.kitPkgPrice > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', paddingLeft: 4 }}>
+                  <span>Kit packaging &times; {ik.totalConsumed}</span>
+                  <span>&#8377;{ik.kitPkgPrice.toLocaleString()} &times; {ik.totalConsumed} = &#8377;{ik.kitPkgTotal.toLocaleString()}</span>
+                </div>
+              )}
               {ik.prodLines.map((pl, pi) => (
                 <div key={pi} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', paddingLeft: 4 }}>
                   <span>{pl.name} &times; {pl.totalQty} pcs</span>
