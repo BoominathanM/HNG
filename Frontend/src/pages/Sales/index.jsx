@@ -936,6 +936,9 @@ const _BRUSH_TYPES = [{ value: 'Wooden', label: 'Wooden' }, { value: 'Plastic', 
 const _SIZES_SOAP = ['15', '20', '30'].map(v => ({ value: v, label: `${v}g` }));
 const _SIZES_LIQUID = ['15', '20', '25', '30'].map(v => ({ value: v, label: `${v}ml` }));
 
+// Attribute keys that support multiple selection (both in Inventory add-item and Lead spec).
+const MULTI_ATTR_KEYS = new Set(['fragrance', 'color', 'material', 'packingMaterial', 'brand']);
+
 // Per-product-type attribute fields — kept in sync with Inventory's PRODUCT_FIELD_DEFS so the
 // lead form shows exactly the attributes that inventory collects for each product type. The
 // `options` here are only fallbacks; at render time the dropdowns are populated from the actual
@@ -1174,17 +1177,22 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
       form.setFieldValue([fieldName, name, 'defaultSize'], sz);
       form.setFieldValue([fieldName, name, 'size'], sz);
     }
-    applySpec('packingMaterial', item.packingMaterial);
+    // For attrs stored as arrays in inventory: pre-fill only when there's exactly one value
+    const applyAttrSpec = (key, legacyVal) => {
+      const v = item.productAttributes?.[key];
+      if (Array.isArray(v) && v.length === 1) {
+        form.setFieldValue([fieldName, name, key], v[0]);
+      } else if (Array.isArray(v) && v.length > 1) {
+        form.setFieldValue([fieldName, name, key], undefined);
+      } else if (typeof v === 'string' && v) {
+        form.setFieldValue([fieldName, name, key], v);
+      } else {
+        applySpec(key, legacyVal);
+      }
+    };
+    applyAttrSpec('packingMaterial', item.packingMaterial);
     applySpec('materialCategory', item.materialCategory);
-    // Use productAttributes.brand (set in Inventory add-item modal) if available
-    const attrBrand = item.productAttributes?.brand;
-    if (Array.isArray(attrBrand) && attrBrand.length === 1) {
-      form.setFieldValue([fieldName, name, 'brand'], attrBrand[0]);
-    } else if (typeof attrBrand === 'string' && attrBrand) {
-      form.setFieldValue([fieldName, name, 'brand'], attrBrand);
-    } else {
-      applySpec('brand', item.brand);
-    }
+    applyAttrSpec('brand', item.brand);
   };
 
   return (
@@ -1505,6 +1513,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                         disabled={isItemDisabled || (!isYesNo && !invItem)}
                         size="small"
                         options={opts}
+
                         notFoundContent={isYesNo ? undefined : 'No values in inventory for this spec'}
                       />
                     </Form.Item>
