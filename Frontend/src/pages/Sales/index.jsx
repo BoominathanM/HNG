@@ -582,9 +582,23 @@ function computeRecordGrandTotal(rec = {}) {
 // The previous "remaining" math made B and C collapse to ₹0 once they were included in A, which
 // is why the total read correctly on ADD (packagingIncludes still empty) but dropped to just
 // A + forwarding on EDIT/VIEW (prepareFormValues repopulates packagingIncludes on reload).
-// Keeping it bucket-based makes add / edit / view / stored totals all agree, and matches the
-// A/B/C CategoryTotalsBreakdown and the downstream quotation/negotiation/order totals.
-function computeCompositionGrandTotal(formData = {}, _kitsData = []) {
+// When packagingIncludes is non-empty (some kits/products are consumed inside a personalized
+// outer packaging), computeRecordBuckets gives the wrong result because it doesn't understand
+// partial consumption — it counts ALL kit quantity as either personalized or separate and skips
+// the top-level kitPrice×kitOverallQty packaging cost entirely.
+// In that case, delegate to computePersonalizedComposition which correctly computes:
+//   A = outer packaging + consumed kit product costs (NOT per-kit packaging of included kits)
+//   B = remaining kits × (kitPkgPrice + prodsSub) per kit
+//   C = remaining separate products × unitRate
+// + forwarding, giving a total that matches the ORDER COMPOSITION BREAKDOWN display.
+function computeCompositionGrandTotal(formData = {}, kitsData = []) {
+  if ((formData.packagingIncludes || []).length > 0 && kitsData.length > 0) {
+    const comp = computePersonalizedComposition(formData, kitsData);
+    const fwd = formData.forwardingCharge ? r2(Number(formData.forwardingChargeAmount) || 0) : 0;
+    const B = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
+    const C = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
+    return r2(comp.totalPersonalized + B + C + fwd);
+  }
   return computeRecordGrandTotal(formData);
 }
 
@@ -3326,7 +3340,7 @@ export default function Sales() {
         const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
         const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
         if (collectionTotal > 0) {
-          const recordTotal = r2(computeRecordGrandTotal({ ...values, products: srcProducts, kitOrders: srcKitOrders, kitPrice: pickKit('kitPrice'), kitOverallQty: pickKit('kitOverallQty') }));
+          const recordTotal = r2(computeCompositionGrandTotal({ ...values, products: srcProducts, kitOrders: srcKitOrders, kitPrice: pickKit('kitPrice'), kitOverallQty: pickKit('kitOverallQty'), packagingIncludes: srcPackagingIncludes, packagingIncludesQty: values.packagingIncludesQty ?? formStore.packagingIncludesQty, forwardingCharge: values.forwardingCharge ?? formStore.forwardingCharge, forwardingChargeAmount: values.forwardingChargeAmount ?? formStore.forwardingChargeAmount }, kits));
           return recordTotal > 0 && collectionTotal >= recordTotal ? 'Paid' : 'Partially Paid';
         }
         const proofs = paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []);
