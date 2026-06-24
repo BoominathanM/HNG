@@ -159,29 +159,47 @@ export default function Billing() {
   const [updateInvoiceGstMutation] = useUpdateInvoiceGstMutation();
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
 
+  // Map each lead id → its converted sales order (the order carries the resolved kitPrice
+  // that produces the "Amount to Pay" Sales shows; the lead's kitPrice is often stale).
+  // Used by BOTH invoiceList and quotationList so the two render identically.
+  const orderByLead = useMemo(() => {
+    const m = {};
+    (salesOrdersRaw?.data || []).forEach((o) => {
+      const lid = o.leadId && typeof o.leadId === 'object' ? o.leadId._id : o.leadId;
+      if (lid) m[String(lid)] = o;
+    });
+    return m;
+  }, [salesOrdersRaw]);
+
   const invoiceList = useMemo(() => (invoicesData?.data || []).map((inv) => {
     const halfGst = r2((inv.gstAmount || 0) / 2);
     // orderId is populated with products/kitOrders and a nested leadId (with full lead fields)
     const linkedOrder = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
     const linkedLead = linkedOrder?.leadId && typeof linkedOrder.leadId === 'object' ? linkedOrder.leadId : null;
+    // Resolve the SAME full sales order the quotation tab uses (richest kitOrders/items),
+    // via leadId → orderByLead; fall back to the invoice's own populated orderId.
+    const leadId = linkedLead?._id || linkedOrder?.leadId;
+    const fullOrder = (leadId && orderByLead[String(leadId)]) || linkedOrder;
     // The ORDER is the source of truth for the billed "Amount to Pay" (its kitOrders carry
     // the resolved kitPrice; the lead's kitPrice is often stale). Fall back to lead, then invoice.
-    const fwdSrc = linkedOrder || linkedLead;
+    const fwdSrc = fullOrder || linkedLead;
     const fwdEnabled = !!(fwdSrc?.forwardingCharge ?? linkedLead?.forwardingCharge);
     const fwdAmt = fwdEnabled ? r2(Number(fwdSrc?.forwardingChargeAmount ?? linkedLead?.forwardingChargeAmount) || 0) : 0;
-    // Kit composition: prefer the source that actually has kitOrders/products
-    const srcProds = fwdSrc?.products?.length
-      ? fwdSrc.products
-      : (linkedLead?.products?.length
-          ? linkedLead.products
-          : itemsToProducts(fwdSrc?.items?.length ? fwdSrc.items : (linkedLead?.items?.length ? linkedLead.items : (inv.items || []))));
-    const srcKitOrders = fwdSrc?.kitOrders?.length ? fwdSrc.kitOrders : (linkedLead?.kitOrders || []);
+    // Kit composition (identical resolution to quotationList): order products → order items → lead
+    const srcProds = fullOrder?.products?.length
+      ? fullOrder.products
+      : (fullOrder?.items?.length
+          ? itemsToProducts(fullOrder.items)
+          : (linkedLead?.products?.length
+              ? linkedLead.products
+              : itemsToProducts(linkedLead?.items?.length ? linkedLead.items : (inv.items || []))));
+    const srcKitOrders = fullOrder?.kitOrders?.length ? fullOrder.kitOrders : (linkedLead?.kitOrders || []);
     const srcRec = (srcProds.length || srcKitOrders.length)
       ? { products: srcProds, kitOrders: srcKitOrders, forwardingCharge: fwdEnabled, forwardingChargeAmount: fwdAmt }
       : null;
     const kitTotal = srcRec ? computeKitAwareTotal(srcRec) : 0;
     // Chain: kitAwareTotal > order.total > lead.total > invoice.total
-    const invTotal = r2(kitTotal > 0 ? kitTotal : (Number(linkedOrder?.total) || Number(linkedLead?.total) || Number(inv.total) || 0));
+    const invTotal = r2(kitTotal > 0 ? kitTotal : (Number(fullOrder?.total) || Number(linkedLead?.total) || Number(inv.total) || 0));
     const invPaid = r2(Number(inv.advanceAmount) || 0);
     const invBalance = r2(Math.max(0, invTotal - invPaid));
     const invStatus = invTotal > 0
@@ -240,18 +258,7 @@ export default function Billing() {
       products: srcProds,
       kitOrders: srcKitOrders,
     };
-  }), [invoicesData]);
-
-  // Map each lead id → its converted sales order (the order carries the resolved kitPrice
-  // that produces the "Amount to Pay" Sales shows; the lead's kitPrice is often stale).
-  const orderByLead = useMemo(() => {
-    const m = {};
-    (salesOrdersRaw?.data || []).forEach((o) => {
-      const lid = o.leadId && typeof o.leadId === 'object' ? o.leadId._id : o.leadId;
-      if (lid) m[String(lid)] = o;
-    });
-    return m;
-  }, [salesOrdersRaw]);
+  }), [invoicesData, orderByLead]);
 
   const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => {
     const halfGst = r2((q.gstAmount || 0) / 2);

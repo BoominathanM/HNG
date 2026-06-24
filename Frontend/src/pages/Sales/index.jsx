@@ -3295,6 +3295,7 @@ export default function Sales() {
     const city = values.city || formStore.city;
     const state = values.state || formStore.state;
     const pincode = values.pincode || formStore.pincode;
+    const gstPhone = values.gstPhone || formStore.gstPhone;
     // Extract Cloudinary URLs from file list fields
     const hotelLogoUrl = (values.hotelLogo || []).find(f => f.url)?.url || undefined;
     const paymentProofFiles = (values.paymentProofs || []).map(f => ({
@@ -3312,6 +3313,7 @@ export default function Sales() {
       city,
       state,
       pincode,
+      gstPhone,
       address: detailedAddress,
       locationCity: values.location,
       location: values.location,
@@ -4427,6 +4429,10 @@ export default function Sales() {
       products: values.products || [],
       productType: values.productType,
       selectedKit: values.selectedKit,
+      selectedKits: values.selectedKits || [],
+      // Persist per-kit config so Operations can route EACH kit to its own packaging tab
+      // (multi-kit orders) instead of a single order-level display unit.
+      kitOrders: normalizeKitOrdersForSave(values.kitOrders || [], values.productType),
       kitDisplayUnit: values.kitDisplayUnit || values.displayUnit,
       kitSize: values.kitSize,
       deliveryType: hasPartial ? 'Partial' : 'Full',
@@ -9041,6 +9047,9 @@ export default function Sales() {
                         {record.leadType !== 'SAMPLE' && record.billType === 'GST' && (
                           <Col xs={24} sm={12}><InfoRow label="GSTIN" value={record.gstNumber} /></Col>
                         )}
+                        {record.leadType !== 'SAMPLE' && record.billType === 'GST' && record.gstPhone && (
+                          <Col xs={24} sm={12}><InfoRow label="Phone Number" value={record.gstPhone} /></Col>
+                        )}
                         <Col xs={24} sm={12}><InfoRow label="City" value={record.city} /></Col>
                         <Col xs={24} sm={12}><InfoRow label="State" value={record.state} /></Col>
                         <Col xs={24} sm={12}><InfoRow label="Pincode" value={record.pincode} /></Col>
@@ -9075,6 +9084,11 @@ export default function Sales() {
                                     </Button>
                                   }
                                 />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="Phone Number" name="gstPhone" rules={[phoneValidator(false)]}>
+                                <PhoneInput placeholder="Phone number" />
                               </Form.Item>
                             </Col>
                             {/* GST verification result shown below the GST field */}

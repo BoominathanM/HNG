@@ -60,6 +60,7 @@ const leadSchema = new mongoose.Schema({
   // Billing & Address
   billType: { type: String, enum: ['GST', 'NON_GST'], default: 'GST' },
   gstNumber: String,
+  gstPhone: String,
   gstVerifiedData: mongoose.Schema.Types.Mixed,
   detailedAddress: String,
   address: String,

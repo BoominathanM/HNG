@@ -255,27 +255,49 @@ export default function Operations() {
     pincode: o.pincode || o.leadId?.pincode || '',
     detailedAddress: o.detailedAddress || o.leadId?.detailedAddress || '',
     // Fall back to o.products when items is empty (legacy / sample orders that only stored products)
-    items: (o.items?.length ? o.items : (o.products || [])).map(item => {
-      // Normalize sticker/printing: old DB rows may store lowercase 'yes'/'no';
-      // the Sticker-queue checks (item.sticker === 'YES') require uppercase.
-      const sticker = normYNOps(item.sticker || item.stickerPrinting);
-      const printing = normYNOps(item.printing);
-      const pmRaw = item.packingMaterial || item.packaging || '';
-      // Config lookup first; string-match fallback for items without a config entry
-      // (e.g. orders from before packing config was set up, or unregistered material names).
-      const packingMaterialTab = packingMaterialTabMap[pmRaw] || item.packingMaterialTab || packTabFromString(pmRaw);
-      // Infer logoType for items saved before mapOrderItem computed it — ensures Box/Frosted
-      // queue gates (which check logoType or packingMaterialTab) route old items correctly.
-      const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, item.logoType);
-      return {
-        ...item,
-        itemName: item.itemName || item.name,
-        sticker,
-        printing,
-        packingMaterialTab,
-        logoType,
-      };
-    }),
+    items: (() => {
+      // Per-kit display-unit map (by kitId). An order can hold MULTIPLE kits, each with its own
+      // display unit (e.g. dental=Ziplock, shaving=Box, bath=Pouch). Source from the order's own
+      // kitOrders first, then the populated lead's kitOrders, so each kit routes to its OWN tab.
+      const kitOrdersList = ((o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || []).filter(Boolean);
+      const kitCfgById = Object.fromEntries(kitOrdersList.filter(k => k.kitId).map(k => [k.kitId, k]));
+      return (o.items?.length ? o.items : (o.products || [])).map(item => {
+        const isKitItem = !!(item.isKit || item.kitType);
+        // Resolve this kit's own config: match by kitId, else (single-kit order) the lone entry.
+        const kitCfg = isKitItem
+          ? (kitCfgById[item.kitId] || (kitOrdersList.length === 1 ? kitOrdersList[0] : null))
+          : null;
+        // Normalize sticker/printing: old DB rows may store lowercase 'yes'/'no';
+        // the Sticker-queue checks (item.sticker === 'YES') require uppercase.
+        // For kit items, fall back to the kit-level sticker/printing (entered in the per-kit
+        // Order Details card) so a Sticker=Yes kit still goes through the Print tab first.
+        const sticker = normYNOps(item.sticker || item.stickerPrinting || (isKitItem ? kitCfg?.sticker : ''));
+        const printing = normYNOps(item.printing || (isKitItem ? kitCfg?.printing : ''));
+        const pmRaw = item.packingMaterial || item.packaging || '';
+        // Config lookup first; string-match fallback for items without a config entry
+        // (e.g. orders from before packing config was set up, or unregistered material names).
+        const packingMaterialTab = packingMaterialTabMap[pmRaw] || item.packingMaterialTab || packTabFromString(pmRaw);
+        // Per-kit display unit → resolved Operations tab. Empty for non-kit items and for kits
+        // with no display unit, in which case data.js falls back to the order-level value.
+        const itemDisplayUnit = isKitItem ? (item.displayUnit || kitCfg?.displayUnit || '') : (item.displayUnit || '');
+        const itemDisplayUnitTab = (isKitItem && itemDisplayUnit)
+          ? (item.displayUnitTab || displayUnitTabMap[itemDisplayUnit] || packTabFromString(itemDisplayUnit))
+          : (item.displayUnitTab || '');
+        // Infer logoType for items saved before mapOrderItem computed it — ensures Box/Frosted
+        // queue gates (which check logoType or packingMaterialTab) route old items correctly.
+        const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, item.logoType);
+        return {
+          ...item,
+          itemName: item.itemName || item.name,
+          sticker,
+          printing,
+          packingMaterialTab,
+          displayUnit: itemDisplayUnit,
+          displayUnitTab: itemDisplayUnitTab,
+          logoType,
+        };
+      });
+    })(),
     readiness: o.readiness || {},
     paymentProofs: o.paymentProofs || [],
     // Kit display fields — fall back to the populated leadId fields for orders created
@@ -626,10 +648,40 @@ export default function Operations() {
         },
       },
       {
+        title: 'Display Unit',
+        key: 'displayUnitCol',
+        width: 150,
+        render: (_, record) => {
+          if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          const du = record.displayUnit;
+          const dest = PACKAGING_TYPE_LABELS[record.packagingType] || '';
+          if (!du && !dest) return <Text type="secondary">—</Text>;
+          return (
+            <Space direction="vertical" size={0}>
+              {du
+                ? <Tag color="purple" style={{ margin: 0, borderRadius: 12 }}>{String(du).replace(/_/g, ' ')}</Tag>
+                : <Text type="secondary" style={{ fontSize: 11 }}>{record.packingMaterial || '—'}</Text>}
+              {dest && <Text type="secondary" style={{ fontSize: 10 }}>→ {dest} tab</Text>}
+            </Space>
+          );
+        },
+      },
+      {
         title: 'Product Spec',
         key: 'productSpec',
         render: (_, record) => {
-          if (record.isKitParent || record.isKitChild) return <Text type="secondary">—</Text>;
+          if (record.isKitParent || record.isKitChild) {
+            // Kit rows: show the kit-level sticker / printing carried on the row.
+            const st = (record.sticker || '').toUpperCase();
+            const pr = (record.printing || '').toUpperCase();
+            if (!st && !pr) return <Text type="secondary">—</Text>;
+            return (
+              <Space wrap size={3}>
+                {st && <Tag color={st === 'YES' ? 'green' : 'default'} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>Sticker: {st === 'YES' ? 'Yes' : 'No'}</Tag>}
+                {pr && <Tag color={pr === 'YES' ? 'purple' : 'default'} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>Print: {pr === 'YES' ? 'Yes' : 'No'}</Tag>}
+              </Space>
+            );
+          }
           // Look up the full item from the normalized order to get all attributes
           const ord = apiOrders.find((o) => o.id === record.orderId);
           const productLower = (record.product || '').toLowerCase();
@@ -1067,7 +1119,11 @@ export default function Operations() {
           (typeKey === 'box' && (order?.displayUnitTab === 'Box' || duNameLc.includes('box'))) ||
           (typeKey === 'frosted' && (order?.displayUnitTab === 'Ziplock' || (!duNameLc.includes('butter') && (duNameLc.includes('ziplock') || duNameLc.includes('frosted') || duNameLc.includes('pouch'))))) ||
           (typeKey === 'butter' && (order?.displayUnitTab === 'Butter Paper' || duNameLc.includes('butter')));
-        const shouldGroupAsKit = isKitOrder && displayUnitMatchesTab;
+        // Row-based fallback: group when every row in this tab for this order is a KIT row whose
+        // destination IS this tab. Handles multi-kit orders where each kit routes by its OWN
+        // display unit (so the order-level display unit may not match this tab).
+        const groupAllKitForThisTab = group.length > 1 && group.every((r) => r.isKit && r.packagingType === typeKey);
+        const shouldGroupAsKit = (isKitOrder && displayUnitMatchesTab) || groupAllKitForThisTab;
         if (!shouldGroupAsKit || group.length === 1) {
           // Non-kit, single-product, or individual-packing kit items: shown individually.
           // For kit orders with kit size, apply that size to each row.
@@ -1095,6 +1151,10 @@ export default function Operations() {
             size: order?.kitSize || null,
             stickerPrinting: first.stickerPrinting,
             packagingType: first.packagingType,
+            displayUnit: first.displayUnit || '',
+            sticker: first.sticker || '',
+            printing: first.printing || '',
+            packingMaterial: first.packingMaterial || '',
             isKitParent: true,
             children: group.map((r) => ({ ...r, isKitChild: true })),
           });

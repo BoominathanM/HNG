@@ -16,19 +16,32 @@ export const packTabFromString = (pm) => {
   return '';
 };
 
+// Resolve a KIT item's packaging tab + display-unit NAME, preferring the item's OWN
+// per-kit value so a multi-kit order (e.g. dental=Ziplock, shaving=Box, bath=Pouch) routes
+// each kit to its respective tab. Falls back to the single order-level display unit when the
+// item carries no per-kit value — so single-kit and legacy orders behave exactly as before.
+export const kitTabOf = (item, order) => (item && item.displayUnitTab) || (order && order.displayUnitTab) || '';
+export const kitDuNameOf = (item, order) =>
+  (item && item.displayUnit) || (order && (order.kitDisplayUnit || order.displayUnit)) || '';
+
 // Infer logoType for items saved before mapOrderItem started computing it.
 // existing: the currently stored logoType (returned as-is when truthy so we never overwrite data).
 export const inferItemLogoType = (sticker, printing, pmRaw, packingMaterialTab, existing) => {
   if (existing) return existing;
-  if (sticker === 'YES' || printing === 'YES') return 'Sticker';
+  // Sticker=Yes is always a sticker job → Sticker tab.
+  if (sticker === 'YES') return 'Sticker';
   const hay = (pmRaw || '').toLowerCase();
+  // Packing material decides the destination for everything else (incl. Printing=Yes items, which
+  // go DIRECTLY to their box/ziplock/butter packaging tab rather than the Sticker tab).
   if (hay.includes('butter')) return 'Butter Paper';
   if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
   if (hay.includes('box')) return 'Box';
-  if (sticker !== 'NO' && hay.includes('sticker')) return 'Sticker';
   if (packingMaterialTab === 'Butter Paper') return 'Butter Paper';
   if (packingMaterialTab === 'Ziplock') return 'Frosted Ziplock';
   if (packingMaterialTab === 'Box') return 'Box';
+  // Printing=Yes with no resolvable packaging destination → print/sticker tab.
+  if (printing === 'YES') return 'Sticker';
+  if (sticker !== 'NO' && hay.includes('sticker')) return 'Sticker';
   return '';
 };
 
@@ -122,7 +135,7 @@ export const getFlowStep = (order) => {
 const hasFrostedPackaging = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
   // Kit items: display unit tab determines their packaging — packing material is irrelevant.
-  if (isKitItem && order.displayUnitTab === 'Ziplock') return true;
+  if (isKitItem && kitTabOf(item, order) === 'Ziplock') return true;
   // Standalone products: use their own config-resolved packingMaterial tab.
   if (item.packingMaterialTab === 'Ziplock') return true;
   if (item.logoType === 'Frosted Ziplock') return true;
@@ -130,7 +143,7 @@ const hasFrostedPackaging = (item, order) => {
   if (pm.includes('ziplock') || pm.includes('frosted') || pm.includes('pouch')) return true;
   // Kit items only: fall back to display unit name when displayUnitTab not yet stored.
   if (isKitItem) {
-    const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+    const du = kitDuNameOf(item, order).toLowerCase();
     return du.includes('ziplock') || du.includes('frosted') || du.includes('pouch');
   }
   return false;
@@ -142,13 +155,13 @@ const hasFrostedPackaging = (item, order) => {
 // (4) string-match fallback on display unit / packing material names.
 const hasButterPaperPackaging = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
-  if (isKitItem && order.displayUnitTab === 'Butter Paper') return true;
+  if (isKitItem && kitTabOf(item, order) === 'Butter Paper') return true;
   if (item.packingMaterialTab === 'Butter Paper') return true;
   if (item.logoType === 'Butter Paper') return true;
   const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
   if (pm.includes('butter')) return true;
   if (isKitItem) {
-    const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+    const du = kitDuNameOf(item, order).toLowerCase();
     return du.includes('butter');
   }
   return false;
@@ -158,7 +171,7 @@ const isFrostedZiplock = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
   // Kit items: display unit determines final tab; sticker flag still respected
   // (sticker=YES kit items go to Sticker tab first, then Frosted after).
-  if (isKitItem && order.displayUnitTab === 'Ziplock') {
+  if (isKitItem && kitTabOf(item, order) === 'Ziplock') {
     if (item.sticker === 'YES') return false;
     return true;
   }
@@ -175,21 +188,35 @@ const itemNeedsSticker = (item) =>
   item.sticker === 'YES' || (item.sticker !== 'NO' && item.logoType === 'Sticker');
 
 // Returns true when an item needs a direct printing step (Printing = Yes on the product/kit).
-// Like sticker, a printing item goes through the Sticker/Print tab first, then moves on to its
-// Box/Ziplock packaging tab (or stays in the Print tab if it has no box/ziplock packaging).
 const itemNeedsPrinting = (item) => String(item.printing ?? '').trim().toUpperCase() === 'YES';
 
-// Combined "needs a print step" check (sticker OR printing) — drives Sticker/Print tab membership
-// and the pre-packaging gate for the Box/Frosted tabs.
+// Combined "has print/sticker work" check (sticker OR printing) — used for the queue note,
+// the stickerPrinting flag, and the "no reason to be in this packaging tab" exclusion.
 const itemNeedsPrintStep = (item) => itemNeedsSticker(item) || itemNeedsPrinting(item);
+
+// Whether an item must pass through the Sticker/Print tab BEFORE it appears in its
+// box/ziplock/butter packaging tab.
+//   • KITS (separate + personalized): NEVER — a kit always routes DIRECTLY to its display-unit
+//     tab (Box/Ziplock/Butter); any sticker/printing is a sub-step done within that tab.
+//   • Standalone products: only Sticker=Yes routes through the Sticker tab — but a Sticker=Yes
+//     product's destination IS the sticker tab (it never reaches a packaging queue), so in the
+//     packaging queues this is effectively always false. A Printing=Yes (Sticker=No) product
+//     with box/ziplock/butter packing goes DIRECTLY to that packaging tab.
+const mustPrintBeforePackaging = (item) => {
+  const isKitItem = !!(item.isKit || item.kitType);
+  if (isKitItem) return false;
+  return itemNeedsSticker(item);
+};
 
 // Determine an item's ultimate packaging destination (after sticker step completes).
 const getItemPackagingType = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
   // Kit items: display unit tab is the final packaging destination (overrides packing material).
-  if (isKitItem && order.displayUnitTab === 'Butter Paper') return 'butter';
-  if (isKitItem && order.displayUnitTab === 'Ziplock') return 'frosted';
-  if (isKitItem && order.displayUnitTab === 'Box') return 'box';
+  // Uses the item's OWN per-kit display unit (kitTabOf) so each kit in a multi-kit order routes
+  // to its respective tab; falls back to the order-level display unit for single-kit orders.
+  if (isKitItem && kitTabOf(item, order) === 'Butter Paper') return 'butter';
+  if (isKitItem && kitTabOf(item, order) === 'Ziplock') return 'frosted';
+  if (isKitItem && kitTabOf(item, order) === 'Box') return 'box';
   // Standalone products with sticker=YES stay in the Sticker tab after printing — they do
   // NOT move on to a Box/Ziplock/Butter Paper tab regardless of packingMaterialTab.
   if (!isKitItem && itemNeedsSticker(item)) return 'sticker';
@@ -205,7 +232,7 @@ const getItemPackagingType = (item, order) => {
   if (pm.includes('box')) return 'box';
   // Kit items only: fall back to display unit name for box routing.
   if (isKitItem) {
-    const du = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+    const du = kitDuNameOf(item, order).toLowerCase();
     if (du.includes('butter')) return 'butter';
     if (du.includes('box')) return 'box';
     if (du.includes('ziplock') || du.includes('frosted') || du.includes('pouch')) return 'frosted';
@@ -307,33 +334,14 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const emergencyQtyMap = getEmergencyProductQtyMap(order);
       const emergencyAllDone = areAllEmergencyItemsDone(order);
       const items = (order.items || []).map((item, idx) => ({ item, idx }))
-        .filter(({ item, idx }) => {
-          const isKitItem = !!(item.isKit || item.kitType);
-          if (!isKitItem) {
-            // Standalone products that need a print step (Sticker=Yes OR Printing=Yes) go to the
-            // Sticker/Print tab. Items with no print step and an explicit Box/Ziplock packing tab
-            // skip the Print tab entirely.
-            const needsPrintStandalone = itemNeedsPrintStep(item);
-            if (!needsPrintStandalone && (item.packingMaterialTab === 'Box' || item.packingMaterialTab === 'Ziplock' || item.packingMaterialTab === 'Butter Paper')) return false;
-          } else {
-            // Kit items: Sticker=Yes / Printing=Yes still goes through the Print tab first even if
-            // displayUnitTab is Box/Ziplock/Butter Paper. Only kit items with no print step skip it.
-            if ((order.displayUnitTab === 'Box' || order.displayUnitTab === 'Ziplock' || order.displayUnitTab === 'Butter Paper') &&
-                !itemNeedsPrintStep(item)) return false;
-          }
-          // Sticker=Yes or Printing=Yes → route to the Sticker/Print tab regardless of Logo / Packing Material.
-          if (!itemNeedsPrintStep(item)) return false;
-          // Once the item's sticker is printed and it has a box/frosted destination,
-          // remove it from the sticker queue — it now lives in the box/frosted tab.
-          const packagingType = getItemPackagingType(item, order);
-          if (packagingType !== 'sticker') {
-            const product = item.product || item.itemName;
-            const sr = findSR(order.id, product, 'Sticker');
-            if (sr && STICKER_MOVED_ON_STATUSES.has(sr.status)) return false;
-            // Also hide when local state says printing has started (pre-refetch window)
-            if (localStickerStep(order.id, idx) >= 3) return false;
-          }
-          return true;
+        .filter(({ item }) => {
+          // Sticker/Print tab shows ONLY items whose destination IS the sticker tab
+          // (packagingType==='sticker'):
+          //   • Sticker=Yes product, or a Printing=Yes product with no box/ziplock/butter packing.
+          //   • A kit appears here only when it has NO packaging display unit — kits WITH a
+          //     Box/Ziplock/Butter display unit route DIRECTLY to that tab (sticker handled there).
+          if (getItemPackagingType(item, order) !== 'sticker') return false;
+          return itemNeedsPrintStep(item);
         })
         .flatMap(({ item, idx }) => {
           const packagingType = getItemPackagingType(item, order);
@@ -362,6 +370,12 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             isEmergencyGated,
             logoRequired: order.logoRequired || false,
             logoUrl: order.logoUrl || '',
+            // Detail fields surfaced in the queue table
+            isKit: !!(item.isKit || item.kitType),
+            displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
+            sticker: item.sticker || '',
+            printing: item.printing || '',
+            packingMaterial: item.packingMaterial || item.packaging || '',
           });
 
           if (eQty !== undefined) {
@@ -399,27 +413,30 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // When a kit item has packingMaterialTab='Box' but the display unit routes to Frosted,
         // include it here for the individual packing step — independent of the kit assembly step.
         const needsBoxPacking = packType === 'box' ||
-          (isKitItem && item.packingMaterialTab === 'Box' && order.displayUnitTab !== 'Box');
+          (isKitItem && item.packingMaterialTab === 'Box' && kitTabOf(item, order) !== 'Box');
         if (!needsBoxPacking) return;
         const product = item.product || item.itemName;
-        const needsSticker = itemNeedsSticker(item);
-        // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before box.
+        // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
         const needsPrint = itemNeedsPrintStep(item);
+        // "Must clear the Sticker/Print tab first" — Sticker=Yes (any item) or any print step on a
+        // KIT. A standalone Printing=Yes (Sticker=No) product goes DIRECTLY to box (no print-first hold).
+        const mustClearSticker = mustPrintBeforePackaging(item);
         // "Belongs in Box" — used for the no-logo exclusion check. Recognize the kit's display
         // unit by NAME too (mirrors getItemPackagingType's fallback) so kit orders route even
         // when the display unit has no packing-config tabMapping (displayUnitTab unresolved).
-        const duNameLc = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
-        const hasExplicitBoxTab = (isKitItem && (order.displayUnitTab === 'Box' || duNameLc.includes('box'))) || item.packingMaterialTab === 'Box';
-        // "Can bypass print gate" — only standalone items that DON'T need a print step show in
-        // Box directly. Items needing Sticker/Printing always clear the Print tab first.
-        const canBypassBoxSticker = !isKitItem && hasExplicitBoxTab && !needsPrint;
-        if (needsPrint && !canBypassBoxSticker && !isStickerPrinted(order.id, product, idx)) return;
+        const duNameLc = kitDuNameOf(item, order).toLowerCase();
+        const hasExplicitBoxTab = (isKitItem && (kitTabOf(item, order) === 'Box' || duNameLc.includes('box'))) || item.packingMaterialTab === 'Box';
+        // "Can bypass the sticker-first gate" — standalone items that don't need the sticker step.
+        const canBypassBoxSticker = !isKitItem && hasExplicitBoxTab && !mustClearSticker;
+        if (mustClearSticker && !canBypassBoxSticker && !isStickerPrinted(order.id, product, idx)) return;
         // No print step, Logo Required = No → no routing to Box tab, unless explicit Box tab.
         if (!needsPrint && !order.logoRequired && !hasExplicitBoxTab) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
         const itemQty = Number(item.qty) || 0;
-        const boxNote = needsPrint ? 'Print approved — now in box manufacturing queue' : 'Box manufacturing';
+        const boxNote = mustClearSticker
+          ? 'Print approved — now in box manufacturing queue'
+          : needsPrint ? 'Box manufacturing (printing at packaging stage)' : 'Box manufacturing';
 
         const makeBoxRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-box${keySuffix}`,
@@ -441,6 +458,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           isEmergencyGated,
           logoRequired: order.logoRequired || false,
           logoUrl: order.logoUrl || '',
+          isKit: isKitItem,
+          displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
+          sticker: item.sticker || '',
+          printing: item.printing || '',
+          packingMaterial: item.packingMaterial || item.packaging || '',
         });
 
         if (eQty !== undefined) {
@@ -475,29 +497,30 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // Non-kit items: still use the single-source-of-truth packType so sticker=YES items
         // never leak into Frosted even if their packing material string contains 'ziplock'.
         const needsFrostedPacking = packType === 'frosted' ||
-          (isKitItem && item.packingMaterialTab === 'Ziplock' && order.displayUnitTab !== 'Ziplock');
+          (isKitItem && item.packingMaterialTab === 'Ziplock' && kitTabOf(item, order) !== 'Ziplock');
         if (!needsFrostedPacking) return;
         const product = item.product || item.itemName;
-        const needsSticker = itemNeedsSticker(item);
-        // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before frosted.
+        // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
         const needsPrint = itemNeedsPrintStep(item);
+        // "Must clear the Sticker/Print tab first" — Sticker=Yes (any item) or any print step on a
+        // KIT. A standalone Printing=Yes (Sticker=No) ziplock product goes DIRECTLY here.
+        const mustClearSticker = mustPrintBeforePackaging(item);
         // "Belongs in Frosted" — used for the no-logo exclusion check and active-SR gate.
         // Recognize the kit's display unit by NAME too (mirrors getItemPackagingType's fallback)
         // so kit orders route even when the display unit has no packing-config tabMapping.
         // Exclude 'butter' so a "Butter paper pouch" display unit isn't misread as ziplock.
-        const duNameLc = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
+        const duNameLc = kitDuNameOf(item, order).toLowerCase();
         const duIsZiplockName = !duNameLc.includes('butter') &&
           (duNameLc.includes('ziplock') || duNameLc.includes('frosted') || duNameLc.includes('pouch'));
-        const hasExplicitZiplockTab = (isKitItem && (order.displayUnitTab === 'Ziplock' || duIsZiplockName)) || item.packingMaterialTab === 'Ziplock';
-        // "Can bypass print gate" — only standalone items that DON'T need a print step show in
-        // Frosted directly. Items needing Sticker/Printing always clear the Print tab first.
-        const canBypassZiplockSticker = !isKitItem && item.packingMaterialTab === 'Ziplock' && !needsPrint;
-        // Gate on an active Sticker-type SR so that print items alongside frosted packaging
+        const hasExplicitZiplockTab = (isKitItem && (kitTabOf(item, order) === 'Ziplock' || duIsZiplockName)) || item.packingMaterialTab === 'Ziplock';
+        // "Can bypass the sticker-first gate" — standalone items that don't need the sticker step.
+        const canBypassZiplockSticker = !isKitItem && item.packingMaterialTab === 'Ziplock' && !mustClearSticker;
+        // Gate on an active Sticker-type SR so that sticker items alongside frosted packaging
         // still wait in the print tab until printed (only stickerType='Sticker' to avoid
         // false matches from a Frosted Ziplock SR created within this tab).
         const sr = findSR(order.id, product, 'Sticker');
         const hasActiveSR = sr && !STICKER_MOVED_ON_STATUSES.has(sr.status);
-        if (needsPrint && !canBypassZiplockSticker && !isStickerPrinted(order.id, product, idx)) return;
+        if (mustClearSticker && !canBypassZiplockSticker && !isStickerPrinted(order.id, product, idx)) return;
         // Active SR from the print tab blocks display even when no print step is explicitly set.
         if (!needsPrint && hasActiveSR && !hasExplicitZiplockTab && !isStickerPrinted(order.id, product, idx)) return;
         // No print step, Logo Required = No → no routing to Frosted tab, unless explicit Ziplock tab is set.
@@ -505,7 +528,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
         const itemQty = Number(item.qty) || 0;
-        const frostedNote = needsPrint ? 'Print approved — now in frosted ziplock queue' : 'Dispatch and received updates should be verified by operations';
+        const frostedNote = mustClearSticker
+          ? 'Print approved — now in frosted ziplock queue'
+          : needsPrint ? 'Frosted ziplock (printing at packaging stage)' : 'Dispatch and received updates should be verified by operations';
 
         const makeFrostedRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-frosted${keySuffix}`,
@@ -527,6 +552,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           isEmergencyGated,
           logoRequired: order.logoRequired || false,
           logoUrl: order.logoUrl || '',
+          isKit: isKitItem,
+          displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
+          sticker: item.sticker || '',
+          printing: item.printing || '',
+          packingMaterial: item.packingMaterial || item.packaging || '',
         });
 
         if (eQty !== undefined) {
@@ -559,24 +589,26 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // when a kit item has packingMaterialTab='Butter Paper' but the display unit routes
         // elsewhere, include it here for the individual packing step.
         const needsButterPacking = packType === 'butter' ||
-          (isKitItem && item.packingMaterialTab === 'Butter Paper' && order.displayUnitTab !== 'Butter Paper');
+          (isKitItem && item.packingMaterialTab === 'Butter Paper' && kitTabOf(item, order) !== 'Butter Paper');
         if (!needsButterPacking) return;
         const product = item.product || item.itemName;
-        // Needs a print step (Sticker=Yes OR Printing=Yes) → must clear the Print tab before butter paper.
+        // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
         const needsPrint = itemNeedsPrintStep(item);
+        // "Must clear the Sticker/Print tab first" — Sticker=Yes (any item) or any print step on a
+        // KIT. A standalone Printing=Yes (Sticker=No) butter-paper product goes DIRECTLY here.
+        const mustClearSticker = mustPrintBeforePackaging(item);
         // "Belongs in Butter Paper" — used for the no-logo exclusion check and active-SR gate.
         // Recognize the kit's display unit by NAME too (mirrors getItemPackagingType's fallback)
         // so kit orders route even when the display unit has no packing-config tabMapping.
-        const duNameLc = (order.kitDisplayUnit || order.displayUnit || '').toLowerCase();
-        const hasExplicitButterTab = (isKitItem && (order.displayUnitTab === 'Butter Paper' || duNameLc.includes('butter'))) || item.packingMaterialTab === 'Butter Paper';
-        // "Can bypass print gate" — only standalone items that DON'T need a print step show in
-        // Butter Paper directly. Items needing Sticker/Printing always clear the Print tab first.
-        const canBypassButterSticker = !isKitItem && item.packingMaterialTab === 'Butter Paper' && !needsPrint;
-        // Gate on an active Sticker-type SR so that print items alongside butter packaging
+        const duNameLc = kitDuNameOf(item, order).toLowerCase();
+        const hasExplicitButterTab = (isKitItem && (kitTabOf(item, order) === 'Butter Paper' || duNameLc.includes('butter'))) || item.packingMaterialTab === 'Butter Paper';
+        // "Can bypass the sticker-first gate" — standalone items that don't need the sticker step.
+        const canBypassButterSticker = !isKitItem && item.packingMaterialTab === 'Butter Paper' && !mustClearSticker;
+        // Gate on an active Sticker-type SR so that sticker items alongside butter packaging
         // still wait in the print tab until printed.
         const sr = findSR(order.id, product, 'Sticker');
         const hasActiveSR = sr && !STICKER_MOVED_ON_STATUSES.has(sr.status);
-        if (needsPrint && !canBypassButterSticker && !isStickerPrinted(order.id, product, idx)) return;
+        if (mustClearSticker && !canBypassButterSticker && !isStickerPrinted(order.id, product, idx)) return;
         // Active SR from the print tab blocks display even when no print step is explicitly set.
         if (!needsPrint && hasActiveSR && !hasExplicitButterTab && !isStickerPrinted(order.id, product, idx)) return;
         // No print step, Logo Required = No → no routing to Butter Paper tab, unless explicit Butter Paper tab is set.
@@ -584,7 +616,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
         const itemQty = Number(item.qty) || 0;
-        const butterNote = needsPrint ? 'Print approved — now in butter paper queue' : 'Butter paper packing';
+        const butterNote = mustClearSticker
+          ? 'Print approved — now in butter paper queue'
+          : needsPrint ? 'Butter paper packing (printing at packaging stage)' : 'Butter paper packing';
 
         const makeButterRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-butter${keySuffix}`,
@@ -606,6 +640,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           isEmergencyGated,
           logoRequired: order.logoRequired || false,
           logoUrl: order.logoUrl || '',
+          isKit: isKitItem,
+          displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
+          sticker: item.sticker || '',
+          printing: item.printing || '',
+          packingMaterial: item.packingMaterial || item.packaging || '',
         });
 
         if (eQty !== undefined) {

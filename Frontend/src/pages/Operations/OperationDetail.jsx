@@ -64,6 +64,7 @@ import {
   useUploadStickerDesignMutation,
   useUpdateStickerStatusMutation,
   useGetTasksQuery,
+  useGetPackingConfigQuery,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -101,6 +102,12 @@ export default function OperationDetail() {
   const stickerRequests = stickerData?.data || [];
   const { data: invData } = useGetItemsQuery({ limit: 1000 });
   const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
+  const { data: packingConfigRaw } = useGetPackingConfigQuery();
+  // displayUnit name → Operations tab mapping (for per-kit routing).
+  const displayUnitTabMap = useMemo(() => {
+    const entries = (packingConfigRaw?.data || []).filter((c) => c.type === 'displayUnit');
+    return Object.fromEntries(entries.map((c) => [c.value, c.tabMapping || '']));
+  }, [packingConfigRaw]);
 
   // Build { sticker_printing: [...], box: [...], frosted_ziplock: [...] } from live vendor data.
   const PRINTING_VENDORS = useMemo(() => {
@@ -206,14 +213,29 @@ export default function OperationDetail() {
     isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
     splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
     // Fall back to o.products when items is empty (legacy / sample orders that only stored products)
-    items: (o.items?.length ? o.items : (o.products || [])).map((it, idx) => {
-      const sticker = normYNOps(it.sticker || it.stickerPrinting);
-      const printing = normYNOps(it.printing);
-      const pmRaw = it.packingMaterial || it.packaging || '';
-      const packingMaterialTab = it.packingMaterialTab || packTabFromString(pmRaw);
-      const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, it.logoType);
-      return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, logoType };
-    }),
+    items: (() => {
+      // Per-kit display-unit map (by kitId) so each kit in a multi-kit order routes to its OWN tab.
+      const kitOrdersList = ((o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || []).filter(Boolean);
+      const kitCfgById = Object.fromEntries(kitOrdersList.filter((k) => k.kitId).map((k) => [k.kitId, k]));
+      return (o.items?.length ? o.items : (o.products || [])).map((it, idx) => {
+        const isKitItem = !!(it.isKit || it.kitType);
+        const kitCfg = isKitItem
+          ? (kitCfgById[it.kitId] || (kitOrdersList.length === 1 ? kitOrdersList[0] : null))
+          : null;
+        // Kit items fall back to the kit-level sticker/printing entered in the per-kit Order Details card.
+        const sticker = normYNOps(it.sticker || it.stickerPrinting || (isKitItem ? kitCfg?.sticker : ''));
+        const printing = normYNOps(it.printing || (isKitItem ? kitCfg?.printing : ''));
+        const pmRaw = it.packingMaterial || it.packaging || '';
+        const packingMaterialTab = it.packingMaterialTab || packTabFromString(pmRaw);
+        // Per-kit display unit → its own Operations tab (config map first, name-string fallback).
+        const itemDisplayUnit = isKitItem ? (it.displayUnit || kitCfg?.displayUnit || '') : (it.displayUnit || '');
+        const itemDisplayUnitTab = (isKitItem && itemDisplayUnit)
+          ? (it.displayUnitTab || displayUnitTabMap[itemDisplayUnit] || packTabFromString(itemDisplayUnit))
+          : (it.displayUnitTab || '');
+        const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, it.logoType);
+        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitTab: itemDisplayUnitTab, logoType };
+      });
+    })(),
     readiness: o.readiness || {},
     location: o.location || o.leadId?.location || o.leadId?.locationCity || '',
     phone: o.clientPhone || o.phone || o.leadId?.phone || '',
@@ -267,7 +289,7 @@ export default function OperationDetail() {
         return true;
       });
     })(),
-  })), [ordersData]);
+  })), [ordersData, displayUnitTabMap]);
   const checkStates = useMemo(() => getCheckStateMap(allOrders), [allOrders]);
   const productionQueues = useMemo(() => buildProductionQueues(allOrders, stickerRequests), [allOrders, stickerRequests]);
   const [taskOptions, setTaskOptions] = useState(['Packing', 'Labeling', 'Filling']);
