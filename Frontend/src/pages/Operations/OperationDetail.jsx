@@ -855,34 +855,6 @@ export default function OperationDetail() {
       },
     },
     {
-      title: 'Selling Price',
-      key: 'sellingPrice',
-      align: 'right',
-      render: (_, record) => {
-        const name = record.itemName || record.name || record.kitType;
-        const sp = record.price || record.rate || record.itemId?.sellingPrice || invMap[name]?.sellingPrice;
-        return sp ? <Text>₹{Number(sp).toLocaleString()}</Text> : '-';
-      },
-    },
-    {
-      title: 'Value',
-      key: 'value',
-      align: 'right',
-      render: (_, record) => {
-        const val = record.lineTotal || (record.qty || 0) * (record.price || record.rate || 0);
-        return val ? <Text strong style={{ color: '#B11E6A' }}>₹{Number(val).toLocaleString()}</Text> : '-';
-      },
-    },
-    {
-      title: 'GST %',
-      key: 'gst',
-      align: 'center',
-      render: (_, record) => {
-        const gst = record.gst ?? order?.gstPercent;
-        return gst != null ? <Tag color="blue">{gst}%</Tag> : '-';
-      },
-    },
-    {
       title: 'HSN Code',
       key: 'hsnCode',
       render: (_, record) => {
@@ -1055,6 +1027,8 @@ export default function OperationDetail() {
     {
       title: 'Ops Approval',
       key: 'opsApproval',
+      fixed: 'right',
+      width: 140,
       render: (_, record) => {
         const name = (record.product || record.itemName || record.name || '').toLowerCase();
         const sr = stickerRequestMap[name];
@@ -1095,29 +1069,26 @@ export default function OperationDetail() {
     {
       title: 'Assign Task',
       key: 'assignTask',
+      fixed: 'right',
+      width: 140,
       render: (_, record) => {
-        // Determine if this product already has a task
         const itemIndex = (order?.items || []).findIndex((it) => String(it.key) === String(record.key));
         const alreadyTasked = (itemIndex >= 0 && taskedProductIndices.has(itemIndex))
           || taskedProductNames.has((record.product || record.itemName || record.name || '').toLowerCase());
-        if (alreadyTasked) {
-          return (
-            <Tooltip title="A task is already assigned for this product on this order. Delete the existing task to reassign.">
-              <Tag color="green" style={{ borderRadius: 6, cursor: 'default', fontSize: 11 }}>
-                ✓ Task Assigned
-              </Tag>
-            </Tooltip>
-          );
-        }
         return (
-          <Button
-            type="primary"
-            size="small"
-            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-            onClick={() => openAssignModal(record, order)}
-          >
-            Assign Task
-          </Button>
+          <Space direction="vertical" size={4}>
+            {alreadyTasked && (
+              <Tag color="green" style={{ borderRadius: 6, fontSize: 10, margin: 0 }}>✓ Task Assigned</Tag>
+            )}
+            <Button
+              type="primary"
+              size="small"
+              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+              onClick={() => openAssignModal(record, order)}
+            >
+              {alreadyTasked ? 'Add Another Task' : 'Assign Task'}
+            </Button>
+          </Space>
         );
       },
     },

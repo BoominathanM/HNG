@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { flushSync } from 'react-dom';
 import dayjs from 'dayjs';
 import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal, Form, Row, Col, Typography,
@@ -1174,7 +1175,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const handleProductSelect = (value) => {
     const item = inventoryItemsData.find((i) => i._id === value);
     if (!item) return;
-    if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
+    // flushSync forces a synchronous React render so the InputNumber receives its
+    // new value prop before the browser paints — prevents the "click to reveal" lag.
+    flushSync(() => {
+      form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice ?? 0);
+    });
     if (item.gstPercent != null && item.gstPercent > 0) form.setFieldValue([fieldName, name, 'gst'], item.gstPercent);
     if (item.unit) form.setFieldValue([fieldName, name, 'unit'], item.unit);
     if (item.hsnCode) form.setFieldValue([fieldName, name, 'hsnCode'], item.hsnCode);
@@ -1297,7 +1302,9 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       const item = inventoryItemsData.find(i => i._id === selectedId);
                       form.setFieldValue([fieldName, name, 'name'], item?.itemName ?? selectedId);
                       if (!item) return;
-                      if (item.sellingPrice) form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice);
+                      flushSync(() => {
+                        form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice ?? 0);
+                      });
                       if (item.gstPercent != null && item.gstPercent > 0) form.setFieldValue([fieldName, name, 'gst'], item.gstPercent);
                       if (item.unit) form.setFieldValue([fieldName, name, 'unit'], item.unit);
                       if (item.hsnCode) form.setFieldValue([fieldName, name, 'hsnCode'], item.hsnCode);
@@ -2051,6 +2058,7 @@ export default function Sales() {
       hotelName: order.hotelName || order.clientName || '',
       billingName: order.billingName || order.clientName || '',
       contactPerson: order.contactPerson || '',
+      pocDesignation: order.pocDesignation || '',
       phone: order.phone || '',
       email: order.email || '',
       alternativeName: order.alternativeName || '',
@@ -2067,6 +2075,11 @@ export default function Sales() {
       location: order.location || '',
       destination: order.destination || '',
       salesPerson: order.salesPerson || '',
+      branch: order.branch || '',
+      deliveryBy: order.deliveryBy || '',
+      transportationBy: order.transportationBy || '',
+      forwardingCharge: order.forwardingCharge || false,
+      forwardingChargeAmount: order.forwardingChargeAmount || 0,
     });
     setOrderEditPaymentProofs(
       (order.paymentProofs || []).map((f, i) => ({
@@ -2166,6 +2179,7 @@ export default function Sales() {
         hotelName: vals.hotelName || orderEditTarget.hotelName,
         billingName: vals.billingName || orderEditTarget.billingName,
         contactPerson: vals.contactPerson || orderEditTarget.contactPerson,
+        pocDesignation: vals.pocDesignation || orderEditTarget.pocDesignation,
         phone: vals.phone || orderEditTarget.phone,
         email: vals.email || orderEditTarget.email,
         alternativeName: vals.alternativeName || orderEditTarget.alternativeName,
@@ -2182,6 +2196,11 @@ export default function Sales() {
         location: vals.location || orderEditTarget.location,
         destination: vals.destination || orderEditTarget.destination,
         salesPerson: vals.salesPerson || orderEditTarget.salesPerson,
+        branch: vals.branch || orderEditTarget.branch,
+        deliveryBy: vals.deliveryBy || orderEditTarget.deliveryBy,
+        transportationBy: vals.transportationBy || orderEditTarget.transportationBy,
+        forwardingCharge: vals.forwardingCharge ?? orderEditTarget.forwardingCharge,
+        forwardingChargeAmount: vals.forwardingChargeAmount ?? orderEditTarget.forwardingChargeAmount,
         kitDisplayUnit: editStore.kitDisplayUnit || orderEditTarget.kitDisplayUnit,
         kitDisplayUnitType: editStore.kitDisplayUnitType || orderEditTarget.kitDisplayUnitType,
         kitSize: editStore.kitSize || orderEditTarget.kitSize,
@@ -2227,6 +2246,7 @@ export default function Sales() {
           clientName: updated.hotelName,
           billingName: updated.billingName,
           contactPerson: updated.contactPerson,
+          pocDesignation: updated.pocDesignation || undefined,
           clientPhone: updated.phone,
           email: updated.email || undefined,
           alternativeName: updated.alternativeName || undefined,
@@ -2243,6 +2263,11 @@ export default function Sales() {
           location: updated.location || undefined,
           destination: updated.destination || undefined,
           salesPerson: updated.salesPerson || undefined,
+          branch: updated.branch || undefined,
+          deliveryBy: updated.deliveryBy || undefined,
+          transportationBy: updated.transportationBy || undefined,
+          forwardingCharge: updated.forwardingCharge != null ? updated.forwardingCharge : undefined,
+          forwardingChargeAmount: updated.forwardingChargeAmount != null ? updated.forwardingChargeAmount : undefined,
           kitDisplayUnit: updated.kitDisplayUnit || undefined,
           kitDisplayUnitType: updated.kitDisplayUnitType || undefined,
           kitSize: updated.kitSize || undefined,
@@ -2697,7 +2722,7 @@ export default function Sales() {
   const performanceTargets = perfRaw?.data?.targets || [];
   const performanceRewards = perfRaw?.data?.rewards || {};
   const salesPersonOptions = (usersRaw?.data || [])
-    .filter((u) => u.fullName)
+    .filter((u) => u.fullName && u.department === 'Sales')
     .map((u) => ({ value: u.fullName, label: u.fullName }));
   const kits = kitsRaw?.data || [];
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
@@ -2734,7 +2759,7 @@ export default function Sales() {
       const kitCat = existingKo?.category || defaultKitCategory(productType);
       (kit.products || []).forEach(p => {
         const invItem = inventoryItemsRaw.find(i => i.itemName === p.productName);
-        const rate = p.rate || invItem?.sellingPrice || 0;
+        const rate = invItem?.sellingPrice ?? p.sellingPrice ?? p.rate ?? 0;
         allKitRows.push({
           isKit: true,
           kitType: p.productName,
@@ -4665,7 +4690,7 @@ export default function Sales() {
     },
     { title: 'Source', dataIndex: 'source', width: 110, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     { title: 'Assigned To', dataIndex: 'salesPerson', width: 115, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
-    { title: 'Follow Up Name', dataIndex: 'followUpName', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+    { title: 'Follow Up Note', dataIndex: 'followUpName', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
       title: 'Follow Up Date/Time', dataIndex: 'followUpDate', width: 165,
       render: (v, r) => <Text style={{ fontSize: 13 }}>{v ? `${dayjs(v).format('DD MMM YYYY')}${r.followUpTime ? ' ' + r.followUpTime : ''}` : '—'}</Text>,
@@ -6743,9 +6768,11 @@ export default function Sales() {
                     <Tag color={o.hotelType === 'OLD' ? 'blue' : 'green'}>{o.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}</Tag>
                   </Descriptions.Item>
                 )}
+                {o.branch && <Descriptions.Item label="Branch">{o.branch}</Descriptions.Item>}
                 {o.rooms && <Descriptions.Item label="No. of Rooms">{o.rooms}</Descriptions.Item>}
                 {o.occupancy && <Descriptions.Item label="Occupancy (%)">{`${o.occupancy}%`}</Descriptions.Item>}
                 <Descriptions.Item label="Contact Person">{o.contactPerson || '—'}</Descriptions.Item>
+                {o.pocDesignation && <Descriptions.Item label="POC Designation">{o.pocDesignation}</Descriptions.Item>}
                 <Descriptions.Item label="Phone">{o.phone || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Email">{o.email || '—'}</Descriptions.Item>
                 {o.alternativeName && <Descriptions.Item label="Alt. Name">{o.alternativeName}</Descriptions.Item>}
@@ -6794,6 +6821,7 @@ export default function Sales() {
                   : null;
                 const kitPsPA = paProducts.filter(p => p && (p.isKit || p.kitType));
                 const isKitTypePA = ptHasKitUI(paProductType);
+                const paPackagingIncludes = oPickPA('packagingIncludes') || [];
                 const hasKitInfoPA = oSelKitIdsPA.length > 0 || paDisplayUnit || paKitPrice || paKitQty || kitPsPA.length > 0;
                 if (!hasKitInfoPA && !paProductType) return null;
                 const kitProductsToShowPA = kitPsPA.length > 0
@@ -6903,6 +6931,24 @@ export default function Sales() {
                       {isKitTypePA && kitProductsToShowPA.length === 0 && kitNamePA && (
                         <div style={{ padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px dashed rgba(114,46,209,0.2)' }}>
                           <Text type="secondary" style={{ fontSize: 12 }}>Kit: <Text strong style={{ color: '#722ed1' }}>{kitNamePA}</Text> — products listed below in Order Details</Text>
+                        </div>
+                      )}
+                      {ptHasPersonalized(paProductType) && paPackagingIncludes.length > 0 && (
+                        <div style={{ padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.2)' }}>
+                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6, letterSpacing: 0.6 }}>INCLUDED IN KIT PACKAGING</Text>
+                          <Space wrap size={4}>
+                            {paPackagingIncludes.map((v, i) => {
+                              const id = typeof v === 'object' ? v.id : v;
+                              const qty = typeof v === 'object' ? v.qty : null;
+                              const kMatch = kits.find(k => k._id === id);
+                              const label = kMatch?.kitName || id;
+                              return (
+                                <Tag key={i} color={kMatch ? 'purple' : 'orange'} style={{ borderRadius: 12, fontSize: 11 }}>
+                                  {label}{qty && qty > 1 ? ` ×${qty}` : ''}
+                                </Tag>
+                              );
+                            })}
+                          </Space>
                         </div>
                       )}
                     </div>
@@ -7327,6 +7373,8 @@ export default function Sales() {
                   <Col xs={24} sm={8}><Form.Item label="Location / City" name="location"><Input placeholder="e.g. Coimbatore" /></Form.Item></Col>
                   <Col xs={24} sm={8}><Form.Item label="Destination" name="destination"><Input placeholder="e.g. Chennai" /></Form.Item></Col>
                   <Col xs={24} sm={8}><Form.Item label="Assigned To (Sales)" name="salesPerson"><Input placeholder="Sales person name" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Branch" name="branch"><Input placeholder="e.g. Main Branch" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="POC Designation" name="pocDesignation"><Input placeholder="GM, Manager" /></Form.Item></Col>
                 </Row>
               </Card>
 
@@ -7416,6 +7464,9 @@ export default function Sales() {
                             </Form.Item>
                             </Col>
                             </>)}
+                            <Col xs={24}><Form.Item label="Specification / Notes" name={['kitOrders', kitIndex, 'specification']} style={{ marginBottom: 8 }}>
+                              <Input.TextArea rows={2} placeholder="Kit specification notes, special requirements..." />
+                            </Form.Item></Col>
                           </Row>
                           <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.kitPrice !== c.kitOrders?.[kitIndex]?.kitPrice || p.kitOrders?.[kitIndex]?.overallQty !== c.kitOrders?.[kitIndex]?.overallQty}>
                             {({ getFieldValue }) => {
@@ -7519,6 +7570,20 @@ export default function Sales() {
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CalendarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
                 <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}><DatePicker style={{ width: '100%' }} /></Form.Item>
+                <Row gutter={[12, 0]}>
+                  <Col xs={24} sm={8}><Form.Item label="Delivery By" name="deliveryBy"><SelectWithAdd field="deliveryBy" defaultOptions={[{ value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Transport Cost Scope" name="transportationBy"><SelectWithAdd field="transportationBy" defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'TTDC', label: 'TTDC' }]} placeholder="Select or Add" /></Form.Item></Col>
+                  <Col xs={24} sm={8}>
+                    <Form.Item name="forwardingCharge" valuePropName="checked"><Checkbox>Forwarding charge applicable</Checkbox></Form.Item>
+                    <Form.Item noStyle shouldUpdate={(p, c) => p.forwardingCharge !== c.forwardingCharge}>
+                      {({ getFieldValue }) => getFieldValue('forwardingCharge') ? (
+                        <Form.Item label="Forwarding Charge Amount (₹)" name="forwardingChargeAmount">
+                          <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                        </Form.Item>
+                      ) : null}
+                    </Form.Item>
+                  </Col>
+                </Row>
                 {orderEditTarget?.orderCategory !== 'SAMPLE' && <Form.Item label="Payment Terms" name="paymentTerms" rules={[{ required: true }]}>
                   <Select onChange={(val) => {
                     const prods = orderEditForm.getFieldValue('editProducts') || [];

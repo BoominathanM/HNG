@@ -368,6 +368,19 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     forwardingCharge: lead.forwardingCharge,
     forwardingChargeAmount: lead.forwardingChargeAmount || 0,
     paymentTerms: lead.paymentTerms,
+    // Alternative contact details — Lead uses altName/altRole/altNumber; carry to negotiation
+    alternativeName: lead.altName || lead.alternativeName || '',
+    alternativeRole: lead.altRole || lead.alternativeRole || '',
+    alternativePhone: lead.altNumber || lead.alternativePhone || '',
+    pocDesignation: lead.pocDesignation || '',
+    hotelType: lead.hotelType || '',
+    rooms: lead.numRooms || lead.rowsInHotel,
+    occupancy: lead.generalOccupancy,
+    branch: lead.branch || '',
+    destination: lead.destination || '',
+    // Kit packaging includes — critical for personalized kit orders to survive to Order
+    packagingIncludes: req.body.packagingIncludes || lead.packagingIncludes || [],
+    packagingIncludesQty: req.body.packagingIncludesQty || lead.packagingIncludesQty || {},
     // Emergency / partial-delivery data so it survives lead → negotiation → order
     splitDates: req.body.splitDates || lead.splitDates || [],
     isEmergency: !!(req.body.isEmergency) || !!(lead.isEmergency) || !!(lead.splitDates?.length),
@@ -500,6 +513,19 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     isEmergency: !!(lead?.isEmergency) || !!(lead?.splitDates?.length),
     isUrgent: !!(lead?.isUrgent) || !!(lead?.splitDates?.length),
     deliveryType: lead?.splitDates?.length ? 'Partial' : resolveField(negObj.deliveryType, 'Full'),
+    // Alternative contact details — Lead uses altName/altRole/altNumber; negotiation uses alternativeName/Role/Phone
+    alternativeName: resolveField(negObj.alternativeName, lead?.altName, lead?.alternativeName),
+    alternativeRole: resolveField(negObj.alternativeRole, lead?.altRole, lead?.alternativeRole),
+    alternativePhone: resolveField(negObj.alternativePhone, lead?.altNumber, lead?.alternativePhone),
+    pocDesignation: resolveField(negObj.pocDesignation, lead?.pocDesignation),
+    hotelType: resolveField(negObj.hotelType, lead?.hotelType),
+    rooms: resolveField(negObj.rooms, lead?.numRooms, lead?.rowsInHotel),
+    occupancy: resolveField(negObj.occupancy, lead?.generalOccupancy),
+    branch: resolveField(negObj.branch, lead?.branch),
+    destination: resolveField(negObj.destination, lead?.destination),
+    // Kit packaging includes (top-level, across all kits in a personalized order)
+    packagingIncludes: negObj.packagingIncludes || lead?.packagingIncludes || [],
+    packagingIncludesQty: negObj.packagingIncludesQty || lead?.packagingIncludesQty || {},
     // Display/kit fields chosen during lead creation
     displayUnit: resolveField(negObj.displayUnit, lead?.displayUnit),
     kitDisplayUnit: resolveField(negObj.kitDisplayUnit, lead?.kitDisplayUnit),
