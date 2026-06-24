@@ -537,6 +537,21 @@ export default function OperationDetail() {
     return map;
   }, [stickerRequests, order?.key, id]);
 
+  // Kit-level SR lookup: stickerType → SR (for SRs where product='Kit').
+  // All kit items with the same display-unit tab (Box/Ziplock/Butter Paper) share ONE SR,
+  // so approving once covers every item of that kit type in this order.
+  const kitSRByType = useMemo(() => {
+    const map = {};
+    stickerRequests
+      .filter((sr) => {
+        const srOrderId = String(sr.orderId?._id || sr.orderId || '');
+        return (srOrderId === String(order?.key || '') || sr.orderId?.orderCode === id)
+          && (sr.product || '').toLowerCase() === 'kit';
+      })
+      .forEach((sr) => { map[sr.stickerType || 'Box'] = sr; });
+    return map;
+  }, [stickerRequests, order?.key, id]);
+
   // Kit display-unit packaging approval (one per kit order, stickerType='Display Unit').
   // Distinct from the per-product sticker design approval — this is the final sign-off on
   // the kit's display unit (Box/Ziplock packaging) by both Sales and Operations.
@@ -749,6 +764,15 @@ export default function OperationDetail() {
         })}
       </Space>
     );
+  };
+
+  // Resolve the shared Kit SR for a kit item based on its display-unit tab.
+  // Returns the SR that ALL kit items with the same packaging type share → single approval covers all.
+  const resolveKitSR = (record) => {
+    if (!(record.isKit || record.kitType)) return null;
+    const duTab = record.displayUnitTab || '';
+    const st = duTab === 'Ziplock' ? 'Frosted Ziplock' : duTab === 'Butter Paper' ? 'Butter Paper' : 'Box';
+    return kitSRByType[st] || Object.values(kitSRByType)[0] || null;
   };
 
   const productColumns = [
@@ -989,7 +1013,7 @@ export default function OperationDetail() {
       width: 90,
       render: (_, record) => {
         const name = (record.product || record.itemName || record.name || '').toLowerCase();
-        const sr = stickerRequestMap[name];
+        const sr = resolveKitSR(record) || stickerRequestMap[name];
         const url = sr?.designFileUrl;
         if (!url) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
         const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
@@ -1031,7 +1055,7 @@ export default function OperationDetail() {
       width: 140,
       render: (_, record) => {
         const name = (record.product || record.itemName || record.name || '').toLowerCase();
-        const sr = stickerRequestMap[name];
+        const sr = resolveKitSR(record) || stickerRequestMap[name];
         if (!sr) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
         if (sr.opsHeadApproved) {
           return (

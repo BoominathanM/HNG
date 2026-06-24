@@ -1717,6 +1717,12 @@ export default function Operations() {
                   setPrintingStatuses((prev) => ({ ...prev, [ord.id]: 'Yet to Receive' }));
                   setDispatchTimes((prev) => ({ ...prev, [ord.id]: { date: vals.dispatchDate, time: vals.dispatchTime } }));
                 }
+                // Persist dispatch on the StickerRequest so the step survives page refresh.
+                // findStickerReq uses the key suffix (-box/-frosted/-butter) to find the right SR type.
+                const sr = findStickerReq(selectedQueueItem);
+                if (sr?._id) {
+                  await updateStickerStatus({ id: sr._id, status: 'Dispatch' }).unwrap();
+                }
                 setSelectedQueueItem((prev) => ({ ...prev, dispatchDate: vals.dispatchDate, dispatchTime: vals.dispatchTime }));
                 if (selectedQueueItem) advanceStep(selectedQueueItem.key, 4);
                 enqueueSnackbar(`Dispatched to Operations at ${vals.dispatchTime}`, { variant: 'success' });

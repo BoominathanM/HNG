@@ -17,7 +17,7 @@ import {
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
   WarningOutlined, ExclamationCircleOutlined, DollarOutlined, AlertFilled, ExperimentOutlined,
-  AppstoreOutlined,
+  AppstoreOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -1932,6 +1932,7 @@ export default function Sales() {
   const [payEntrySaving, setPayEntrySaving] = useState(false);
   const [payEntryProof, setPayEntryProof] = useState(null); // { name, url } after upload
   const [payEntryProofUploading, setPayEntryProofUploading] = useState(false);
+  const [leadPayEntryProofUploadingMap, setLeadPayEntryProofUploadingMap] = useState({});
 
   const handleDownloadQuotation = (order) => {
     // findLinkedQuotation handles both raw ObjectId and populated {_id, quotCode} objects
@@ -3378,7 +3379,12 @@ export default function Sales() {
       paymentProofs: paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []),
       paymentCollection: [
         ...(selectedRecord?.paymentCollection || []),
-        ...(values.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() })),
+        ...(values.paymentCollection || []).filter(e => e?.paymentMethod).map((e, idx) => {
+          // proof is set via setFieldValue (not a Form.Item) so validateFields may omit it;
+          // fall back to formStore which always has the full store value.
+          const storeEntry = (formStore.paymentCollection || [])[idx];
+          return { ...e, proof: e?.proof || storeEntry?.proof, recordedAt: e?.recordedAt || new Date().toISOString() };
+        }),
       ],
       paymentStatus: (() => {
         const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
@@ -3627,7 +3633,15 @@ export default function Sales() {
       values.splitDates = values.splitDates.map(sd => ({ ...sd, date: toStr(sd.date) }));
     }
     if (section === 'delivery') {
-      const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
+      // Merge existing saved entries with new ones from the form, picking up proof from
+      // the full form store (proof is set via setFieldValue, not a registered Form.Item).
+      const sectionFormStore = leadForm.getFieldsValue(true);
+      const newEntries = (values.paymentCollection || []).filter(e => e?.paymentMethod).map((e, idx) => {
+        const storeEntry = (sectionFormStore.paymentCollection || [])[idx];
+        return { ...e, proof: e?.proof || storeEntry?.proof, recordedAt: e?.recordedAt || now };
+      });
+      values.paymentCollection = [...(selectedRecord?.paymentCollection || []), ...newEntries];
+      const collectionEntries = values.paymentCollection.filter(e => Number(e.paidAmount) > 0);
       const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const recordTotal = r2(computeRecordGrandTotal(selectedRecord));
       if (collectionTotal > 0) {
@@ -8866,6 +8880,12 @@ export default function Sales() {
                       <Descriptions.Item label="Destination">{record.destination || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Assigned To">{record.salesPerson || '—'}</Descriptions.Item>
                       {record.source && <Descriptions.Item label="Source">{record.source}</Descriptions.Item>}
+                      {record.priority > 0 && (
+                        <Descriptions.Item label="Priority Level">
+                          <Progress percent={record.priority} size="small" strokeColor="#B11E6A" style={{ maxWidth: 200, display: 'inline-block' }} />
+                        </Descriptions.Item>
+                      )}
+                      {record.priorityNote && <Descriptions.Item label="Priority Note">{record.priorityNote}</Descriptions.Item>}
                     </Descriptions>
                     {/* Software Interest */}
                     {record.interestedInSoftware && (
@@ -11450,16 +11470,17 @@ export default function Sales() {
                                   <InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="e.g. 5000" />
                                 </Form.Item>
                               </Col>
-                              <Col xs={24} sm={7}>
+                              <Col xs={24} sm={5}>
                                 <Form.Item {...rest} name={[name, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
                                   <Input size="small" placeholder="e.g. UPI ref no." />
                                 </Form.Item>
                               </Col>
-                              <Col xs={4} sm={3} style={{ paddingTop: 22 }}>
+                              <Col xs={24} sm={5} style={{ paddingTop: 22 }}>
                                 <Upload
                                   accept="image/*,.pdf"
                                   showUploadList={false}
                                   customRequest={async ({ file, onSuccess, onError }) => {
+                                    setLeadPayEntryProofUploadingMap(prev => ({ ...prev, [name]: true }));
                                     const fd = new FormData();
                                     fd.append('files', file);
                                     try {
@@ -11471,16 +11492,30 @@ export default function Sales() {
                                         enqueueSnackbar('Proof uploaded', { variant: 'success' });
                                       } else onError(new Error('Upload failed'));
                                     } catch (err) { onError(err); enqueueSnackbar('Upload failed', { variant: 'error' }); }
+                                    finally { setLeadPayEntryProofUploadingMap(prev => ({ ...prev, [name]: false })); }
                                   }}
                                 >
-                                  <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontSize: 11 }}>
-                                    {(watchedLeadPaymentCollection?.[name]?.proof?.url) ? 'Change' : 'Proof'}
+                                  <Button
+                                    size="small"
+                                    icon={leadPayEntryProofUploadingMap[name] ? <LoadingOutlined /> : <UploadOutlined />}
+                                    loading={!!leadPayEntryProofUploadingMap[name]}
+                                    style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontSize: 11 }}
+                                  >
+                                    {leadPayEntryProofUploadingMap[name] ? 'Uploading…' : (watchedLeadPaymentCollection?.[name]?.proof?.url ? 'Change Proof' : 'Upload Proof')}
                                   </Button>
                                 </Upload>
-                                {watchedLeadPaymentCollection?.[name]?.proof?.url && (
-                                  <a href={watchedLeadPaymentCollection[name].proof.url} target="_blank" rel="noopener noreferrer"
-                                    style={{ fontSize: 10, color: '#1890ff', display: 'block', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 60 }}>
-                                    <FileTextOutlined /> View
+                                {watchedLeadPaymentCollection?.[name]?.proof?.url && !leadPayEntryProofUploadingMap[name] && (
+                                  <a
+                                    href={watchedLeadPaymentCollection[name].proof.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4, marginTop: 5, padding: '3px 7px', borderRadius: 6, background: 'rgba(24,144,255,0.06)', border: '1px solid rgba(24,144,255,0.2)', maxWidth: 160, overflow: 'hidden' }}
+                                  >
+                                    <FileTextOutlined style={{ flexShrink: 0 }} />
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {watchedLeadPaymentCollection[name].proof.name || 'View Proof'}
+                                    </span>
+                                    <span style={{ flexShrink: 0, color: '#1890ff' }}>↗</span>
                                   </a>
                                 )}
                               </Col>
