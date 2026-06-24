@@ -3995,12 +3995,19 @@ export default function Sales() {
           status: payStatus,
           type: effectiveBillType === 'GST' ? 'GST' : 'Non-GST',
           billType: effectiveBillType,
+          // Spread the full product FIRST so dynamic specifications (shape, fragrance, size,
+          // color, specification, productAttributes, category + kit fields) survive into
+          // quotation.items and flow through negotiation → order → Operations. Previously this
+          // hand-picked map dropped them, so anything reading order.items (Operations, Parties,
+          // Billing) showed no specs even though order.products kept them.
           items: (values.products || []).map((p) => ({
-            itemName: p.name,
+            ...p,
+            itemName: p.name || p.itemName,
             unit: p.unit,
             price: Number(p.rate) || 0,
             qty: Number(p.qty) || 0,
             lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
+            attachments: normalizeAttachments(p.attachments),
           })),
           products: values.products || [],
           note: values.note,
@@ -7432,7 +7439,23 @@ export default function Sales() {
 
               {/* ── Kit Details (editable) ── */}
               {(() => {
-                const editKitIds = watchedOrderEditSelKits.length > 0 ? watchedOrderEditSelKits : (orderEditTarget?.selectedKit ? [orderEditTarget.selectedKit] : []);
+                // Resolve which kits to render per-kit "Order Details" cards for. Prefer the live
+                // selectedKits watch (reactive while the user edits the Kit selection). When that's
+                // empty (e.g. selectedKits never reached the form, or useWatch hasn't caught up),
+                // fall back to the kit ids ALREADY present on the order — derived from kitOrders
+                // (whose index the per-kit Form.Items bind to) and from kit products. Without this,
+                // a converted order with kitOrders but no selectedKits in the form rendered only the
+                // generic fallback card, so the full per-kit "Dental kit — Order Details" card (with
+                // Display Unit / Box Type / Size / Sticker / Logo / Printing / Lamination / Qty /
+                // Kit Price / Specification) went missing.
+                const koKitIds = ((orderEditForm.getFieldValue('kitOrders') || orderEditTarget?.kitOrders || []).map(k => k?.kitId).filter(Boolean));
+                const prodKitIds = [...new Set((orderEditForm.getFieldValue('editProducts') || []).filter(p => p?.isKit || p?.kitType).map(p => p?.kitId).filter(Boolean))];
+                const targetSelKits = (Array.isArray(orderEditTarget?.selectedKits) && orderEditTarget.selectedKits.length)
+                  ? orderEditTarget.selectedKits
+                  : (orderEditTarget?.selectedKit ? [orderEditTarget.selectedKit] : []);
+                const editKitIds = watchedOrderEditSelKits.length > 0
+                  ? watchedOrderEditSelKits
+                  : (koKitIds.length ? koKitIds : (targetSelKits.length ? targetSelKits : prodKitIds));
                 const hasKitProds = (orderEditForm.getFieldValue('editProducts') || []).some(p => p?.isKit || p?.kitType);
                 if (editKitIds.length === 0 && !hasKitProds) return null;
                 return (

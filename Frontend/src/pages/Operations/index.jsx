@@ -299,6 +299,14 @@ export default function Operations() {
       });
     })(),
     readiness: o.readiness || {},
+    // ─── Partial-delivery tracking (deliveryType Full/Partial + qty split) ───
+    // Carried through so the Operations list, queues and detail view reflect a
+    // partial delivery. Without these the partial badge/tag can never render.
+    qty: o.qty || (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0), 0),
+    deliveryType: o.deliveryType || '',
+    partialQty: o.partialQty || 0,
+    balanceQty: o.balanceQty || 0,
+    partialDeliveries: o.partialDeliveries || [],
     paymentProofs: o.paymentProofs || [],
     // Kit display fields — fall back to the populated leadId fields for orders created
     // before kitDisplayUnit was copied onto the Order document itself.
@@ -470,6 +478,13 @@ export default function Operations() {
           {record.orderCategory === 'SAMPLE' && (
             <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Sample Order</Tag>
           )}
+          {record.deliveryType === 'Partial' && (
+            <Tooltip title={`Partial delivery — ${record.partialQty || 0} now · balance ${record.balanceQty || 0} tracked under the same order ID`}>
+              <Tag color="orange" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>
+                Partial: {record.partialQty || 0} / bal {record.balanceQty || 0}
+              </Tag>
+            </Tooltip>
+          )}
         </Space>
       ),
     },
@@ -565,25 +580,36 @@ export default function Operations() {
       {
         title: 'Order',
         dataIndex: 'orderId',
-        render: (value, record) => (
-          <Space size={2} direction="vertical">
-            <Space size={4}>
+        render: (value, record) => {
+          const ord = apiOrders.find((o) => o.id === record.orderId);
+          const isPartial = ord?.deliveryType === 'Partial';
+          return (
+            <Space size={2} direction="vertical">
+              <Space size={4}>
+                {record.isUrgent && (
+                  <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
+                )}
+                {record.orderCategory === 'SAMPLE' && (
+                  <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />
+                )}
+                <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
+              </Space>
               {record.isUrgent && (
-                <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
+                <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Emergency Order</Tag>
               )}
               {record.orderCategory === 'SAMPLE' && (
-                <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />
+                <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Sample</Tag>
               )}
-              <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
+              {isPartial && (
+                <Tooltip title={`Partial delivery — produce ${ord.partialQty || 0} now · balance ${ord.balanceQty || 0} follows under the same order ID`}>
+                  <Tag color="orange" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>
+                    Partial: {ord.partialQty || 0} / bal {ord.balanceQty || 0}
+                  </Tag>
+                </Tooltip>
+              )}
             </Space>
-            {record.isUrgent && (
-              <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Emergency Order</Tag>
-            )}
-            {record.orderCategory === 'SAMPLE' && (
-              <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Sample</Tag>
-            )}
-          </Space>
-        ),
+          );
+        },
       },
       { title: 'Hotel Name', dataIndex: 'hotelLogo' },
       {

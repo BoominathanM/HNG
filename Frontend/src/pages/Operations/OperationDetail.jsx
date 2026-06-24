@@ -42,6 +42,7 @@ import {
   PlusOutlined,
   PrinterOutlined,
   TeamOutlined,
+  TruckOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -242,6 +243,12 @@ export default function OperationDetail() {
       });
     })(),
     readiness: o.readiness || {},
+    // Partial-delivery tracking — needed for the partial tag + split modal below.
+    qty: o.qty || (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0), 0),
+    deliveryType: o.deliveryType || '',
+    partialQty: o.partialQty || 0,
+    balanceQty: o.balanceQty || 0,
+    partialDeliveries: o.partialDeliveries || [],
     location: o.location || o.leadId?.location || o.leadId?.locationCity || '',
     phone: o.clientPhone || o.phone || o.leadId?.phone || '',
     email: o.email || o.leadId?.email || '',
@@ -1188,6 +1195,16 @@ export default function OperationDetail() {
           items={[{ label: 'Operations', link: '/operations' }, { label: order.id }]}
         />
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button
+            icon={<TruckOutlined />}
+            onClick={() => {
+              setPartialQtyInput(order.partialQty || 0);
+              setPartialModalOpen(true);
+            }}
+            style={{ color: '#fa8c16', borderColor: '#fa8c1655' }}
+          >
+            {order.deliveryType === 'Partial' ? 'Update Partial Delivery' : 'Split Partial Delivery'}
+          </Button>
           <Button icon={<TeamOutlined />} onClick={handleAssignAllProducts} style={{ color: '#B11E6A', borderColor: '#B11E6A55' }}>
             Assign Tasks (All Products)
           </Button>
@@ -1196,7 +1213,7 @@ export default function OperationDetail() {
 
       {order.deliveryType === 'Partial' && (order.balanceQty > 0 || order.partialQty > 0) && (
         <Tag color="orange" style={{ marginBottom: 8 }}>
-          Partial: {order.partialQty || 0} now Â· Balance {order.balanceQty || 0} (same order ID)
+          Partial: {order.partialQty || 0} now · Balance {order.balanceQty || 0} (same order ID)
         </Tag>
       )}
 

@@ -86,7 +86,11 @@ function PartyOrdersSection({ orders = [], isDark, cardBg }) {
     >
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
         {orders.map((o) => {
-          const items = (Array.isArray(o.items) && o.items.length ? o.items : (o.products || [])).filter(Boolean);
+          // Prefer o.products — it carries the full product specifications (shape, fragrance,
+          // size, color, specification, productAttributes) entered on the Lead. o.items can be
+          // spec-less on orders created before the quotation items map was fixed, so it's only a
+          // fallback for legacy orders that stored items but no products.
+          const items = (Array.isArray(o.products) && o.products.length ? o.products : (o.items || [])).filter(Boolean);
           const kitOrders = Array.isArray(o.kitOrders) ? o.kitOrders : [];
           // Kit-aware total: kitPrice×overallQty per kit, else items subtotal+GST, else stored total
           const koTotal = kitOrders.reduce((s, ko) => {
