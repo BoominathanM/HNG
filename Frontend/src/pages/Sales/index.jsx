@@ -2029,12 +2029,17 @@ export default function Sales() {
       // Preserve EVERY product field (specs, kit flags, dynamic inventory attributes) so they
       // survive the edit round-trip and can be displayed — only the editable numerics are coerced.
       // Fall back to the linked lead's products when the order itself stored none.
-      editProducts: ((order.products && order.products.length ? order.products : pickKit('products')) || []).filter(Boolean).map(p => ({
+      editProducts: ((order.products && order.products.length ? order.products : (order.items && order.items.length ? order.items : pickKit('products'))) || []).filter(Boolean).map(p => ({
         ...p,
         name: p.name || p.itemName || '',
         qty: Number(p.qty) || 0,
         rate: Number(p.rate || p.price) || 0,
         gst: Number(p.gst || p.gstPercent) || 0,
+        // Flatten nested inventory attributes so the editable spec dropdowns (bound to flat
+        // keys) show the saved values, mirroring how lead/quotation/negotiation round-trip.
+        ...((p.productAttributes && typeof p.productAttributes === 'object' && !Array.isArray(p.productAttributes)) ? p.productAttributes : {}),
+        // Rehydrate attachments to AntD fileList format so previously uploaded files show.
+        attachments: attachmentsToFileList(p.attachments),
       })),
       // Carry kit display-unit details so the Kit Details block renders on edit, same as Add/Lead.
       // Each pulls from the order first, then the linked negotiation/quotation/lead.
@@ -2132,6 +2137,8 @@ export default function Sales() {
           qty: Number(p.qty) || 0,
           rate: Number(p.rate) || 0,
           gst: Number(p.gst) || 0,
+          // Strip File objects so only persisted Cloudinary URLs are saved.
+          attachments: normalizeAttachments(p.attachments),
         })),
         vals.kitOrders || orderEditTarget.kitOrders || [],
       );
@@ -2500,11 +2507,18 @@ export default function Sales() {
     if (p.logo) push('Logo', p.logo === 'YES' ? 'Yes' : 'No');
     Object.entries(p).forEach(([k, v]) => {
       if (ORDER_EDIT_SHOWN_KEYS.has(k)) return;
+      if (k === 'productAttributes' || k === 'attachments' || k === 'kitIncludes' || k === 'kitIncludesQty' || k === 'specification') return;
       if (v == null || v === '') return;
       if (typeof v === 'object' && !Array.isArray(v)) return;
       if (Array.isArray(v) && v.length === 0) return;
       push(prettyAttrKeyLead(k), v);
     });
+    if (p.productAttributes && typeof p.productAttributes === 'object' && !Array.isArray(p.productAttributes)) {
+      Object.entries(p.productAttributes).forEach(([k, v]) => {
+        if (v != null && v !== '' && typeof v !== 'object') push(prettyAttrKeyLead(k), v);
+      });
+    }
+    if (p.specification) push('Specification', p.specification);
     if (p.otherSpecs) push('Other', p.otherSpecs);
     if (chips.length === 0 && !(p.isKit || p.kitType)) return null;
     return (
@@ -5319,6 +5333,8 @@ export default function Sales() {
                   {kSticker && <Tag color={kSticker === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Sticker: {kSticker === 'YES' ? 'Yes' : 'No'}</Tag>}
                   {kLogo && <Tag color={kLogo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Logo: {kLogo === 'YES' ? 'Yes' : 'No'}</Tag>}
                   {kPrinting && <Tag color={kPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Printing: {kPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
+                  {ko.displayUnitType && <Tag color="magenta" style={{ borderRadius: 12, fontSize: 11 }}>Box Type: {ko.displayUnitType}</Tag>}
+                  {ko.lamination && <Tag color={ko.lamination === 'YES' ? 'gold' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Lamination: {ko.lamination === 'YES' ? 'Yes' : 'No'}</Tag>}
                   {kPrice > 0 && <Tag color="orange" style={{ borderRadius: 12, fontSize: 11 }}>₹{Number(kPrice).toLocaleString()}{kQty > 0 ? ` × ${kQty} = ₹${(Number(kPrice) * kQty).toLocaleString()}` : ''}</Tag>}
                 </div>
                 {ko.specification && (
@@ -6832,9 +6848,9 @@ export default function Sales() {
                 const paKitPrinting = oPickPA('kitPrinting');
                 const paKitBoxType = oPickPA('kitDisplayUnitType') || (Array.isArray(o.kitOrders) && o.kitOrders[0]?.displayUnitType) || null;
                 const paKitLamination = oPickPA('kitLamination') || (Array.isArray(o.kitOrders) && o.kitOrders[0]?.lamination) || null;
-                const paKitPrice = oPickPA('kitPrice');
-                const paKitQty = oPickPA('kitOverallQty');
-                const paProducts = (o.products && o.products.length ? o.products : oPickPA('products')) || [];
+                const paKitPrice = oPickPA('kitPrice') || (Array.isArray(o.kitOrders) && o.kitOrders[0]?.kitPrice) || null;
+                const paKitQty = oPickPA('kitOverallQty') || (Array.isArray(o.kitOrders) && o.kitOrders[0]?.overallQty) || null;
+                const paProducts = (o.products && o.products.length ? o.products : (o.items && o.items.length ? o.items : oPickPA('products'))) || [];
                 const oSelKitIdsPA = (() => {
                   const sk = oPickPA('selectedKits');
                   if (Array.isArray(sk) && sk.length) return sk;
@@ -6995,7 +7011,8 @@ export default function Sales() {
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Order Products & Specifications</span></Space>}>
                 {(() => {
-                  const kitPs = (o.products || []).filter(p => p && (p.isKit || p.kitType));
+                  const oProductsResolved = (o.products && o.products.length ? o.products : (o.items && o.items.length ? o.items : []));
+                  const kitPs = oProductsResolved.filter(p => p && (p.isKit || p.kitType));
                   const derivedKitDU = o.kitDisplayUnit || o.displayUnit ||
                     (kitPs.length > 0 ? (kitPs[0].packingMaterial || kitPs[0].packaging || '') : '');
                   const oSelKitIds = Array.isArray(o.selectedKits) && o.selectedKits.length > 0
@@ -7009,7 +7026,7 @@ export default function Sales() {
                     || (Array.isArray(oLead?.kitOrders) && oLead.kitOrders.length > 0 ? oLead.kitOrders : null) || [];
                   return (
                     <DetailProductCards
-                      products={o.products}
+                      products={oProductsResolved}
                       totalAmount={o.totalAmount}
                       kitDisplayUnit={derivedKitDU}
                       kitSize={o.kitSize || oLead?.kitSize}
@@ -7421,6 +7438,21 @@ export default function Sales() {
                 return (
                   <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1' }}>Kit Details</span></Space>}>
+                    <Row gutter={[12, 0]} style={{ marginBottom: 12 }}>
+                      <Col xs={24} sm={12}>
+                        <Form.Item label="Product Selection" name="productType" style={{ marginBottom: 8 }}>
+                          <Select mode="multiple" allowClear placeholder="Select product types" options={PRODUCT_SELECTION_OPTIONS} />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <Form.Item label="Select Kit(s)" name="selectedKits" style={{ marginBottom: 8 }}>
+                          <Select mode="multiple" allowClear showSearch optionFilterProp="label"
+                            placeholder={kitOptions.length ? 'Select kits to include' : 'No kits configured yet'}
+                            options={kitOptions}
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
                     {editKitIds.length > 0 ? editKitIds.map((kitId, kitIndex) => {
                       const kitDef = kits.find(k => k._id === kitId);
                       const kitLabel = kitDef?.kitName || 'Personalized Kit';
@@ -7551,69 +7583,31 @@ export default function Sales() {
                 );
               })()}
 
-              {/* ── Products ── */}
+              {/* ── Products & Specifications (editable, mirrors Quotation/Negotiation) ── */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Products</span></Space>}>
-                <Form.List name="editProducts">
-                  {(fields, { add, remove }) => (
-                    <>
-                      {(() => {
-                        const prodsW = watchedOrderEditProds || [];
-                        const isKitRow = (n) => { const p = prodsW[n]; return !!(p && (p.isKit || p.kitType)); };
-                        const grpHdr = (label, color) => (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 0' }}>
-                            <span style={{ width: 16, height: 16, borderRadius: 4, background: color, color: '#fff', fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{label[0]}</span>
-                            <Text strong style={{ fontSize: 12, color }}>{label}</Text>
-                          </div>
-                        );
-                        const renderRow = ({ key, name, ...rest }) => (
-                        <div key={key} style={{ background: 'rgba(177,30,106,0.02)', border: '1px solid rgba(177,30,106,0.12)', borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
-                          <Row gutter={[6, 0]} align="middle">
-                            <Col xs={24} sm={8}><Form.Item {...rest} name={[name, 'name']} label="Product Name" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Name required' }]}><Input size="small" placeholder="Product name" /></Form.Item></Col>
-                            <Col xs={8} sm={4}><Form.Item {...rest} name={[name, 'qty']} label="Qty" style={{ marginBottom: 0 }}><InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="0" /></Form.Item></Col>
-                            <Col xs={8} sm={4}><Form.Item {...rest} name={[name, 'rate']} label="Rate (₹)" style={{ marginBottom: 0 }}><InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="0" /></Form.Item></Col>
-                            <Col xs={8} sm={4}><Form.Item {...rest} name={[name, 'gst']} label="GST %" style={{ marginBottom: 0 }}><InputNumber size="small" style={{ width: '100%' }} min={0} max={100} placeholder="0" /></Form.Item></Col>
-                            <Col xs={20} sm={3}><Form.Item noStyle shouldUpdate>{({ getFieldValue }) => { const prods = getFieldValue('editProducts') || []; const p = prods[name] || {}; const amt = r2((Number(p.qty)||0)*(Number(p.rate)||0)*(1+(Number(p.gst)||0)/100)); return <div style={{ paddingTop: 22, fontSize: 12, color: '#B11E6A', fontWeight: 600, textAlign: 'right' }}>₹{amt.toLocaleString()}</div>; }}</Form.Item></Col>
-                            <Col xs={4} sm={1} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 2 }}><Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} /></Col>
-                          </Row>
-                          <Form.Item noStyle shouldUpdate>{({ getFieldValue }) => renderOrderEditProductSpecs((getFieldValue('editProducts') || [])[name])}</Form.Item>
-                        </div>
-                        );
-                        const kitFields = fields.filter(f => isKitRow(f.name));
-                        const sepFields = fields.filter(f => !isKitRow(f.name));
-                        return (
-                          <>
-                            {kitFields.length > 0 && grpHdr('Kit Products', '#722ed1')}
-                            {kitFields.map(renderRow)}
-                            {sepFields.length > 0 && grpHdr('Separate Products', '#B11E6A')}
-                            {sepFields.map(renderRow)}
-                          </>
-                        );
-                      })()}
-                      <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ name: '', qty: 1, rate: 0, gst: 0 })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>+ Add Product</Button>
-                      <Form.Item noStyle shouldUpdate>
-                        {({ getFieldValue }) => {
-                          const prods = getFieldValue('editProducts') || [];
-                          const sepProds = prods.filter(p => p && !p.isKit && !p.kitType);
-                          const subtotal = sepProds.reduce((s, p) => s + (Number(p?.qty)||0)*(Number(p?.rate)||0), 0);
-                          const gstAmt = sepProds.reduce((s, p) => s + (Number(p?.qty)||0)*(Number(p?.rate)||0)*((Number(p?.gst)||0)/100), 0);
-                          const _editRec0 = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [] };
-                          const total = r2(computeCompositionGrandTotal(_editRec0, kits)) || r2(computeRecordGrandTotal(_editRec0));
-                          if (total === 0) return null;
-                          const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount)||0) : 0));
-                          return (
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-                              {kitPortion > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Kit: <strong>₹{kitPortion.toLocaleString()}</strong></Text>}
-                              {subtotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Separate: <strong>₹{r2(subtotal).toLocaleString()}</strong></Text>}
-                              {gstAmt > 0 && <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{r2(gstAmt).toLocaleString()}</strong></Text>}
-                              <Text style={{ fontSize: 13, color: '#B11E6A', fontWeight: 700 }}>Total: ₹{total.toLocaleString()}</Text>
-                            </div>
-                          );
-                        }}
-                      </Form.Item>
-                    </>
-                  )}
-                </Form.List>
+                title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Products & Specifications</span></Space>}>
+                <ProductHeaders />
+                <ProductFormList fieldName="editProducts" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} packingMaterialOptions={configPackingMaterialOptions} />
+                <Form.Item noStyle shouldUpdate>
+                  {({ getFieldValue }) => {
+                    const prods = getFieldValue('editProducts') || [];
+                    const sepProds = prods.filter(p => p && !p.isKit && !p.kitType);
+                    const subtotal = sepProds.reduce((s, p) => s + (Number(p?.qty)||0)*(Number(p?.rate)||0), 0);
+                    const gstAmt = sepProds.reduce((s, p) => s + (Number(p?.qty)||0)*(Number(p?.rate)||0)*((Number(p?.gst)||0)/100), 0);
+                    const _editRec0 = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [] };
+                    const total = r2(computeCompositionGrandTotal(_editRec0, kits)) || r2(computeRecordGrandTotal(_editRec0));
+                    if (total === 0) return null;
+                    const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount)||0) : 0));
+                    return (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                        {kitPortion > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Kit: <strong>₹{kitPortion.toLocaleString()}</strong></Text>}
+                        {subtotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Separate: <strong>₹{r2(subtotal).toLocaleString()}</strong></Text>}
+                        {gstAmt > 0 && <Text type="secondary" style={{ fontSize: 12 }}>GST: <strong>₹{r2(gstAmt).toLocaleString()}</strong></Text>}
+                        <Text style={{ fontSize: 13, color: '#B11E6A', fontWeight: 700 }}>Total: ₹{total.toLocaleString()}</Text>
+                      </div>
+                    );
+                  }}
+                </Form.Item>
               </Card>
 
               {/* ── Delivery & Payment ── */}
