@@ -31,6 +31,19 @@ const taskSchema = new mongoose.Schema({
   }],
   startedAt: Date,
   completedAt: Date,
+  // ── Time management ──────────────────────────────────────────────────────
+  // Snapshot taken at assign time so later config edits don't rewrite history.
+  timePerUnitSec: Number,            // configured time for 1 unit of this task
+  estimatedDurationSec: Number,      // timePerUnitSec × qty
+  plannedStartTime: Date,            // auto-filled with the assignment time
+  plannedEndTime: Date,              // plannedStartTime + estimatedDurationSec
+  // Computed on completion from startedAt → completedAt.
+  actualDurationSec: Number,
+  // Auto rating from actual-vs-estimated time + an optional written note.
+  rating: { type: Number, min: 0, max: 5 },
+  ratingReason: String,
+  efficiencyPct: Number,
+  feedback: String,
   isEmergency: { type: Boolean, default: false },
   emergencyRequested: { type: Boolean, default: false },
   emergencyRequestedAt: Date,

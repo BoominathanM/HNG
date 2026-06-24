@@ -5,6 +5,25 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
+const { computeTaskEstimate, computeRating } = require('../../utils/taskTime');
+
+// Resolve the time-management fields for a task being created, from its configured
+// per-unit time × qty. plannedStartTime defaults to now (the assignment time);
+// plannedEndTime is start + estimate. Returns only the fields we want to set.
+async function buildTimeFields(body = {}) {
+  const { taskName, taskType, product, qty } = body;
+  const { timePerUnitSec, estimatedDurationSec } = await computeTaskEstimate({ taskName, taskType, product, qty });
+  const plannedStartTime = body.plannedStartTime ? new Date(body.plannedStartTime) : new Date();
+  const fields = { plannedStartTime };
+  if (timePerUnitSec > 0) {
+    fields.timePerUnitSec = timePerUnitSec;
+    fields.estimatedDurationSec = estimatedDurationSec;
+    fields.plannedEndTime = new Date(plannedStartTime.getTime() + estimatedDurationSec * 1000);
+  } else if (body.plannedEndTime) {
+    fields.plannedEndTime = new Date(body.plannedEndTime);
+  }
+  return fields;
+}
 
 exports.getTasks = asyncHandler(async (req, res) => {
   const filter = {};
@@ -155,7 +174,8 @@ exports.createTask = asyncHandler(async (req, res, next) => {
   }
 
   const taskCode = await generateCode('TASK');
-  const task = await Task.create({ ...req.body, taskCode, createdBy: req.user._id });
+  const timeFields = await buildTimeFields(req.body);
+  const task = await Task.create({ ...req.body, ...timeFields, taskCode, createdBy: req.user._id });
   notifyRoles({ modules: ['Task Management'], userIds: [task.assignedTo], type: 'task', title: 'New Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} for ${task.clientName || 'order'}`, link: '/tasks' }).catch(() => {});
   res.status(201).json({ success: true, data: task });
 });
@@ -169,6 +189,23 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
 
   const task = await Task.findByIdAndUpdate(req.params.id, update, { new: true });
   if (!task) return next(new AppError('Task not found', 404));
+
+  // On completion: measure actual time (start → done) and auto-rate vs the estimate.
+  if (status === 'Done') {
+    const startMs = task.startedAt ? new Date(task.startedAt).getTime()
+      : task.plannedStartTime ? new Date(task.plannedStartTime).getTime()
+      : new Date(task.createdAt).getTime();
+    const endMs = task.completedAt ? new Date(task.completedAt).getTime() : Date.now();
+    task.actualDurationSec = Math.max(0, Math.round((endMs - startMs) / 1000));
+    const { rating, ratingReason, efficiencyPct } = computeRating(task.estimatedDurationSec, task.actualDurationSec);
+    if (rating !== null) {
+      task.rating = rating;
+      task.ratingReason = ratingReason;
+      task.efficiencyPct = efficiencyPct;
+    }
+    if (req.body.feedback !== undefined) task.feedback = req.body.feedback;
+    await task.save();
+  }
 
   // Automation: when ALL tasks under the same order are Done, forward the order to Dispatch.
   let orderForwarded = false;

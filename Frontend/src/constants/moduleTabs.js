@@ -31,6 +31,7 @@ export const MODULE_TAB_DEFS = {
   'Task Management': [
     { key: 'current', label: 'Current Task' },
     { key: 'suggested', label: 'Suggested Task' },
+    { key: 'timeconfig', label: 'Time Management' },
   ],
   'Dispatch Team': [
     { key: 'dispatch', label: 'Dispatch Orders' },

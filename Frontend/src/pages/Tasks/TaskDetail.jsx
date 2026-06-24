@@ -1,15 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Row, Space, Steps, Table, Tag, Typography,
+  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Rate, Row, Space, Statistic, Steps, Table, Tag, Typography,
 } from 'antd';
 import {
   AlertFilled, ArrowLeftOutlined, BellOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  ExclamationCircleOutlined, ExperimentOutlined, PlayCircleOutlined, UserOutlined,
+  ExclamationCircleOutlined, ExperimentOutlined, FieldTimeOutlined, PlayCircleOutlined, UserOutlined,
 } from '@ant-design/icons';
 import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import { secToHuman, ratingFromDurations, ratingColor, ratingLabel } from '../../utils/taskTime';
 import {
   useGetTaskQuery,
   useGetTasksQuery,
@@ -41,6 +42,8 @@ export default function TaskDetail() {
 
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
   const [emergencyReason, setEmergencyReason] = useState('');
+  const [completeModalOpen, setCompleteModalOpen] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
 
   const t = taskData?.data;
 
@@ -75,6 +78,17 @@ export default function TaskDetail() {
       enqueueSnackbar(`Task marked as ${status}`, { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to update status', { variant: 'error' });
+    }
+  };
+
+  // Completion: capture feedback, then mark Done (backend auto-rates vs the estimate).
+  const confirmComplete = async () => {
+    try {
+      await updateTaskStatus({ id, status: 'Done', feedback: feedbackText }).unwrap();
+      enqueueSnackbar('Task completed', { variant: 'success' });
+      setCompleteModalOpen(false);
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Failed to complete task', { variant: 'error' });
     }
   };
 
@@ -134,7 +148,7 @@ export default function TaskDetail() {
             {t.status === 'In Progress' && (
               <Button type="primary" icon={<CheckCircleOutlined />}
                 style={{ background: '#52c41a', border: 'none' }}
-                onClick={() => handleStatus('Done')}>
+                onClick={() => { setFeedbackText(t.feedback || ''); setCompleteModalOpen(true); }}>
                 Mark Done
               </Button>
             )}
@@ -191,6 +205,49 @@ export default function TaskDetail() {
               )}
             </Descriptions>
           </Card>
+
+          {/* Time & Performance */}
+          {(t.estimatedDurationSec > 0 || t.actualDurationSec > 0 || t.rating != null) && (
+            <Card
+              title={<Text style={labelStyle}><FieldTimeOutlined /> Time &amp; Performance</Text>}
+              style={{ ...cardStyle, marginTop: 16 }}
+              styles={{ body: { padding: 16 } }}
+            >
+              <Row gutter={[16, 16]}>
+                {t.estimatedDurationSec > 0 && (
+                  <Col xs={8}>
+                    <Statistic title="Estimated" value={secToHuman(t.estimatedDurationSec)} valueStyle={{ fontSize: 18, color: '#7c3aed' }} />
+                  </Col>
+                )}
+                {t.actualDurationSec > 0 && (
+                  <Col xs={8}>
+                    <Statistic title="Actual" value={secToHuman(t.actualDurationSec)} valueStyle={{ fontSize: 18, color: '#B11E6A' }} />
+                  </Col>
+                )}
+                {t.efficiencyPct != null && (
+                  <Col xs={8}>
+                    <Statistic title="Efficiency" value={t.efficiencyPct} suffix="%" valueStyle={{ fontSize: 18, color: t.efficiencyPct >= 100 ? '#52c41a' : '#fa8c16' }} />
+                  </Col>
+                )}
+              </Row>
+              {t.rating != null && (
+                <>
+                  <Divider style={{ margin: '14px 0' }} />
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    <Space align="center" wrap>
+                      <Text type="secondary" style={{ fontSize: 12 }}>Performance rating:</Text>
+                      <Rate disabled allowHalf value={t.rating} style={{ color: ratingColor(t.rating) }} />
+                      <Tag color={ratingColor(t.rating)} style={{ marginInlineStart: 4 }}>{ratingLabel(t.rating)}</Tag>
+                    </Space>
+                    {t.ratingReason && <Text type="secondary" style={{ fontSize: 12 }}>{t.ratingReason}</Text>}
+                  </Space>
+                </>
+              )}
+              {t.feedback && (
+                <Alert type="info" showIcon style={{ marginTop: 12, borderRadius: 8 }} message="Feedback" description={t.feedback} />
+              )}
+            </Card>
+          )}
 
           {/* Sub-tasks */}
           {t.subTasks?.length > 0 && (
@@ -416,6 +473,54 @@ export default function TaskDetail() {
           </div>
         </Col>
       </Row>
+
+      {/* ── Complete Task Modal (rating + feedback) ───────────────────────── */}
+      <Modal
+        title={<Space><CheckCircleOutlined style={{ color: '#52c41a' }} /><span>Complete Task</span></Space>}
+        open={completeModalOpen}
+        onCancel={() => setCompleteModalOpen(false)}
+        onOk={confirmComplete}
+        okText="Mark Done"
+        okButtonProps={{ style: { background: '#52c41a', border: 'none' } }}
+        width={Math.min(480, window.innerWidth - 32)}
+      >
+        {(() => {
+          const estSec = t.estimatedDurationSec || 0;
+          const actualSec = t.startedAt ? Math.max(0, Math.round((Date.now() - new Date(t.startedAt).getTime()) / 1000)) : 0;
+          const preview = ratingFromDurations(estSec, actualSec);
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              <Row gutter={16}>
+                <Col xs={12}><Statistic title="Estimated" value={estSec > 0 ? secToHuman(estSec) : '—'} valueStyle={{ fontSize: 18, color: '#7c3aed' }} /></Col>
+                <Col xs={12}><Statistic title="Actual (so far)" value={actualSec > 0 ? secToHuman(actualSec) : '—'} valueStyle={{ fontSize: 18, color: '#B11E6A' }} /></Col>
+              </Row>
+              {preview.rating != null ? (
+                <Alert
+                  type={preview.rating >= 3.5 ? 'success' : preview.rating >= 2.5 ? 'warning' : 'error'}
+                  showIcon
+                  message={(
+                    <Space>
+                      <Rate disabled allowHalf value={preview.rating} style={{ fontSize: 16, color: ratingColor(preview.rating) }} />
+                      <Text strong>{ratingLabel(preview.rating)}</Text>
+                    </Space>
+                  )}
+                  description={preview.ratingReason}
+                  style={{ borderRadius: 8 }}
+                />
+              ) : (
+                <Alert type="info" showIcon style={{ borderRadius: 8 }}
+                  message="No automatic rating"
+                  description="This task has no configured time estimate, so a rating can't be auto-calculated." />
+              )}
+              <div>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>Feedback (optional)</Text>
+                <Input.TextArea rows={3} value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)}
+                  placeholder="Notes on quality, issues, or anything worth recording" />
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
 
       {/* ── Emergency Dispatch Modal ─────────────────────────────────────── */}
       <Modal

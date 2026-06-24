@@ -5,6 +5,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
+const { computeTaskEstimate } = require('../../utils/taskTime');
 
 // ─── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
 exports.getOrders = asyncHandler(async (req, res) => {
@@ -107,8 +108,23 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
   }
 
   const taskCode = await generateCode('TASK');
+  // Estimate from the configured per-unit time × qty. plannedStartTime = assignment
+  // time (or the start time picked in the modal); plannedEndTime = start + estimate.
+  const { timePerUnitSec, estimatedDurationSec } = await computeTaskEstimate({
+    taskName: req.body.taskName, taskType: req.body.taskType, product: req.body.product, qty: req.body.qty,
+  });
+  const plannedStartTime = req.body.plannedStartTime ? new Date(req.body.plannedStartTime) : new Date();
+  const timeFields = { plannedStartTime };
+  if (timePerUnitSec > 0) {
+    timeFields.timePerUnitSec = timePerUnitSec;
+    timeFields.estimatedDurationSec = estimatedDurationSec;
+    timeFields.plannedEndTime = new Date(plannedStartTime.getTime() + estimatedDurationSec * 1000);
+  } else if (req.body.plannedEndTime) {
+    timeFields.plannedEndTime = new Date(req.body.plannedEndTime);
+  }
   const task = await Task.create({
     ...req.body,
+    ...timeFields,
     taskCode,
     orderId,
     createdBy: req.user._id,

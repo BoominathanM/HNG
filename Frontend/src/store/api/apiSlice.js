@@ -31,7 +31,7 @@ export const apiSlice = createApi({
     'Dashboard', 'Kits', 'Options',
     'Reminders', 'Transport', 'Pickups', 'HotelDesigns', 'SuggestedTasks',
     'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
-    'GstConfig',
+    'GstConfig', 'TaskTimeConfig',
   ],
   endpoints: (builder) => ({
 
@@ -648,7 +648,7 @@ export const apiSlice = createApi({
       invalidatesTags: ['Tasks'],
     }),
     updateTaskStatus: builder.mutation({
-      query: ({ id, status }) => ({ url: `/tasks/${id}/status`, method: 'patch', data: { status } }),
+      query: ({ id, status, feedback }) => ({ url: `/tasks/${id}/status`, method: 'patch', data: { status, ...(feedback !== undefined ? { feedback } : {}) } }),
       invalidatesTags: ['Tasks'],
     }),
     approveEmergency: builder.mutation({
@@ -670,6 +670,23 @@ export const apiSlice = createApi({
     deleteTask: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}`, method: 'delete' }),
       invalidatesTags: ['Tasks'],
+    }),
+    // ── Task Time Management config ────────────────────────────────────────────
+    getTaskTimeConfigs: builder.query({
+      query: () => ({ url: '/tasks/time-config' }),
+      providesTags: ['TaskTimeConfig'],
+    }),
+    createTaskTimeConfig: builder.mutation({
+      query: (data) => ({ url: '/tasks/time-config', method: 'post', data }),
+      invalidatesTags: ['TaskTimeConfig'],
+    }),
+    updateTaskTimeConfig: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/tasks/time-config/${id}`, method: 'put', data }),
+      invalidatesTags: ['TaskTimeConfig'],
+    }),
+    deleteTaskTimeConfig: builder.mutation({
+      query: (id) => ({ url: `/tasks/time-config/${id}`, method: 'delete' }),
+      invalidatesTags: ['TaskTimeConfig'],
     }),
 
     // ── Operations ───────────────────────────────────────────────────────────
@@ -1157,6 +1174,10 @@ export const {
   useApproveEmergencySalesHeadMutation,
   useApproveEmergencyOpsHeadMutation,
   useDeleteTaskMutation,
+  useGetTaskTimeConfigsQuery,
+  useCreateTaskTimeConfigMutation,
+  useUpdateTaskTimeConfigMutation,
+  useDeleteTaskTimeConfigMutation,
   // Operations
   useGetOperationOrdersQuery,
   useGetTodaysOrdersQuery,

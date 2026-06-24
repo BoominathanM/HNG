@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -65,7 +66,9 @@ import {
   useUpdateStickerStatusMutation,
   useGetTasksQuery,
   useGetPackingConfigQuery,
+  useGetTaskTimeConfigsQuery,
 } from '../../store/api/apiSlice';
+import { estimateSecFor, secToHuman, perUnitLabel } from '../../utils/taskTime';
 import {
   buildProductionQueues,
   canAssignTaskFromChecks,
@@ -103,6 +106,8 @@ export default function OperationDetail() {
   const { data: invData } = useGetItemsQuery({ limit: 1000 });
   const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
   const { data: packingConfigRaw } = useGetPackingConfigQuery();
+  const { data: timeConfigData } = useGetTaskTimeConfigsQuery();
+  const timeConfigs = useMemo(() => timeConfigData?.data || [], [timeConfigData]);
   // displayUnit name → Operations tab mapping (for per-kit routing).
   const displayUnitTabMap = useMemo(() => {
     const entries = (packingConfigRaw?.data || []).filter((c) => c.type === 'displayUnit');
@@ -316,6 +321,8 @@ export default function OperationDetail() {
       product: record.itemName || record.name || record.product || '',
       printing: printingValues[record.key] || undefined,
       assignee: loggedInUser?.name || currentOrder.assignedEmployee,
+      // Auto-fetch the start time from the assignment time (now).
+      taskStartTime: dayjs(),
     });
     setAssignModalOpen(true);
   };
@@ -345,6 +352,9 @@ export default function OperationDetail() {
 
     const cleanSubTasks = filledSubTasks
       .map((t) => ({ label: t.description, qty: Number(t.qty) || 0, assigneeName: t.assignee }));
+    // Planned start/end as full datetimes (today + picked time) for the estimate window.
+    const plannedStartTime = vals.taskStartTime ? vals.taskStartTime.toISOString() : dayjs().toISOString();
+    const plannedEndTime = vals.taskEndTime ? vals.taskEndTime.toISOString() : undefined;
     const payload = {
       orderId: order?.key || order?._id || id,
       taskName: vals.taskName,
@@ -359,6 +369,13 @@ export default function OperationDetail() {
       status: 'Pending',
       taskStartTime: vals.taskStartTime ? vals.taskStartTime.format('HH:mm') : undefined,
       taskEndTime: vals.taskEndTime ? vals.taskEndTime.format('HH:mm') : undefined,
+      // Time management — server recomputes the estimate from config when available.
+      plannedStartTime,
+      plannedEndTime,
+      ...(assignEstimate.matched ? {
+        timePerUnitSec: assignEstimate.perUnitSec,
+        estimatedDurationSec: assignEstimate.estimatedSec,
+      } : {}),
     };
     try {
       await assignTask(payload).unwrap();
@@ -722,6 +739,24 @@ export default function OperationDetail() {
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const mutedBg = isDark ? '#161622' : '#faf8fb';
   const textColor = isDark ? '#ececf1' : '#1a1a2e';
+
+  // Live estimate for the Assign-Task modal: matches the entered task against the Time
+  // Management config and multiplies the per-unit time by the required qty. Declared
+  // here (before the early returns below) to satisfy the rules of hooks.
+  const assignTaskNameWatch = Form.useWatch('taskName', assignModalForm);
+  const assignTaskTypeWatch = Form.useWatch('taskType', assignModalForm);
+  const assignStartWatch = Form.useWatch('taskStartTime', assignModalForm);
+  const assignEstimate = useMemo(
+    () => estimateSecFor(timeConfigs, { taskName: assignTaskNameWatch, taskType: assignTaskTypeWatch }, taskRequiredQty),
+    [timeConfigs, assignTaskNameWatch, assignTaskTypeWatch, taskRequiredQty],
+  );
+  // Keep the End Time field in sync with start + estimate (still user-editable afterward).
+  useEffect(() => {
+    if (assignModalOpen && assignEstimate.matched && assignStartWatch) {
+      assignModalForm.setFieldsValue({ taskEndTime: assignStartWatch.add(assignEstimate.estimatedSec, 'second') });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignModalOpen, assignEstimate.matched, assignEstimate.estimatedSec, assignStartWatch]);
 
   if (ordersLoading) {
     return <div className="page-container"><Text>Loading order…</Text></div>;
@@ -1799,6 +1834,19 @@ export default function OperationDetail() {
               </Form.Item>
             </Col>
           </Row>
+
+          {/* Estimated duration from Time Management config × required qty */}
+          <Alert
+            type={assignEstimate.matched ? 'success' : 'warning'}
+            showIcon
+            style={{ borderRadius: 8, marginBottom: 4 }}
+            message={assignEstimate.matched
+              ? `Estimated duration: ${secToHuman(assignEstimate.estimatedSec)}`
+              : 'No time standard configured for this task'}
+            description={assignEstimate.matched
+              ? `${perUnitLabel(assignEstimate.perUnitSec)} × ${Number(taskRequiredQty || 0).toLocaleString()} units${assignStartWatch ? ` · expected completion ${assignStartWatch.add(assignEstimate.estimatedSec, 'second').format('HH:mm')}` : ''}`
+              : 'Add it under Task Management → Time Management to auto-calculate the duration and rating.'}
+          />
 
           {/* Task Breakdown by Quantity */}
           <Divider orientation="left" style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A30' }}>

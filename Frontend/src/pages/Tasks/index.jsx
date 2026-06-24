@@ -3,19 +3,22 @@ import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs, Typography, Space,
   Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, Steps,
-  DatePicker,
+  DatePicker, TimePicker, InputNumber, Rate, Empty,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
   FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
+  EditOutlined, DeleteOutlined, FieldTimeOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
+import dayjs from 'dayjs';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
+import { estimateSecFor, secToHuman, perUnitLabel, unitToSec, secToUnit, ratingColor, ratingLabel } from '../../utils/taskTime';
 import {
   useGetTasksQuery,
   useGetSuggestedTasksQuery,
@@ -24,6 +27,11 @@ import {
   useRequestEmergencyDispatchMutation,
   useDeleteTaskMutation,
   useGetUsersQuery,
+  useGetSalesOrdersQuery,
+  useGetTaskTimeConfigsQuery,
+  useCreateTaskTimeConfigMutation,
+  useUpdateTaskTimeConfigMutation,
+  useDeleteTaskTimeConfigMutation,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -49,6 +57,10 @@ export default function Tasks() {
   const { data: suggestedData } = useGetSuggestedTasksQuery();
   const suggestedList = suggestedData?.data || [];
 
+  // Orders — drive the New Task modal's Order → Products selectors
+  const { data: ordersData } = useGetSalesOrdersQuery({ limit: 500 });
+  const ordersList = useMemo(() => ordersData?.data || [], [ordersData]);
+
   // Users with a role — populate the "Assign To" dropdown
   const { data: usersData } = useGetUsersQuery();
   const assignableUsers = useMemo(
@@ -59,6 +71,16 @@ export default function Tasks() {
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
   const [deleteTask] = useDeleteTaskMutation();
+
+  // ── Time Management config ───────────────────────────────────────────────
+  const { data: timeConfigData } = useGetTaskTimeConfigsQuery();
+  const timeConfigs = useMemo(() => timeConfigData?.data || [], [timeConfigData]);
+  const [createTimeConfig] = useCreateTaskTimeConfigMutation();
+  const [updateTimeConfig] = useUpdateTaskTimeConfigMutation();
+  const [deleteTimeConfig] = useDeleteTaskTimeConfigMutation();
+  const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [editingConfig, setEditingConfig] = useState(null);
+  const [configForm] = Form.useForm();
 
   const taskList = useMemo(() => (tasksData?.data || []).map((t) => ({
     key: t._id,
@@ -98,6 +120,16 @@ export default function Tasks() {
     printingType: t.printingType || '',
     startTime: t.startedAt || null,
     endTime: t.completedAt || null,
+    // Time management
+    timePerUnitSec: t.timePerUnitSec ?? null,
+    estimatedDurationSec: t.estimatedDurationSec ?? null,
+    actualDurationSec: t.actualDurationSec ?? null,
+    plannedStartTime: t.plannedStartTime || null,
+    plannedEndTime: t.plannedEndTime || null,
+    rating: t.rating ?? null,
+    ratingReason: t.ratingReason || '',
+    efficiencyPct: t.efficiencyPct ?? null,
+    feedback: t.feedback || '',
     createdAt: t.createdAt,
   })), [tasksData]);
   const [searchText, setSearchText] = useState('');
@@ -183,22 +215,48 @@ export default function Tasks() {
   const handleCreateTask = async () => {
     try {
       const vals = await form.validateFields();
-      // Only forward orderId if it's a real Mongo ObjectId (the mock ORD-xxxx codes are not).
+      // vals.orderId is a real Mongo ObjectId from the orders dropdown.
       const realOrderId = /^[a-f0-9]{24}$/i.test(vals.orderId || '') ? vals.orderId : undefined;
+      // Resolve the selected order + product line item (for product name + qty).
+      const selectedOrder = ordersList.find((o) => o._id === vals.orderId) || null;
+      const productIndex = (vals.productIndex !== undefined && vals.productIndex !== null) ? Number(vals.productIndex) : undefined;
+      const selectedItem = productIndex !== undefined ? (selectedOrder?.items || [])[productIndex] : null;
+      const productName = selectedItem?.itemName || selectedItem?.product || undefined;
+      const qty = Number(selectedItem?.qty) || undefined;
       // vals.assignee holds the selected user's _id — resolve to id + display name
       const assignedUser = assignableUsers.find((u) => u._id === vals.assignee);
+      const startDt = vals.startTime || dayjs();
+      const estimate = estimateSecFor(timeConfigs, { taskName: vals.title, taskType: vals.type }, qty);
+      // Sub-tasks from the Task Breakdown by Quantity section (rows with any content).
+      const cleanSubTasks = newSubTasks
+        .filter((st) => st.description || st.qty || st.assignee)
+        .map((st) => {
+          const u = assignableUsers.find((x) => x._id === st.assignee);
+          return { label: st.description, qty: Number(st.qty) || 0, assignedTo: u?._id, assigneeName: u?.fullName };
+        });
       await createTask({
         taskName: vals.title,
         taskType: vals.type,
         priority: vals.priority,
-        clientName: vals.client,
+        clientName: vals.client || selectedOrder?.clientName,
         assignedTo: assignedUser?._id,
         assigneeName: assignedUser?.fullName,
         dueDate: vals.due ? vals.due.toISOString() : undefined,
         description: vals.desc || vals.description,
         orderId: realOrderId,
+        product: productName,
+        productIndex,
+        qty,
+        ...(cleanSubTasks.length ? { subTasks: cleanSubTasks } : {}),
         status: 'Pending',
         isEmergency: vals.priority === 'Urgent',
+        // Time management — server recomputes from config when available.
+        plannedStartTime: startDt.toISOString(),
+        ...(estimate.matched ? {
+          timePerUnitSec: estimate.perUnitSec,
+          estimatedDurationSec: estimate.estimatedSec,
+          plannedEndTime: startDt.add(estimate.estimatedSec, 'second').toISOString(),
+        } : {}),
       }).unwrap();
       form.resetFields();
       setModalOpen(false);
@@ -219,8 +277,64 @@ export default function Tasks() {
       title: `Production — ${s.product}`,
       type: 'Production',
       priority: s.isUrgent ? 'Urgent' : undefined,
+      // Auto-fetch the start time from the assignment time (now).
+      startTime: dayjs(),
     });
     setAssignModalOpen(true);
+  };
+
+  // Live estimate for the Assign-Task modal: matches the entered task against the
+  // Time Management config and multiplies the per-unit time by the suggestion qty.
+  const assignTypeWatch = Form.useWatch('type', assignForm);
+  const assignTitleWatch = Form.useWatch('title', assignForm);
+  const assignStartWatch = Form.useWatch('startTime', assignForm);
+  const assignEstimate = useMemo(
+    () => estimateSecFor(timeConfigs, { taskName: assignTitleWatch, taskType: assignTypeWatch }, assignTarget?.qty),
+    [timeConfigs, assignTitleWatch, assignTypeWatch, assignTarget],
+  );
+
+  // ── New Task modal: Order → Products → qty → estimate (mirrors Assign Task) ──
+  const newOrderIdWatch = Form.useWatch('orderId', form);
+  const newProductIdxWatch = Form.useWatch('productIndex', form);
+  const newTypeWatch = Form.useWatch('type', form);
+  const newTitleWatch = Form.useWatch('title', form);
+  const newStartWatch = Form.useWatch('startTime', form);
+  // The order selected in the New Task modal + its line items (for the Product dropdown).
+  const newSelectedOrder = useMemo(
+    () => ordersList.find((o) => o._id === newOrderIdWatch) || null,
+    [ordersList, newOrderIdWatch],
+  );
+  const newOrderItems = useMemo(() => newSelectedOrder?.items || [], [newSelectedOrder]);
+  const newSelectedItem = (newProductIdxWatch !== undefined && newProductIdxWatch !== null)
+    ? newOrderItems[newProductIdxWatch] : null;
+  const newTaskQty = Number(newSelectedItem?.qty) || 0;
+  const newTaskEstimate = useMemo(
+    () => estimateSecFor(timeConfigs, { taskName: newTitleWatch, taskType: newTypeWatch }, newTaskQty),
+    [timeConfigs, newTitleWatch, newTypeWatch, newTaskQty],
+  );
+
+  // New Task modal — Task Breakdown by Quantity (mirrors the Operations assign modal).
+  const [newSubTasks, setNewSubTasks] = useState([{ id: 1, description: '', qty: '', assignee: '' }]);
+  const newTotalAssigned = newSubTasks.reduce((sum, t) => sum + (Number(t.qty) || 0), 0);
+  const newQtyMet = newTaskQty > 0 && newTotalAssigned >= newTaskQty;
+  const addNewSubTask = () => setNewSubTasks((prev) => [...prev, { id: Date.now(), description: '', qty: '', assignee: '' }]);
+  const removeNewSubTask = (rid) => setNewSubTasks((prev) => prev.filter((t) => t.id !== rid));
+  const updateNewSubTask = (rid, field, value) => setNewSubTasks((prev) => prev.map((t) => (t.id === rid ? { ...t, [field]: value } : t)));
+
+  // Open the New Task modal with the start time pre-filled to now.
+  const openNewTaskModal = () => {
+    if (!requireAccess('add')) return;
+    form.resetFields();
+    form.setFieldsValue({ startTime: dayjs() });
+    setNewSubTasks([{ id: 1, description: '', qty: '', assignee: '' }]);
+    setModalOpen(true);
+  };
+
+  // When the order changes, auto-fill client and reset the product + sub-tasks.
+  const handleNewOrderChange = (orderId) => {
+    const ord = ordersList.find((o) => o._id === orderId);
+    form.setFieldsValue({ client: ord?.clientName || '', productIndex: undefined });
+    setNewSubTasks([{ id: 1, description: '', qty: '', assignee: '' }]);
   };
 
   // Submit the Assign-Task modal — validates mandatory fields before creating.
@@ -230,6 +344,8 @@ export default function Tasks() {
     try {
       const vals = await assignForm.validateFields();
       const assignedUser = assignableUsers.find((u) => u._id === vals.assignee);
+      const startDt = vals.startTime || dayjs();
+      const estimatedDurationSec = assignEstimate.estimatedSec || undefined;
       await createTask({
         taskName: vals.title,
         taskType: vals.type,
@@ -245,6 +361,13 @@ export default function Tasks() {
         clientName: s.client,
         status: 'Pending',
         isEmergency: vals.priority === 'Urgent',
+        // Time management — server recomputes from config when available.
+        plannedStartTime: startDt.toISOString(),
+        ...(assignEstimate.matched ? {
+          timePerUnitSec: assignEstimate.perUnitSec,
+          estimatedDurationSec,
+          plannedEndTime: startDt.add(estimatedDurationSec, 'second').toISOString(),
+        } : {}),
       }).unwrap();
       setAssignModalOpen(false);
       setAssignTarget(null);
@@ -253,6 +376,66 @@ export default function Tasks() {
       if (e?.errorFields) return;
       enqueueSnackbar(e?.data?.message || e?.data || 'Failed to assign task', { variant: 'error' });
     }
+  };
+
+  // ── Time Management config handlers ──────────────────────────────────────
+  const openConfigModal = (cfg = null) => {
+    if (!requireAccess(cfg ? 'edit' : 'add')) return;
+    setEditingConfig(cfg);
+    configForm.resetFields();
+    if (cfg) {
+      configForm.setFieldsValue({
+        taskName: cfg.taskName,
+        inputValue: cfg.inputValue ?? secToUnit(cfg.timePerUnitSec, cfg.inputUnit || 'min'),
+        inputUnit: cfg.inputUnit || 'min',
+        notes: cfg.notes || '',
+      });
+    } else {
+      configForm.setFieldsValue({ inputUnit: 'min' });
+    }
+    setConfigModalOpen(true);
+  };
+
+  const saveConfig = async () => {
+    let vals;
+    try { vals = await configForm.validateFields(); } catch { return; }
+    const payload = {
+      taskName: vals.taskName.trim(),
+      inputValue: Number(vals.inputValue) || 0,
+      inputUnit: vals.inputUnit || 'min',
+      notes: vals.notes || '',
+    };
+    try {
+      if (editingConfig) {
+        await updateTimeConfig({ id: editingConfig._id, ...payload }).unwrap();
+        enqueueSnackbar('Time standard updated', { variant: 'success' });
+      } else {
+        await createTimeConfig(payload).unwrap();
+        enqueueSnackbar('Time standard added', { variant: 'success' });
+      }
+      setConfigModalOpen(false);
+      setEditingConfig(null);
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to save time standard', { variant: 'error' });
+    }
+  };
+
+  const removeConfig = (cfg) => {
+    if (!requireAccess('delete')) return;
+    Modal.confirm({
+      title: 'Delete time standard?',
+      content: `Remove the configured time for "${cfg.taskName}"? Existing tasks keep their saved estimates.`,
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await deleteTimeConfig(cfg._id).unwrap();
+          enqueueSnackbar('Time standard deleted', { variant: 'success' });
+        } catch (e) {
+          enqueueSnackbar(e?.data?.message || e?.data || 'Failed to delete', { variant: 'error' });
+        }
+      },
+    });
   };
 
   const openEmergency = (task) => {
@@ -381,6 +564,26 @@ export default function Tasks() {
         )
         : <Tag color="default" style={{ color: '#999' }}>Done</Tag>,
     },
+    {
+      title: 'Time / Rating', key: 'timeRating', responsive: ['lg'], width: 150,
+      render: (_, r) => (
+        <Space direction="vertical" size={2}>
+          {r.estimatedDurationSec > 0 && (
+            <Tooltip title="Estimated duration">
+              <Tag icon={<FieldTimeOutlined />} color="purple" style={{ fontSize: 11, margin: 0 }}>{secToHuman(r.estimatedDurationSec)}</Tag>
+            </Tooltip>
+          )}
+          {r.status === 'Completed' && r.rating != null && (
+            <Tooltip title={r.ratingReason || ratingLabel(r.rating)}>
+              <Rate disabled allowHalf value={r.rating} style={{ fontSize: 12, color: ratingColor(r.rating) }} />
+            </Tooltip>
+          )}
+          {!(r.estimatedDurationSec > 0) && !(r.status === 'Completed' && r.rating != null) && (
+            <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+          )}
+        </Space>
+      ),
+    },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={statusColor[v]}>{v}</Tag> },
     { title: 'Due', dataIndex: 'due', responsive: ['lg'] },
     {
@@ -455,7 +658,7 @@ export default function Tasks() {
         <Space wrap>
           <Input prefix={<SearchOutlined />} placeholder="Search tasks..." value={searchText}
             onChange={(e) => setSearchText(e.target.value)} allowClear style={{ width: 200, borderRadius: 8 }} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!requireAccess('add')) return; setModalOpen(true); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>New Task</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openNewTaskModal} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>New Task</Button>
         </Space>
       </div>
 
@@ -778,11 +981,77 @@ export default function Tasks() {
               </div>
             ),
           },
+          {
+            key: 'timeconfig',
+            label: (
+              <Space size={6}>
+                <FieldTimeOutlined />
+                Time Management
+              </Space>
+            ),
+            children: (
+              <div>
+                <Alert
+                  type="info"
+                  showIcon
+                  icon={<ClockCircleOutlined />}
+                  message="Per-Task Time Standards"
+                  description="Set how long ONE unit of each task takes (e.g. Sticker placing = 10s, Packing = 1m). When a task is assigned, the estimated duration = this time × quantity. On completion, the actual time is auto-rated against this estimate."
+                  style={{ marginBottom: 16, borderRadius: 8 }}
+                />
+                <Card
+                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  styles={{ body: { padding: 16 } }}
+                  title={<Text strong style={{ color: textColor }}>Configured Tasks</Text>}
+                  extra={(
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => openConfigModal()}
+                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+                      Add Task Time
+                    </Button>
+                  )}
+                >
+                  <Table
+                    dataSource={timeConfigs.map((c) => ({ ...c, key: c._id }))}
+                    pagination={false}
+                    size="small"
+                    scroll={{ x: 'max-content' }}
+                    locale={{ emptyText: <Empty description="No task times configured yet" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+                    columns={[
+                      { title: 'Task Name', dataIndex: 'taskName', render: (v) => <Text strong>{v}</Text> },
+                      {
+                        title: 'Time / Unit',
+                        key: 'time',
+                        render: (_, r) => <Tag color="purple">{r.inputValue ?? secToUnit(r.timePerUnitSec, r.inputUnit || 'min')} {r.inputUnit || 'min'}</Tag>,
+                      },
+                      {
+                        title: 'Per Unit (s)', dataIndex: 'timePerUnitSec',
+                        render: (v) => <Text type="secondary">{perUnitLabel(v)}</Text>,
+                      },
+                      {
+                        title: 'Example — 100 units', key: 'example',
+                        render: (_, r) => <Text type="secondary">{secToHuman((r.timePerUnitSec || 0) * 100)}</Text>,
+                      },
+                      { title: 'Notes', dataIndex: 'notes', render: (v) => v || <Text type="secondary">—</Text> },
+                      {
+                        title: 'Action', key: 'action',
+                        render: (_, r) => (
+                          <Space>
+                            <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openConfigModal(r)} />
+                            <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeConfig(r)} />
+                          </Space>
+                        ),
+                      },
+                    ]}
+                  />
+                </Card>
+              </div>
+            ),
+          },
         ])}
         activeKey={activeKeyFor(mainTab)}
       />
 
-      {/* ── New Task Modal (existing, unchanged) ─────────────────────────────── */}
+      {/* ── New Task Modal (Order → Products → estimate, mirrors Assign Task) ──── */}
       <Modal title="Create New Task" open={modalOpen} onCancel={() => setModalOpen(false)}
         footer={[
           <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
@@ -804,16 +1073,36 @@ export default function Tasks() {
             <Col xs={24}><Form.Item label="Task Title" name="title" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Related Order" name="orderId">
-                <Select placeholder="Select Order" allowClear>
-                  {['ORD-2401', 'ORD-2402', 'ORD-2403', 'ORD-2404', 'ORD-2406'].map((o) => <Option key={o} value={o}>{o}</Option>)}
-                </Select>
+                <Select
+                  placeholder="Select Order"
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  onChange={handleNewOrderChange}
+                  notFoundContent={ordersList.length ? 'No match' : 'No orders found'}
+                  options={ordersList.map((o) => ({
+                    value: o._id,
+                    label: `${o.orderCode || 'Order'}${o.clientName ? ` — ${o.clientName}` : ''}`,
+                  }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Product" name="productIndex" extra={!newOrderIdWatch ? 'Select an order first' : undefined}>
+                <Select
+                  placeholder={newOrderIdWatch ? 'Select product' : 'Select an order first'}
+                  allowClear
+                  disabled={!newOrderIdWatch}
+                  options={newOrderItems.map((it, idx) => ({
+                    value: idx,
+                    label: `${it.itemName || it.product || `Item ${idx + 1}`}${it.qty ? ` — ${Number(it.qty).toLocaleString()} units` : ''}`,
+                  }))}
+                />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Client Name" name="client">
-                <Select placeholder="Select Client/Hotel" allowClear>
-                  {['Hotel Blue Star', 'Marriott Mumbai', 'Taj Hotels Delhi', 'ITC Grand', 'Hyatt Chennai'].map((c) => <Option key={c} value={c}>{c}</Option>)}
-                </Select>
+                <Input placeholder="Auto-filled from order" readOnly />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
@@ -832,7 +1121,140 @@ export default function Tasks() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}><Form.Item label="Due Date" name="due"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} sm={12}><Form.Item label="End Time" name="endTime"><Input type="time" /></Form.Item></Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                label={(
+                  <Space size={4}>
+                    <span>Start Time</span>
+                    <Tooltip title="Auto-filled with the creation time. The expected completion is computed from the configured task time × quantity.">
+                      <span style={{ color: '#B11E6A', cursor: 'help', fontSize: 13 }}>ⓘ</span>
+                    </Tooltip>
+                  </Space>
+                )}
+                name="startTime"
+              >
+                <TimePicker format="HH:mm" style={{ width: '100%' }} minuteStep={5} />
+              </Form.Item>
+            </Col>
+            {newSelectedItem && (
+              <Col xs={24}>
+                {/* Estimated duration from the Time Management config × the product qty */}
+                <Alert
+                  type={newTaskEstimate.matched ? 'success' : 'warning'}
+                  showIcon
+                  icon={<FieldTimeOutlined />}
+                  style={{ borderRadius: 8, marginBottom: 4 }}
+                  message={newTaskEstimate.matched
+                    ? `Estimated duration: ${secToHuman(newTaskEstimate.estimatedSec)}`
+                    : 'No time standard configured for this task'}
+                  description={newTaskEstimate.matched
+                    ? `${perUnitLabel(newTaskEstimate.perUnitSec)} × ${newTaskQty.toLocaleString()} units${newStartWatch ? ` · expected completion ${newStartWatch.add(newTaskEstimate.estimatedSec, 'second').format('HH:mm')}` : ''}`
+                    : 'Add it under Time Management to auto-calculate the duration and rating.'}
+                />
+              </Col>
+            )}
+
+            {/* Task Breakdown by Quantity (mirrors the Operations Assign Task modal) */}
+            {newSelectedItem && (
+              <Col xs={24}>
+                <Divider orientation="left" style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A30' }}>
+                  Task Breakdown by Quantity
+                </Divider>
+
+                {/* Quantity progress overview */}
+                <Row gutter={12} style={{ marginBottom: 12 }}>
+                  <Col xs={12}>
+                    <div style={{ padding: '8px 12px', borderRadius: 8, background: isDark ? '#161622' : '#fafafa', border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}` }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Required Quantity</Text>
+                      <Text strong style={{ fontSize: 15, color: '#B11E6A' }}>{newTaskQty.toLocaleString()} units</Text>
+                    </div>
+                  </Col>
+                  <Col xs={12}>
+                    <div style={{ padding: '8px 12px', borderRadius: 8, background: isDark ? '#161622' : '#fafafa', border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}` }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Assigned So Far</Text>
+                      <Text strong style={{ fontSize: 15, color: newQtyMet ? '#52c41a' : '#faad14' }}>
+                        {newTotalAssigned.toLocaleString()} / {newTaskQty.toLocaleString()}
+                      </Text>
+                    </div>
+                  </Col>
+                </Row>
+
+                {newTaskQty > 0 && (
+                  <Progress
+                    percent={Math.min(100, Math.round((newTotalAssigned / newTaskQty) * 100))}
+                    strokeColor={newQtyMet ? '#52c41a' : '#B11E6A'}
+                    size="small"
+                    style={{ marginBottom: 12 }}
+                  />
+                )}
+
+                {/* Sub-task rows */}
+                <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                  {newSubTasks.map((task, idx) => (
+                    <div
+                      key={task.id}
+                      style={{
+                        display: 'flex', gap: 8, alignItems: 'flex-end', padding: '10px 12px', borderRadius: 8,
+                        background: isDark ? '#161622' : '#fafafa', border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`,
+                      }}
+                    >
+                      <div style={{ flex: 2 }}>
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task {idx + 1} — What to do</Text>
+                        <Input
+                          placeholder="e.g. Fill bottles, Apply sticker, Pack in box"
+                          value={task.description}
+                          onChange={(e) => updateNewSubTask(task.id, 'description', e.target.value)}
+                          style={{ borderRadius: 6 }}
+                        />
+                      </div>
+                      <div style={{ width: 90 }}>
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
+                        <InputNumber
+                          min={0}
+                          max={newTaskQty || undefined}
+                          placeholder="0"
+                          value={task.qty || undefined}
+                          onChange={(val) => updateNewSubTask(task.id, 'qty', val || 0)}
+                          style={{ width: '100%', borderRadius: 6 }}
+                        />
+                      </div>
+                      <div style={{ flex: 1.4 }}>
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
+                        <Select
+                          placeholder="Select"
+                          value={task.assignee || undefined}
+                          onChange={(val) => updateNewSubTask(task.id, 'assignee', val)}
+                          style={{ width: '100%' }}
+                          showSearch
+                          optionFilterProp="label"
+                          options={assignableUsers.map((u) => ({ value: u._id, label: `${u.fullName} — ${u.role}` }))}
+                        />
+                      </div>
+                      {newSubTasks.length > 1 && (
+                        <Button type="text" danger icon={<DeleteOutlined />} onClick={() => removeNewSubTask(task.id)} style={{ marginBottom: 0, flexShrink: 0 }} />
+                      )}
+                    </div>
+                  ))}
+                </Space>
+
+                {/* Add Task / completion status */}
+                {!newQtyMet ? (
+                  <Button
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    onClick={addNewSubTask}
+                    style={{ width: '100%', marginTop: 10, borderColor: '#B11E6A', color: '#B11E6A' }}
+                  >
+                    Add Task{newTaskQty > 0 ? ` — ${Math.max(0, newTaskQty - newTotalAssigned).toLocaleString()} units remaining` : ''}
+                  </Button>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '8px', color: '#52c41a', fontSize: 12, marginTop: 10 }}>
+                    ✓ Full quantity assigned across all sub-tasks
+                  </div>
+                )}
+              </Col>
+            )}
+
             <Col xs={24}><Form.Item label="Description" name="desc"><Input.TextArea rows={3} /></Form.Item></Col>
           </Row>
         </Form>
@@ -893,10 +1315,84 @@ export default function Tasks() {
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                label={(
+                  <Space size={4}>
+                    <span>Start Time</span>
+                    <Tooltip title="Auto-filled with the assignment time. The expected completion is computed from the configured task time × quantity.">
+                      <span style={{ color: '#B11E6A', cursor: 'help', fontSize: 13 }}>ⓘ</span>
+                    </Tooltip>
+                  </Space>
+                )}
+                name="startTime"
+              >
+                <TimePicker format="HH:mm" style={{ width: '100%' }} minuteStep={5} />
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              {/* Estimated duration from the Time Management config × qty */}
+              <Alert
+                type={assignEstimate.matched ? 'success' : 'warning'}
+                showIcon
+                icon={<FieldTimeOutlined />}
+                style={{ borderRadius: 8, marginBottom: 4 }}
+                message={assignEstimate.matched
+                  ? `Estimated duration: ${secToHuman(assignEstimate.estimatedSec)}`
+                  : 'No time standard configured for this task'}
+                description={assignEstimate.matched
+                  ? `${perUnitLabel(assignEstimate.perUnitSec)} × ${Number(assignTarget?.qty || 0).toLocaleString()} units${assignStartWatch ? ` · expected completion ${assignStartWatch.add(assignEstimate.estimatedSec, 'second').format('HH:mm')}` : ''}`
+                  : 'Add it under Time Management to auto-calculate the duration and rating.'}
+              />
+            </Col>
             <Col xs={24}>
               <Form.Item label="Description" name="desc"><Input.TextArea rows={3} /></Form.Item>
             </Col>
           </Row>
+        </Form>
+      </Modal>
+
+      {/* ── Time Management Config Modal ──────────────────────────────────────── */}
+      <Modal
+        title={editingConfig ? 'Edit Task Time' : 'Add Task Time'}
+        open={configModalOpen}
+        onCancel={() => { setConfigModalOpen(false); setEditingConfig(null); }}
+        onOk={saveConfig}
+        okText={editingConfig ? 'Save' : 'Add'}
+        okButtonProps={{ style: { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' } }}
+        width={Math.min(460, window.innerWidth - 32)}
+        destroyOnClose
+      >
+        <Form form={configForm} layout="vertical" style={{ marginTop: 8 }}>
+          <Form.Item
+            label="Task Name"
+            name="taskName"
+            rules={[{ required: true, message: 'Enter the task name' }]}
+            extra="e.g. Sticker placing, Packing, Sealing, Filling, Printing"
+          >
+            <Input placeholder="Task name" />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col xs={14}>
+              <Form.Item label="Time per 1 unit" name="inputValue" rules={[{ required: true, message: 'Enter the time' }]}>
+                <InputNumber min={0} step={0.5} style={{ width: '100%' }} placeholder="e.g. 10" />
+              </Form.Item>
+            </Col>
+            <Col xs={10}>
+              <Form.Item label="Unit" name="inputUnit" initialValue="min">
+                <Select
+                  options={[
+                    { value: 'sec', label: 'Seconds' },
+                    { value: 'min', label: 'Minutes' },
+                    { value: 'hr', label: 'Hours' },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="Notes" name="notes">
+            <Input.TextArea rows={2} placeholder="Optional note" />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -973,6 +1469,35 @@ export default function Tasks() {
                   )}
                 </Descriptions>
               </div>
+
+              {/* Time & Performance */}
+              {(selectedTask.estimatedDurationSec > 0 || selectedTask.actualDurationSec > 0 || selectedTask.rating != null) && (
+                <div>
+                  <Text style={labelStyle}>Time &amp; Performance</Text>
+                  <Descriptions bordered size="small" column={2} style={{ marginTop: 8, borderRadius: 8 }}>
+                    {selectedTask.estimatedDurationSec > 0 && (
+                      <Descriptions.Item label="Estimated">{secToHuman(selectedTask.estimatedDurationSec)}</Descriptions.Item>
+                    )}
+                    {selectedTask.actualDurationSec > 0 && (
+                      <Descriptions.Item label="Actual">{secToHuman(selectedTask.actualDurationSec)}</Descriptions.Item>
+                    )}
+                    {selectedTask.efficiencyPct != null && (
+                      <Descriptions.Item label="Efficiency">{selectedTask.efficiencyPct}%</Descriptions.Item>
+                    )}
+                    {selectedTask.rating != null && (
+                      <Descriptions.Item label="Rating">
+                        <Space>
+                          <Rate disabled allowHalf value={selectedTask.rating} style={{ fontSize: 14, color: ratingColor(selectedTask.rating) }} />
+                          <Text type="secondary" style={{ fontSize: 12 }}>{selectedTask.ratingReason || ratingLabel(selectedTask.rating)}</Text>
+                        </Space>
+                      </Descriptions.Item>
+                    )}
+                    {selectedTask.feedback && (
+                      <Descriptions.Item label="Feedback" span={2}>{selectedTask.feedback}</Descriptions.Item>
+                    )}
+                  </Descriptions>
+                </div>
+              )}
 
               {/* Sub-tasks */}
               {selectedTask.subTasks?.length > 0 && (
