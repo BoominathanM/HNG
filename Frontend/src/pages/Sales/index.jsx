@@ -4033,6 +4033,7 @@ export default function Sales() {
           kitSticker: pickKitField('kitSticker'),
           kitLogo: pickKitField('kitLogo'),
           kitPrinting: pickKitField('kitPrinting'),
+          kitLamination: pickKitField('kitLamination'),
           kitOverallQty: pickKitField('kitOverallQty'),
           kitPrice: pickKitField('kitPrice'),
           packagingIncludes: pickKitField('packagingIncludes'),
@@ -5607,6 +5608,8 @@ export default function Sales() {
                 const qKitSticker = q.kitSticker || qLeadPA?.kitSticker;
                 const qKitLogo = q.kitLogo || qLeadPA?.kitLogo;
                 const qKitPrinting = q.kitPrinting || qLeadPA?.kitPrinting;
+                const qKitBoxType = q.kitDisplayUnitType || (Array.isArray(q.kitOrders) && q.kitOrders[0]?.displayUnitType) || qLeadPA?.kitDisplayUnitType;
+                const qKitLamination = q.kitLamination || (Array.isArray(q.kitOrders) && q.kitOrders[0]?.lamination) || qLeadPA?.kitLamination;
                 if (!qProdType && qSelKitsPA.length === 0 && !qKitDUPA && !qKitPrice) return null;
                 const normYN = v => (v === 'YES' || v === true ? 'Yes' : v === 'NO' || v === false ? 'No' : v || '—');
                 return (
@@ -5623,10 +5626,12 @@ export default function Sales() {
                       )}
                       {qKitNamePA && <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Kit Selected</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitNamePA}</Text></Col>}
                       {qKitDUPA && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Display Unit</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{(qKitDUPA || '').replace(/_/g, ' ')}</Text></Col>}
+                      {qKitBoxType && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Box Type</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitBoxType}</Text></Col>}
                       {qKitSize && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Size</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitSize}</Text></Col>}
                       {qKitSticker && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Sticker</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitSticker)}</Text></Col>}
                       {qKitLogo && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Logo</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitLogo)}</Text></Col>}
                       {qKitPrinting && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Printing</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitPrinting)}</Text></Col>}
+                      {qKitLamination && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Lamination</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitLamination)}</Text></Col>}
                       {(qKitPrice != null && qKitPrice !== '') && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Price (single)</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(qKitPrice).toLocaleString()}</Text></Col>}
                       {Number(qKitQty) > 0 && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitQty} kit{Number(qKitQty) > 1 ? 's' : ''}</Text></Col>}
                       {(qKitPrice != null && qKitPrice !== '' && Number(qKitQty) > 0) && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{(Number(qKitPrice) * Number(qKitQty)).toLocaleString()}</Text></Col>}
@@ -6113,6 +6118,8 @@ export default function Sales() {
                 const nKitSticker = n.kitSticker || nLeadPA?.kitSticker;
                 const nKitLogo = n.kitLogo || nLeadPA?.kitLogo;
                 const nKitPrinting = n.kitPrinting || nLeadPA?.kitPrinting;
+                const nKitBoxType = n.kitDisplayUnitType || (Array.isArray(n.kitOrders) && n.kitOrders[0]?.displayUnitType) || nLeadPA?.kitDisplayUnitType;
+                const nKitLamination = n.kitLamination || (Array.isArray(n.kitOrders) && n.kitOrders[0]?.lamination) || nLeadPA?.kitLamination;
                 if (!nProdType && nSelKitsPA.length === 0 && !nKitDUPA && !nKitPrice) return null;
                 const normYN = v => (v === 'YES' || v === true ? 'Yes' : v === 'NO' || v === false ? 'No' : v || '—');
                 return (
@@ -6129,10 +6136,12 @@ export default function Sales() {
                       )}
                       {nKitNamePA && <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Kit Selected</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitNamePA}</Text></Col>}
                       {nKitDUPA && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Display Unit</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{(nKitDUPA || '').replace(/_/g, ' ')}</Text></Col>}
+                      {nKitBoxType && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Box Type</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitBoxType}</Text></Col>}
                       {nKitSize && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Size</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitSize}</Text></Col>}
                       {nKitSticker && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Sticker</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitSticker)}</Text></Col>}
                       {nKitLogo && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Logo</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitLogo)}</Text></Col>}
                       {nKitPrinting && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Printing</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitPrinting)}</Text></Col>}
+                      {nKitLamination && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Lamination</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitLamination)}</Text></Col>}
                       {(nKitPrice != null && nKitPrice !== '') && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Price (single)</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(nKitPrice).toLocaleString()}</Text></Col>}
                       {Number(nKitQty) > 0 && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitQty} kit{Number(nKitQty) > 1 ? 's' : ''}</Text></Col>}
                       {(nKitPrice != null && nKitPrice !== '' && Number(nKitQty) > 0) && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{(Number(nKitPrice) * Number(nKitQty)).toLocaleString()}</Text></Col>}
@@ -6821,6 +6830,8 @@ export default function Sales() {
                 const paKitSticker = oPickPA('kitSticker');
                 const paKitLogo = oPickPA('kitLogo');
                 const paKitPrinting = oPickPA('kitPrinting');
+                const paKitBoxType = oPickPA('kitDisplayUnitType') || (Array.isArray(o.kitOrders) && o.kitOrders[0]?.displayUnitType) || null;
+                const paKitLamination = oPickPA('kitLamination') || (Array.isArray(o.kitOrders) && o.kitOrders[0]?.lamination) || null;
                 const paKitPrice = oPickPA('kitPrice');
                 const paKitQty = oPickPA('kitOverallQty');
                 const paProducts = (o.products && o.products.length ? o.products : oPickPA('products')) || [];
@@ -6885,6 +6896,11 @@ export default function Sales() {
                             <OIR label="Display Unit" value={(paDisplayUnit || '').replace(/_/g, ' ')} />
                           </Col>
                         )}
+                        {paKitBoxType && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Box Type" value={paKitBoxType} />
+                          </Col>
+                        )}
                         {paKitSize && (
                           <Col xs={12} sm={6}>
                             <OIR label="Kit Size" value={paKitSize} />
@@ -6903,6 +6919,11 @@ export default function Sales() {
                         {paKitPrinting && (
                           <Col xs={12} sm={6}>
                             <OIR label="Printing" value={paKitPrinting === 'YES' ? 'Yes' : 'No'} />
+                          </Col>
+                        )}
+                        {paKitLamination && (
+                          <Col xs={12} sm={6}>
+                            <OIR label="Lamination" value={paKitLamination === 'YES' ? 'Yes' : 'No'} />
                           </Col>
                         )}
                         {(paKitPrice != null && paKitPrice !== '') && (
@@ -7448,6 +7469,21 @@ export default function Sales() {
                             <Col xs={12} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                             <Col xs={12} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                             <Col xs={12} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                          </Row>
+                          <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
+                            {({ getFieldValue }) => {
+                              const du = getFieldValue(['kitOrders', kitIndex, 'displayUnit']);
+                              const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                              const isBox = duCfg?.label?.toLowerCase().includes('box') || duCfg?.tabMapping === 'Box';
+                              if (!isBox) return null;
+                              return (
+                                <Row gutter={[10, 0]} style={{ marginBottom: 0 }}>
+                                  <Col xs={12} sm={6}><Form.Item label="Lamination" name={['kitOrders', kitIndex, 'lamination']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                </Row>
+                              );
+                            }}
+                          </Form.Item>
+                          <Row gutter={[10, 0]}>
                             <Col xs={12} sm={8}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 8 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
                             <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 8 }}>
                               <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
@@ -7868,6 +7904,21 @@ export default function Sales() {
                           <Col xs={12} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                           <Col xs={12} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                           <Col xs={12} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                        </Row>
+                        <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
+                          {({ getFieldValue }) => {
+                            const du = getFieldValue(['kitOrders', kitIndex, 'displayUnit']);
+                            const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                            const isBox = duCfg?.label?.toLowerCase().includes('box') || duCfg?.tabMapping === 'Box';
+                            if (!isBox) return null;
+                            return (
+                              <Row gutter={[10, 0]} style={{ marginBottom: 0 }}>
+                                <Col xs={12} sm={6}><Form.Item label="Lamination" name={['kitOrders', kitIndex, 'lamination']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                              </Row>
+                            );
+                          }}
+                        </Form.Item>
+                        <Row gutter={[10, 0]}>
                           <Col xs={12} sm={8}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 8 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
                           <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 8 }}>
                             <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
@@ -8248,6 +8299,200 @@ export default function Sales() {
                   </Row>
                 </Card>
 
+                {/* ── Products adding — kit config (mirrors Lead form) ── */}
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
+                  <Row gutter={16}>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Product Selection" name="productType" tooltip="Personalized = a kit customized with extra products; Separate Product = individual items.">
+                        <Select mode="multiple" allowClear placeholder="Select product types (optional)" options={PRODUCT_SELECTION_OPTIONS} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Select Kit(s) to Include" name="selectedKits" tooltip="Pick kits defined in Inventory → Kit.">
+                        <Select mode="multiple" allowClear showSearch optionFilterProp="label"
+                          placeholder={kitOptions.length ? 'Select kits to include' : 'No kits yet — add in Inventory → Kit'}
+                          options={kitOptions}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.productType) !== JSON.stringify(c.productType)}>
+                    {({ getFieldValue }) => {
+                      const pt = getFieldValue('productType');
+                      if (!ptHasPersonalizedUI(pt)) return null;
+                      return (
+                        <>
+                          <Row gutter={[8, 8]} style={{ marginTop: 4 }}>
+                            <Col xs={12} sm={4}>
+                              <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
+                                <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions}
+                                  onChange={() => quotationForm.setFieldValue('kitDisplayUnitType', undefined)} />
+                              </Form.Item>
+                            </Col>
+                            <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
+                              {({ getFieldValue: gfv }) => {
+                                const du = gfv('kitDisplayUnit');
+                                const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                                const subtypes = duCfg?.subtypes || [];
+                                if (!subtypes.length) return null;
+                                const duLabel = duCfg?.label || 'Display Unit';
+                                return (
+                                  <Col xs={12} sm={4}>
+                                    <Form.Item label={`${duLabel} Type`} name="kitDisplayUnitType" style={{ marginBottom: 0 }}>
+                                      <Select allowClear placeholder={`${duLabel} type`}
+                                        options={subtypes.map(s => ({ value: s.value, label: s.label }))}
+                                        onChange={(val) => {
+                                          const st = subtypes.find(s => s.value === val);
+                                          if (st) {
+                                            const patch = {};
+                                            if (st.size) patch.kitSize = st.size;
+                                            if (st.sticker) patch.kitSticker = st.sticker;
+                                            if (st.logo) patch.kitLogo = st.logo;
+                                            if (st.printing) patch.kitPrinting = st.printing;
+                                            if (st.lamination) patch.kitLamination = st.lamination;
+                                            if (st.sellingPrice != null) patch.kitPrice = st.sellingPrice;
+                                            quotationForm.setFieldsValue(patch);
+                                          }
+                                        }}
+                                      />
+                                    </Form.Item>
+                                  </Col>
+                                );
+                              }}
+                            </Form.Item>
+                            <Col xs={12} sm={4}><Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}><Input placeholder="e.g. 2.5cm x 2.5cm" /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                          </Row>
+                          <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
+                            {({ getFieldValue: gfv }) => {
+                              const du = gfv('kitDisplayUnit');
+                              const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                              const isBox = duCfg?.label?.toLowerCase().includes('box') || duCfg?.tabMapping === 'Box';
+                              if (!isBox) return null;
+                              return (
+                                <Row gutter={[8, 0]} style={{ marginTop: 4 }}>
+                                  <Col xs={12} sm={6}>
+                                    <Form.Item label="Lamination" name="kitLamination" style={{ marginBottom: 0 }}>
+                                      <Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                    </Form.Item>
+                                  </Col>
+                                </Row>
+                              );
+                            }}
+                          </Form.Item>
+                          <Row gutter={16} style={{ marginTop: 10 }} align="bottom">
+                            <Col xs={12} sm={5}>
+                              <Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 0 }}>
+                                <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={9}>
+                              <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}>
+                                <InputNumber min={0} style={{ width: '100%' }} placeholder="Single kit price"
+                                  formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                                  parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                          {/* Per-kit Order Details blocks */}
+                          <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.selectedKits) !== JSON.stringify(c.selectedKits)}>
+                            {({ getFieldValue: gfv }) => {
+                              const selKits = gfv('selectedKits') || [];
+                              if (!selKits.length) return null;
+                              return (
+                                <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                  {selKits.map((kitId, kitIndex) => {
+                                    const kitDef = kits.find(k => k._id === kitId);
+                                    const kitLabel = kitDef?.kitName || 'Kit';
+                                    return (
+                                      <div key={kitId} style={{ padding: '12px 14px', background: isDark ? 'rgba(114,46,209,0.07)' : 'rgba(114,46,209,0.04)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.18)' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                                          <GiftOutlined style={{ color: '#722ed1' }} />
+                                          <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{kitLabel} — Order Details</Text>
+                                        </div>
+                                        <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
+                                        <Row gutter={[8, 8]}>
+                                          <Col xs={12} sm={4}>
+                                            <Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 0 }}>
+                                              <Select allowClear showSearch optionFilterProp="label" placeholder="Display unit" options={configDisplayUnitOptions}
+                                                onChange={() => quotationForm.setFieldValue(['kitOrders', kitIndex, 'displayUnitType'], undefined)} />
+                                            </Form.Item>
+                                          </Col>
+                                          <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
+                                            {({ getFieldValue: gfv2 }) => {
+                                              const du2 = gfv2(['kitOrders', kitIndex, 'displayUnit']);
+                                              const duCfg2 = configDisplayUnitOptions.find(c => c.value === du2);
+                                              const subtypes2 = duCfg2?.subtypes || [];
+                                              if (!subtypes2.length) return null;
+                                              const duLabel2 = duCfg2?.label || 'Display Unit';
+                                              return (
+                                                <Col xs={12} sm={4}>
+                                                  <Form.Item label={`${duLabel2} Type`} name={['kitOrders', kitIndex, 'displayUnitType']} style={{ marginBottom: 0 }}>
+                                                    <Select allowClear placeholder={`${duLabel2} type`}
+                                                      options={subtypes2.map(s => ({ value: s.value, label: s.label }))}
+                                                      onChange={(val) => {
+                                                        const st2 = subtypes2.find(s => s.value === val);
+                                                        if (st2) {
+                                                          const p2 = (f) => ['kitOrders', kitIndex, f];
+                                                          if (st2.size) quotationForm.setFieldValue(p2('size'), st2.size);
+                                                          if (st2.sticker) quotationForm.setFieldValue(p2('sticker'), st2.sticker);
+                                                          if (st2.logo) quotationForm.setFieldValue(p2('logo'), st2.logo);
+                                                          if (st2.printing) quotationForm.setFieldValue(p2('printing'), st2.printing);
+                                                          if (st2.lamination) quotationForm.setFieldValue(p2('lamination'), st2.lamination);
+                                                          if (st2.sellingPrice != null) quotationForm.setFieldValue(p2('kitPrice'), st2.sellingPrice);
+                                                        }
+                                                      }}
+                                                    />
+                                                  </Form.Item>
+                                                </Col>
+                                              );
+                                            }}
+                                          </Form.Item>
+                                          <Col xs={12} sm={4}><Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 0 }}><Input placeholder="e.g. 2.5cm" /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                        </Row>
+                                        <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
+                                          {({ getFieldValue: gfv3 }) => {
+                                            const du3 = gfv3(['kitOrders', kitIndex, 'displayUnit']);
+                                            const duCfg3 = configDisplayUnitOptions.find(c => c.value === du3);
+                                            const isBox3 = duCfg3?.label?.toLowerCase().includes('box') || duCfg3?.tabMapping === 'Box';
+                                            if (!isBox3) return null;
+                                            return (
+                                              <Row gutter={[8, 0]} style={{ marginTop: 4 }}>
+                                                <Col xs={12} sm={6}><Form.Item label="Lamination" name={['kitOrders', kitIndex, 'lamination']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                              </Row>
+                                            );
+                                          }}
+                                        </Form.Item>
+                                        <Row gutter={[8, 0]} style={{ marginTop: 8 }}>
+                                          <Col xs={12} sm={5}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
+                                          <Col xs={24} sm={9}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
+                                            <InputNumber min={0} style={{ width: '100%' }} placeholder="0"
+                                              formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                                              parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                                          </Form.Item></Col>
+                                        </Row>
+                                        <Row gutter={[8, 0]} style={{ marginTop: 8 }}>
+                                          <Col xs={24}><Form.Item label="Specification / Notes" name={['kitOrders', kitIndex, 'specification']} style={{ marginBottom: 0 }}><Input.TextArea rows={2} placeholder="Kit specification notes..." /></Form.Item></Col>
+                                        </Row>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            }}
+                          </Form.Item>
+                        </>
+                      );
+                    }}
+                  </Form.Item>
+                </Card>
+
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><span>Products & Specifications</span></Space>}>
                   <ProductHeaders />
@@ -8302,6 +8547,200 @@ export default function Sales() {
                     <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
                     <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Billing name" /></Form.Item></Col>
                   </Row>
+                </Card>
+
+                {/* ── Products adding — kit config (mirrors Lead form) ── */}
+                <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
+                  <Row gutter={16}>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Product Selection" name="productType" tooltip="Personalized = a kit customized with extra products; Separate Product = individual items.">
+                        <Select mode="multiple" allowClear placeholder="Select product types (optional)" options={PRODUCT_SELECTION_OPTIONS} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Select Kit(s) to Include" name="selectedKits">
+                        <Select mode="multiple" allowClear showSearch optionFilterProp="label"
+                          placeholder={kitOptions.length ? 'Select kits to include' : 'No kits yet — add in Inventory → Kit'}
+                          options={kitOptions}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.productType) !== JSON.stringify(c.productType)}>
+                    {({ getFieldValue }) => {
+                      const pt = getFieldValue('productType');
+                      if (!ptHasPersonalizedUI(pt)) return null;
+                      return (
+                        <>
+                          <Row gutter={[8, 8]} style={{ marginTop: 4 }}>
+                            <Col xs={12} sm={4}>
+                              <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
+                                <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions}
+                                  onChange={() => negotiationForm.setFieldValue('kitDisplayUnitType', undefined)} />
+                              </Form.Item>
+                            </Col>
+                            <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
+                              {({ getFieldValue: gfv }) => {
+                                const du = gfv('kitDisplayUnit');
+                                const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                                const subtypes = duCfg?.subtypes || [];
+                                if (!subtypes.length) return null;
+                                const duLabel = duCfg?.label || 'Display Unit';
+                                return (
+                                  <Col xs={12} sm={4}>
+                                    <Form.Item label={`${duLabel} Type`} name="kitDisplayUnitType" style={{ marginBottom: 0 }}>
+                                      <Select allowClear placeholder={`${duLabel} type`}
+                                        options={subtypes.map(s => ({ value: s.value, label: s.label }))}
+                                        onChange={(val) => {
+                                          const st = subtypes.find(s => s.value === val);
+                                          if (st) {
+                                            const patch = {};
+                                            if (st.size) patch.kitSize = st.size;
+                                            if (st.sticker) patch.kitSticker = st.sticker;
+                                            if (st.logo) patch.kitLogo = st.logo;
+                                            if (st.printing) patch.kitPrinting = st.printing;
+                                            if (st.lamination) patch.kitLamination = st.lamination;
+                                            if (st.sellingPrice != null) patch.kitPrice = st.sellingPrice;
+                                            negotiationForm.setFieldsValue(patch);
+                                          }
+                                        }}
+                                      />
+                                    </Form.Item>
+                                  </Col>
+                                );
+                              }}
+                            </Form.Item>
+                            <Col xs={12} sm={4}><Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}><Input placeholder="e.g. 2.5cm x 2.5cm" /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                          </Row>
+                          <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
+                            {({ getFieldValue: gfv }) => {
+                              const du = gfv('kitDisplayUnit');
+                              const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                              const isBox = duCfg?.label?.toLowerCase().includes('box') || duCfg?.tabMapping === 'Box';
+                              if (!isBox) return null;
+                              return (
+                                <Row gutter={[8, 0]} style={{ marginTop: 4 }}>
+                                  <Col xs={12} sm={6}>
+                                    <Form.Item label="Lamination" name="kitLamination" style={{ marginBottom: 0 }}>
+                                      <Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                    </Form.Item>
+                                  </Col>
+                                </Row>
+                              );
+                            }}
+                          </Form.Item>
+                          <Row gutter={16} style={{ marginTop: 10 }} align="bottom">
+                            <Col xs={12} sm={5}>
+                              <Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 0 }}>
+                                <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={9}>
+                              <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}>
+                                <InputNumber min={0} style={{ width: '100%' }} placeholder="Single kit price"
+                                  formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                                  parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                          {/* Per-kit Order Details blocks */}
+                          <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.selectedKits) !== JSON.stringify(c.selectedKits)}>
+                            {({ getFieldValue: gfv }) => {
+                              const selKits = gfv('selectedKits') || [];
+                              if (!selKits.length) return null;
+                              return (
+                                <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                  {selKits.map((kitId, kitIndex) => {
+                                    const kitDef = kits.find(k => k._id === kitId);
+                                    const kitLabel = kitDef?.kitName || 'Kit';
+                                    return (
+                                      <div key={kitId} style={{ padding: '12px 14px', background: isDark ? 'rgba(114,46,209,0.07)' : 'rgba(114,46,209,0.04)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.18)' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                                          <GiftOutlined style={{ color: '#722ed1' }} />
+                                          <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{kitLabel} — Order Details</Text>
+                                        </div>
+                                        <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
+                                        <Row gutter={[8, 8]}>
+                                          <Col xs={12} sm={4}>
+                                            <Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 0 }}>
+                                              <Select allowClear showSearch optionFilterProp="label" placeholder="Display unit" options={configDisplayUnitOptions}
+                                                onChange={() => negotiationForm.setFieldValue(['kitOrders', kitIndex, 'displayUnitType'], undefined)} />
+                                            </Form.Item>
+                                          </Col>
+                                          <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
+                                            {({ getFieldValue: gfv2 }) => {
+                                              const du2 = gfv2(['kitOrders', kitIndex, 'displayUnit']);
+                                              const duCfg2 = configDisplayUnitOptions.find(c => c.value === du2);
+                                              const subtypes2 = duCfg2?.subtypes || [];
+                                              if (!subtypes2.length) return null;
+                                              const duLabel2 = duCfg2?.label || 'Display Unit';
+                                              return (
+                                                <Col xs={12} sm={4}>
+                                                  <Form.Item label={`${duLabel2} Type`} name={['kitOrders', kitIndex, 'displayUnitType']} style={{ marginBottom: 0 }}>
+                                                    <Select allowClear placeholder={`${duLabel2} type`}
+                                                      options={subtypes2.map(s => ({ value: s.value, label: s.label }))}
+                                                      onChange={(val) => {
+                                                        const st2 = subtypes2.find(s => s.value === val);
+                                                        if (st2) {
+                                                          const p2 = (f) => ['kitOrders', kitIndex, f];
+                                                          if (st2.size) negotiationForm.setFieldValue(p2('size'), st2.size);
+                                                          if (st2.sticker) negotiationForm.setFieldValue(p2('sticker'), st2.sticker);
+                                                          if (st2.logo) negotiationForm.setFieldValue(p2('logo'), st2.logo);
+                                                          if (st2.printing) negotiationForm.setFieldValue(p2('printing'), st2.printing);
+                                                          if (st2.lamination) negotiationForm.setFieldValue(p2('lamination'), st2.lamination);
+                                                          if (st2.sellingPrice != null) negotiationForm.setFieldValue(p2('kitPrice'), st2.sellingPrice);
+                                                        }
+                                                      }}
+                                                    />
+                                                  </Form.Item>
+                                                </Col>
+                                              );
+                                            }}
+                                          </Form.Item>
+                                          <Col xs={12} sm={4}><Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 0 }}><Input placeholder="e.g. 2.5cm" /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                        </Row>
+                                        <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
+                                          {({ getFieldValue: gfv3 }) => {
+                                            const du3 = gfv3(['kitOrders', kitIndex, 'displayUnit']);
+                                            const duCfg3 = configDisplayUnitOptions.find(c => c.value === du3);
+                                            const isBox3 = duCfg3?.label?.toLowerCase().includes('box') || duCfg3?.tabMapping === 'Box';
+                                            if (!isBox3) return null;
+                                            return (
+                                              <Row gutter={[8, 0]} style={{ marginTop: 4 }}>
+                                                <Col xs={12} sm={6}><Form.Item label="Lamination" name={['kitOrders', kitIndex, 'lamination']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                              </Row>
+                                            );
+                                          }}
+                                        </Form.Item>
+                                        <Row gutter={[8, 0]} style={{ marginTop: 8 }}>
+                                          <Col xs={12} sm={5}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
+                                          <Col xs={24} sm={9}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
+                                            <InputNumber min={0} style={{ width: '100%' }} placeholder="0"
+                                              formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                                              parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                                          </Form.Item></Col>
+                                        </Row>
+                                        <Row gutter={[8, 0]} style={{ marginTop: 8 }}>
+                                          <Col xs={24}><Form.Item label="Specification / Notes" name={['kitOrders', kitIndex, 'specification']} style={{ marginBottom: 0 }}><Input.TextArea rows={2} placeholder="Kit specification notes..." /></Form.Item></Col>
+                                        </Row>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            }}
+                          </Form.Item>
+                        </>
+                      );
+                    }}
+                  </Form.Item>
                 </Card>
 
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}

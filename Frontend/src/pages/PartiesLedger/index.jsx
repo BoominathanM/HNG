@@ -118,11 +118,13 @@ function PartyOrdersSection({ orders = [], isDark, cardBg }) {
                       <Space wrap size={6}>
                         <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{ko.kitName || ko.kitType || `Kit ${ki + 1}`}</Text>
                         {ko.displayUnit && <Tag color="purple" style={{ borderRadius: 12 }}>{String(ko.displayUnit).replace(/_/g, ' ')}</Tag>}
+                        {ko.displayUnitType && <Tag color="magenta" style={{ borderRadius: 12 }}>{ko.displayUnitType}</Tag>}
                         {ko.size && <Tag color="geekblue" style={{ borderRadius: 12 }}>{ko.size}</Tag>}
                         {Number(ko.overallQty) > 0 && <Tag color="blue" style={{ borderRadius: 12 }}>Qty: {ko.overallQty}</Tag>}
                         {ko.sticker && <Tag color={yn(ko.sticker) ? 'green' : 'default'} style={{ borderRadius: 12 }}>Sticker: {yn(ko.sticker) ? 'Yes' : 'No'}</Tag>}
                         {ko.logo && <Tag color={yn(ko.logo) ? 'cyan' : 'default'} style={{ borderRadius: 12 }}>Logo: {yn(ko.logo) ? 'Yes' : 'No'}</Tag>}
                         {ko.printing && <Tag color={yn(ko.printing) ? 'magenta' : 'default'} style={{ borderRadius: 12 }}>Printing: {yn(ko.printing) ? 'Yes' : 'No'}</Tag>}
+                        {ko.lamination && <Tag color={yn(ko.lamination) ? 'gold' : 'default'} style={{ borderRadius: 12 }}>Lamination: {yn(ko.lamination) ? 'Yes' : 'No'}</Tag>}
                         {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 12 }}>₹{Number(ko.kitPrice).toLocaleString()}{Number(ko.overallQty) > 0 ? ` × ${ko.overallQty} = ₹${r2(Number(ko.kitPrice) * Number(ko.overallQty)).toLocaleString()}` : ''}</Tag>}
                       </Space>
                       {ko.specification && <div style={{ marginTop: 6, fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Specification: </Text>{ko.specification}</div>}
