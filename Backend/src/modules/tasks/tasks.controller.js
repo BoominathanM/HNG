@@ -6,6 +6,7 @@ const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { computeTaskEstimate, computeRating } = require('../../utils/taskTime');
+const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 
 // Resolve the time-management fields for a task being created, from its configured
 // per-unit time × qty. plannedStartTime defaults to now (the assignment time);
@@ -175,7 +176,12 @@ exports.createTask = asyncHandler(async (req, res, next) => {
 
   const taskCode = await generateCode('TASK');
   const timeFields = await buildTimeFields(req.body);
-  const task = await Task.create({ ...req.body, ...timeFields, taskCode, createdBy: req.user._id });
+  // Inherit the order's current paid status if the caller didn't set one — so a
+  // task created after payment was already recorded isn't stuck on 'Pending'.
+  const paymentFields = (orderId && req.body.paymentStatus === undefined)
+    ? { paymentStatus: await resolveOrderPaymentStatus(orderId).catch(() => 'Pending') }
+    : {};
+  const task = await Task.create({ ...req.body, ...timeFields, ...paymentFields, taskCode, createdBy: req.user._id });
   notifyRoles({ modules: ['Task Management'], userIds: [task.assignedTo], type: 'task', title: 'New Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} for ${task.clientName || 'order'}`, link: '/tasks' }).catch(() => {});
   res.status(201).json({ success: true, data: task });
 });

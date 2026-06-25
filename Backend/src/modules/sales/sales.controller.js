@@ -9,6 +9,7 @@ const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { cloudinary } = require('../../config/cloudinary');
 const { notifyRoles } = require('../../utils/notify');
+const { syncOrderTasksPayment } = require('../../utils/syncOrderPayment');
 
 // ─── LEADS ───────────────────────────────────────────────────────────────────
 exports.getLeads = asyncHandler(async (req, res) => {
@@ -608,6 +609,11 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
     { new: true, runValidators: true }
   );
   if (!order) return next(new AppError('Order not found', 404));
+  // If this update recorded a payment (paidAmount / balance / paymentCollection),
+  // propagate the new paid/partial status to the order's tasks for Dispatch.
+  if (req.body.paidAmount !== undefined || req.body.balance !== undefined || req.body.paymentCollection !== undefined) {
+    await syncOrderTasksPayment(order._id).catch(() => {});
+  }
   res.status(200).json({ success: true, data: order });
 });
 

@@ -8,6 +8,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
+const { syncOrderTasksPayment } = require('../../utils/syncOrderPayment');
 
 // ─── PARTIES ─────────────────────────────────────────────────────────────────
 exports.getParties = asyncHandler(async (req, res) => {
@@ -202,6 +203,11 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
   });
 
+  // Sync any carried-over advance/paid status onto the linked order's tasks.
+  if (invoice.orderId || linkedOrder?._id) {
+    await syncOrderTasksPayment(invoice.orderId || linkedOrder._id).catch(() => {});
+  }
+
   notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: 'Invoice Converted from Quotation', message: `Invoice ${invoice.invoiceNumber} — ₹${invoice.total?.toLocaleString()} (Balance: ₹${invoice.balanceDue?.toLocaleString()})`, link: '/billing' }).catch(() => {});
   res.status(201).json({ success: true, data: invoice });
 });
@@ -247,7 +253,20 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
     await Party.findByIdAndUpdate(pId, { runningBalance: newBalance });
   }
 
+  // Propagate the payment to the linked order's tasks so Task Management +
+  // Dispatch reflect the new paid/partial status (dispatch is gated on this).
+  let orderId = invoice.orderId;
+  if (!orderId && invoice.quotationId) {
+    const linkedOrder = await Order.findOne({ quotationId: invoice.quotationId, deletedAt: null }).sort('-createdAt');
+    orderId = linkedOrder?._id;
+  }
+  let taskPaymentStatus = null;
+  if (orderId) taskPaymentStatus = await syncOrderTasksPayment(orderId).catch(() => null);
+
   notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: 'Payment Received', message: `Payment of ₹${netAmount?.toLocaleString()} received — Invoice ${invoice.invoiceNumber} (Balance: ₹${invoice.balanceDue?.toLocaleString()})`, link: '/billing' }).catch(() => {});
+  if (taskPaymentStatus === 'Paid') {
+    notifyRoles({ modules: ['Task Management', 'Dispatch Team', 'Operations'], type: 'task', title: 'Payment Cleared — Dispatch Unblocked', message: `Invoice ${invoice.invoiceNumber} fully paid — linked tasks marked Paid and cleared for dispatch`, link: '/tasks' }).catch(() => {});
+  }
   res.status(201).json({ success: true, data: { payment, invoice } });
 });
 
