@@ -224,10 +224,14 @@ function computeModel(type, data, settings) {
   const cfg = resolveConfig(settings, data);
   const isQuotation = type === 'quotation';
   const items = (data.items || SAMPLE_ITEMS).filter(Boolean);
-  const sections = computeDocSections(data);
+  // A pre-built composition (from Billing) takes precedence over the template's own
+  // kitPrice×qty computation so the items table matches the Sales composition breakdown.
+  const sections = data.composition || computeDocSections(data);
 
   const totalQty = sections ? sections.totalSectionsQty : items.reduce((s, i) => s + (i.qty || 0), 0);
-  const totalTax = items.reduce((s, i) => s + (i.taxAmt || 0), 0);
+  const totalTax = sections && sections.totalTax !== undefined
+    ? sections.totalTax
+    : items.reduce((s, i) => s + (i.taxAmt || 0), 0);
   const subtotalAmt = sections
     ? sections.totalSectionsAmt
     : items.reduce((s, i) => s + (i.amount || 0), 0);

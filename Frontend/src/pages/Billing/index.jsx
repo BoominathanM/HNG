@@ -35,6 +35,7 @@ import {
   useGetCompanySettingsQuery,
   useGetSalesOrdersQuery,
   useUpdateSalesOrderMutation,
+  useGetKitsQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -59,6 +60,16 @@ const itemsToProducts = (items = []) =>
     category: i.category || '',
   }));
 
+const rowCategory = (p, kitOrders = []) => {
+  if (!p) return 'separate_product';
+  if (p.category) return p.category;
+  if (p.isKit || p.kitType) {
+    const ko = (kitOrders || []).find(o => o && o.kitId && String(o.kitId) === String(p.kitId));
+    return ko?.category || 'separate_kit';
+  }
+  return 'separate_product';
+};
+
 // Kit-aware grand total — mirrors computeRecordGrandTotal / computeRecordBuckets in Sales/index.jsx.
 // Uses products[] + kitOrders[] from the quotation/order document.
 // Returns 0 when no composition data is present so callers can fall back to the stored total.
@@ -67,11 +78,7 @@ const computeKitAwareTotal = (rec) => {
   const kitOrders = (rec.kitOrders || []).filter(Boolean);
   if (!products.length && !kitOrders.length) return 0;
 
-  const catOf = (p) => {
-    if (p.category) return p.category;
-    if (p.isKit || p.kitType) return 'separate_kit';
-    return 'separate_product';
-  };
+  const catOf = (p) => rowCategory(p, kitOrders);
 
   // GST-inclusive subtotal of non-kit product rows.
   // Accepts both 'rate' (Sales form field) and 'price' (quotation item schema field).
@@ -93,7 +100,7 @@ const computeKitAwareTotal = (rec) => {
     const price = Number(ko.kitPrice) || 0;
     const qty = Number(ko.overallQty) || 0;
     if (price > 0) return r2(price * (qty || 1));
-    const rows = kitRowsAll.filter(r => r.kitId === ko.kitId);
+    const rows = kitRowsAll.filter(r => String(r.kitId || '') === String(ko.kitId || ''));
     const sub = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || Number(p.price) || 0), 0);
     const gst = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || Number(p.price) || 0) * ((Number(p.gst) || 0) / 100), 0);
     return r2((sub + gst) * (qty || 1));
@@ -117,6 +124,208 @@ const computeKitAwareTotal = (rec) => {
   const separateProduct = sumProds(sepProds);
   const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
   return r2(personalized + separateKit + separateProduct + fwd);
+};
+
+function computePersonalizedComposition(formData = {}, kitsData = []) {
+  const piRaw = formData.packagingIncludes || [];
+  let piIds, piQtyMap;
+  if (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null) {
+    piIds = piRaw.map(p => p.id);
+    piQtyMap = Object.fromEntries(piRaw.map(p => [p.id, Number(p.qty) || 1]));
+  } else {
+    piIds = piRaw;
+    piQtyMap = formData.packagingIncludesQty || {};
+  }
+
+  const persQty = Number(formData.kitOverallQty) || 1;
+  const persPrice = Number(formData.kitPrice) || 0;
+  const pkgTotal = persPrice * persQty;
+  const allProds = (formData.products || []).filter(Boolean);
+  const kitOrders = (formData.kitOrders || []).filter(Boolean);
+  const kitUsage = {};
+  const prodUsage = {};
+
+  const includedKits = piIds.map(id => {
+    const kDef = kitsData.find(k => String(k._id) === String(id));
+    if (!kDef) return null;
+    const totalConsumed = Number(piQtyMap[id]) || 1;
+    kitUsage[id] = totalConsumed;
+    const kOrder = kitOrders.find(ko => String(ko.kitId) === String(id)) || {};
+    const kitPkgPrice = Number(kOrder.kitPrice) || 0;
+    const kitOrderQty = Number(kOrder.overallQty) || 0;
+    const kitProds = allProds.filter(p => (p.isKit || p.kitType) && String(p.kitId) === String(id));
+    const prodLines = kitProds.map(p => {
+      const qPerKit = Number(p.qty) || 0;
+      const rate = Number(p.rate || p.price) || 0;
+      const gst = Number(p.gst || p.taxRate) || 0;
+      const subtotalPerKit = r2(qPerKit * rate * (1 + gst / 100));
+      return { name: p.name || p.itemName || p.kitType || '—', unit: p.unit || 'PCS', gst, rate, qtyPerKit: qPerKit, totalQty: qPerKit * totalConsumed, totalValue: r2(subtotalPerKit * totalConsumed) };
+    });
+    const prodsTotalPerKit = prodLines.reduce((s, pl) => s + r2(pl.totalValue / totalConsumed), 0);
+    const kitValuePerKit = kitPkgPrice + prodsTotalPerKit;
+    const kitTotal = r2(kitValuePerKit * totalConsumed);
+    return { kitId: id, kitName: kDef.kitName || kDef.name || id, totalConsumed, kitPkgPrice, kitPkgTotal: r2(kitPkgPrice * totalConsumed), kitOrderQty, prodLines, kitTotal };
+  }).filter(Boolean);
+
+  const includedSepProds = piIds.map(id => {
+    const p = allProds.find(pp => !pp.isKit && !pp.kitType && (pp.name || pp.itemName) === id);
+    if (!p) return null;
+    const totalConsumed = Number(piQtyMap[id]) || 1;
+    prodUsage[id] = totalConsumed;
+    const rate = Number(p.rate || p.price) || 0;
+    const gst = Number(p.gst || p.taxRate) || 0;
+    const unitRate = rate * (1 + gst / 100);
+    return { name: id, unit: p.unit || 'PCS', rate, gst, totalConsumed, unitRate, totalValue: r2(totalConsumed * unitRate) };
+  }).filter(Boolean);
+
+  const inclKitTotal = includedKits.reduce((s, ik) => s + ik.kitTotal, 0);
+  const inclSepTotal = includedSepProds.reduce((s, sp) => s + sp.totalValue, 0);
+  const ownKitProdsPerPers = piIds.length > 0
+    ? allProds
+        .filter(p => (p.isKit || p.kitType) && p.kitId && !piIds.map(String).includes(String(p.kitId)))
+        .reduce((s, p) => s + r2((Number(p.qty) || 0) * (Number(p.rate || p.price) || 0) * (1 + (Number(p.gst || p.taxRate) || 0) / 100)), 0)
+    : 0;
+  const ownKitProdsTotal = ownKitProdsPerPers * persQty;
+  const totalPersonalized = r2(pkgTotal + ownKitProdsTotal + inclKitTotal + inclSepTotal);
+
+  const separateKits = kitOrders.map(ko => {
+    if (!ko || !ko.kitId) return null;
+    const kDef = kitsData.find(k => String(k._id) === String(ko.kitId));
+    const origQty = Number(ko.overallQty) || 0;
+    const consumed = kitUsage[ko.kitId] || 0;
+    const remaining = Math.max(0, origQty - consumed);
+    const kitProds = allProds.filter(p => (p.isKit || p.kitType) && String(p.kitId) === String(ko.kitId));
+    const prodsSub = kitProds.reduce((s, p) => s + r2((Number(p.qty) || 0) * (Number(p.rate || p.price) || 0) * (1 + (Number(p.gst || p.taxRate) || 0) / 100)), 0);
+    const kitPkgPrice = Number(ko.kitPrice) || 0;
+    const valuePerKit = kitPkgPrice + prodsSub;
+    return { kitId: ko.kitId, kitName: kDef?.kitName || kDef?.name || ko.kitId, remaining, kitPkgPrice, valuePerKit, remainingValue: r2(remaining * valuePerKit) };
+  }).filter(Boolean);
+
+  const sepProdsList = allProds.filter(p => p && !p.isKit && !p.kitType).map(p => {
+    const name = p.name || p.itemName || '';
+    const consumed = prodUsage[name] || 0;
+    const remaining = Math.max(0, (Number(p.qty) || 0) - consumed);
+    const rate = Number(p.rate || p.price) || 0;
+    const gst = Number(p.gst || p.taxRate) || 0;
+    const unitRate = rate * (1 + gst / 100);
+    return { name, unit: p.unit || 'PCS', rate, gst, remaining, unitRate, remainingValue: r2(remaining * unitRate) };
+  });
+
+  return { persQty, persPrice, pkgTotal, includedKits, includedSepProds, totalPersonalized, separateKits, sepProdsList };
+}
+
+// GST-inclusive amount → { taxable, gst } split at rate g (%).
+const splitGst = (amount, g) => {
+  const a = Number(amount) || 0;
+  const rate = Number(g) || 0;
+  if (rate <= 0) return { taxable: r2(a), gst: 0 };
+  const taxable = r2(a / (1 + rate / 100));
+  return { taxable, gst: r2(a - taxable) };
+};
+
+// Build a category-aware sections object (same shape DocumentTemplate's computeDocSections
+// returns) from a personalized composition, so the invoice/quotation items table matches the
+// Sales "Order Composition Breakdown" exactly: outer packaging + included kits/products in
+// Section A (Personalized) and only the REMAINING kits/products in Sections B/C.
+// Returns null when there is no personalized-packaging consumption (caller falls back to
+// DocumentTemplate's own kitPrice×qty rendering).
+function buildDocComposition(rec = {}, kitsData = []) {
+  if (!(rec.packagingIncludes || []).length || !kitsData.length) return null;
+  const comp = computePersonalizedComposition(rec, kitsData);
+  let taxableSum = 0, gstSum = 0;
+  const acc = (amount, g) => { const s = splitGst(amount, g); taxableSum += s.taxable; gstSum += s.gst; };
+
+  // ── Section A rows ──
+  const persKits = [];
+  if (comp.persPrice > 0) {
+    acc(comp.pkgTotal, 0); // outer personalized packaging (price treated as final)
+    persKits.push({ kitName: 'Personalized Packaging', qty: comp.persQty, price: comp.persPrice, components: [], kitTotal: r2(comp.pkgTotal) });
+  }
+  comp.includedKits.forEach(ik => {
+    const components = [];
+    if (ik.kitPkgPrice > 0) { acc(ik.kitPkgTotal, 0); components.push({ name: 'Kit packaging', qty: ik.totalConsumed, unit: 'kit', rate: ik.kitPkgPrice, amount: ik.kitPkgTotal }); }
+    ik.prodLines.forEach(pl => { acc(pl.totalValue, pl.gst); components.push({ name: pl.name, qty: pl.totalQty, unit: pl.unit, rate: pl.rate, amount: pl.totalValue }); });
+    persKits.push({ kitName: `${ik.kitName} (in personalized)`, qty: ik.totalConsumed, price: 0, components, kitTotal: ik.kitTotal });
+  });
+  const persProdRows = comp.includedSepProds.map(sp => {
+    acc(sp.totalValue, sp.gst);
+    const split = splitGst(sp.totalValue, sp.gst);
+    return { name: `${sp.name} (in personalized)`, qty: sp.totalConsumed, unit: sp.unit, rate: sp.rate, gstRate: sp.gst, taxAmt: split.gst, amount: sp.totalValue };
+  });
+
+  // ── Section B/C rows (remaining only) ──
+  const sepKits = comp.separateKits.filter(sk => sk.remaining > 0).map(sk => {
+    acc(sk.remainingValue, 0);
+    return { kitName: sk.kitName, qty: sk.remaining, price: sk.valuePerKit, components: [], kitTotal: sk.remainingValue };
+  });
+  const sepProdRows = comp.sepProdsList.filter(sp => sp.remaining > 0).map(sp => {
+    acc(sp.remainingValue, sp.gst);
+    const split = splitGst(sp.remainingValue, sp.gst);
+    return { name: sp.name, qty: sp.remaining, unit: sp.unit, rate: sp.rate, gstRate: sp.gst, taxAmt: split.gst, amount: sp.remainingValue };
+  });
+
+  const personalized = r2(comp.totalPersonalized);
+  const separateKit = r2(sepKits.reduce((s, k) => s + k.kitTotal, 0));
+  const separateProduct = r2(sepProdRows.reduce((s, p) => s + p.amount, 0));
+  if (personalized === 0 && separateKit === 0 && separateProduct === 0) return null;
+
+  const persKitCount = comp.persQty;
+  const sepKitCount = sepKits.reduce((s, k) => s + (k.qty || 0), 0);
+  const totalSectionsQty = (
+    persKitCount +
+    persProdRows.reduce((s, p) => s + (p.qty || 0), 0) +
+    sepKitCount +
+    sepProdRows.reduce((s, p) => s + (p.qty || 0), 0)
+  );
+
+  return {
+    persKits, persProdRows, persKitTotal: personalized, persProdTotal: 0, persKitCount, personalized,
+    sepKits, sepProdRows, separateKit, sepKitCount, separateProduct,
+    totalSectionsAmt: r2(personalized + separateKit + separateProduct),
+    totalSectionsQty,
+    totalTax: r2(gstSum),
+    taxable: r2(taxableSum),
+    gst: r2(gstSum),
+    isCategorized: true,
+  };
+}
+
+function computeCompositionGrandTotal(formData = {}, kitsData = []) {
+  if ((formData.packagingIncludes || []).length > 0 && kitsData.length > 0) {
+    const comp = computePersonalizedComposition(formData, kitsData);
+    const fwd = formData.forwardingCharge ? r2(Number(formData.forwardingChargeAmount) || 0) : 0;
+    const separateKit = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
+    const separateProduct = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
+    return r2(comp.totalPersonalized + separateKit + separateProduct + fwd);
+  }
+  return computeKitAwareTotal(formData);
+}
+
+const computeKitTaxable = (rec) => {
+  const products = (rec.products || []).filter(Boolean);
+  const kitOrders = (rec.kitOrders || []).filter(Boolean);
+  const productTaxable = products.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0), 0);
+  const productGst = products.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0) * ((Number(p.gst || p.taxRate) || 0) / 100), 0);
+  if (!kitOrders.length) return { taxable: r2(productTaxable), gst: r2(productGst) };
+  const pricedKitTaxable = kitOrders.reduce((s, ko) => {
+    const price = Number(ko.kitPrice) || 0;
+    const qty = Number(ko.overallQty || ko.qty) || 1;
+    if (price <= 0) return s;
+    const gstPct = Number(ko.gst || ko.gstPercent || ko.taxRate) || 0;
+    return s + (gstPct > 0 ? price / (1 + gstPct / 100) : price) * qty;
+  }, 0);
+  return { taxable: r2(Math.max(productTaxable, pricedKitTaxable)), gst: r2(productGst) };
+};
+
+const sumPaid = (...sources) => {
+  for (const src of sources) {
+    if (!src) continue;
+    const coll = (src.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+    if (coll > 0) return r2(coll);
+    const paid = Number(src.paidAmount) || Number(src.totalPaid) || Number(src.amountCollected) || Number(src.advancePaidAmount) || Number(src.advancePaid) || Number(src.advanceAmount) || 0;
+    if (paid > 0) return r2(paid);
+  }
+  return 0;
 };
 
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
@@ -150,7 +359,9 @@ export default function Billing() {
   const { data: partiesData } = useGetBillingPartiesQuery();
   const { data: invItemsData } = useGetItemsQuery({ limit: 1000 });
   const { data: companySettingsData } = useGetCompanySettingsQuery();
-  const { data: salesOrdersRaw } = useGetSalesOrdersQuery({ limit: 200 });
+  const { data: salesOrdersRaw } = useGetSalesOrdersQuery({ limit: 1000 });
+  const { data: kitsRaw } = useGetKitsQuery();
+  const kits = kitsRaw?.data || [];
   const invoiceSettings = companySettingsData?.data || {};
   const [createInvoiceMutation] = useCreateInvoiceMutation();
   const [recordPaymentMutation] = useRecordPaymentMutation();
@@ -176,15 +387,17 @@ export default function Billing() {
     // orderId is populated with products/kitOrders and a nested leadId (with full lead fields)
     const linkedOrder = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
     const linkedLead = linkedOrder?.leadId && typeof linkedOrder.leadId === 'object' ? linkedOrder.leadId : null;
+    const linkedQuotation = inv.quotationId && typeof inv.quotationId === 'object' ? inv.quotationId : null;
+    const quotationLead = linkedQuotation?.leadId && typeof linkedQuotation.leadId === 'object' ? linkedQuotation.leadId : null;
     // Resolve the SAME full sales order the quotation tab uses (richest kitOrders/items),
     // via leadId → orderByLead; fall back to the invoice's own populated orderId.
-    const leadId = linkedLead?._id || linkedOrder?.leadId;
+    const leadId = linkedLead?._id || linkedOrder?.leadId || quotationLead?._id || linkedQuotation?.leadId;
     const fullOrder = (leadId && orderByLead[String(leadId)]) || linkedOrder;
     // The ORDER is the source of truth for the billed "Amount to Pay" (its kitOrders carry
     // the resolved kitPrice; the lead's kitPrice is often stale). Fall back to lead, then invoice.
-    const fwdSrc = fullOrder || linkedLead;
-    const fwdEnabled = !!(fwdSrc?.forwardingCharge ?? linkedLead?.forwardingCharge);
-    const fwdAmt = fwdEnabled ? r2(Number(fwdSrc?.forwardingChargeAmount ?? linkedLead?.forwardingChargeAmount) || 0) : 0;
+    const fwdSrc = fullOrder || linkedLead || linkedQuotation || quotationLead;
+    const fwdEnabled = !!(fwdSrc?.forwardingCharge ?? linkedLead?.forwardingCharge ?? quotationLead?.forwardingCharge);
+    const fwdAmt = fwdEnabled ? r2(Number(fwdSrc?.forwardingChargeAmount ?? linkedLead?.forwardingChargeAmount ?? quotationLead?.forwardingChargeAmount) || 0) : 0;
     // Kit composition (identical resolution to quotationList): order products → order items → lead
     const srcProds = fullOrder?.products?.length
       ? fullOrder.products
@@ -192,15 +405,32 @@ export default function Billing() {
           ? itemsToProducts(fullOrder.items)
           : (linkedLead?.products?.length
               ? linkedLead.products
-              : itemsToProducts(linkedLead?.items?.length ? linkedLead.items : (inv.items || []))));
-    const srcKitOrders = fullOrder?.kitOrders?.length ? fullOrder.kitOrders : (linkedLead?.kitOrders || []);
+              : (quotationLead?.products?.length
+                  ? quotationLead.products
+                  : (linkedQuotation?.products?.length
+                      ? linkedQuotation.products
+                      : itemsToProducts(linkedLead?.items?.length ? linkedLead.items : (quotationLead?.items?.length ? quotationLead.items : (linkedQuotation?.items?.length ? linkedQuotation.items : (inv.items || []))))))));
+    const srcKitOrders = fullOrder?.kitOrders?.length ? fullOrder.kitOrders : (linkedLead?.kitOrders?.length ? linkedLead.kitOrders : (quotationLead?.kitOrders?.length ? quotationLead.kitOrders : (linkedQuotation?.kitOrders || [])));
     const srcRec = (srcProds.length || srcKitOrders.length)
-      ? { products: srcProds, kitOrders: srcKitOrders, forwardingCharge: fwdEnabled, forwardingChargeAmount: fwdAmt }
+      ? {
+          products: srcProds,
+          kitOrders: srcKitOrders,
+          kitPrice: fullOrder?.kitPrice ?? linkedLead?.kitPrice ?? quotationLead?.kitPrice ?? linkedQuotation?.kitPrice,
+          kitOverallQty: fullOrder?.kitOverallQty ?? linkedLead?.kitOverallQty ?? quotationLead?.kitOverallQty ?? linkedQuotation?.kitOverallQty,
+          packagingIncludes: fullOrder?.packagingIncludes || linkedLead?.packagingIncludes || quotationLead?.packagingIncludes || linkedQuotation?.packagingIncludes || [],
+          packagingIncludesQty: fullOrder?.packagingIncludesQty || linkedLead?.packagingIncludesQty || quotationLead?.packagingIncludesQty || linkedQuotation?.packagingIncludesQty || {},
+          forwardingCharge: fwdEnabled,
+          forwardingChargeAmount: fwdAmt,
+        }
       : null;
-    const kitTotal = srcRec ? computeKitAwareTotal(srcRec) : 0;
+    const kitTotal = srcRec ? computeCompositionGrandTotal(srcRec, kits) : 0;
+    const composition = srcRec ? buildDocComposition(srcRec, kits) : null;
+    const kitMoney = composition
+      ? { taxable: composition.taxable, gst: composition.gst }
+      : (srcRec ? computeKitTaxable(srcRec) : { taxable: 0, gst: 0 });
     // Chain: kitAwareTotal > order.total > lead.total > invoice.total
-    const invTotal = r2(kitTotal > 0 ? kitTotal : (Number(fullOrder?.total) || Number(linkedLead?.total) || Number(inv.total) || 0));
-    const invPaid = r2(Number(inv.advanceAmount) || 0);
+    const invTotal = r2(kitTotal > 0 ? kitTotal : (Number(fullOrder?.total) || Number(linkedLead?.total) || Number(quotationLead?.total) || Number(linkedQuotation?.total) || Number(inv.total) || 0));
+    const invPaid = sumPaid(fullOrder, linkedLead, quotationLead, linkedQuotation, inv);
     const invBalance = r2(Math.max(0, invTotal - invPaid));
     const invStatus = invTotal > 0
       ? (invPaid >= invTotal ? 'Paid' : invPaid > 0 ? 'Partially Paid' : 'Unpaid')
@@ -211,13 +441,13 @@ export default function Billing() {
       client: inv.partyId?.name || '—',
       partyPhone: inv.partyId?.phone || '',
       partyGst: inv.partyId?.gstNumber || '',
-      order: linkedOrder?.orderCode || '—',
-      orderCategory: (linkedOrder?.orderCategory === 'SAMPLE' || linkedLead?.leadType === 'SAMPLE') ? 'SAMPLE' : (linkedOrder?.orderCategory || 'ORDER'),
-      isEmergency: !!(linkedOrder?.isEmergency),
+      order: fullOrder?.orderCode || linkedOrder?.orderCode || '—',
+      orderCategory: (fullOrder?.orderCategory === 'SAMPLE' || linkedLead?.leadType === 'SAMPLE' || quotationLead?.leadType === 'SAMPLE') ? 'SAMPLE' : (fullOrder?.orderCategory || linkedOrder?.orderCategory || 'ORDER'),
+      isEmergency: !!(fullOrder?.isEmergency || linkedOrder?.isEmergency),
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
-      amount: inv.subtotal,
-      gst: inv.gstAmount,
+      amount: kitMoney.taxable || inv.subtotal,
+      gst: kitMoney.gst || inv.gstAmount,
       gstPercent: inv.gstPercent,
       total: invTotal,
       advance: invPaid,
@@ -229,9 +459,9 @@ export default function Billing() {
       isComplementary: inv.isComplementary,
       complementaryNote: inv.complementaryNote || '',
       // DocumentTemplate summary fields
-      taxableAmount: inv.subtotal || 0,
-      cgst: halfGst,
-      sgst: halfGst,
+      taxableAmount: kitMoney.taxable || inv.subtotal || 0,
+      cgst: kitMoney.gst ? r2(kitMoney.gst / 2) : halfGst,
+      sgst: kitMoney.gst ? r2(kitMoney.gst / 2) : halfGst,
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
       // DocumentTemplate customer block
@@ -241,7 +471,7 @@ export default function Billing() {
         gstin: inv.partyId?.gstNumber || '',
         address: inv.partyId?.address || '',
         city: inv.partyId?.city || '',
-        pan: inv.partyId?.pan || '',
+        pan: inv.partyId?.pan || inv.partyId?.panNumber || '',
         placeOfSupply: inv.partyId?.state || 'Tamil Nadu',
       },
       items: (inv.items || []).filter(Boolean).map(i => ({
@@ -257,8 +487,11 @@ export default function Billing() {
       // Kit composition for category-aware document rendering — order is source of truth
       products: srcProds,
       kitOrders: srcKitOrders,
+      // Pre-computed personalized composition (outer packaging + included kits/products in
+      // Section A, remaining in B/C) — DocumentTemplate renders this verbatim when present.
+      composition,
     };
-  }), [invoicesData, orderByLead]);
+  }), [invoicesData, orderByLead, kits]);
 
   const quotationList = useMemo(() => (quotationsData?.data || []).map((q) => {
     const halfGst = r2((q.gstAmount || 0) / 2);
@@ -280,21 +513,30 @@ export default function Billing() {
               ? lead.products
               : itemsToProducts(lead?.items?.length ? lead.items : (q.items || []))));
     const lKitOrders = linkedOrder?.kitOrders?.length ? linkedOrder.kitOrders : (lead?.kitOrders || q.kitOrders || []);
-    const sourceRec = { products: lProds, kitOrders: lKitOrders, forwardingCharge: fwdEnabled, forwardingChargeAmount: fwdAmt };
-    const kitTotal = computeKitAwareTotal(sourceRec);
+    const sourceRec = {
+      products: lProds,
+      kitOrders: lKitOrders,
+      kitPrice: linkedOrder?.kitPrice ?? lead?.kitPrice ?? q.kitPrice,
+      kitOverallQty: linkedOrder?.kitOverallQty ?? lead?.kitOverallQty ?? q.kitOverallQty,
+      packagingIncludes: linkedOrder?.packagingIncludes || lead?.packagingIncludes || q.packagingIncludes || [],
+      packagingIncludesQty: linkedOrder?.packagingIncludesQty || lead?.packagingIncludesQty || q.packagingIncludesQty || {},
+      forwardingCharge: fwdEnabled,
+      forwardingChargeAmount: fwdAmt,
+    };
+    const kitTotal = computeCompositionGrandTotal(sourceRec, kits);
+    const composition = buildDocComposition(sourceRec, kits);
+    const kitMoney = composition ? { taxable: composition.taxable, gst: composition.gst } : computeKitTaxable(sourceRec);
     // Chain: kitAwareTotal > order.total > lead.total > q.total (stale snapshot)
     const total = r2(kitTotal > 0 ? kitTotal : (Number(linkedOrder?.total) || Number(lead?.total) || Number(q.total) || 0));
     // paymentCollection from lead is authoritative (Sales reads the same source)
-    const leadColl = r2((lead?.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0));
-    const quotColl = r2((q.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0));
-    const collTotal = leadColl || quotColl;
-    const paid = r2(collTotal || Number(q.advancePaid) || 0);
+    const paid = sumPaid(linkedOrder, lead, q);
     const balance = r2(Math.max(0, total - paid));
     const qStatus = total > 0
       ? (r2(paid) >= r2(total) ? 'Paid' : paid > 0 ? 'Partially Paid' : 'Unpaid')
       : (q.status || 'Unpaid');
     return {
       key: q._id,
+      orderId: linkedOrder?._id,
       docType: 'Quotation',
       quot: q.quotCode,
       client: clientDisplay,
@@ -302,17 +544,17 @@ export default function Billing() {
       orderCategory: (lead?.leadType === 'SAMPLE') ? 'SAMPLE' : 'ORDER',
       isEmergency: false,
       date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
-      amount: q.amount,
-      gst: q.gstAmount,
+      amount: kitMoney.taxable || q.amount,
+      gst: kitMoney.gst || q.gstAmount,
       total,
       advance: paid,
       balance,
       type: q.type,
       status: qStatus,
       note: q.note || '',
-      taxableAmount: q.amount || 0,
-      cgst: halfGst,
-      sgst: halfGst,
+      taxableAmount: kitMoney.taxable || q.amount || 0,
+      cgst: kitMoney.gst ? r2(kitMoney.gst / 2) : halfGst,
+      sgst: kitMoney.gst ? r2(kitMoney.gst / 2) : halfGst,
       // Boolean flag + amount (matches Order model pattern; DocumentTemplate understands both)
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
@@ -338,8 +580,9 @@ export default function Billing() {
       // Kit composition data for category-aware document rendering — order is source of truth
       products: lProds,
       kitOrders: lKitOrders,
+      composition,
     };
-  }), [quotationsData, orderByLead]);
+  }), [quotationsData, orderByLead, kits]);
 
   const partiesList = useMemo(() => (partiesData?.data || []).map((p) => ({
     key: p._id,
@@ -386,7 +629,8 @@ export default function Billing() {
     const fwdEnabled = !!o.forwardingCharge;
     const fwdAmt = fwdEnabled ? r2(Number(o.forwardingChargeAmount) || 0) : 0;
     // Kit-aware total takes priority; fall back to stored o.total then item-computed
-    const kitTotal = computeKitAwareTotal(o);
+    const kitTotal = computeCompositionGrandTotal(o, kits);
+    const composition = buildDocComposition(o, kits);
     const total = r2(kitTotal > 0 ? kitTotal : (Number(o.total) || (subtotal + effectiveGst + fwdAmt)));
     const collTotal = r2((o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0));
     const paid = r2(collTotal || Number(o.paidAmount) || Number(o.advancePaid) || Number(o.advancePaidAmount) || 0);
@@ -418,9 +662,9 @@ export default function Billing() {
       balance,
       type: o.billType === 'NON_GST' ? 'Non-GST' : (o.type || 'GST'),
       status,
-      taxableAmount: subtotal,
-      cgst: halfGst,
-      sgst: halfGst,
+      taxableAmount: composition ? composition.taxable : subtotal,
+      cgst: composition ? r2(composition.gst / 2) : halfGst,
+      sgst: composition ? r2(composition.gst / 2) : halfGst,
       // Boolean + amount (DocumentTemplate understands this pattern)
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
@@ -438,8 +682,9 @@ export default function Billing() {
       // Kit composition data for category-aware document rendering
       products: o.products || [],
       kitOrders: o.kitOrders || [],
+      composition,
     };
-  }), [salesOrdersRaw]);
+  }), [salesOrdersRaw, kits]);
 
   const [activeTab, setActiveTab] = useState('quotation-in-process');
   const { filterTabs, activeKeyFor } = useTabAccess('Billing');
@@ -787,6 +1032,7 @@ export default function Billing() {
         await convertQuotationMutation({
           quotationId: convertQuot.key,
           partyId: party.key,
+          orderId: convertQuot.orderId,
           amount: amt,
           includePreviousDue: convertPreviousDue > 0,
         }).unwrap();

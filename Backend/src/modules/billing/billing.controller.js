@@ -3,6 +3,7 @@ const Payment = require('../../models/Payment');
 const Party = require('../../models/Party');
 const LedgerEntry = require('../../models/LedgerEntry');
 const Quotation = require('../../models/Quotation');
+const Order = require('../../models/Order');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -88,7 +89,19 @@ exports.getInvoices = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [invoices, total] = await Promise.all([
-    Invoice.find(filter).populate('partyId', 'name phone').populate({ path: 'orderId', select: 'orderCode orderCategory isEmergency leadId products kitOrders forwardingCharge forwardingChargeAmount items', populate: { path: 'leadId', select: 'leadType products kitOrders forwardingCharge forwardingChargeAmount total paymentCollection items' } }).sort('-invoiceDate').skip((page - 1) * limit).limit(limit),
+    Invoice.find(filter)
+      .populate('partyId', 'name phone gstNumber address city state panNumber')
+      .populate({
+        path: 'orderId',
+        select: 'orderCode orderCategory isEmergency leadId products kitOrders forwardingCharge forwardingChargeAmount items total amount gstAmount paymentCollection paidAmount advancePaid advancePaidAmount billType type clientName billingName clientPhone phone gstNumber detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType',
+        populate: { path: 'leadId', select: 'leadType products kitOrders forwardingCharge forwardingChargeAmount total paymentCollection paidAmount advancePaid items hotelName billingName phone gstNumber locationCity detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType' },
+      })
+      .populate({
+        path: 'quotationId',
+        select: 'quotCode leadId products kitOrders forwardingCharge forwardingChargeAmount items total amount gstAmount advancePaid type paymentCollection paidAmount kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType',
+        populate: { path: 'leadId', select: 'leadType products kitOrders forwardingCharge forwardingChargeAmount total paymentCollection paidAmount advancePaid items hotelName billingName phone gstNumber locationCity detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType' },
+      })
+      .sort('-invoiceDate').skip((page - 1) * limit).limit(limit),
     Invoice.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: invoices });
@@ -152,6 +165,15 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
   const { quotationId, amount, includePreviousDue } = req.body;
   const quotation = await Quotation.findById(quotationId);
   if (!quotation) return next(new AppError('Quotation not found', 404));
+  const linkedOrder = req.body.orderId
+    ? await Order.findById(req.body.orderId)
+    : await Order.findOne({
+        $or: [
+          { quotationId: quotation._id },
+          ...(quotation.leadId ? [{ leadId: quotation.leadId }] : []),
+        ],
+        deletedAt: null,
+      }).sort('-createdAt');
 
   const settings = await require('../../models/CompanySettings').findOne();
   const prefix = settings?.invoicePrefix || 'INV-';
@@ -167,14 +189,14 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
   const invoice = await Invoice.create({
     invoiceNumber: invCode,
     partyId: req.body.partyId,
-    orderId: req.body.orderId,
+    orderId: req.body.orderId || linkedOrder?._id,
     quotationId: quotation._id,
     invoiceType: quotation.type,
     subtotal: quotation.amount,
     gstAmount: quotation.gstAmount,
     total: invoiceTotal,
-    advanceAmount: quotation.advancePaid,
-    balanceDue: invoiceTotal - quotation.advancePaid,
+    advanceAmount: (quotation.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0) || quotation.paidAmount || quotation.advancePaid,
+    balanceDue: invoiceTotal - ((quotation.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0) || quotation.paidAmount || quotation.advancePaid || 0),
     previousBalance,
     items: quotation.items,
     createdBy: req.user._id,
@@ -234,7 +256,7 @@ exports.getQuotationsInProcess = asyncHandler(async (req, res) => {
   // Return all non-deleted quotations regardless of status so newly created
   // (Unpaid / In Process) quotations appear immediately in the Billing tab.
   const quotations = await Quotation.find({ deletedAt: null })
-    .populate('leadId', 'hotelName contactPerson phone locationCity gstNumber leadType products kitOrders forwardingCharge forwardingChargeAmount paymentCollection total kitPrice kitOverallQty items')
+    .populate('leadId', 'hotelName contactPerson phone locationCity gstNumber leadType products kitOrders forwardingCharge forwardingChargeAmount paymentCollection paidAmount advancePaid total kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType items')
     .sort('-createdAt');
 
   // Exclude quotations already converted to a billing invoice.

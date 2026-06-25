@@ -24,14 +24,26 @@ const invoiceSchema = new mongoose.Schema({
     enum: ['Pending', 'Partially Paid', 'Paid', 'Overdue'],
     default: 'Pending',
   },
-  items: [{
+  items: [new mongoose.Schema({
     itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },
     itemName: { type: String, required: true },
     unit: String,
     price: { type: Number, required: true },
     qty: { type: Number, required: true },
     lineTotal: Number,
-  }],
+    rate: Number,
+    gst: Number,
+    taxRate: Number,
+    isKit: Boolean,
+    kitId: String,
+    kitName: String,
+    kitType: String,
+    category: String,
+    kitPrice: Number,
+    overallQty: Number,
+    displayUnit: String,
+    kitIncludes: [mongoose.Schema.Types.Mixed],
+  }, { strict: false })],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
