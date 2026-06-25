@@ -10114,6 +10114,46 @@ export default function Sales() {
                           </Form.Item>
                         </Col>
                       </Row>
+                      {/* Per-kit Category + Display Unit — set at CREATE time so each selected kit can be
+                          a Personalized kit OR a Separate Kit with its OWN display unit (e.g. a Dental kit
+                          set to Ziplock that is packed inside a personalized Box). Operations routes each
+                          kit to its own design tab by these values; the top-level Display Unit below is the
+                          personalized OUTER packaging. */}
+                      {(watchedSelectedKits || []).length > 0 && (
+                        <div style={{ marginTop: 4, marginBottom: 8 }}>
+                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                            EACH KIT — CATEGORY &amp; DISPLAY UNIT
+                          </Text>
+                          {(watchedSelectedKits || []).map((kitId, kIdx) => {
+                            const kDef = kits.find((k) => k._id === kitId);
+                            return (
+                              <Row key={kitId} gutter={12} align="bottom" style={{ marginBottom: 8, padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.15)' }}>
+                                <Col xs={24} sm={8}>
+                                  <Text strong style={{ color: '#722ed1', fontSize: 13 }}><GiftOutlined /> {kDef?.kitName || `Kit ${kIdx + 1}`}</Text>
+                                  <Form.Item name={['kitOrders', kIdx, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
+                                </Col>
+                                <Col xs={12} sm={8}>
+                                  <Form.Item label="Kit Category" name={['kitOrders', kIdx, 'category']} style={{ marginBottom: 0 }}
+                                    tooltip="Personalized = part of the personalized outer packaging. Separate Kit = assembled in its own display unit (its own design tab).">
+                                    <Select
+                                      options={[
+                                        { value: ORDER_CATEGORIES.PERSONALIZED, label: 'Personalized' },
+                                        { value: ORDER_CATEGORIES.SEPARATE_KIT, label: 'Separate Kit' },
+                                      ]}
+                                    />
+                                  </Form.Item>
+                                </Col>
+                                <Col xs={12} sm={8}>
+                                  <Form.Item label="Display Unit" name={['kitOrders', kIdx, 'displayUnit']} style={{ marginBottom: 0 }}
+                                    tooltip="This kit's own packaging — drives which Operations design tab (Box / Ziplock / Butter Paper) it routes to.">
+                                    <Select allowClear showSearch optionFilterProp="label" placeholder="Display unit" options={configDisplayUnitOptions} />
+                                  </Form.Item>
+                                </Col>
+                              </Row>
+                            );
+                          })}
+                        </div>
+                      )}
                       {/* Kit customization specs — only for Personalized kits (a Separate Kit is bought as-is). */}
                       {ptHasPersonalizedUI(watchedProductType) && (
                         <>

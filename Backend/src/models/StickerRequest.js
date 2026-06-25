@@ -5,6 +5,10 @@ const stickerRequestSchema = new mongoose.Schema({
   hotelLogo: String,
   hotelName: String,
   product: String,
+  // Order-composition category this approval belongs to (personalized | separate_kit | separate_product).
+  // Lets the SAME product in the SAME tab carry SEPARATE approvals when it shows twice — once as a
+  // Separate Kit and once as Personalized (a separate kit packed inside a personalized outer unit).
+  category: { type: String, default: '' },
   // queue this request belongs to ('Display Unit' = kit packaging approval, not a sticker)
   stickerType: { type: String, enum: ['Product', 'Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'Display Unit'], default: 'Sticker' },
   quantity: Number,

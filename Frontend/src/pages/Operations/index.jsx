@@ -271,6 +271,15 @@ export default function Operations() {
       const productByKey = {};
       leadProducts.forEach((p) => { const k = prodKey(p); if (p && !(k in productByKey)) productByKey[k] = p; });
       const rawItems = (o.items?.length ? o.items : leadProducts);
+      // Personalized order + what's packed inside its outer unit (packagingIncludes). An included
+      // kit/product is a SEPARATE thing packed inside the personalized box, so its OWN row reads as
+      // Separate Kit / Separate Product (the personalized OUTER packing appears as a synthesized
+      // personalized copy in the queue). This is why "Select Kit → add a kit inside personalized"
+      // must surface that kit as a Separate Kit, not just as Personalized.
+      const ptArr = Array.isArray(o.productType) ? o.productType : (o.productType ? [o.productType] : []);
+      const isPersonalizedOrder = ptArr.includes('personalized') || ptArr.includes('PERSONALIZED_KIT');
+      const includesList = (o.packagingIncludes?.length ? o.packagingIncludes : (o.leadId?.packagingIncludes || [])) || [];
+      const includeSet = new Set(includesList.map(String));
       return rawItems.map((rawItem, itemIdx) => {
         // Prefer the index-aligned product (items derive from products), else match by kitId+name.
         const prod = (o.items?.length && leadProducts[itemIdx] && prodKey(leadProducts[itemIdx]) === prodKey(rawItem))
@@ -305,11 +314,15 @@ export default function Operations() {
         // Config lookup first; string-match fallback for items without a config entry
         // (e.g. orders from before packing config was set up, or unregistered material names).
         const packingMaterialTab = packingMaterialTabMap[pmRaw] || item.packingMaterialTab || packTabFromString(pmRaw);
-        // Composition category — the per-kit Order Details config (kitOrders[i].category) is the
-        // source of truth; the item row's own category can be stale/defaulted (e.g. saved as
-        // 'separate_kit' before the kit was flagged Personalized). Computed before the display-unit
-        // fallback below because that fallback depends on it.
-        const itemCategory = (isKitItem && kitCfg?.category) ? kitCfg.category : item.category;
+        // Composition category. An item packed INSIDE a personalized outer (packagingIncludes) is a
+        // Separate Kit / Separate Product inside the box → its OWN row reads as that (the personalized
+        // outer packing is the synthesized personalized copy). Otherwise the per-kit Order Details
+        // config (kitOrders[i].category) is the source of truth; the item's own category can be stale.
+        const isIncludedInPersonalized = isPersonalizedOrder
+          && (includeSet.has(String(item.kitId)) || includeSet.has(String(item.name || item.itemName)));
+        const itemCategory = isIncludedInPersonalized
+          ? (isKitItem ? 'separate_kit' : 'separate_product')
+          : ((isKitItem && kitCfg?.category) ? kitCfg.category : item.category);
         // Per-kit display unit → resolved Operations tab. Resolution priority for a kit item:
         //   1. item.displayUnit (per-item)
         //   2. kitCfg.displayUnit (per-kit Order Details card / kit inventory default)
@@ -353,6 +366,13 @@ export default function Operations() {
     balanceQty: o.balanceQty || 0,
     partialDeliveries: o.partialDeliveries || [],
     paymentProofs: o.paymentProofs || [],
+    // Carried onto the mapped order so the productionQueues dual-step (which runs on apiOrders,
+    // NOT the raw order) can detect a personalized order and what's packed inside it. Without
+    // these the personalized-packing copies are never generated (the leadId object is not on the
+    // mapped order). Fall back to the populated lead like the other kit fields.
+    productType: o.productType || o.leadId?.productType || [],
+    packagingIncludes: (o.packagingIncludes?.length ? o.packagingIncludes : (o.leadId?.packagingIncludes || [])) || [],
+    kitOrders: (o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || [],
     // Kit display fields — fall back to the populated leadId fields for orders created
     // before kitDisplayUnit was copied onto the Order document itself.
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
@@ -394,8 +414,15 @@ export default function Operations() {
       if (!isPersonalizedOrder || !persTab || !includes.length) return o;
       const includeSet = new Set(includes.map(String));
       const persCopies = (o.items || [])
+        // Emit a "personalized packing" copy for every INCLUDED item that is not ALREADY personalized
+        // (i.e. Separate Kit / Separate Product packed inside the personalized outer). The copy is
+        // independent of the tab — so when the separate kit and the personalized outer share the SAME
+        // display unit (both Box, or both Ziplock), the SAME tab shows TWO rows for the same order:
+        // the item once as its own category (e.g. Separate Kit) AND once as Personalized. When they
+        // differ, the two rows land in their two tabs. Already-personalized items ARE the personalized
+        // row via normal routing, so they are not copied (no duplicate personalized row).
         .filter((it) => (includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName)))
-          && it.displayUnitTab !== persTab)
+          && it.category !== 'personalized')
         .map((it) => ({
           // Force isKit so the queue routes this copy by its display-unit tab (the personalized
           // outer unit) regardless of whether the included item is itself a kit or a product.
@@ -447,9 +474,14 @@ export default function Operations() {
       : item.key?.endsWith('-butter') ? 'Butter Paper'
       : 'Sticker';
     const pLower = (item.product || '').toLowerCase();
-    return stickerRequests.find(
+    const cat = item.category || '';
+    const matches = stickerRequests.filter(
       (s) => s.orderId?.orderCode === item.orderId && s.stickerType === stickerType && (s.product || '').toLowerCase() === pLower,
     );
+    // Category-scoped approval: when the same product shows twice in one tab (once as Separate Kit,
+    // once as Personalized), each row gets its OWN approval. Prefer the request with the matching
+    // category; fall back to a legacy request that has no category (orders created before this).
+    return matches.find((s) => (s.category || '') === cat) || matches.find((s) => !s.category);
   };
   // Local overrides take priority (immediate post-action feedback);
   // falls back to DB-backed status so approved/printed steps survive page refresh.
@@ -974,6 +1006,9 @@ export default function Operations() {
                             orderId: ord?.key,
                             hotelLogo: record.hotelLogo,
                             product: record.product,
+                            // Category so a product shown twice in one tab (Separate Kit + Personalized)
+                            // is approved separately per category.
+                            category: record.category || '',
                             stickerType: queueType,
                             quantity: record.qty,
                             stickerSize: record.size,
@@ -1081,6 +1116,7 @@ export default function Operations() {
                             orderId: ord?.key,
                             hotelLogo: record.hotelLogo,
                             product: record.product,
+                            category: record.category || '',
                             stickerType: 'Sticker',
                             quantity: record.qty,
                             stickerSize: record.size,
@@ -1205,11 +1241,15 @@ export default function Operations() {
       const typeKey = type === 'Box' ? 'box' : type === 'Butter Paper' ? 'butter' : 'frosted';
       const orderMap = new Map();
       activeRows.forEach((row) => {
-        if (!orderMap.has(row.orderId)) orderMap.set(row.orderId, []);
-        orderMap.get(row.orderId).push(row);
+        // Group by order AND composition category, so a Separate Kit group and the Personalized
+        // (outer-packing) group of the SAME order render as TWO distinct kit blocks in this tab.
+        const gkey = `${row.orderId}|${row.category || ''}`;
+        if (!orderMap.has(gkey)) orderMap.set(gkey, []);
+        orderMap.get(gkey).push(row);
       });
       tableSource = [];
-      orderMap.forEach((group, orderId) => {
+      orderMap.forEach((group) => {
+        const orderId = group[0].orderId;
         const order = apiOrders.find((o) => o.id === orderId);
         const isKitOrder = !!(order?.kitDisplayUnit);
         // Group under a kit parent ONLY when items are here for KIT ASSEMBLY — i.e. the
@@ -1240,7 +1280,7 @@ export default function Operations() {
           // Key suffix must end in -box/-frosted so findStickerReq detects the right SR type.
           const first = group[0];
           tableSource.push({
-            key: `${orderId}-kit-${typeKey}`,
+            key: `${orderId}-${first.category || 'kit'}-kit-${typeKey}`,
             orderId,
             orderCategory: first.orderCategory,
             hotelLogo: first.hotelLogo,

@@ -231,6 +231,11 @@ export default function OperationDetail() {
       const productByKey = {};
       leadProducts.forEach((p) => { const k = prodKey(p); if (p && !(k in productByKey)) productByKey[k] = p; });
       const rawItems = (o.items?.length ? o.items : leadProducts);
+      // Items packed inside a personalized outer (packagingIncludes) read as Separate Kit/Product.
+      const ptArr = Array.isArray(o.productType) ? o.productType : (o.productType ? [o.productType] : []);
+      const isPersonalizedOrder = ptArr.includes('personalized') || ptArr.includes('PERSONALIZED_KIT');
+      const includesList = (o.packagingIncludes?.length ? o.packagingIncludes : (o.leadId?.packagingIncludes || [])) || [];
+      const includeSet = new Set(includesList.map(String));
       return rawItems.map((rawIt, idx) => {
         const prod = (o.items?.length && leadProducts[idx] && prodKey(leadProducts[idx]) === prodKey(rawIt))
           ? leadProducts[idx]
@@ -260,7 +265,11 @@ export default function OperationDetail() {
         // Kit composition category: the per-kit Order Details config (kitOrders[i].category) is the
         // source of truth; the item row's own category can be stale. Computed first because the
         // display-unit fallback below depends on it.
-        const itemCategory = (isKitItem && kitCfg?.category) ? kitCfg.category : it.category;
+        const isIncludedInPersonalized = isPersonalizedOrder
+          && (includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName)));
+        const itemCategory = isIncludedInPersonalized
+          ? (isKitItem ? 'separate_kit' : 'separate_product')
+          : ((isKitItem && kitCfg?.category) ? kitCfg.category : it.category);
         // Per-kit display unit → its own Operations tab. Priority: per-item → per-kit config →
         // order/lead top-level display unit (fallback for ANY kit when no per-kit value exists).
         // Per-kit value is authoritative (multi-kit different display units route independently);
@@ -591,10 +600,17 @@ export default function OperationDetail() {
       })
       .forEach((sr) => {
         const key = (sr.product || sr.hotelLogo || '').toLowerCase();
-        if (key) map[key] = sr;
+        // Plain key (legacy) + category-scoped key, so a product that has SEPARATE approvals for
+        // its Separate-Kit row and its Personalized-packing row resolves the correct one by category.
+        if (key) { if (!(key in map)) map[key] = sr; map[`${key}|${sr.category || ''}`] = sr; }
       });
     return map;
   }, [stickerRequests, order?.key, id]);
+  // Resolve the design/sticker request for a spec-table row, preferring its own category.
+  const srForRow = (record) => {
+    const name = (record.itemName || record.name || record.product || '').toLowerCase();
+    return stickerRequestMap[`${name}|${record.category || ''}`] || stickerRequestMap[name];
+  };
 
   // Kit-level SR lookup: stickerType → SR (for SRs where product='Kit').
   // All kit items with the same display-unit tab (Box/Ziplock/Butter Paper) share ONE SR,
@@ -1122,8 +1138,7 @@ export default function OperationDetail() {
       key: 'design',
       width: 90,
       render: (_, record) => {
-        const name = (record.product || record.itemName || record.name || '').toLowerCase();
-        const sr = resolveKitSR(record) || stickerRequestMap[name];
+        const sr = resolveKitSR(record) || srForRow(record);
         const url = sr?.designFileUrl;
         if (!url) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
         const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
@@ -1164,8 +1179,7 @@ export default function OperationDetail() {
       fixed: 'right',
       width: 140,
       render: (_, record) => {
-        const name = (record.product || record.itemName || record.name || '').toLowerCase();
-        const sr = resolveKitSR(record) || stickerRequestMap[name];
+        const sr = resolveKitSR(record) || srForRow(record);
         if (!sr) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
         if (sr.opsHeadApproved) {
           return (
