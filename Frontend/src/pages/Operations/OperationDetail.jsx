@@ -81,6 +81,7 @@ import {
   getProgressFromChecks,
   inferItemLogoType,
   normYNOps,
+  ORDER_CATEGORY_META,
   PAYMENT_LABELS,
   packTabFromString,
   statusPill,
@@ -223,7 +224,30 @@ export default function OperationDetail() {
       // Per-kit display-unit map (by kitId) so each kit in a multi-kit order routes to its OWN tab.
       const kitOrdersList = ((o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || []).filter(Boolean);
       const kitCfgById = Object.fromEntries(kitOrdersList.filter((k) => k.kitId).map((k) => [k.kitId, k]));
-      return (o.items?.length ? o.items : (o.products || [])).map((it, idx) => {
+      // Enrich each item from the lead-sourced order.products (full kit flag/category/displayUnit/
+      // specs) — order.items (from the negotiation) can drop some of those. See index.jsx for detail.
+      const leadProducts = (o.products?.length ? o.products : (o.leadId?.products || [])) || [];
+      const prodKey = (p) => `${p?.kitId || ''}|${String(p?.name || p?.itemName || '').trim().toLowerCase()}`;
+      const productByKey = {};
+      leadProducts.forEach((p) => { const k = prodKey(p); if (p && !(k in productByKey)) productByKey[k] = p; });
+      const rawItems = (o.items?.length ? o.items : leadProducts);
+      return rawItems.map((rawIt, idx) => {
+        const prod = (o.items?.length && leadProducts[idx] && prodKey(leadProducts[idx]) === prodKey(rawIt))
+          ? leadProducts[idx]
+          : (productByKey[prodKey(rawIt)] || {});
+        const it = {
+          ...prod, ...rawIt,
+          isKit: rawIt.isKit || prod.isKit || false,
+          kitId: rawIt.kitId || prod.kitId || '',
+          kitName: rawIt.kitName || prod.kitName || '',
+          kitType: rawIt.kitType || prod.kitType || '',
+          category: rawIt.category || prod.category || '',
+          displayUnit: rawIt.displayUnit || prod.displayUnit || '',
+          size: rawIt.size || prod.size || '',
+          sticker: rawIt.sticker || prod.sticker || '',
+          printing: rawIt.printing || prod.printing || '',
+          packingMaterial: rawIt.packingMaterial || rawIt.packaging || prod.packingMaterial || prod.packaging || '',
+        };
         const isKitItem = !!(it.isKit || it.kitType);
         const kitCfg = isKitItem
           ? (kitCfgById[it.kitId] || (kitOrdersList.length === 1 ? kitOrdersList[0] : null))
@@ -233,13 +257,24 @@ export default function OperationDetail() {
         const printing = normYNOps(it.printing || (isKitItem ? kitCfg?.printing : ''));
         const pmRaw = it.packingMaterial || it.packaging || '';
         const packingMaterialTab = it.packingMaterialTab || packTabFromString(pmRaw);
-        // Per-kit display unit → its own Operations tab (config map first, name-string fallback).
-        const itemDisplayUnit = isKitItem ? (it.displayUnit || kitCfg?.displayUnit || '') : (it.displayUnit || '');
+        // Kit composition category: the per-kit Order Details config (kitOrders[i].category) is the
+        // source of truth; the item row's own category can be stale. Computed first because the
+        // display-unit fallback below depends on it.
+        const itemCategory = (isKitItem && kitCfg?.category) ? kitCfg.category : it.category;
+        // Per-kit display unit → its own Operations tab. Priority: per-item → per-kit config →
+        // order/lead top-level display unit (fallback for ANY kit when no per-kit value exists).
+        // Per-kit value is authoritative (multi-kit different display units route independently);
+        // the order-level fallback keeps separate kits — whose only display unit is order-level —
+        // from dropping out of the design tabs / spec table.
+        const orderLevelDU = o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '';
+        const itemDisplayUnit = isKitItem
+          ? (it.displayUnit || kitCfg?.displayUnit || orderLevelDU || '')
+          : (it.displayUnit || '');
         const itemDisplayUnitTab = (isKitItem && itemDisplayUnit)
           ? (it.displayUnitTab || displayUnitTabMap[itemDisplayUnit] || packTabFromString(itemDisplayUnit))
           : (it.displayUnitTab || '');
         const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, it.logoType);
-        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitTab: itemDisplayUnitTab, logoType };
+        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory };
       });
     })(),
     readiness: o.readiness || {},
@@ -855,6 +890,39 @@ export default function OperationDetail() {
       render: (_, record) => {
         const kitName = record.kitName || record.kitType;
         return kitName ? <Tag color="purple" icon={<GiftOutlined />}>{kitName}</Tag> : '-';
+      },
+    },
+    {
+      // Composition category — Personalized / Separate Kit / Separate Product. Resolved from the
+      // per-kit Order Details config during normalization, so personalized kits read correctly here.
+      title: 'Category',
+      key: 'category',
+      render: (_, record) => {
+        const isKitItem = !!(record.isKit || record.kitType);
+        const cat = record.category || (isKitItem ? 'separate_kit' : 'separate_product');
+        const meta = ORDER_CATEGORY_META[cat] || ORDER_CATEGORY_META.separate_product;
+        return (
+          <Tag style={{ background: `${meta.color}1a`, color: meta.color, border: `1px solid ${meta.color}55`, borderRadius: 12, fontSize: 11, fontWeight: 600, margin: 0 }}>
+            {meta.label}
+          </Tag>
+        );
+      },
+    },
+    {
+      // Display unit for kit items (personalized & separate kits alike) — drives the Box/Ziplock/
+      // Butter routing, so showing it here makes the kit's packaging destination explicit.
+      title: 'Display Unit',
+      key: 'displayUnit',
+      render: (_, record) => {
+        const isKitItem = !!(record.isKit || record.kitType);
+        const du = record.displayUnit || (isKitItem ? (order?.kitDisplayUnit || '') : '');
+        if (!du) return '-';
+        return (
+          <Space direction="vertical" size={0}>
+            <Tag color="purple" style={{ margin: 0 }}>{String(du).replace(/_/g, ' ')}</Tag>
+            {record.displayUnitTab && <Text type="secondary" style={{ fontSize: 10 }}>{record.displayUnitTab}</Text>}
+          </Space>
+        );
       },
     },
     { title: 'Print Type', dataIndex: 'logoType', render: (value) => value ? <Tag color="purple">{value}</Tag> : '-' },

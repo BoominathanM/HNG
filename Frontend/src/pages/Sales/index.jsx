@@ -10460,9 +10460,21 @@ export default function Sales() {
                               const flatOptsInline = [...otherKitOptsInline, ...sepProdOptsInline];
                               return (
                                 <div key={kitId} style={{ marginBottom: 12, padding: '12px 16px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.2)' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                                     <GiftOutlined style={{ color: '#722ed1' }} />
                                     <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{kitCardNameInline} — Order Details</Text>
+                                    {/* Per-kit category: a kit inside a personalized order can itself be a Separate Kit
+                                        (e.g. a Dental kit packed inside the personalized Box). This drives whether it
+                                        routes to its OWN display-unit tab in Operations (Separate Kit) and is shown
+                                        separately from the personalized outer packing. */}
+                                    <Form.Item name={['kitOrders', kitIndex, 'category']} noStyle initialValue={koCatInline}>
+                                      <Select size="small" style={{ width: 160 }}
+                                        options={[
+                                          { value: ORDER_CATEGORIES.PERSONALIZED, label: 'Personalized' },
+                                          { value: ORDER_CATEGORIES.SEPARATE_KIT, label: 'Separate Kit' },
+                                        ]}
+                                      />
+                                    </Form.Item>
                                   </div>
                                   <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
                                   <Row gutter={12} style={{ marginBottom: 10 }}>

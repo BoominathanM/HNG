@@ -261,7 +261,35 @@ export default function Operations() {
       // kitOrders first, then the populated lead's kitOrders, so each kit routes to its OWN tab.
       const kitOrdersList = ((o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || []).filter(Boolean);
       const kitCfgById = Object.fromEntries(kitOrdersList.filter(k => k.kitId).map(k => [k.kitId, k]));
-      return (o.items?.length ? o.items : (o.products || [])).map(item => {
+      // Lead-sourced product list: at conversion the FULL lead products are copied onto the order
+      // (kit flag, kitId/kitName, composition category, display unit, specs) — but order.items can
+      // come from the negotiation and lose some of those (e.g. isKit/category). So when reading
+      // order.items, enrich each row from the matching order.products / lead products entry. This
+      // pulls back ALL the detail captured in the lead so Operations shows & clusters it correctly.
+      const leadProducts = (o.products?.length ? o.products : (o.leadId?.products || [])) || [];
+      const prodKey = (p) => `${p?.kitId || ''}|${String(p?.name || p?.itemName || '').trim().toLowerCase()}`;
+      const productByKey = {};
+      leadProducts.forEach((p) => { const k = prodKey(p); if (p && !(k in productByKey)) productByKey[k] = p; });
+      const rawItems = (o.items?.length ? o.items : leadProducts);
+      return rawItems.map((rawItem, itemIdx) => {
+        // Prefer the index-aligned product (items derive from products), else match by kitId+name.
+        const prod = (o.items?.length && leadProducts[itemIdx] && prodKey(leadProducts[itemIdx]) === prodKey(rawItem))
+          ? leadProducts[itemIdx]
+          : (productByKey[prodKey(rawItem)] || {});
+        // Field-level enrichment: keep the item's own value when present, else take the lead product's.
+        const item = {
+          ...prod, ...rawItem,
+          isKit: rawItem.isKit || prod.isKit || false,
+          kitId: rawItem.kitId || prod.kitId || '',
+          kitName: rawItem.kitName || prod.kitName || '',
+          kitType: rawItem.kitType || prod.kitType || '',
+          category: rawItem.category || prod.category || '',
+          displayUnit: rawItem.displayUnit || prod.displayUnit || '',
+          size: rawItem.size || prod.size || '',
+          sticker: rawItem.sticker || prod.sticker || '',
+          printing: rawItem.printing || prod.printing || '',
+          packingMaterial: rawItem.packingMaterial || rawItem.packaging || prod.packingMaterial || prod.packaging || '',
+        };
         const isKitItem = !!(item.isKit || item.kitType);
         // Resolve this kit's own config: match by kitId, else (single-kit order) the lone entry.
         const kitCfg = isKitItem
@@ -277,9 +305,25 @@ export default function Operations() {
         // Config lookup first; string-match fallback for items without a config entry
         // (e.g. orders from before packing config was set up, or unregistered material names).
         const packingMaterialTab = packingMaterialTabMap[pmRaw] || item.packingMaterialTab || packTabFromString(pmRaw);
-        // Per-kit display unit → resolved Operations tab. Empty for non-kit items and for kits
-        // with no display unit, in which case data.js falls back to the order-level value.
-        const itemDisplayUnit = isKitItem ? (item.displayUnit || kitCfg?.displayUnit || '') : (item.displayUnit || '');
+        // Composition category — the per-kit Order Details config (kitOrders[i].category) is the
+        // source of truth; the item row's own category can be stale/defaulted (e.g. saved as
+        // 'separate_kit' before the kit was flagged Personalized). Computed before the display-unit
+        // fallback below because that fallback depends on it.
+        const itemCategory = (isKitItem && kitCfg?.category) ? kitCfg.category : item.category;
+        // Per-kit display unit → resolved Operations tab. Resolution priority for a kit item:
+        //   1. item.displayUnit (per-item)
+        //   2. kitCfg.displayUnit (per-kit Order Details card / kit inventory default)
+        //   3. order/lead top-level display unit — fallback for ANY kit (personalized AND
+        //      separate/dental/shaving/bath) when no per-kit value was captured.
+        // The per-kit value (2) is authoritative, so a multi-kit order where each kit carries its
+        // OWN display unit (e.g. personalized=Box, dental=Ziplock) still routes each kit to its own
+        // tab. The order-level fallback (3) only applies when a kit has NO per-kit value at all —
+        // covering separate kits whose only display unit is the order-level one (their inventory
+        // kit has no displayUnit). Without this, separate kits silently drop out of the design tabs.
+        const orderLevelDU = o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '';
+        const itemDisplayUnit = isKitItem
+          ? (item.displayUnit || kitCfg?.displayUnit || orderLevelDU || '')
+          : (item.displayUnit || '');
         const itemDisplayUnitTab = (isKitItem && itemDisplayUnit)
           ? (item.displayUnitTab || displayUnitTabMap[itemDisplayUnit] || packTabFromString(itemDisplayUnit))
           : (item.displayUnitTab || '');
@@ -295,6 +339,7 @@ export default function Operations() {
           displayUnit: itemDisplayUnit,
           displayUnitTab: itemDisplayUnitTab,
           logoType,
+          category: itemCategory,
         };
       });
     })(),
@@ -328,10 +373,43 @@ export default function Operations() {
   const [dispatchTimes, setDispatchTimes] = useState({}); // orderId → { date, time }
 
   const checkStates = useMemo(() => getCheckStateMap(apiOrders), [apiOrders]);
-  const productionQueues = useMemo(
-    () => buildProductionQueues(apiOrders, stickerRequests, queueSteps),
-    [apiOrders, stickerRequests, queueSteps],
-  );
+  const productionQueues = useMemo(() => {
+    // ─── Dual-step display for PERSONALIZED orders ───────────────────────────────
+    // A personalized kit is an OUTER unit (e.g. a Box) that physically contains other kits and
+    // products (listed in packagingIncludes). The real production flow has TWO steps for those
+    // contents, e.g. a Dental kit set to Ziplock that goes inside a personalized Box:
+    //   1. assemble the dental kit in ITS OWN display-unit tab (Ziplock) — category Separate Kit
+    //   2. pack the assembled kit (+ any included products) into the personalized outer unit —
+    //      shown in the PERSONALIZED display-unit tab (Box), category Personalized
+    // The per-item normalization above already routes each kit to its own tab (step 1). Here we
+    // synthesize a "personalized packing" copy of each INCLUDED item so it ALSO appears in the
+    // personalized outer tab (step 2) — but only when that outer tab differs from the item's own
+    // tab, so we never duplicate a row within the same tab.
+    const queueOrders = apiOrders.map((o) => {
+      const ptArr = Array.isArray(o.productType) ? o.productType : (o.productType ? [o.productType] : []);
+      const isPersonalizedOrder = ptArr.includes('personalized') || ptArr.includes('PERSONALIZED_KIT');
+      const persDU = o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '';
+      const persTab = persDU ? (displayUnitTabMap[persDU] || packTabFromString(persDU)) : '';
+      const includes = (o.packagingIncludes?.length ? o.packagingIncludes : (o.leadId?.packagingIncludes || [])) || [];
+      if (!isPersonalizedOrder || !persTab || !includes.length) return o;
+      const includeSet = new Set(includes.map(String));
+      const persCopies = (o.items || [])
+        .filter((it) => (includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName)))
+          && it.displayUnitTab !== persTab)
+        .map((it) => ({
+          // Force isKit so the queue routes this copy by its display-unit tab (the personalized
+          // outer unit) regardless of whether the included item is itself a kit or a product.
+          ...it,
+          isKit: true,
+          category: 'personalized',
+          displayUnit: persDU,
+          displayUnitTab: persTab,
+          isPersonalizedPacking: true,
+        }));
+      return persCopies.length ? { ...o, items: [...o.items, ...persCopies] } : o;
+    });
+    return buildProductionQueues(queueOrders, stickerRequests, queueSteps);
+  }, [apiOrders, stickerRequests, queueSteps, displayUnitTabMap]);
   const [orderMgmtInnerTab, setOrderMgmtInnerTab] = useState('order');
 
   const [requestOpen, setRequestOpen] = useState(false);
