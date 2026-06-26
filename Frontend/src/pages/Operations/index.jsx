@@ -391,6 +391,9 @@ export default function Operations() {
 
   const [queueSteps, setQueueSteps] = useState({});
   const [dispatchTimes, setDispatchTimes] = useState({}); // orderId → { date, time }
+  // Accordion expand state for the Box/Ziplock/Butter queue tables (per tab type).
+  // Holds at most one expanded kit-row key per tab → opening one closes the previous.
+  const [expandedQueueKey, setExpandedQueueKey] = useState({}); // { [type]: key | null }
 
   const checkStates = useMemo(() => getCheckStateMap(apiOrders), [apiOrders]);
   const productionQueues = useMemo(() => {
@@ -1346,7 +1349,12 @@ export default function Operations() {
             <Table
               dataSource={tableSource}
               columns={queueColumns(type)}
-              expandable={type !== 'Sticker' ? { defaultExpandAllRows: true } : undefined}
+              expandable={type !== 'Sticker' ? {
+                // Initially collapsed; accordion — opening one kit row closes the previously open one.
+                expandedRowKeys: expandedQueueKey[type] ? [expandedQueueKey[type]] : [],
+                onExpand: (expanded, record) =>
+                  setExpandedQueueKey((prev) => ({ ...prev, [type]: expanded ? record.key : null })),
+              } : undefined}
               pagination={type === 'Sticker' ? { showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' } : false}
               size="small"
               onRow={(record) =>
