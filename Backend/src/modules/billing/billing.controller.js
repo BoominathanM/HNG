@@ -275,7 +275,7 @@ exports.getQuotationsInProcess = asyncHandler(async (req, res) => {
   // Return all non-deleted quotations regardless of status so newly created
   // (Unpaid / In Process) quotations appear immediately in the Billing tab.
   const quotations = await Quotation.find({ deletedAt: null })
-    .populate('leadId', 'hotelName contactPerson phone locationCity gstNumber leadType products kitOrders forwardingCharge forwardingChargeAmount paymentCollection paidAmount advancePaid total kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType items')
+    .populate('leadId', 'hotelName contactPerson phone locationCity detailedAddress address city state pincode billingName gstNumber leadType products kitOrders forwardingCharge forwardingChargeAmount paymentCollection paidAmount advancePaid total kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType items')
     .sort('-createdAt');
 
   // Exclude quotations already converted to a billing invoice.

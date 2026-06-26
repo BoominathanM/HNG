@@ -243,14 +243,15 @@ function buildDocComposition(rec = {}, kitsData = []) {
   }
   comp.includedKits.forEach(ik => {
     const components = [];
-    if (ik.kitPkgPrice > 0) { acc(ik.kitPkgTotal, 0); components.push({ name: 'Kit packaging', perKit: 1, qty: ik.totalConsumed, unit: 'kit', rate: ik.kitPkgPrice, amount: ik.kitPkgTotal }); }
-    ik.prodLines.forEach(pl => { acc(pl.totalValue, pl.gst); components.push({ name: pl.name, perKit: pl.qtyPerKit, qty: pl.totalQty, unit: pl.unit, rate: pl.rate, amount: pl.totalValue }); });
+    if (ik.kitPkgPrice > 0) { acc(ik.kitPkgTotal, 0); components.push({ name: 'Kit packaging', perKit: 1, qty: ik.totalConsumed, unit: 'kit', rate: ik.kitPkgPrice, gstRate: 0, amount: ik.kitPkgTotal }); }
+    ik.prodLines.forEach(pl => { acc(pl.totalValue, pl.gst); components.push({ name: pl.name, perKit: pl.qtyPerKit, qty: pl.totalQty, unit: pl.unit, rate: pl.rate, gstRate: pl.gst, amount: pl.totalValue }); });
     persKits.push({ kitName: `${ik.kitName} (in personalized)`, qty: ik.totalConsumed, price: 0, components, kitTotal: ik.kitTotal });
   });
   const persProdRows = comp.includedSepProds.map(sp => {
     acc(sp.totalValue, sp.gst);
     const split = splitGst(sp.totalValue, sp.gst);
-    return { name: `${sp.name} (in personalized)`, qty: sp.totalConsumed, unit: sp.unit, rate: sp.rate, gstRate: sp.gst, taxAmt: split.gst, amount: sp.totalValue };
+    // PER KIT = total consumed inside personalized ÷ number of personalized kits.
+    return { name: `${sp.name} (in personalized)`, perKit: comp.persQty > 0 ? r2(sp.totalConsumed / comp.persQty) : null, qty: sp.totalConsumed, unit: sp.unit, rate: sp.rate, gstRate: sp.gst, taxAmt: split.gst, amount: sp.totalValue };
   });
 
   // ── Section B/C rows (remaining only) ──
@@ -258,10 +259,12 @@ function buildDocComposition(rec = {}, kitsData = []) {
     acc(sk.remainingValue, 0);
     return { kitName: sk.kitName, qty: sk.remaining, price: sk.valuePerKit, components: [], kitTotal: sk.remainingValue };
   });
+  // PER KIT for a separate product = its shown quantity ÷ number of personalized kits
+  // (e.g. Shampoo 8 PCS ÷ 4 kits = 2 per kit). Blank when there are no personalized kits.
   const sepProdRows = comp.sepProdsList.filter(sp => sp.remaining > 0).map(sp => {
     acc(sp.remainingValue, sp.gst);
     const split = splitGst(sp.remainingValue, sp.gst);
-    return { name: sp.name, qty: sp.remaining, unit: sp.unit, rate: sp.rate, gstRate: sp.gst, taxAmt: split.gst, amount: sp.remainingValue };
+    return { name: sp.name, perKit: comp.persQty > 0 ? r2(sp.remaining / comp.persQty) : null, qty: sp.remaining, unit: sp.unit, rate: sp.rate, gstRate: sp.gst, taxAmt: split.gst, amount: sp.remainingValue };
   });
 
   const personalized = r2(comp.totalPersonalized);
@@ -464,15 +467,16 @@ export default function Billing() {
       sgst: kitMoney.gst ? r2(kitMoney.gst / 2) : halfGst,
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
-      // DocumentTemplate customer block
+      // DocumentTemplate customer block — detailed address from the order/lead (richest source),
+      // falling back to the billing party.
       customer: {
         name: inv.partyId?.name || '—',
-        mobile: inv.partyId?.phone || '',
-        gstin: inv.partyId?.gstNumber || '',
-        address: inv.partyId?.address || '',
-        city: inv.partyId?.city || '',
+        mobile: inv.partyId?.phone || fullOrder?.clientPhone || linkedLead?.phone || quotationLead?.phone || '',
+        gstin: inv.partyId?.gstNumber || fullOrder?.gstNumber || linkedLead?.gstNumber || '',
+        address: fullOrder?.detailedAddress || linkedLead?.detailedAddress || linkedLead?.address || quotationLead?.detailedAddress || inv.partyId?.address || '',
+        city: [fullOrder?.city || linkedLead?.city || quotationLead?.city, fullOrder?.state || linkedLead?.state || quotationLead?.state, fullOrder?.pincode || linkedLead?.pincode || quotationLead?.pincode].filter(Boolean).join(', ') || inv.partyId?.city || '',
         pan: inv.partyId?.pan || inv.partyId?.panNumber || '',
-        placeOfSupply: inv.partyId?.state || 'Tamil Nadu',
+        placeOfSupply: fullOrder?.state || linkedLead?.state || quotationLead?.state || inv.partyId?.state || 'Tamil Nadu',
       },
       items: (inv.items || []).filter(Boolean).map(i => ({
         key: i._id || i.itemId,
@@ -562,10 +566,11 @@ export default function Billing() {
         name: clientDisplay,
         mobile: lead?.phone || '',
         gstin: lead?.gstNumber || '',
-        address: '',
-        city: lead?.locationCity || '',
+        // Detailed address for Bill To / Ship To — prefer lead's full address, fall back to city
+        address: lead?.detailedAddress || lead?.address || '',
+        city: [lead?.city, lead?.state, lead?.pincode].filter(Boolean).join(', ') || lead?.locationCity || '',
         pan: '',
-        placeOfSupply: 'Tamil Nadu',
+        placeOfSupply: lead?.state || 'Tamil Nadu',
       },
       items: (q.items || []).filter(Boolean).map(i => ({
         key: i._id || i.itemId,
