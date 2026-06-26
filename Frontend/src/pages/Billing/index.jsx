@@ -243,8 +243,8 @@ function buildDocComposition(rec = {}, kitsData = []) {
   }
   comp.includedKits.forEach(ik => {
     const components = [];
-    if (ik.kitPkgPrice > 0) { acc(ik.kitPkgTotal, 0); components.push({ name: 'Kit packaging', qty: ik.totalConsumed, unit: 'kit', rate: ik.kitPkgPrice, amount: ik.kitPkgTotal }); }
-    ik.prodLines.forEach(pl => { acc(pl.totalValue, pl.gst); components.push({ name: pl.name, qty: pl.totalQty, unit: pl.unit, rate: pl.rate, amount: pl.totalValue }); });
+    if (ik.kitPkgPrice > 0) { acc(ik.kitPkgTotal, 0); components.push({ name: 'Kit packaging', perKit: 1, qty: ik.totalConsumed, unit: 'kit', rate: ik.kitPkgPrice, amount: ik.kitPkgTotal }); }
+    ik.prodLines.forEach(pl => { acc(pl.totalValue, pl.gst); components.push({ name: pl.name, perKit: pl.qtyPerKit, qty: pl.totalQty, unit: pl.unit, rate: pl.rate, amount: pl.totalValue }); });
     persKits.push({ kitName: `${ik.kitName} (in personalized)`, qty: ik.totalConsumed, price: 0, components, kitTotal: ik.kitTotal });
   });
   const persProdRows = comp.includedSepProds.map(sp => {

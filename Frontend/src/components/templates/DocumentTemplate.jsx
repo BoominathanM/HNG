@@ -172,7 +172,7 @@ function computeDocSections(data) {
       const gstRate = Number(r.gst || r.taxRate || 0);
       const taxAmt = r2d(totalQty * rate * gstRate / 100);
       const amount = r2d(totalQty * rate + taxAmt);
-      return { name: r.itemName || r.name || '—', qty: totalQty, unit: r.unit || 'PCS', rate, gstRate, taxAmt, amount };
+      return { name: r.itemName || r.name || '—', perKit: r._q, qty: totalQty, unit: r.unit || 'PCS', rate, gstRate, taxAmt, amount };
     });
     const kitName = ko.kitName || rawRows[0]?.kitName || rawRows[0]?.kitType || '—';
     // kitPrice (when set) wins; otherwise sum the (already qty-scaled) component amounts
@@ -290,7 +290,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
       : '';
     html += `
       <tr>
-        <td colspan="4" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;letter-spacing:0.5px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+        <td colspan="5" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;letter-spacing:0.5px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
           A &nbsp;&mdash;&nbsp; PERSONALIZED KIT${kitLabel}
         </td>
         <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:right;border-bottom:1px solid ${BORDER};">
@@ -306,7 +306,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
         // Kit sub-header + indented component rows
         html += `
           <tr style="background:${cs.sub};">
-            <td colspan="4" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+            <td colspan="5" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
               ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}${price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
             </td>
             <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
@@ -317,6 +317,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
               <td style="padding:5px 10px 5px 40px;font-size:10px;color:#555;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
                 &ndash;&nbsp;${comp.name}
               </td>
+              <td style="padding:5px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;font-weight:700;">${comp.perKit != null ? comp.perKit : '—'}</td>
               <td style="padding:5px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${comp.qty} ${comp.unit}</td>
               <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${comp.rate.toLocaleString()}</td>
               <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">—</td>
@@ -329,6 +330,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
             <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
               ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}
             </td>
+            <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
             <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${qty}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${price > 0 ? price.toLocaleString() : '—'}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
@@ -341,16 +343,17 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
       html += `
         <tr style="background:#fff;">
           <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">${p.name}</td>
+          <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.qty} ${p.unit}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.rate.toLocaleString()}</td>
-          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.taxAmt.toLocaleString()}${cfg.show.taxRate ? `<br/><span style="color:#666;font-size:10px;">(${p.gstRate}%)</span>` : ''}</td>
+          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${cfg.show.taxRate ? `${p.gstRate || 0}%` : '—'}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
         </tr>`;
     });
 
     html += `
       <tr style="background:${cs.header};">
-        <td colspan="4" style="padding:6px 10px;font-size:11px;font-weight:700;color:${cs.text};font-style:italic;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">Total Personalized (A)</td>
+        <td colspan="5" style="padding:6px 10px;font-size:11px;font-weight:700;color:${cs.text};font-style:italic;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">Total Personalized (A)</td>
         <td style="padding:6px 10px;text-align:right;font-weight:800;color:${cs.text};font-size:11px;border-bottom:1px solid ${BORDER};">${rs(sections.personalized)}</td>
       </tr>`;
   }
@@ -360,7 +363,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
     const cs = CAT_STYLE.separate_kit;
     html += `
       <tr>
-        <td colspan="4" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+        <td colspan="5" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
           B &nbsp;&mdash;&nbsp; SEPARATE KIT${sections.sepKitCount ? ` — ${sections.sepKitCount} kit${sections.sepKitCount !== 1 ? 's' : ''}` : ''}
         </td>
         <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:right;border-bottom:1px solid ${BORDER};">
@@ -375,7 +378,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
       if (hasComponents) {
         html += `
           <tr style="background:${cs.sub};">
-            <td colspan="4" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+            <td colspan="5" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
               ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}${price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
             </td>
             <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
@@ -386,6 +389,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
               <td style="padding:5px 10px 5px 40px;font-size:10px;color:#555;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
                 &ndash;&nbsp;${comp.name}
               </td>
+              <td style="padding:5px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;font-weight:700;">${comp.perKit != null ? comp.perKit : '—'}</td>
               <td style="padding:5px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${comp.qty} ${comp.unit}</td>
               <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${comp.rate.toLocaleString()}</td>
               <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">—</td>
@@ -398,6 +402,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
             <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
               ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}
             </td>
+            <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
             <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${qty}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${price > 0 ? price.toLocaleString() : '—'}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
@@ -412,7 +417,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
     const cs = CAT_STYLE.separate_product;
     html += `
       <tr>
-        <td colspan="4" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+        <td colspan="5" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
           C &nbsp;&mdash;&nbsp; SEPARATE PRODUCTS
         </td>
         <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:right;border-bottom:1px solid ${BORDER};">
@@ -424,9 +429,10 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
       html += `
         <tr style="background:${cs.sub};">
           <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">${p.name}</td>
+          <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.qty} ${p.unit}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.rate.toLocaleString()}</td>
-          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.taxAmt.toLocaleString()}${cfg.show.taxRate ? `<br/><span style="color:#666;font-size:10px;">(${p.gstRate}%)</span>` : ''}</td>
+          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${cfg.show.taxRate ? `${p.gstRate || 0}%` : '—'}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
         </tr>`;
     });
@@ -452,9 +458,10 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">
           ${item.name}${cfg.show.hsn && (item.hsn || item.hsnCode) ? `<br/><span style="color:#666;font-size:10px;">HSN: ${item.hsn || item.hsnCode}</span>` : ''}
         </td>
+        <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:center;">${item.perKit != null ? item.perKit : '—'}</td>
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:center;">${item.qty} ${item.unit}</td>
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${(item.rate || 0).toLocaleString()}</td>
-        <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${(item.taxAmt || 0).toLocaleString()}${cfg.show.taxRate ? `<br/><span style="color:#666;font-size:10px;">(${item.taxRate || 0}%)</span>` : ''}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${cfg.show.taxRate ? `${item.taxRate || 0}%` : '—'}</td>
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};font-size:11px;text-align:right;">${(item.amount || 0).toLocaleString()}</td>
       </tr>`).join('');
 
@@ -554,7 +561,6 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
     <div style="display:flex;padding:10px 20px;border-bottom:1px solid ${BORDER};background:${LIGHT};gap:40px;font-size:11px;flex-wrap:wrap;">
       <div><strong>${isQuotation ? 'Quotation No.:' : 'Invoice No.:'}</strong> ${docNumber}</div>
       <div><strong>${isQuotation ? 'Quotation Date:' : 'Invoice Date:'}</strong> ${docDate}</div>
-      <div><strong>${isQuotation ? 'Expiry Date:' : 'Due Date:'}</strong> ${secondDate}</div>
     </div>
 
     <!-- Bill To / Ship To -->
@@ -585,10 +591,11 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
     <table style="width:100%;border-collapse:collapse;border-bottom:1px solid ${BORDER};">
       <thead>
         <tr>
-          <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:left;font-size:11px;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);width:44%;">ITEMS</th>
-          <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:center;font-size:11px;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);width:11%;">QTY.</th>
+          <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:left;font-size:11px;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);width:37%;">ITEMS</th>
+          <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:center;font-size:11px;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);width:9%;">PER KIT</th>
+          <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:center;font-size:11px;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);width:10%;">QTY.</th>
           <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:right;font-size:11px;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);width:12%;">RATE</th>
-          <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:right;font-size:11px;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);width:14%;">TAX</th>
+          <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:right;font-size:11px;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);width:13%;">TAX</th>
           <th style="background:${ACCENT};color:#fff;padding:9px 10px;text-align:right;font-size:11px;font-weight:700;width:19%;">AMOUNT</th>
         </tr>
       </thead>
@@ -596,6 +603,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
         ${itemRows}
         <tr style="background:${LIGHT};">
           <td style="padding:9px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-weight:800;color:${ACCENT};font-size:11px;">SUBTOTAL</td>
+          <td style="padding:9px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
           <td style="padding:9px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-weight:700;text-align:center;font-size:11px;">${totalQty}</td>
           <td style="padding:9px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
           <td style="padding:9px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-weight:700;text-align:right;font-size:11px;">&#x20B9;${r2d(totalTax).toLocaleString()}</td>
@@ -652,7 +660,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
         return (
           <>
             <tr>
-              <td colSpan={4} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, letterSpacing: 0.5, borderRight: `1px solid ${BORDER}` }}>
+              <td colSpan={5} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, letterSpacing: 0.5, borderRight: `1px solid ${BORDER}` }}>
                 A &nbsp;—&nbsp; PERSONALIZED KIT{kitLabel}
               </td>
               <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'right', borderRight: 'none' }}>
@@ -667,7 +675,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                 <React.Fragment key={`pkit-${i}`}>
                   {hasComponents ? (
                     <tr style={{ background: cs.sub }}>
-                      <td colSpan={4} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
+                      <td colSpan={5} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
                         {ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}{price > 0 ? ` — ${rs(price)}/kit` : ''}
                       </td>
                       <td style={{ ...td, textAlign: 'right', fontWeight: 700, borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
@@ -675,6 +683,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                   ) : (
                     <tr style={{ background: cs.sub }}>
                       <td style={{ ...td, paddingLeft: 24 }}>{ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}</td>
+                      <td style={{ ...td, textAlign: 'center' }}>—</td>
                       <td style={{ ...td, textAlign: 'center' }}>{qty}</td>
                       <td style={{ ...td, textAlign: 'right' }}>{price > 0 ? price.toLocaleString() : '—'}</td>
                       <td style={{ ...td, textAlign: 'right' }}>—</td>
@@ -684,6 +693,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                   {hasComponents && ko.components.map((comp, j) => (
                     <tr key={`pkit-${i}-comp-${j}`} style={{ background: '#fff' }}>
                       <td style={{ ...td, paddingLeft: 40, fontSize: 10, color: '#555' }}>–&nbsp;{comp.name}</td>
+                      <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555', fontWeight: 700 }}>{comp.perKit != null ? comp.perKit : '—'}</td>
                       <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555' }}>{comp.qty} {comp.unit}</td>
                       <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>{comp.rate.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>—</td>
@@ -696,17 +706,17 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
             {sections.persProdRows.map((p, i) => (
               <tr key={`pprod-${i}`} style={{ background: '#fff' }}>
                 <td style={{ ...td, paddingLeft: 24 }}>{p.name}</td>
+                <td style={{ ...td, textAlign: 'center' }}>—</td>
                 <td style={{ ...td, textAlign: 'center' }}>{p.qty} {p.unit}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{p.rate.toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>
-                  {p.taxAmt.toLocaleString()}
-                  {cfg.show.taxRate && <div style={{ color: '#666', fontSize: 10 }}>({p.gstRate}%)</div>}
+                  {cfg.show.taxRate ? `${p.gstRate || 0}%` : '—'}
                 </td>
                 <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
               </tr>
             ))}
             <tr style={{ background: cs.header }}>
-              <td colSpan={4} style={{ ...td, color: cs.text, fontWeight: 700, fontStyle: 'italic', borderRight: `1px solid ${BORDER}` }}>Total Personalized (A)</td>
+              <td colSpan={5} style={{ ...td, color: cs.text, fontWeight: 700, fontStyle: 'italic', borderRight: `1px solid ${BORDER}` }}>Total Personalized (A)</td>
               <td style={{ ...td, textAlign: 'right', fontWeight: 800, color: cs.text, borderRight: 'none' }}>{rs(sections.personalized)}</td>
             </tr>
           </>
@@ -719,7 +729,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
         return (
           <>
             <tr>
-              <td colSpan={4} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, borderRight: `1px solid ${BORDER}` }}>
+              <td colSpan={5} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, borderRight: `1px solid ${BORDER}` }}>
                 B &nbsp;—&nbsp; SEPARATE KIT{sections.sepKitCount ? ` — ${sections.sepKitCount} kit${sections.sepKitCount !== 1 ? 's' : ''}` : ''}
               </td>
               <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'right', borderRight: 'none' }}>
@@ -734,7 +744,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                 <React.Fragment key={`skit-${i}`}>
                   {hasComponents ? (
                     <tr style={{ background: cs.sub }}>
-                      <td colSpan={4} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
+                      <td colSpan={5} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
                         {ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}{price > 0 ? ` — ${rs(price)}/kit` : ''}
                       </td>
                       <td style={{ ...td, textAlign: 'right', fontWeight: 700, borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
@@ -742,6 +752,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                   ) : (
                     <tr style={{ background: cs.sub }}>
                       <td style={{ ...td, paddingLeft: 24 }}>{ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}</td>
+                      <td style={{ ...td, textAlign: 'center' }}>—</td>
                       <td style={{ ...td, textAlign: 'center' }}>{qty}</td>
                       <td style={{ ...td, textAlign: 'right' }}>{price > 0 ? price.toLocaleString() : '—'}</td>
                       <td style={{ ...td, textAlign: 'right' }}>—</td>
@@ -751,6 +762,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                   {hasComponents && ko.components.map((comp, j) => (
                     <tr key={`skit-${i}-comp-${j}`} style={{ background: '#fff' }}>
                       <td style={{ ...td, paddingLeft: 40, fontSize: 10, color: '#555' }}>–&nbsp;{comp.name}</td>
+                      <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555', fontWeight: 700 }}>{comp.perKit != null ? comp.perKit : '—'}</td>
                       <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555' }}>{comp.qty} {comp.unit}</td>
                       <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>{comp.rate.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>—</td>
@@ -770,7 +782,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
         return (
           <>
             <tr>
-              <td colSpan={4} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, borderRight: `1px solid ${BORDER}` }}>
+              <td colSpan={5} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, borderRight: `1px solid ${BORDER}` }}>
                 C &nbsp;—&nbsp; SEPARATE PRODUCTS
               </td>
               <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'right', borderRight: 'none' }}>
@@ -780,11 +792,11 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
             {sections.sepProdRows.map((p, i) => (
               <tr key={`sprod-${i}`} style={{ background: cs.sub }}>
                 <td style={{ ...td, paddingLeft: 24 }}>{p.name}</td>
+                <td style={{ ...td, textAlign: 'center' }}>—</td>
                 <td style={{ ...td, textAlign: 'center' }}>{p.qty} {p.unit}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{p.rate.toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>
-                  {p.taxAmt.toLocaleString()}
-                  {cfg.show.taxRate && <div style={{ color: '#666', fontSize: 10 }}>({p.gstRate}%)</div>}
+                  {cfg.show.taxRate ? `${p.gstRate || 0}%` : '—'}
                 </td>
                 <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
               </tr>
@@ -848,7 +860,6 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
       <div style={{ display: 'flex', padding: '10px 20px', borderBottom: `1px solid ${BORDER}`, background: LIGHT, gap: 40, fontSize: 11, flexWrap: 'wrap' }}>
         <div><strong>{isQuotation ? 'Quotation No.:' : 'Invoice No.:'}</strong> {docNumber}</div>
         <div><strong>{isQuotation ? 'Quotation Date:' : 'Invoice Date:'}</strong> {docDate}</div>
-        <div><strong>{isQuotation ? 'Expiry Date:' : 'Due Date:'}</strong> {secondDate}</div>
       </div>
 
       {/* Bill To / Ship To */}
@@ -879,10 +890,11 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
       <table style={{ width: '100%', borderCollapse: 'collapse', borderBottom: `1px solid ${BORDER}` }}>
         <thead>
           <tr>
-            <th style={{ ...th, width: '44%' }}>ITEMS</th>
-            <th style={{ ...th, width: '11%', textAlign: 'center' }}>QTY.</th>
+            <th style={{ ...th, width: '37%' }}>ITEMS</th>
+            <th style={{ ...th, width: '9%', textAlign: 'center' }}>PER KIT</th>
+            <th style={{ ...th, width: '10%', textAlign: 'center' }}>QTY.</th>
             <th style={{ ...th, width: '12%', textAlign: 'right' }}>RATE</th>
-            <th style={{ ...th, width: '14%', textAlign: 'right' }}>TAX</th>
+            <th style={{ ...th, width: '13%', textAlign: 'right' }}>TAX</th>
             <th style={{ ...th, width: '19%', textAlign: 'right', borderRight: 'none' }}>AMOUNT</th>
           </tr>
         </thead>
@@ -898,11 +910,11 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
                     <div style={{ color: '#666', fontSize: 10 }}>HSN: {item.hsn || item.hsnCode}</div>
                   )}
                 </td>
+                <td style={{ ...td, textAlign: 'center' }}>{item.perKit != null ? item.perKit : '—'}</td>
                 <td style={{ ...td, textAlign: 'center' }}>{item.qty} {item.unit}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{(item.rate || 0).toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>
-                  {(item.taxAmt || 0).toLocaleString()}
-                  {cfg.show.taxRate && <div style={{ color: '#666', fontSize: 10 }}>({item.taxRate || 0}%)</div>}
+                  {cfg.show.taxRate ? `${item.taxRate || 0}%` : '—'}
                 </td>
                 <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{(item.amount || 0).toLocaleString()}</td>
               </tr>
@@ -910,6 +922,7 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
           )}
           <tr style={{ background: LIGHT }}>
             <td style={{ ...td, fontWeight: 800, color: ACCENT }}>SUBTOTAL</td>
+            <td style={td} />
             <td style={{ ...td, textAlign: 'center', fontWeight: 700 }}>{totalQty}</td>
             <td style={td} />
             <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>₹{r2d(totalTax).toLocaleString()}</td>
