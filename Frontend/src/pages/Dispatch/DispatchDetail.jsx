@@ -138,7 +138,7 @@ export default function DispatchDetail() {
     // falling back to any denormalized fields on the dispatch root.
     const o = (d.orderId && typeof d.orderId === 'object') ? d.orderId : {};
     // Sample orders bypass payment — no payment is expected for samples.
-    const isSample = o.orderCategory === 'SAMPLE';
+    const isSample = o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE';
     // Credit orders are dispatched before payment — payment is due after delivery.
     const isCredit = o.paymentTerms === 'CREDIT_10_30';
     // Payment is "Confirmed" for dispatch purposes once the order balance is cleared, or credit terms apply.

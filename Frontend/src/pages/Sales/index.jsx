@@ -10372,15 +10372,20 @@ export default function Sales() {
                                   return (
                                     <div style={{ padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.15)' }}>
                                       <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6 }}>
-                                        TOTAL QTY IN PERSONALIZED KITS (across {overallQty} kit{overallQty > 1 ? 's' : ''})
+                                        QTY INSIDE PERSONALIZED KITS — enter "Per kit" (× {overallQty} kit{overallQty > 1 ? 's' : ''}) or override "Total"
                                       </Text>
                                       {sel.map(id => {
                                         const kMatch = kits.find(k => k._id === id);
                                         const sProd = (watchedLeadProducts || []).find(p => p && (p.name || p.itemName) === id);
                                         const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
                                         const isKit = Boolean(kMatch);
-                                        // totalInside = exact count entered (total across ALL personalized kits)
+                                        // totalInside = total going into ALL personalized kits combined (persisted source of truth)
                                         const totalInside = Number(getFieldValue(['packagingIncludesQty', id])) || 1;
+                                        // perKitDisplay = how many of this item go inside ONE personalized kit (helper that drives the total).
+                                        // Blank when the total is still the untouched default so the user can type a fresh per-kit count.
+                                        const perKitDisplay = (totalInside <= 1 && overallQty > 1)
+                                          ? undefined
+                                          : (overallQty > 0 ? r2(totalInside / overallQty) : totalInside);
                                         const standaloneQty = isKit
                                           ? (Number(watchedKitOrders.find(ko => ko?.kitId === id)?.overallQty) || 0)
                                           : (Number((watchedLeadProducts || []).find(p => p && (p.name || p.itemName) === id)?.qty) || 0);
@@ -10398,9 +10403,28 @@ export default function Sales() {
                                               {isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over by {totalInside - standaloneQty}</Text>}
                                             </Col>
                                             <Col>
-                                              <Form.Item name={['packagingIncludesQty', id]} initialValue={1} noStyle>
-                                                <InputNumber min={1} size="small" style={{ width: 70 }} />
-                                              </Form.Item>
+                                              <div style={{ textAlign: 'center' }}>
+                                                <Text type="secondary" style={{ fontSize: 9, display: 'block', lineHeight: 1.1 }}>Per kit</Text>
+                                                <InputNumber
+                                                  min={0}
+                                                  size="small"
+                                                  style={{ width: 64 }}
+                                                  placeholder="qty"
+                                                  value={perKitDisplay}
+                                                  onChange={(v) => {
+                                                    const perKit = Number(v) || 0;
+                                                    leadForm.setFieldValue(['packagingIncludesQty', id], perKit > 0 ? perKit * (overallQty || 1) : 1);
+                                                  }}
+                                                />
+                                              </div>
+                                            </Col>
+                                            <Col>
+                                              <div style={{ textAlign: 'center' }}>
+                                                <Text type="secondary" style={{ fontSize: 9, display: 'block', lineHeight: 1.1 }}>Total</Text>
+                                                <Form.Item name={['packagingIncludesQty', id]} initialValue={1} noStyle>
+                                                  <InputNumber min={1} size="small" style={{ width: 70 }} />
+                                                </Form.Item>
+                                              </div>
                                             </Col>
                                           </Row>
                                         );

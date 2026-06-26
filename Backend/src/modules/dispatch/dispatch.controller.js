@@ -9,6 +9,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyMany } = require('../../utils/notify');
+const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 
 exports.getDispatches = asyncHandler(async (req, res) => {
   const filter = {};
@@ -17,13 +18,21 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   const limit = parseInt(req.query.limit) || 10;
   const [dispatches, total] = await Promise.all([
     DispatchRecord.find(filter)
-      .populate({ path: 'orderId', select: 'orderCode clientName total orderCategory isEmergency leadId', populate: { path: 'leadId', select: 'leadType' } })
+      .populate({ path: 'orderId', select: 'orderCode clientName total orderCategory isEmergency leadId paymentTerms', populate: { path: 'leadId', select: 'leadType' } })
       .populate('pickupEmpId', 'fullName')
       .sort('-createdAt')
       .skip((page - 1) * limit)
-      .limit(limit),
+      .limit(limit)
+      .lean(),
     DispatchRecord.countDocuments(filter),
   ]);
+  // Resolve each order's live payment status (invoices → order collection) so the
+  // Dispatch list reflects payments recorded in Billing or Sales, not a static term.
+  await Promise.all(dispatches.map(async (d) => {
+    d.orderPaymentStatus = d.orderId?._id
+      ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending')
+      : 'Pending';
+  }));
   res.status(200).json({ success: true, total, page, data: dispatches });
 });
 
@@ -36,13 +45,18 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
       { dispatchedAt: { $gte: start, $lte: end } },
       { updatedAt: { $gte: start, $lte: end }, status: { $in: ['Draft', 'Confirmed'] } },
     ],
-  }).populate({ path: 'orderId', select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency leadId', populate: { path: 'leadId', select: 'leadType' } }).sort('-updatedAt').lean();
+  }).populate({ path: 'orderId', select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency leadId paymentTerms', populate: { path: 'leadId', select: 'leadType' } }).sort('-updatedAt').lean();
+  await Promise.all(dispatches.map(async (d) => {
+    d.orderPaymentStatus = d.orderId?._id
+      ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending')
+      : 'Pending';
+  }));
   res.status(200).json({ success: true, total: dispatches.length, data: dispatches });
 });
 
 exports.getDispatch = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id)
-    .populate('orderId')
+    .populate({ path: 'orderId', populate: { path: 'leadId', select: 'leadType' } })
     .populate('pickupEmpId', 'fullName phone');
   if (!dispatch) return next(new AppError('Dispatch record not found', 404));
   res.status(200).json({ success: true, data: dispatch });

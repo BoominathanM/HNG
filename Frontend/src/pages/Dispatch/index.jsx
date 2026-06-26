@@ -129,7 +129,7 @@ export default function Dispatch() {
       qty: d.orderId?.qty || 0,
       boxes: 0,
       weight: '—',
-      payment: isSample ? 'N/A' : (d.orderId?.paymentTerms || 'Pending'),
+      payment: isSample ? 'N/A' : (d.orderPaymentStatus || 'Pending'),
       status: d.status === 'Dispatched' ? 'Dispatched' : d.status === 'Confirmed' ? 'Ready to Dispatch' : 'Packing',
       orderCategory: isSample ? 'SAMPLE' : (d.orderId?.orderCategory || 'ORDER'),
       isSample,
@@ -508,9 +508,11 @@ export default function Dispatch() {
     { title: 'Weight', dataIndex: 'weight', width: 90, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
       title: 'Payment', dataIndex: 'payment', width: 115,
-      render: (v) => v === 'N/A'
-        ? <Tag color="default" style={{ borderRadius: 20, fontSize: 13, fontWeight: 600 }}>N/A</Tag>
-        : <Tag style={{ borderRadius: 20, fontSize: 13, background: v === 'Confirmed' ? '#6b124022' : '#B11E6A22', color: v === 'Confirmed' ? '#6b1240' : '#B11E6A', border: `1px solid ${v === 'Confirmed' ? '#6b124044' : '#B11E6A44'}` }}>{v}</Tag>,
+      render: (v) => {
+        if (v === 'N/A') return <Tag color="default" style={{ borderRadius: 20, fontSize: 13, fontWeight: 600 }}>N/A</Tag>;
+        const c = v === 'Paid' ? '#2e7d32' : v === 'Partial' ? '#c77700' : '#B11E6A';
+        return <Tag style={{ borderRadius: 20, fontSize: 13, background: `${c}22`, color: c, border: `1px solid ${c}44` }}>{v}</Tag>;
+      },
     },
     { title: 'Transport', dataIndex: 'transport', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     {
@@ -594,7 +596,8 @@ export default function Dispatch() {
         <FilterOutlined style={{ color: '#B11E6A' }} />
         <Select value={paymentFilter} onChange={setPaymentFilter} style={{ width: 160, borderRadius: 8 }}>
           <Option value="All">All Payments</Option>
-          <Option value="Confirmed">Confirmed</Option>
+          <Option value="Paid">Paid</Option>
+          <Option value="Partial">Partial</Option>
           <Option value="Pending">Pending</Option>
         </Select>
         <Select allowClear placeholder="Status" value={dispatchStatusFilter} onChange={(val) => { setDispatchStatusFilter(val); setDispatchPage(1); }} style={{ width: 180, borderRadius: 8 }}>
