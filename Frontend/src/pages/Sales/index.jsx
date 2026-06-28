@@ -2076,8 +2076,8 @@ export default function Sales() {
       pincode: order.pincode || '',
       gstNumber: order.gstNumber || '',
       hotelType: order.hotelType || undefined,
-      rooms: order.rooms || undefined,
-      occupancy: order.occupancy || undefined,
+      rooms: order.rooms || order.numRooms || order.rowsInHotel || undefined,
+      occupancy: order.occupancy || order.generalOccupancy || undefined,
       location: order.location || '',
       destination: order.destination || '',
       salesPerson: order.salesPerson || '',
@@ -3644,7 +3644,7 @@ export default function Sales() {
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
     const fieldsBySection = {
       hotel: ['hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
-      billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber'],
+      billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber', 'gstPhone'],
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
       leadJourney: ['followUpStep'],
       personalization: ['productType', 'displayUnit', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitPrice', 'kitOverallQty', 'kitOrders', 'products'],
@@ -6514,8 +6514,8 @@ export default function Sales() {
         alternativePhone: base.alternativePhone || full.alternativePhone || lead.alternativePhone || lead.altNumber,
         destination: base.destination || full.destination || lead.destination,
         hotelType: base.hotelType || full.hotelType || lead.hotelType,
-        rooms: base.rooms || full.rooms || lead.rooms,
-        occupancy: base.occupancy || full.occupancy || lead.occupancy,
+        rooms: base.rooms || full.rooms || lead.rooms || lead.numRooms || lead.rowsInHotel,
+        occupancy: base.occupancy || full.occupancy || lead.occupancy || lead.generalOccupancy,
       };
       const ORDER_STEPS = [
         { title: 'Confirmed', description: 'Order placed' },
@@ -10224,6 +10224,15 @@ export default function Sales() {
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <InfoRow label="Current Status" value={<Tag color={STATUS_COLORS[record.status]}>{record.status}</Tag>} />
+                        {record.quotationNo && (
+                          <div style={{ padding: '8px 12px', background: isDark ? 'rgba(177,30,106,0.06)' : 'rgba(177,30,106,0.04)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.2)' }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>QUOTATION REFERENCE</Text>
+                            <Space size={16} wrap>
+                              <span><Text type="secondary" style={{ fontSize: 11 }}>No: </Text><Text strong style={{ fontSize: 13, color: '#B11E6A' }}>{record.quotationNo}</Text></span>
+                              {record.quotationDate && <span><Text type="secondary" style={{ fontSize: 11 }}>Date: </Text><Text strong style={{ fontSize: 13 }}>{dayjs(record.quotationDate).format('DD MMM YYYY')}</Text></span>}
+                            </Space>
+                          </div>
+                        )}
                         {record.followUpDate && (
                           <div style={{ padding: '10px', background: 'rgba(82,196,26,0.08)', borderRadius: 10, border: '1px solid rgba(82,196,26,0.2)' }}>
                             <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>NEXT FOLLOW-UP</Text>
