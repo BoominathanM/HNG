@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs, Typography, Space,
   Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, Steps,
-  DatePicker, TimePicker, InputNumber, Rate, Empty,
+  DatePicker, InputNumber, Rate, Empty,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -75,6 +75,11 @@ export default function Tasks() {
   // ── Time Management config ───────────────────────────────────────────────
   const { data: timeConfigData } = useGetTaskTimeConfigsQuery();
   const timeConfigs = useMemo(() => timeConfigData?.data || [], [timeConfigData]);
+  const configTaskNameOptions = useMemo(() => {
+    const seen = new Set();
+    return timeConfigs.filter((c) => c.taskName && !seen.has(c.taskName) && seen.add(c.taskName))
+      .map((c) => ({ value: c.taskName, label: c.taskName }));
+  }, [timeConfigs]);
   const [createTimeConfig] = useCreateTaskTimeConfigMutation();
   const [updateTimeConfig] = useUpdateTaskTimeConfigMutation();
   const [deleteTimeConfig] = useDeleteTaskTimeConfigMutation();
@@ -225,8 +230,8 @@ export default function Tasks() {
       const qty = Number(selectedItem?.qty) || undefined;
       // vals.assignee holds the selected user's _id — resolve to id + display name
       const assignedUser = assignableUsers.find((u) => u._id === vals.assignee);
-      const startDt = vals.startTime || dayjs();
-      const estimate = estimateSecFor(timeConfigs, { taskName: vals.title, taskType: vals.type }, qty);
+      const startDt = dayjs();
+      const estimate = estimateSecFor(timeConfigs, { taskName: vals.title }, qty);
       // Sub-tasks from the Task Breakdown by Quantity section (rows with any content).
       const cleanSubTasks = newSubTasks
         .filter((st) => st.description || st.qty || st.assignee)
@@ -236,20 +241,15 @@ export default function Tasks() {
         });
       await createTask({
         taskName: vals.title,
-        taskType: vals.type,
-        priority: vals.priority,
         clientName: vals.client || selectedOrder?.clientName,
         assignedTo: assignedUser?._id,
         assigneeName: assignedUser?.fullName,
-        dueDate: vals.due ? vals.due.toISOString() : undefined,
-        description: vals.desc || vals.description,
         orderId: realOrderId,
         product: productName,
         productIndex,
         qty,
         ...(cleanSubTasks.length ? { subTasks: cleanSubTasks } : {}),
         status: 'Pending',
-        isEmergency: vals.priority === 'Urgent',
         // Time management — server recomputes from config when available.
         plannedStartTime: startDt.toISOString(),
         ...(estimate.matched ? {
@@ -287,7 +287,6 @@ export default function Tasks() {
   // Time Management config and multiplies the per-unit time by the suggestion qty.
   const assignTypeWatch = Form.useWatch('type', assignForm);
   const assignTitleWatch = Form.useWatch('title', assignForm);
-  const assignStartWatch = Form.useWatch('startTime', assignForm);
   const assignEstimate = useMemo(
     () => estimateSecFor(timeConfigs, { taskName: assignTitleWatch, taskType: assignTypeWatch }, assignTarget?.qty),
     [timeConfigs, assignTitleWatch, assignTypeWatch, assignTarget],
@@ -296,9 +295,7 @@ export default function Tasks() {
   // ── New Task modal: Order → Products → qty → estimate (mirrors Assign Task) ──
   const newOrderIdWatch = Form.useWatch('orderId', form);
   const newProductIdxWatch = Form.useWatch('productIndex', form);
-  const newTypeWatch = Form.useWatch('type', form);
   const newTitleWatch = Form.useWatch('title', form);
-  const newStartWatch = Form.useWatch('startTime', form);
   // The order selected in the New Task modal + its line items (for the Product dropdown).
   const newSelectedOrder = useMemo(
     () => ordersList.find((o) => o._id === newOrderIdWatch) || null,
@@ -309,8 +306,8 @@ export default function Tasks() {
     ? newOrderItems[newProductIdxWatch] : null;
   const newTaskQty = Number(newSelectedItem?.qty) || 0;
   const newTaskEstimate = useMemo(
-    () => estimateSecFor(timeConfigs, { taskName: newTitleWatch, taskType: newTypeWatch }, newTaskQty),
-    [timeConfigs, newTitleWatch, newTypeWatch, newTaskQty],
+    () => estimateSecFor(timeConfigs, { taskName: newTitleWatch }, newTaskQty),
+    [timeConfigs, newTitleWatch, newTaskQty],
   );
 
   // New Task modal — Task Breakdown by Quantity (mirrors the Operations assign modal).
@@ -344,7 +341,7 @@ export default function Tasks() {
     try {
       const vals = await assignForm.validateFields();
       const assignedUser = assignableUsers.find((u) => u._id === vals.assignee);
-      const startDt = vals.startTime || dayjs();
+      const startDt = dayjs();
       const estimatedDurationSec = assignEstimate.estimatedSec || undefined;
       await createTask({
         taskName: vals.title,
@@ -1060,17 +1057,18 @@ export default function Tasks() {
         width={Math.min(520, window.innerWidth - 32)}>
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item label="Task Type" name="type" rules={[{ required: true }]}>
-                <Select>{Object.keys(typeColor).map((t) => <Option key={t} value={t}>{t}</Option>)}</Select>
+            <Col xs={24}>
+              <Form.Item label="Task Title" name="title" rules={[{ required: true, message: 'Please select a task title' }]}>
+                <Select
+                  placeholder="Select task"
+                  showSearch
+                  optionFilterProp="label"
+                  allowClear
+                  notFoundContent={configTaskNameOptions.length ? 'No match' : 'No tasks configured — add one in Time Management'}
+                  options={configTaskNameOptions}
+                />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item label="Priority" name="priority" rules={[{ required: true }]}>
-                <Select>{Object.keys(priorityColor).map((p) => <Option key={p} value={p}>{p}</Option>)}</Select>
-              </Form.Item>
-            </Col>
-            <Col xs={24}><Form.Item label="Task Title" name="title" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Related Order" name="orderId">
                 <Select
@@ -1120,22 +1118,6 @@ export default function Tasks() {
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12}><Form.Item label="Due Date" name="due"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                label={(
-                  <Space size={4}>
-                    <span>Start Time</span>
-                    <Tooltip title="Auto-filled with the creation time. The expected completion is computed from the configured task time × quantity.">
-                      <span style={{ color: '#B11E6A', cursor: 'help', fontSize: 13 }}>ⓘ</span>
-                    </Tooltip>
-                  </Space>
-                )}
-                name="startTime"
-              >
-                <TimePicker format="HH:mm" style={{ width: '100%' }} minuteStep={5} />
-              </Form.Item>
-            </Col>
             {newSelectedItem && (
               <Col xs={24}>
                 {/* Estimated duration from the Time Management config × the product qty */}
@@ -1148,7 +1130,7 @@ export default function Tasks() {
                     ? `Estimated duration: ${secToHuman(newTaskEstimate.estimatedSec)}`
                     : 'No time standard configured for this task'}
                   description={newTaskEstimate.matched
-                    ? `${perUnitLabel(newTaskEstimate.perUnitSec)} × ${newTaskQty.toLocaleString()} units${newStartWatch ? ` · expected completion ${newStartWatch.add(newTaskEstimate.estimatedSec, 'second').format('HH:mm')}` : ''}`
+                    ? `${perUnitLabel(newTaskEstimate.perUnitSec)} × ${newTaskQty.toLocaleString()} units`
                     : 'Add it under Time Management to auto-calculate the duration and rating.'}
                 />
               </Col>
@@ -1255,7 +1237,6 @@ export default function Tasks() {
               </Col>
             )}
 
-            <Col xs={24}><Form.Item label="Description" name="desc"><Input.TextArea rows={3} /></Form.Item></Col>
           </Row>
         </Form>
       </Modal>
@@ -1282,8 +1263,15 @@ export default function Tasks() {
         <Form form={assignForm} layout="vertical">
           <Row gutter={16}>
             <Col xs={24}>
-              <Form.Item label="Task Title" name="title" rules={[{ required: true, message: 'Please enter a task title' }]}>
-                <Input />
+              <Form.Item label="Task Title" name="title" rules={[{ required: true, message: 'Please select a task title' }]}>
+                <Select
+                  placeholder="Select task"
+                  showSearch
+                  optionFilterProp="label"
+                  allowClear
+                  notFoundContent={configTaskNameOptions.length ? 'No match' : 'No tasks configured — add one in Time Management'}
+                  options={configTaskNameOptions}
+                />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
@@ -1315,21 +1303,6 @@ export default function Tasks() {
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                label={(
-                  <Space size={4}>
-                    <span>Start Time</span>
-                    <Tooltip title="Auto-filled with the assignment time. The expected completion is computed from the configured task time × quantity.">
-                      <span style={{ color: '#B11E6A', cursor: 'help', fontSize: 13 }}>ⓘ</span>
-                    </Tooltip>
-                  </Space>
-                )}
-                name="startTime"
-              >
-                <TimePicker format="HH:mm" style={{ width: '100%' }} minuteStep={5} />
-              </Form.Item>
-            </Col>
             <Col xs={24}>
               {/* Estimated duration from the Time Management config × qty */}
               <Alert
@@ -1341,7 +1314,7 @@ export default function Tasks() {
                   ? `Estimated duration: ${secToHuman(assignEstimate.estimatedSec)}`
                   : 'No time standard configured for this task'}
                 description={assignEstimate.matched
-                  ? `${perUnitLabel(assignEstimate.perUnitSec)} × ${Number(assignTarget?.qty || 0).toLocaleString()} units${assignStartWatch ? ` · expected completion ${assignStartWatch.add(assignEstimate.estimatedSec, 'second').format('HH:mm')}` : ''}`
+                  ? `${perUnitLabel(assignEstimate.perUnitSec)} × ${Number(assignTarget?.qty || 0).toLocaleString()} units`
                   : 'Add it under Time Management to auto-calculate the duration and rating.'}
               />
             </Col>
@@ -1382,6 +1355,7 @@ export default function Tasks() {
               <Form.Item label="Unit" name="inputUnit" initialValue="min">
                 <Select
                   options={[
+                    { value: 'ms', label: 'Milliseconds' },
                     { value: 'sec', label: 'Seconds' },
                     { value: 'min', label: 'Minutes' },
                     { value: 'hr', label: 'Hours' },

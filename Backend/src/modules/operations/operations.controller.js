@@ -74,8 +74,13 @@ exports.getHotelDesigns = asyncHandler(async (req, res) => {
 
 exports.saveHotelDesign = asyncHandler(async (req, res) => {
   const HotelDesign = require('../../models/HotelDesign');
-  const design = await HotelDesign.create({ ...req.body, createdBy: req.user._id });
-  res.status(201).json({ success: true, data: design });
+  const { hotelName, product, type } = req.body;
+  const design = await HotelDesign.findOneAndUpdate(
+    { hotelName, product, type: type || 'Sticker' },
+    { ...req.body, approved: true, createdBy: req.user._id },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  res.status(200).json({ success: true, data: design });
 });
 
 exports.assignTask = asyncHandler(async (req, res, next) => {
@@ -289,6 +294,19 @@ exports.approveStickerRequest = asyncHandler(async (req, res, next) => {
   }
   if (sticker.salesApproved && sticker.opsHeadApproved) {
     sticker.status = 'Approved';
+    // Auto-save approved design to HotelDesign for reuse in future orders
+    if ((sticker.hotelLogo || sticker.hotelName) && sticker.designFileUrl) {
+      const HotelDesign = require('../../models/HotelDesign');
+      const designType = sticker.stickerType === 'Box' ? 'Box'
+        : sticker.stickerType === 'Frosted Ziplock' ? 'Frosted Ziplock'
+        : sticker.stickerType === 'Butter Paper' ? 'Butter Paper'
+        : 'Sticker';
+      HotelDesign.findOneAndUpdate(
+        { hotelName: sticker.hotelLogo || sticker.hotelName, product: sticker.product, type: designType },
+        { designFileUrl: sticker.designFileUrl, approved: true, createdBy: userId },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      ).catch(() => {});
+    }
     notifyRoles({ modules: ['Operations', 'Sales Team'], type: 'task', title: 'Sticker/Design Approved', message: `${sticker.stickerType || 'Sticker'} for "${sticker.product || 'product'}" fully approved — ready to print`, link: '/operations' }).catch(() => {});
   } else {
     sticker.status = 'Waiting for Approval';

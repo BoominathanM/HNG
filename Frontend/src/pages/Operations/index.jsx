@@ -71,6 +71,7 @@ import {
   useGetCompanySettingsQuery,
   useGetPackingConfigQuery,
   useApproveEmergencyOpsHeadMutation,
+  useGetHotelDesignsQuery,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -149,6 +150,28 @@ export default function Operations() {
   const [emergencyOpsApprovalOrder, setEmergencyOpsApprovalOrder] = useState(null);
 
   const stickerRequests = stickerData?.data || [];
+
+  // All hotel designs (previously approved across all orders) — used to bypass re-approval
+  const { data: hotelDesignsRaw } = useGetHotelDesignsQuery();
+  const hotelDesigns = hotelDesignsRaw?.data || [];
+  // Map: `${hotelName.toLowerCase()}-${product.toLowerCase()}-${type}` → design record
+  const hotelDesignMap = useMemo(() => {
+    const map = {};
+    hotelDesigns.forEach((d) => {
+      const key = `${(d.hotelName || '').toLowerCase()}-${(d.product || '').toLowerCase()}-${d.type || 'Sticker'}`;
+      if (!map[key]) map[key] = d;
+    });
+    return map;
+  }, [hotelDesigns]);
+  // Find existing approved hotel design for a queue row
+  const findHotelDesign = (record) => {
+    const stickerType = record.key?.endsWith('-box') ? 'Box'
+      : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
+      : record.key?.endsWith('-butter') ? 'Butter Paper'
+      : 'Sticker';
+    const key = `${(record.hotelLogo || '').toLowerCase()}-${(record.product || '').toLowerCase()}-${stickerType}`;
+    return hotelDesignMap[key] || null;
+  };
 
   // Printing vendors from Vendors & Suppliers module (vendorType = 'printing')
   const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
@@ -894,13 +917,14 @@ export default function Operations() {
       {
         title: 'Design',
         key: 'design',
-        width: 90,
+        width: 100,
         render: (_, record) => {
           // Kit children (display-unit assembly) share the parent's single upload — show — here.
           // Individually-packed products are standalone rows (no isKitChild) and keep their own design.
           if (record.isKitChild || record.isEmergencyGated) return <Text type="secondary">—</Text>;
           const sr = findStickerReq(record);
-          const url = sr?.designFileUrl;
+          const url = sr?.designFileUrl || findHotelDesign(record)?.designFileUrl;
+          const isExisting = !sr?.designFileUrl && !!findHotelDesign(record)?.designFileUrl;
           if (!url) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
           const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
           if (isImage) {
@@ -912,25 +936,38 @@ export default function Operations() {
                     <div style={{ marginTop: 8 }}>
                       <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1890ff' }}>Open full size ↗</a>
                     </div>
+                    {isExisting && (
+                      <div style={{ marginTop: 6 }}>
+                        <Tag color="green" style={{ fontSize: 11 }}>♻ Previously approved design</Tag>
+                      </div>
+                    )}
                   </div>
                 }
-                title="Uploaded Design"
+                title={isExisting ? 'Existing Approved Design' : 'Uploaded Design'}
                 trigger="click"
                 placement="left"
               >
-                <img
-                  src={url}
-                  alt="design"
-                  style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid #e0d0e8', cursor: 'pointer' }}
-                />
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <img
+                    src={url}
+                    alt="design"
+                    style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: `1px solid ${isExisting ? '#52c41a' : '#e0d0e8'}`, cursor: 'pointer' }}
+                  />
+                  {isExisting && (
+                    <div style={{ position: 'absolute', top: -4, right: -4, background: '#52c41a', borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', border: '1px solid #fff' }}>♻</div>
+                  )}
+                </div>
               </Popover>
             );
           }
           return (
-            <a href={url} target="_blank" rel="noopener noreferrer"
-              style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-              <EyeOutlined style={{ fontSize: 12 }} /> View
-            </a>
+            <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
+              <a href={url} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <EyeOutlined style={{ fontSize: 12 }} /> View
+              </a>
+              {isExisting && <Tag color="green" style={{ fontSize: 10, margin: 0 }}>♻ Existing</Tag>}
+            </Space>
           );
         },
       },
@@ -958,11 +995,52 @@ export default function Operations() {
           }
           const step = getQueueStep(record);
           const sr = findStickerReq(record);
+          const existingHotelDesign = findHotelDesign(record);
           return (
             <Space wrap size={4}>
               {step === 0 && (
                 <>
-                  <Tag color="blue">Designing</Tag>
+                  {/* If a previously approved design exists for this hotel+product, offer one-click reuse */}
+                  {existingHotelDesign && !sr && (
+                    <Tooltip title={`Previously approved design from a past order — click to use it directly without re-approval`}>
+                      <Button
+                        size="small"
+                        icon={<CheckCircleOutlined />}
+                        style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff', borderRadius: 6 }}
+                        onClick={async () => {
+                          const ord = apiOrders.find((o) => o.id === record.orderId);
+                          const queueType = record.key?.endsWith('-box') ? 'Box'
+                            : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
+                            : record.key?.endsWith('-butter') ? 'Butter Paper'
+                            : 'Sticker';
+                          try {
+                            await createStickerRequest({
+                              orderId: ord?.key,
+                              hotelLogo: record.hotelLogo,
+                              product: record.product,
+                              category: record.category || '',
+                              stickerType: queueType,
+                              quantity: record.qty,
+                              stickerSize: record.size,
+                              designFileUrl: existingHotelDesign.designFileUrl,
+                              status: 'Approved',
+                              salesApproved: true,
+                              salesApprovedAt: new Date(),
+                              opsHeadApproved: true,
+                              opsHeadApprovedAt: new Date(),
+                            }).unwrap();
+                            advanceStep(record.key, 2);
+                            enqueueSnackbar(`Existing design applied — ${record.product} marked Approved`, { variant: 'success' });
+                          } catch (err) {
+                            enqueueSnackbar(err?.data?.message || err?.data || 'Failed to apply existing design', { variant: 'error' });
+                          }
+                        }}
+                      >
+                        ♻ Use Existing Design
+                      </Button>
+                    </Tooltip>
+                  )}
+                  <Tag color={existingHotelDesign && !sr ? 'default' : 'blue'}>{existingHotelDesign && !sr ? 'Or Upload New' : 'Designing'}</Tag>
                   <Upload
                     beforeUpload={() => false}
                     fileList={uploadedFiles[record.key] || []}

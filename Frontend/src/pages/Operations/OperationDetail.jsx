@@ -20,7 +20,6 @@ import {
   Table,
   Tabs,
   Tag,
-  TimePicker,
   Tooltip,
   Typography,
   Upload,
@@ -110,6 +109,11 @@ export default function OperationDetail() {
   const { data: packingConfigRaw } = useGetPackingConfigQuery();
   const { data: timeConfigData } = useGetTaskTimeConfigsQuery();
   const timeConfigs = useMemo(() => timeConfigData?.data || [], [timeConfigData]);
+  const configTaskNameOptions = useMemo(() => {
+    const seen = new Set();
+    return timeConfigs.filter((c) => c.taskName && !seen.has(c.taskName) && seen.add(c.taskName))
+      .map((c) => ({ value: c.taskName, label: c.taskName }));
+  }, [timeConfigs]);
   // displayUnit name → Operations tab mapping (for per-kit routing).
   const displayUnitTabMap = useMemo(() => {
     const entries = (packingConfigRaw?.data || []).filter((c) => c.type === 'displayUnit');
@@ -803,18 +807,10 @@ export default function OperationDetail() {
   // here (before the early returns below) to satisfy the rules of hooks.
   const assignTaskNameWatch = Form.useWatch('taskName', assignModalForm);
   const assignTaskTypeWatch = Form.useWatch('taskType', assignModalForm);
-  const assignStartWatch = Form.useWatch('taskStartTime', assignModalForm);
   const assignEstimate = useMemo(
     () => estimateSecFor(timeConfigs, { taskName: assignTaskNameWatch, taskType: assignTaskTypeWatch }, taskRequiredQty),
     [timeConfigs, assignTaskNameWatch, assignTaskTypeWatch, taskRequiredQty],
   );
-  // Keep the End Time field in sync with start + estimate (still user-editable afterward).
-  useEffect(() => {
-    if (assignModalOpen && assignEstimate.matched && assignStartWatch) {
-      assignModalForm.setFieldsValue({ taskEndTime: assignStartWatch.add(assignEstimate.estimatedSec, 'second') });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignModalOpen, assignEstimate.matched, assignEstimate.estimatedSec, assignStartWatch]);
 
   if (ordersLoading) {
     return <div className="page-container"><Text>Loading order…</Text></div>;
@@ -1136,10 +1132,21 @@ export default function OperationDetail() {
     {
       title: 'Design',
       key: 'design',
-      width: 90,
+      width: 100,
       render: (_, record) => {
         const sr = resolveKitSR(record) || srForRow(record);
-        const url = sr?.designFileUrl;
+        // Fall back to existing hotel design when this order has no uploaded design yet
+        const productName = (record.itemName || record.name || record.product || '').toLowerCase();
+        const stickerType = record.packingMaterialTab === 'box' ? 'Box'
+          : record.packingMaterialTab === 'frosted_ziplock' ? 'Frosted Ziplock'
+          : record.packingMaterialTab === 'butter_paper' ? 'Butter Paper'
+          : 'Sticker';
+        const hdKey = `${(order.hotelLogo || '').toLowerCase()}-${productName}-${stickerType}`;
+        const existingHD = hotelDesigns.find((d) =>
+          `${(d.hotelName || '').toLowerCase()}-${(d.product || '').toLowerCase()}-${d.type || 'Sticker'}` === hdKey
+        );
+        const url = sr?.designFileUrl || existingHD?.designFileUrl;
+        const isExisting = !sr?.designFileUrl && !!existingHD?.designFileUrl;
         if (!url) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
         const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
         if (isImage) {
@@ -1151,25 +1158,38 @@ export default function OperationDetail() {
                   <div style={{ marginTop: 8 }}>
                     <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1890ff' }}>Open full size ↗</a>
                   </div>
+                  {isExisting && (
+                    <div style={{ marginTop: 6 }}>
+                      <Tag color="green" style={{ fontSize: 11 }}>♻ Previously approved design</Tag>
+                    </div>
+                  )}
                 </div>
               }
-              title="Uploaded Design"
+              title={isExisting ? 'Existing Approved Design' : 'Uploaded Design'}
               trigger="click"
               placement="left"
             >
-              <img
-                src={url}
-                alt="design"
-                style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid #e0d0e8', cursor: 'pointer' }}
-              />
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <img
+                  src={url}
+                  alt="design"
+                  style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: `1px solid ${isExisting ? '#52c41a' : '#e0d0e8'}`, cursor: 'pointer' }}
+                />
+                {isExisting && (
+                  <div style={{ position: 'absolute', top: -4, right: -4, background: '#52c41a', borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', border: '1px solid #fff' }}>♻</div>
+                )}
+              </div>
             </Popover>
           );
         }
         return (
-          <a href={url} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-            <EyeOutlined style={{ fontSize: 12 }} /> View
-          </a>
+          <Space direction="vertical" size={2}>
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <EyeOutlined style={{ fontSize: 12 }} /> View
+            </a>
+            {isExisting && <Tag color="green" style={{ fontSize: 10, margin: 0 }}>♻ Existing</Tag>}
+          </Space>
         );
       },
     },
@@ -1300,10 +1320,21 @@ export default function OperationDetail() {
       )}
 
       {hotelDesigns.length > 0 && (
-        <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, background: '#f6ffed', border: '1px solid #b7eb8f' }}>
-          <Text style={{ fontSize: 12, color: '#389e0d' }}>
-            ♻ {hotelDesigns.length} approved design(s) on file for {order.hotelLogo} — reusable for this order.
-          </Text>
+        <div style={{ marginBottom: 8, padding: '10px 14px', borderRadius: 8, background: '#f6ffed', border: '1px solid #b7eb8f' }}>
+          <Space wrap size={8}>
+            <Text style={{ fontSize: 12, color: '#389e0d', fontWeight: 600 }}>
+              ♻ {hotelDesigns.length} previously approved design(s) on file for {order.hotelLogo}:
+            </Text>
+            {hotelDesigns.map((d) => (
+              <Space key={d._id} size={4}>
+                <Tag color="green" style={{ fontSize: 11, margin: 0 }}>{d.product} ({d.type})</Tag>
+                {d.designFileUrl && (
+                  <a href={d.designFileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#389e0d' }}>View ↗</a>
+                )}
+              </Space>
+            ))}
+            <Text style={{ fontSize: 11, color: '#52c41a' }}>— these will be offered as one-click reuse in the Sticker/Box/Frosted tabs.</Text>
+          </Space>
         </div>
       )}
 
@@ -1860,7 +1891,15 @@ export default function OperationDetail() {
           <Row gutter={16}>
             <Col xs={24} md={12}>
               <Form.Item label="Task Name" name="taskName" rules={[{ required: true, message: 'Task name is required' }]}>
-                <Input placeholder="e.g. Box filling / sticker placing" style={{ borderRadius: 8 }} />
+                <Select
+                  placeholder="Select task"
+                  showSearch
+                  optionFilterProp="label"
+                  allowClear
+                  style={{ borderRadius: 8 }}
+                  notFoundContent={configTaskNameOptions.length ? 'No match' : 'No tasks configured — add one in Time Management'}
+                  options={configTaskNameOptions}
+                />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
@@ -1912,26 +1951,6 @@ export default function OperationDetail() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                label={
-                  <Space size={4}>
-                    <span>Task Start Time</span>
-                    <Tooltip title="Set the time when this task should begin. Helps schedule the employee's workload and ensures timely production tracking.">
-                      <span style={{ color: '#B11E6A', cursor: 'help', fontSize: 13 }}>ⓘ</span>
-                    </Tooltip>
-                  </Space>
-                }
-                name="taskStartTime"
-              >
-                <TimePicker format="HH:mm" style={{ width: '100%' }} placeholder="Select start time" minuteStep={5} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item label="Task End Time" name="taskEndTime">
-                <TimePicker format="HH:mm" style={{ width: '100%' }} placeholder="Select end time" minuteStep={5} />
-              </Form.Item>
-            </Col>
           </Row>
 
           {/* Estimated duration from Time Management config × required qty */}
@@ -1943,7 +1962,7 @@ export default function OperationDetail() {
               ? `Estimated duration: ${secToHuman(assignEstimate.estimatedSec)}`
               : 'No time standard configured for this task'}
             description={assignEstimate.matched
-              ? `${perUnitLabel(assignEstimate.perUnitSec)} × ${Number(taskRequiredQty || 0).toLocaleString()} units${assignStartWatch ? ` · expected completion ${assignStartWatch.add(assignEstimate.estimatedSec, 'second').format('HH:mm')}` : ''}`
+              ? `${perUnitLabel(assignEstimate.perUnitSec)} × ${Number(taskRequiredQty || 0).toLocaleString()} units`
               : 'Add it under Task Management → Time Management to auto-calculate the duration and rating.'}
           />
 

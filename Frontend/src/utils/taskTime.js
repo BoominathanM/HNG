@@ -3,6 +3,7 @@
 // Convert an entered value in a unit → canonical seconds.
 export const unitToSec = (value, unit) => {
   const v = Number(value) || 0;
+  if (unit === 'ms') return v / 1000;
   if (unit === 'min') return v * 60;
   if (unit === 'hr') return v * 3600;
   return v; // 'sec'
@@ -11,12 +12,13 @@ export const unitToSec = (value, unit) => {
 // Convert canonical seconds → a value in the requested unit (for re-display in the config form).
 export const secToUnit = (sec, unit) => {
   const s = Number(sec) || 0;
+  if (unit === 'ms') return s * 1000;
   if (unit === 'min') return s / 60;
   if (unit === 'hr') return s / 3600;
   return s;
 };
 
-export const UNIT_LABEL = { sec: 'sec', min: 'min', hr: 'hr' };
+export const UNIT_LABEL = { ms: 'ms', sec: 'sec', min: 'min', hr: 'hr' };
 
 // Human-readable duration: "1h 23m", "2m 30s", "45s".
 export const secToHuman = (sec) => {
@@ -32,12 +34,13 @@ export const secToHuman = (sec) => {
   return parts.join(' ') || '0s';
 };
 
-// Compact "per unit" label, e.g. "10s/unit", "1.5m/unit".
+// Compact "per unit" label, e.g. "10s/unit", "1.5m/unit", "500ms/unit".
 export const perUnitLabel = (sec) => {
   const s = Number(sec) || 0;
   if (s >= 3600) return `${+(s / 3600).toFixed(2)}h/unit`;
   if (s >= 60) return `${+(s / 60).toFixed(2)}m/unit`;
-  return `${+s.toFixed(s < 1 ? 2 : 0)}s/unit`;
+  if (s < 1 && s > 0) return `${Math.round(s * 1000)}ms/unit`;
+  return `${+s.toFixed(0)}s/unit`;
 };
 
 const norm = (v) => String(v ?? '').trim().toLowerCase();

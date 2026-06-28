@@ -5,7 +5,7 @@ const hotelDesignSchema = new mongoose.Schema({
   hotelName: { type: String, required: true, index: true },
   partyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Party' },
   product: String,
-  type: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock'], default: 'Sticker' },
+  type: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper'], default: 'Sticker' },
   designFileUrl: String,
   approved: { type: Boolean, default: true },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
