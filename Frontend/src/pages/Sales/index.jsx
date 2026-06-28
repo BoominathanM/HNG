@@ -2600,6 +2600,7 @@ export default function Sales() {
   const watchedOrderEditSelKits = Form.useWatch('selectedKits', orderEditForm) || [];
   const watchedOrderEditKitOrds = Form.useWatch('kitOrders', orderEditForm) || [];
   const watchedOrderEditProds = Form.useWatch('editProducts', orderEditForm) || [];
+  const watchedOrderEditProductType = Form.useWatch('productType', orderEditForm);
   const watchedNegRoundValue = Form.useWatch('useRoundedTotal', negotiationForm);
   const watchedLeadPaymentTerms = Form.useWatch('paymentTerms', leadForm);
   const watchedLeadPaymentCollection = Form.useWatch('paymentCollection', leadForm);
@@ -6895,121 +6896,132 @@ export default function Sales() {
                     <Text strong style={{ fontSize: 13, display: 'block', marginTop: 1 }}>{value || '—'}</Text>
                   </div>
                 );
+                const oKitOrders = Array.isArray(o.kitOrders) && o.kitOrders.length > 0 ? o.kitOrders : [];
+                const normYNv = v => (v === 'YES' || v === true ? 'Yes' : v === 'NO' || v === false ? 'No' : v || '—');
                 return (
                   <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      <Row gutter={[16, 12]}>
-                        {paProductType && (
-                          <Col xs={24} sm={12}>
-                            <OIR label="Product Selection" value={
-                              Array.isArray(paProductType)
-                                ? paProductType.map(productTypeLabel).join(', ')
-                                : productTypeLabel(paProductType)
-                            } />
-                          </Col>
-                        )}
-                        {kitNamePA && (
-                          <Col xs={24} sm={12}>
-                            <OIR label="Kit Selected" value={kitNamePA} />
-                          </Col>
-                        )}
-                        {paDisplayUnit && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Display Unit" value={(paDisplayUnit || '').replace(/_/g, ' ')} />
-                          </Col>
-                        )}
-                        {paKitBoxType && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Box Type" value={paKitBoxType} />
-                          </Col>
-                        )}
-                        {paKitSize && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Kit Size" value={paKitSize} />
-                          </Col>
-                        )}
-                        {paKitSticker && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Sticker" value={paKitSticker === 'YES' ? 'Yes' : 'No'} />
-                          </Col>
-                        )}
-                        {paKitLogo && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Logo" value={paKitLogo === 'YES' ? 'Yes' : 'No'} />
-                          </Col>
-                        )}
-                        {paKitPrinting && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Printing" value={paKitPrinting === 'YES' ? 'Yes' : 'No'} />
-                          </Col>
-                        )}
-                        {paKitLamination && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Lamination" value={paKitLamination === 'YES' ? 'Yes' : 'No'} />
-                          </Col>
-                        )}
-                        {(paKitPrice != null && paKitPrice !== '') && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Kit Price (single)" value={`₹${Number(paKitPrice).toLocaleString()}`} />
-                          </Col>
-                        )}
-                        {Number(paKitQty) > 0 && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Overall Qty" value={`${Number(paKitQty)} kit${Number(paKitQty) > 1 ? 's' : ''}`} />
-                          </Col>
-                        )}
-                        {(paKitPrice != null && paKitPrice !== '') && (
-                          <Col xs={12} sm={6}>
-                            <OIR label="Kit Amount" value={`₹${(Number(paKitPrice) * (Number(paKitQty) || 1)).toLocaleString()}`} />
-                          </Col>
-                        )}
-                      </Row>
-                      {isKitTypePA && kitProductsToShowPA.length > 0 && (
-                        <div>
-                          <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
-                            KIT CONTENTS ({kitProductsToShowPA.length} items)
+                    <Row gutter={[12, 8]}>
+                      {paProductType && (
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Product Selection</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>
+                            {Array.isArray(paProductType) ? paProductType.map(productTypeLabel).join(', ') : productTypeLabel(paProductType)}
                           </Text>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {kitProductsToShowPA.map((kp, i) => (
-                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
-                                <div>
-                                  <Text strong style={{ fontSize: 13 }}>{kp.productName || '—'}</Text>
-                                  {kp.displayType && <Tag color="purple" style={{ marginLeft: 8, borderRadius: 12, fontSize: 10 }}>{kp.displayType}</Tag>}
-                                </div>
-                                <div style={{ textAlign: 'right' }}>
-                                  <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
-                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
-                                </div>
+                        </Col>
+                      )}
+                      {kitNamePA && (
+                        <Col xs={24} sm={12}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Kit Selected</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{kitNamePA}</Text>
+                        </Col>
+                      )}
+                      {paDisplayUnit && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Display Unit</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{(paDisplayUnit || '').replace(/_/g, ' ')}</Text>
+                        </Col>
+                      )}
+                      {paKitBoxType && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Box Type</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{paKitBoxType}</Text>
+                        </Col>
+                      )}
+                      {paKitSize && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Kit Size</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{paKitSize}</Text>
+                        </Col>
+                      )}
+                      {paKitSticker && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Sticker</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{normYNv(paKitSticker)}</Text>
+                        </Col>
+                      )}
+                      {paKitLogo && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Logo</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{normYNv(paKitLogo)}</Text>
+                        </Col>
+                      )}
+                      {paKitPrinting && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Printing</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{normYNv(paKitPrinting)}</Text>
+                        </Col>
+                      )}
+                      {paKitLamination && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Lamination</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{normYNv(paKitLamination)}</Text>
+                        </Col>
+                      )}
+                      {(paKitPrice != null && paKitPrice !== '') && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Kit Price (single)</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(paKitPrice).toLocaleString()}</Text>
+                        </Col>
+                      )}
+                      {Number(paKitQty) > 0 && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block' }}>{paKitQty} kit{Number(paKitQty) > 1 ? 's' : ''}</Text>
+                        </Col>
+                      )}
+                      {(paKitPrice != null && paKitPrice !== '' && Number(paKitQty) > 0) && (
+                        <Col xs={12} sm={6}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text>
+                          <Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{r2(Number(paKitPrice) * Number(paKitQty)).toLocaleString()}</Text>
+                        </Col>
+                      )}
+                    </Row>
+                    {/* Per-kit sub-rows — each kit's category + display unit */}
+                    {oSelKitIdsPA.length > 0 && oKitOrders.length > 0 && (
+                      <div style={{ marginTop: 10 }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                          EACH KIT — CATEGORY &amp; DISPLAY UNIT
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          {oSelKitIdsPA.map((kitId, ki) => {
+                            const ko = oKitOrders.find(k => k.kitId === kitId) || oKitOrders[ki] || {};
+                            const kitDef = kits.find(k => k._id === kitId);
+                            const kName = kitDef?.kitName || ko.kitName || ko.kitType || `Kit ${ki + 1}`;
+                            const kDU = ko.displayUnit;
+                            const kCat = ko.category;
+                            return (
+                              <div key={kitId} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '6px 10px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                                <GiftOutlined style={{ color: '#722ed1' }} />
+                                <Text strong style={{ fontSize: 12, color: '#722ed1' }}>{kName}</Text>
+                                {kCat && <Tag color={kCat === ORDER_CATEGORIES.PERSONALIZED ? 'purple' : 'orange'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{kCat === ORDER_CATEGORIES.PERSONALIZED ? 'Personalized' : 'Separate Kit'}</Tag>}
+                                {kDU && <Tag color="blue" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{(kDU || '').replace(/_/g, ' ')}</Tag>}
+                                {ko.size && <Tag style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{ko.size}</Tag>}
+                                {ko.sticker && <Tag color={ko.sticker === 'YES' ? 'cyan' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Sticker: {normYNv(ko.sticker)}</Tag>}
+                                {ko.logo && <Tag color={ko.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Logo: {normYNv(ko.logo)}</Tag>}
+                                {ko.printing && <Tag color={ko.printing === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Printing: {normYNv(ko.printing)}</Tag>}
+                                {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>₹{Number(ko.kitPrice).toLocaleString()}{Number(ko.overallQty) > 0 ? ` × ${ko.overallQty}` : ''}</Tag>}
                               </div>
-                            ))}
-                          </div>
+                            );
+                          })}
                         </div>
-                      )}
-                      {isKitTypePA && kitProductsToShowPA.length === 0 && kitNamePA && (
-                        <div style={{ padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px dashed rgba(114,46,209,0.2)' }}>
-                          <Text type="secondary" style={{ fontSize: 12 }}>Kit: <Text strong style={{ color: '#722ed1' }}>{kitNamePA}</Text> — products listed below in Order Details</Text>
-                        </div>
-                      )}
-                      {ptHasPersonalized(paProductType) && paPackagingIncludes.length > 0 && (
-                        <div style={{ padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.2)' }}>
-                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6, letterSpacing: 0.6 }}>INCLUDED IN KIT PACKAGING</Text>
-                          <Space wrap size={4}>
-                            {paPackagingIncludes.map((v, i) => {
-                              const id = typeof v === 'object' ? v.id : v;
-                              const qty = typeof v === 'object' ? v.qty : null;
-                              const kMatch = kits.find(k => k._id === id);
-                              const label = kMatch?.kitName || id;
-                              return (
-                                <Tag key={i} color={kMatch ? 'purple' : 'orange'} style={{ borderRadius: 12, fontSize: 11 }}>
-                                  {label}{qty && qty > 1 ? ` ×${qty}` : ''}
-                                </Tag>
-                              );
-                            })}
-                          </Space>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
+                    {/* Packaging includes */}
+                    {ptHasPersonalized(paProductType) && paPackagingIncludes.length > 0 && (
+                      <div style={{ marginTop: 10, padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6, letterSpacing: 0.6 }}>INCLUDED IN KIT PACKAGING</Text>
+                        <Space wrap size={4}>
+                          {paPackagingIncludes.map((v, i) => {
+                            const id = typeof v === 'object' ? v.id : v;
+                            const qty = typeof v === 'object' ? v.qty : null;
+                            const kMatch = kits.find(k => k._id === id);
+                            const label = kMatch ? kMatch.kitName : id;
+                            return <Tag key={i} color={kMatch ? 'purple' : 'orange'} style={{ borderRadius: 12, fontSize: 11 }}>{label}{qty && qty > 1 ? ` ×${qty}` : ''}</Tag>;
+                          })}
+                        </Space>
+                      </div>
+                    )}
                   </Card>
                 );
               })()}
@@ -7476,6 +7488,235 @@ export default function Sales() {
                         </Form.Item>
                       </Col>
                     </Row>
+
+                    {/* ── EACH KIT — CATEGORY & DISPLAY UNIT (mini-rows, matches lead edit "Products adding") ── */}
+                    {editKitIds.length > 0 && (
+                      <div style={{ marginTop: 4, marginBottom: 8 }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                          EACH KIT — CATEGORY &amp; DISPLAY UNIT
+                        </Text>
+                        {editKitIds.map((kitId, kIdx) => {
+                          const kDef = kits.find(k => k._id === kitId);
+                          return (
+                            <Row key={kitId} gutter={12} align="bottom" style={{ marginBottom: 8, padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.15)' }}>
+                              <Col xs={24} sm={8}>
+                                <Text strong style={{ color: '#722ed1', fontSize: 13 }}><GiftOutlined /> {kDef?.kitName || `Kit ${kIdx + 1}`}</Text>
+                              </Col>
+                              <Col xs={12} sm={8}>
+                                <Form.Item label="Kit Category" name={['kitOrders', kIdx, 'category']} style={{ marginBottom: 0 }}
+                                  tooltip="Personalized = part of the outer packaging. Separate Kit = assembled in its own display unit.">
+                                  <Select options={[{ value: ORDER_CATEGORIES.PERSONALIZED, label: 'Personalized' }, { value: ORDER_CATEGORIES.SEPARATE_KIT, label: 'Separate Kit' }]} />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={12} sm={8}>
+                                <Form.Item label="Display Unit" name={['kitOrders', kIdx, 'displayUnit']} style={{ marginBottom: 0 }}
+                                  tooltip="This kit's own packaging — drives which Operations tab it routes to.">
+                                  <Select allowClear showSearch optionFilterProp="label" placeholder="Display unit" options={configDisplayUnitOptions} />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* ── Top-level personalized specs (outer packaging) — matches lead edit ── */}
+                    {ptHasPersonalizedUI(watchedOrderEditProductType ?? orderEditTarget?.productType) && (<>
+                      <Row gutter={[8, 8]} style={{ marginTop: 4 }}>
+                        <Col xs={12} sm={4}>
+                          <Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 0 }}>
+                            <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} onChange={() => orderEditForm.setFieldValue('kitDisplayUnitType', undefined)} />
+                          </Form.Item>
+                        </Col>
+                        <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
+                          {({ getFieldValue }) => {
+                            const du = getFieldValue('kitDisplayUnit');
+                            const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                            const subtypes = duCfg?.subtypes || [];
+                            if (!subtypes.length) return null;
+                            const duLabel = duCfg?.label || 'Display Unit';
+                            return (
+                              <Col xs={12} sm={4}>
+                                <Form.Item label={`${duLabel} Type`} name="kitDisplayUnitType" style={{ marginBottom: 0 }}>
+                                  <Select allowClear placeholder={`${duLabel} type`} options={subtypes.map(s => ({ value: s.value, label: s.label }))}
+                                    onChange={(val) => {
+                                      const st = subtypes.find(s => s.value === val);
+                                      if (st) {
+                                        const patch = {};
+                                        if (st.size) patch.kitSize = st.size;
+                                        if (st.sticker) patch.kitSticker = st.sticker;
+                                        if (st.logo) patch.kitLogo = st.logo;
+                                        if (st.printing) patch.kitPrinting = st.printing;
+                                        if (st.lamination) patch.kitLamination = st.lamination;
+                                        if (st.sellingPrice != null) patch.kitPrice = st.sellingPrice;
+                                        orderEditForm.setFieldsValue(patch);
+                                      }
+                                    }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                            );
+                          }}
+                        </Form.Item>
+                        <Col xs={12} sm={4}>
+                          <Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}>
+                            <Input placeholder="e.g. 2.5cm x 2.5cm" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={8} sm={4}>
+                          <Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}>
+                            <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={8} sm={4}>
+                          <Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}>
+                            <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={8} sm={4}>
+                          <Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}>
+                            <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
+                        {({ getFieldValue }) => {
+                          const du = getFieldValue('kitDisplayUnit');
+                          const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                          const isBox = duCfg?.label?.toLowerCase().includes('box') || duCfg?.tabMapping === 'Box';
+                          if (!isBox) return null;
+                          return (
+                            <Row gutter={[8, 0]} style={{ marginTop: 4 }}>
+                              <Col xs={12} sm={6}>
+                                <Form.Item label="Lamination" name="kitLamination" style={{ marginBottom: 0 }}>
+                                  <Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                          );
+                        }}
+                      </Form.Item>
+                      <Row gutter={16} style={{ marginTop: 10 }} align="bottom">
+                        <Col xs={12} sm={5}>
+                          <Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 0 }} tooltip="Total number of kits ordered.">
+                            <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kit count" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={9}>
+                          <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit || p.kitDisplayUnitType !== c.kitDisplayUnitType}>
+                            {({ getFieldValue }) => {
+                              const du = getFieldValue('kitDisplayUnit');
+                              const duType = getFieldValue('kitDisplayUnitType');
+                              const duCfg = configDisplayUnitOptions.find(c => c.value === du);
+                              const st = (duCfg?.subtypes || []).find(s => s.value === duType);
+                              const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
+                              return (
+                                <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}
+                                  rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice}`) : Promise.resolve() }] : []}>
+                                  <InputNumber min={minPrice || 0} style={{ width: '100%' }} placeholder={st?.sellingPrice > 0 ? `Selling: ₹${st.sellingPrice}` : 'Single kit price'} formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
+                                </Form.Item>
+                              );
+                            }}
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={10}>
+                          <Form.Item noStyle shouldUpdate>
+                            {({ getFieldValue }) => {
+                              const single = Number(getFieldValue('kitPrice')) || 0;
+                              const qty = Number(getFieldValue('kitOverallQty')) || 1;
+                              if (!single) return null;
+                              return (
+                                <div style={{ padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.06)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.2)' }}>
+                                  <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.6, display: 'block' }}>KIT AMOUNT</Text>
+                                  <Text strong style={{ fontSize: 15, color: '#722ed1' }}>₹{(single * qty).toLocaleString()}</Text>
+                                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
+                                </div>
+                              );
+                            }}
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </>)}
+
+                    {/* ── Included in Kit Packaging (top-level packagingIncludes) ── */}
+                    {ptHasPersonalized(watchedOrderEditProductType ?? orderEditTarget?.productType) && (() => {
+                      const kiOpts = editKitIds.map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; }).filter(Boolean);
+                      const prOpts = (watchedOrderEditProds || []).filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName)).map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' })).filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i);
+                      const grpOpts = [...(kiOpts.length > 0 ? [{ label: 'Kits', options: kiOpts }] : []), ...(prOpts.length > 0 ? [{ label: 'Separate Products', options: prOpts }] : [])];
+                      return (
+                        <div style={{ marginTop: 12 }}>
+                          <Divider style={{ margin: '8px 0 10px', fontSize: 12, color: '#722ed1', borderColor: 'rgba(114,46,209,0.2)' }}>
+                            <Space><AppstoreOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1', fontWeight: 600 }}>Included in Kit Packaging</span></Space>
+                          </Divider>
+                          <Form.Item name="packagingIncludes" style={{ marginBottom: 6 }} tooltip="Select kits and products packed inside the personalized kit. Remaining quantities go as separate orders.">
+                            <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder="Select kits / products packed inside the personalized kit" options={grpOpts} />
+                          </Form.Item>
+                          <Form.Item noStyle shouldUpdate>
+                            {({ getFieldValue }) => {
+                              const sel = getFieldValue('packagingIncludes') || [];
+                              if (!sel.length) return null;
+                              const overallQty = Number(getFieldValue('kitOverallQty')) || 1;
+                              return (
+                                <div style={{ padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.15)' }}>
+                                  <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6 }}>
+                                    QTY INSIDE PERSONALIZED KITS — enter "Per kit" (× {overallQty} kit{overallQty > 1 ? 's' : ''}) or override "Total"
+                                  </Text>
+                                  {sel.map(id => {
+                                    const kMatch = kits.find(k => k._id === id);
+                                    const sProd = (watchedOrderEditProds || []).find(p => p && (p.name || p.itemName) === id);
+                                    const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
+                                    const isKit = Boolean(kMatch);
+                                    const totalInside = Number(getFieldValue(['packagingIncludesQty', id])) || 1;
+                                    const perKitDisplay = (totalInside <= 1 && overallQty > 1) ? undefined : (overallQty > 0 ? r2(totalInside / overallQty) : totalInside);
+                                    const standaloneQty = isKit
+                                      ? (Number((watchedOrderEditKitOrds || []).find(ko => ko?.kitId === id)?.overallQty) || 0)
+                                      : (Number((watchedOrderEditProds || []).find(p => p && (p.name || p.itemName) === id)?.qty) || 0);
+                                    const netQty = Math.max(0, standaloneQty - totalInside);
+                                    const isOver = standaloneQty > 0 && totalInside > standaloneQty;
+                                    return (
+                                      <Row key={id} align="middle" gutter={8} style={{ marginBottom: 6 }}>
+                                        <Col flex="1">
+                                          <Text style={{ fontSize: 12 }}>{label}</Text>
+                                          {standaloneQty > 0 && (
+                                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                                              Total ordered: {standaloneQty} → In personalized: {totalInside} → Separate: <Text strong style={{ color: isOver ? '#ff4d4f' : '#52c41a' }}>{netQty}</Text>
+                                            </Text>
+                                          )}
+                                          {isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over by {totalInside - standaloneQty}</Text>}
+                                        </Col>
+                                        <Col>
+                                          <div style={{ textAlign: 'center' }}>
+                                            <Text type="secondary" style={{ fontSize: 9, display: 'block', lineHeight: 1.1 }}>Per kit</Text>
+                                            <InputNumber min={0} size="small" style={{ width: 64 }} placeholder="qty" value={perKitDisplay}
+                                              onChange={(v) => { const pk = Number(v) || 0; orderEditForm.setFieldValue(['packagingIncludesQty', id], pk > 0 ? pk * (overallQty || 1) : 1); }}
+                                            />
+                                          </div>
+                                        </Col>
+                                        <Col>
+                                          <div style={{ textAlign: 'center' }}>
+                                            <Text type="secondary" style={{ fontSize: 9, display: 'block', lineHeight: 1.1 }}>Total</Text>
+                                            <Form.Item name={['packagingIncludesQty', id]} initialValue={1} noStyle>
+                                              <InputNumber min={1} size="small" style={{ width: 70 }} />
+                                            </Form.Item>
+                                          </div>
+                                        </Col>
+                                      </Row>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            }}
+                          </Form.Item>
+                        </div>
+                      );
+                    })()}
+
+                    {/* ── Per-Kit Order Details (detailed spec forms per kit) ── */}
+                    {editKitIds.length > 0 && (
+                      <Divider style={{ margin: '12px 0 8px', fontSize: 12, color: '#722ed1', borderColor: 'rgba(114,46,209,0.2)' }}>
+                        <Space><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1', fontWeight: 600 }}>Per-Kit Order Details</span></Space>
+                      </Divider>
+                    )}
                     {editKitIds.length > 0 ? editKitIds.map((kitId, kitIndex) => {
                       const kitDef = kits.find(k => k._id === kitId);
                       const kitLabel = kitDef?.kitName || 'Personalized Kit';
@@ -7485,15 +7726,26 @@ export default function Sales() {
                       const flatKitOptsEdit1 = [...otherKitOpts, ...sepProdOptsEdit1];
                       return (
                         <div key={kitId} style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.16)', marginBottom: 10 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                             <GiftOutlined style={{ color: '#722ed1' }} />
-                            <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{kitLabel}</Text>
+                            <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{kitLabel} — Order Details</Text>
+                            <Form.Item name={['kitOrders', kitIndex, 'category']} noStyle initialValue={defaultKitCategory(orderEditTarget?.productType)}>
+                              <Select size="small" style={{ width: 160 }}
+                                options={[
+                                  { value: ORDER_CATEGORIES.PERSONALIZED, label: 'Personalized' },
+                                  { value: ORDER_CATEGORIES.SEPARATE_KIT, label: 'Separate Kit' },
+                                ]}
+                              />
+                            </Form.Item>
                           </div>
                           <Form.Item name={['kitOrders', kitIndex, 'kitId']} hidden initialValue={kitId}><Input /></Form.Item>
-                          <Row gutter={[10, 0]}>
-                            <Col xs={24} sm={8}><Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 8 }}>
-                              <Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} onChange={() => orderEditForm.setFieldValue(['kitOrders', kitIndex, 'displayUnitType'], undefined)} />
-                            </Form.Item></Col>
+                          {/* Row 1: Display Unit, Box Type (conditional), Size, Overall Qty, Sticker, Logo, Printing */}
+                          <Row gutter={12} style={{ marginBottom: 10 }}>
+                            <Col xs={24} sm={5}>
+                              <Form.Item label="Display Unit" name={['kitOrders', kitIndex, 'displayUnit']} style={{ marginBottom: 0 }}>
+                                <Select allowClear showSearch optionFilterProp="label" placeholder="Display unit" options={configDisplayUnitOptions} onChange={() => orderEditForm.setFieldValue(['kitOrders', kitIndex, 'displayUnitType'], undefined)} />
+                              </Form.Item>
+                            </Col>
                             <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit || p.kitOrders?.[kitIndex]?.displayUnitType !== c.kitOrders?.[kitIndex]?.displayUnitType}>
                               {({ getFieldValue }) => {
                                 const du = getFieldValue(['kitOrders', kitIndex, 'displayUnit']);
@@ -7502,29 +7754,54 @@ export default function Sales() {
                                 if (!subtypes.length) return null;
                                 const duLabel = duCfg?.label || 'Display Unit';
                                 return (
-                                  <Col xs={24} sm={8}><Form.Item label={`${duLabel} Type`} name={['kitOrders', kitIndex, 'displayUnitType']} style={{ marginBottom: 8 }}>
-                                    <Select allowClear placeholder={`Select ${duLabel} type`} options={subtypes.map(s => ({ value: s.value, label: s.label }))}
-                                      onChange={(val) => {
-                                        const st = subtypes.find(s => s.value === val);
-                                        if (st) {
-                                          const path = (f) => ['kitOrders', kitIndex, f];
-                                          if (st.size) orderEditForm.setFieldValue(path('size'), st.size);
-                                          if (st.sticker) orderEditForm.setFieldValue(path('sticker'), st.sticker);
-                                          if (st.logo) orderEditForm.setFieldValue(path('logo'), st.logo);
-                                          if (st.printing) orderEditForm.setFieldValue(path('printing'), st.printing);
-                                          if (st.sellingPrice != null) orderEditForm.setFieldValue(path('kitPrice'), st.sellingPrice);
-                                        }
-                                      }}
-                                    />
-                                  </Form.Item></Col>
+                                  <Col xs={24} sm={5}>
+                                    <Form.Item label={`${duLabel} Type`} name={['kitOrders', kitIndex, 'displayUnitType']} style={{ marginBottom: 0 }}>
+                                      <Select allowClear placeholder={`${duLabel} type`} options={subtypes.map(s => ({ value: s.value, label: s.label }))}
+                                        onChange={(val) => {
+                                          const st = subtypes.find(s => s.value === val);
+                                          if (st) {
+                                            const path = (f) => ['kitOrders', kitIndex, f];
+                                            if (st.size) orderEditForm.setFieldValue(path('size'), st.size);
+                                            if (st.sticker) orderEditForm.setFieldValue(path('sticker'), st.sticker);
+                                            if (st.logo) orderEditForm.setFieldValue(path('logo'), st.logo);
+                                            if (st.printing) orderEditForm.setFieldValue(path('printing'), st.printing);
+                                            if (st.lamination) orderEditForm.setFieldValue(path('lamination'), st.lamination);
+                                            if (st.sellingPrice != null) orderEditForm.setFieldValue(path('kitPrice'), st.sellingPrice);
+                                          }
+                                        }}
+                                      />
+                                    </Form.Item>
+                                  </Col>
                                 );
                               }}
                             </Form.Item>
-                            <Col xs={12} sm={4}><Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 8 }}><Input placeholder="e.g. 2.5cm" /></Form.Item></Col>
-                            <Col xs={12} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                            <Col xs={12} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                            <Col xs={12} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={12} sm={4}>
+                              <Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 0 }}>
+                                <Input placeholder="e.g. 2.5cm x 2.5cm" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={4}>
+                              <Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}>
+                                <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={4}>
+                              <Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}>
+                                <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={4}>
+                              <Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
+                                <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={4}>
+                              <Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}>
+                                <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              </Form.Item>
+                            </Col>
                           </Row>
+                          {/* Lamination — only when Box display unit selected */}
                           <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
                             {({ getFieldValue }) => {
                               const du = getFieldValue(['kitOrders', kitIndex, 'displayUnit']);
@@ -7532,47 +7809,223 @@ export default function Sales() {
                               const isBox = duCfg?.label?.toLowerCase().includes('box') || duCfg?.tabMapping === 'Box';
                               if (!isBox) return null;
                               return (
-                                <Row gutter={[10, 0]} style={{ marginBottom: 0 }}>
-                                  <Col xs={12} sm={6}><Form.Item label="Lamination" name={['kitOrders', kitIndex, 'lamination']} style={{ marginBottom: 8 }}><Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                <Row gutter={12} style={{ marginBottom: 10 }}>
+                                  <Col xs={12} sm={6}>
+                                    <Form.Item label="Lamination" name={['kitOrders', kitIndex, 'lamination']} style={{ marginBottom: 0 }}>
+                                      <Select allowClear placeholder="Lamination?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                    </Form.Item>
+                                  </Col>
                                 </Row>
                               );
                             }}
                           </Form.Item>
-                          <Row gutter={[10, 0]}>
-                            <Col xs={12} sm={8}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 8 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
-                            <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 8 }}>
-                              <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
-                            </Form.Item></Col>
-                            {ptHasPersonalized(orderEditTarget?.productType) && (<>
-                            <Col xs={24} sm={16}><Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 4 }}>
-                              <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder={flatKitOptsEdit1.length > 0 ? 'Select kits / products inside this kit' : 'Add other kits or products first'} options={groupedKitOptsEdit1} />
-                            </Form.Item>
-                            <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
-                              {({ getFieldValue }) => {
-                                const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
-                                if (!sel.length) return null;
-                                return (
-                                  <div style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
-                                    <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
-                                    {sel.map(id => {
-                                      const optLabel = flatKitOptsEdit1.find(o => o.value === id)?.label || id;
-                                      return (
-                                        <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
-                                          <Col flex="1"><Text style={{ fontSize: 12 }}>{optLabel}</Text></Col>
-                                          <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
-                                        </Row>
-                                      );
-                                    })}
-                                  </div>
-                                );
-                              }}
-                            </Form.Item>
+                          {/* Row 2: Kit Price + Included in Kit Packaging */}
+                          <Row gutter={12}>
+                            <Col xs={12} sm={6}>
+                              <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
+                                <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
+                              </Form.Item>
                             </Col>
-                            </>)}
-                            <Col xs={24}><Form.Item label="Specification / Notes" name={['kitOrders', kitIndex, 'specification']} style={{ marginBottom: 8 }}>
-                              <Input.TextArea rows={2} placeholder="Kit specification notes, special requirements..." />
-                            </Form.Item></Col>
+                            {ptHasPersonalized(orderEditTarget?.productType) && (
+                            <Col xs={24} sm={18}>
+                              <Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 0 }}
+                                tooltip="Select which kits or products are physically placed inside this kit's packaging.">
+                                <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder={flatKitOptsEdit1.length > 0 ? 'Select kits / products inside this kit' : 'Add other kits or products first'} options={groupedKitOptsEdit1} />
+                              </Form.Item>
+                              <Form.Item noStyle shouldUpdate>
+                                {({ getFieldValue }) => {
+                                  const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
+                                  if (!sel.length) return null;
+                                  const overallQty = Number(getFieldValue(['kitOrders', kitIndex, 'overallQty'])) || 1;
+                                  return (
+                                    <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
+                                      <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM (inside each kit)</Text>
+                                      {sel.map(id => {
+                                        const kMatch = kits.find(k => k._id === id);
+                                        const sProd = (watchedOrderEditProds || []).find(p => p && (p.name || p.itemName) === id);
+                                        const label = kMatch?.kitName || sProd?.name || sProd?.itemName || flatKitOptsEdit1.find(o => o.value === id)?.label || id;
+                                        const perKitQty = Number(getFieldValue(['kitOrders', kitIndex, 'kitIncludesQty', id])) || 1;
+                                        const totalIncluded = perKitQty * overallQty;
+                                        const standaloneQty = kMatch
+                                          ? (Number((watchedOrderEditKitOrds || []).find(ko => ko?.kitId === id)?.overallQty) || 0)
+                                          : (Number(sProd?.qty) || 0);
+                                        const remainingQty = Math.max(0, standaloneQty - totalIncluded);
+                                        const isOver = standaloneQty > 0 && totalIncluded > standaloneQty;
+                                        return (
+                                          <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
+                                            <Col flex="1">
+                                              <Text style={{ fontSize: 12 }}>{label}</Text>
+                                              {standaloneQty > 0 && (
+                                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                                                  Total: {standaloneQty} → Separate: <Text strong style={{ color: isOver ? '#ff4d4f' : '#52c41a' }}>{remainingQty}</Text>
+                                                  {` (${perKitQty}×${overallQty}=${totalIncluded} inside)`}
+                                                </Text>
+                                              )}
+                                              {isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over-allocated by {totalIncluded - standaloneQty}</Text>}
+                                            </Col>
+                                            <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
+                                          </Row>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                }}
+                              </Form.Item>
+                            </Col>
+                            )}
                           </Row>
+                          {/* Kit Amount Summary Box — KIT AMT | INCL breakdown | TOTAL KIT PRICE */}
+                          <Form.Item noStyle shouldUpdate>
+                            {({ getFieldValue }) => {
+                              const kPrice = Number(getFieldValue(['kitOrders', kitIndex, 'kitPrice'])) || 0;
+                              const kQty = Number(getFieldValue(['kitOrders', kitIndex, 'overallQty'])) || 1;
+                              const kAmt = kPrice * kQty;
+                              const kIncludes = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
+                              const kIncludesQty = getFieldValue(['kitOrders', kitIndex, 'kitIncludesQty']) || {};
+                              const kSepProds = (watchedOrderEditProds || []).filter(p => p && !p.isKit && !p.kitType);
+                              const kIncludedBreakdown = kIncludes.map(id => {
+                                const kDefMatch = kits.find(k => k._id === id);
+                                const koMatch = kDefMatch ? (watchedOrderEditKitOrds || []).find(ko => ko?.kitId === id) : null;
+                                const pMatch = !kDefMatch ? kSepProds.find(pp => (pp.name || pp.itemName) === id) : null;
+                                if (!kDefMatch && !pMatch) return null;
+                                const incQPK = Number(kIncludesQty[id]) || 1;
+                                const totalInc = incQPK * kQty;
+                                let unitRate, totalPQ, itemName;
+                                if (kDefMatch) {
+                                  unitRate = Number(koMatch?.kitPrice) || 0;
+                                  totalPQ = Number(koMatch?.overallQty) || 0;
+                                  itemName = kDefMatch.kitName || id;
+                                } else {
+                                  unitRate = (Number(pMatch.rate) || 0) * (1 + (Number(pMatch.gst) || 0) / 100);
+                                  totalPQ = Number(pMatch.qty) || 0;
+                                  itemName = pMatch.name || pMatch.itemName || id;
+                                }
+                                const incAmt = r2(totalInc * unitRate);
+                                const remQty = Math.max(0, totalPQ - totalInc);
+                                const remAmt = r2(remQty * unitRate);
+                                const isOver = totalPQ > 0 && totalInc > totalPQ;
+                                return { id, name: itemName, isKit: !!kDefMatch, incQPK, totalInc, incAmt, remQty, remAmt, isOver, totalPQ };
+                              }).filter(Boolean);
+                              const totalIncAmt = kIncludedBreakdown.reduce((s, r) => s + r.incAmt, 0);
+                              const totalSepAmt = kIncludedBreakdown.reduce((s, r) => s + r.remAmt, 0);
+                              const totalKitPrice = kAmt + totalIncAmt;
+                              if (!kPrice && !totalIncAmt) return null;
+                              return (
+                                <div style={{ marginTop: 10, padding: '8px 14px', background: isDark ? 'rgba(24,144,255,0.08)' : 'rgba(24,144,255,0.05)', borderRadius: 10, border: '1px solid rgba(24,144,255,0.18)' }}>
+                                  <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                                    {kAmt > 0 && (
+                                      <div>
+                                        <Text style={{ fontSize: 10, fontWeight: 700, color: '#1890ff', letterSpacing: 0.5, display: 'block' }}>KIT AMT</Text>
+                                        <Text strong style={{ fontSize: 13, color: '#1890ff' }}>₹{kAmt.toLocaleString()}</Text>
+                                        <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>₹{kPrice.toLocaleString()} × {kQty}</Text>
+                                      </div>
+                                    )}
+                                    {kIncludedBreakdown.map(r => (
+                                      <div key={r.id}>
+                                        <Text style={{ fontSize: 10, fontWeight: 700, color: '#722ed1', letterSpacing: 0.5, display: 'block' }}>INCL: {r.name}{r.isKit ? ' (Kit)' : ''}</Text>
+                                        <Text strong style={{ fontSize: 13, color: '#722ed1' }}>₹{r.incAmt.toLocaleString()}</Text>
+                                        {r.totalPQ > 0 ? (
+                                          <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>
+                                            {r.totalPQ} total → <Text strong style={{ color: '#722ed1' }}>{r.totalInc} personalized</Text> + <Text strong style={{ color: r.remQty > 0 ? '#fa8c16' : '#8c8c8c' }}>{r.remQty} separate</Text>
+                                            {` (${r.incQPK}×${kQty})`}
+                                          </Text>
+                                        ) : (
+                                          <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{r.incQPK}/kit × {kQty} = {r.totalInc}</Text>
+                                        )}
+                                        {r.isOver && <Text style={{ fontSize: 10, color: '#ff4d4f', display: 'block' }}>⚠ Over-allocated by {r.totalInc - r.totalPQ}</Text>}
+                                        {r.remQty > 0 && <Text style={{ fontSize: 10, color: '#fa8c16', display: 'block' }}>Separate price → ₹{r.remAmt.toLocaleString()}</Text>}
+                                      </div>
+                                    ))}
+                                    <div style={{ borderLeft: '2px solid rgba(82,196,26,0.3)', paddingLeft: 12 }}>
+                                      <Text style={{ fontSize: 10, fontWeight: 700, color: '#52c41a', letterSpacing: 0.5, display: 'block' }}>TOTAL KIT PRICE</Text>
+                                      <Text strong style={{ fontSize: 15, color: '#52c41a' }}>₹{totalKitPrice.toLocaleString()}</Text>
+                                      {totalSepAmt > 0 && (
+                                        <>
+                                          <Text style={{ fontSize: 10, fontWeight: 700, color: '#fa8c16', letterSpacing: 0.5, display: 'block', marginTop: 4 }}>+ SEPARATE PACK</Text>
+                                          <Text strong style={{ fontSize: 13, color: '#fa8c16' }}>₹{totalSepAmt.toLocaleString()}</Text>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }}
+                          </Form.Item>
+                          <Form.Item label="Specification / Notes" name={['kitOrders', kitIndex, 'specification']} style={{ marginBottom: 8, marginTop: 10 }}>
+                            <Input.TextArea rows={2} placeholder="Kit specification notes, special requirements..." />
+                          </Form.Item>
+                          {/* Per-kit products & their specifications (read-only, sourced from editProducts) */}
+                          {(() => {
+                            const allProds = watchedOrderEditProds || [];
+                            const kitProds = allProds.filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (!p.kitId && kitIndex === 0)));
+                            if (!kitProds.length) return null;
+                            return (
+                              <div style={{ marginTop: 10 }}>
+                                <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 6 }}>
+                                  KIT PRODUCTS ({kitProds.length})
+                                </Text>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {kitProds.map((p, pi) => {
+                                    const pName = p.name || p.itemName || p.kitType || '—';
+                                    const pQty = Number(p.qty) || 0;
+                                    const pRate = Number(p.rate || p.price) || 0;
+                                    const pGst = Number(p.gst || p.gstPercent) || 0;
+                                    const lineTotal = r2(pQty * pRate * (1 + pGst / 100));
+                                    const specEntries = [
+                                      p.logo && ['Logo', p.logo === 'YES' ? 'Yes' : 'No'],
+                                      p.sticker && ['Sticker', p.sticker === 'YES' ? 'Yes' : p.sticker],
+                                      p.printing && ['Printing', p.printing === 'YES' ? 'Yes' : 'No'],
+                                      p.packingMaterial && ['Packing', p.packingMaterial],
+                                      p.materialCategory && ['Material', p.materialCategory],
+                                      p.brand && ['Brand', p.brand],
+                                      p.size && ['Size', p.size],
+                                      p.unit && ['Unit', p.unit],
+                                      p.otherSpecs && ['Other', p.otherSpecs],
+                                    ].filter(Boolean);
+                                    const prodAttrEntries = (p.productAttributes && typeof p.productAttributes === 'object' && !Array.isArray(p.productAttributes))
+                                      ? Object.entries(p.productAttributes).filter(([, v]) => v != null && v !== '')
+                                      : [];
+                                    return (
+                                      <div key={pi} style={{ border: `1px solid ${isDark ? 'rgba(114,46,209,0.25)' : 'rgba(114,46,209,0.18)'}`, borderRadius: 8, overflow: 'hidden' }}>
+                                        <div style={{ background: isDark ? 'rgba(114,46,209,0.12)' : 'rgba(114,46,209,0.06)', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <div style={{ width: 20, height: 20, borderRadius: '50%', background: 'linear-gradient(135deg,#722ed1,#9254de)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                              <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>{pi + 1}</span>
+                                            </div>
+                                            <Text strong style={{ fontSize: 13 }}>{pName}</Text>
+                                            <Tag color="purple" style={{ fontSize: 10, borderRadius: 4, margin: 0, padding: '0 5px' }}>KIT</Tag>
+                                          </div>
+                                          <div style={{ textAlign: 'right' }}>
+                                            {lineTotal > 0 && <Text strong style={{ color: '#722ed1', fontSize: 13 }}>₹{lineTotal.toLocaleString()}</Text>}
+                                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{pQty} pcs × ₹{pRate}{pGst > 0 ? ` +${pGst}% GST` : ''}</Text>
+                                          </div>
+                                        </div>
+                                        {(specEntries.length > 0 || prodAttrEntries.length > 0) && (
+                                          <div style={{ padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderTop: `1px dashed ${isDark ? 'rgba(114,46,209,0.15)' : 'rgba(114,46,209,0.12)'}` }}>
+                                            <Text style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: '#888', display: 'block', marginBottom: 6 }}>SPECIFICATIONS</Text>
+                                            <Row gutter={[8, 6]}>
+                                              {specEntries.map(([k, v]) => (
+                                                <Col xs={12} sm={8} key={k}>
+                                                  <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{k}</Text>
+                                                  <Text strong style={{ fontSize: 11 }}>{v}</Text>
+                                                </Col>
+                                              ))}
+                                              {prodAttrEntries.map(([k, v]) => (
+                                                <Col xs={12} sm={8} key={`pa-${k}`}>
+                                                  <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{prettyAttrKeyLead(k)}</Text>
+                                                  <Text strong style={{ fontSize: 11 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
+                                                </Col>
+                                              ))}
+                                            </Row>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })()}
                           <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.kitPrice !== c.kitOrders?.[kitIndex]?.kitPrice || p.kitOrders?.[kitIndex]?.overallQty !== c.kitOrders?.[kitIndex]?.overallQty}>
                             {({ getFieldValue }) => {
                               const single = Number(getFieldValue(['kitOrders', kitIndex, 'kitPrice'])) || 0;
@@ -7583,25 +8036,7 @@ export default function Sales() {
                           </Form.Item>
                         </div>
                       );
-                    }) : (
-                      <div style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.16)', marginBottom: 10 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                          <GiftOutlined style={{ color: '#722ed1' }} />
-                          <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Personalized Kit</Text>
-                        </div>
-                        <Row gutter={[10, 0]}>
-                          <Col xs={24} sm={8}><Form.Item label="Display Unit" name="kitDisplayUnit" style={{ marginBottom: 8 }}><Select allowClear showSearch optionFilterProp="label" placeholder="Select display unit" options={configDisplayUnitOptions} /></Form.Item></Col>
-                          <Col xs={12} sm={8}><Form.Item label="Size" name="kitSize" style={{ marginBottom: 8 }}><Input placeholder="e.g. 2.5cm" /></Form.Item></Col>
-                          <Col xs={12} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 8 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                          <Col xs={12} sm={4}><Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 8 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                          <Col xs={12} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 8 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                          <Col xs={12} sm={8}><Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 8 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
-                          <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 8 }}>
-                            <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
-                          </Form.Item></Col>
-                        </Row>
-                      </div>
-                    )}
+                    }) : null}
                   </Card>
                 );
               })()}
