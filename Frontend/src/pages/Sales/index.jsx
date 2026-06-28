@@ -2086,6 +2086,10 @@ export default function Sales() {
       transportationBy: order.transportationBy || '',
       forwardingCharge: order.forwardingCharge || false,
       forwardingChargeAmount: order.forwardingChargeAmount || 0,
+      splitDates: (order.splitDates || []).map(sd => ({
+        ...sd,
+        date: sd.date && typeof sd.date === 'string' ? dayjs(sd.date) : sd.date,
+      })),
     });
     setOrderEditPaymentProofs(
       (order.paymentProofs || []).map((f, i) => ({
@@ -2230,6 +2234,10 @@ export default function Sales() {
           (vals.kitOrders?.length > 0 ? vals.kitOrders : (editStore.kitOrders?.length > 0 ? editStore.kitOrders : (orderEditTarget.kitOrders || []))),
           editStore.productType || orderEditTarget?.productType
         ),
+        splitDates: (vals.splitDates || []).map(sd => ({ ...sd, date: sd.date?.format?.('YYYY-MM-DD') || sd.date || undefined })),
+        isEmergency: Array.isArray(vals.splitDates) && vals.splitDates.length > 0,
+        isUrgent: Array.isArray(vals.splitDates) && vals.splitDates.length > 0,
+        deliveryType: Array.isArray(vals.splitDates) && vals.splitDates.length > 0 ? 'Partial' : (orderEditTarget.deliveryType || 'Full'),
       };
       try {
         const backendPatch = {
@@ -2289,6 +2297,10 @@ export default function Sales() {
           packagingIncludes: updated.packagingIncludes || undefined,
           packagingIncludesQty: updated.packagingIncludesQty || undefined,
           kitOrders: updated.kitOrders?.length > 0 ? updated.kitOrders : undefined,
+          splitDates: updated.splitDates,
+          isEmergency: updated.isEmergency,
+          isUrgent: updated.isUrgent,
+          deliveryType: updated.deliveryType || undefined,
         };
         await updateSalesOrderMutation(backendPatch).unwrap();
         setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
@@ -8020,6 +8032,69 @@ export default function Sales() {
                   }}
                 </Form.Item>
               </Card>
+
+              {/* ── Urgent / Emergency Deliveries (Partial) ── */}
+              {orderEditTarget?.orderCategory !== 'SAMPLE' && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: '1px solid rgba(255,77,79,0.25)', boxShadow: '0 2px 12px rgba(255,77,79,0.08)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span style={{ color: '#ff4d4f' }}>Urgent / Emergency Deliveries (Partial)</span></Space>}
+                >
+                  <Form.List name="splitDates">
+                    {(fields, { add, remove }) => (
+                      <div>
+                        {fields.map(({ key, name, ...rest }) => (
+                          <div key={key} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 8, border: '1px solid #ff4d4f33' }}>
+                            <Row gutter={[8, 0]} align="middle">
+                              <Col xs={24} sm={6}>
+                                <Form.Item {...rest} name={[name, 'date']} label="Partial Date" style={{ marginBottom: 6 }}>
+                                  <DatePicker style={{ width: '100%' }} size="small" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={7}>
+                                <Form.Item {...rest} name={[name, 'product']} label="Product" style={{ marginBottom: 6 }}>
+                                  <Select
+                                    size="small"
+                                    placeholder="Select product"
+                                    allowClear
+                                    onChange={(val) => {
+                                      const matched = (Array.isArray(watchedOrderEditProds) ? watchedOrderEditProds : [])
+                                        .find(p => (p.name || p.itemName || p.kitType) === val);
+                                      if (matched?.qty) orderEditForm.setFieldValue(['splitDates', name, 'qty'], matched.qty);
+                                    }}
+                                  >
+                                    {(Array.isArray(watchedOrderEditProds) ? watchedOrderEditProds : [])
+                                      .filter(p => p?.name || p?.itemName || p?.kitType)
+                                      .map((p, i) => {
+                                        const label = p.name || p.itemName || p.kitType;
+                                        return <Option key={i} value={label}>{label}{p.isKit || p.kitType ? ' (Kit)' : ''}</Option>;
+                                      })}
+                                  </Select>
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={4}>
+                                <Form.Item {...rest} name={[name, 'qty']} label="Qty" style={{ marginBottom: 6 }}>
+                                  <InputNumber size="small" style={{ width: '100%' }} min={1} placeholder="Qty" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={5}>
+                                <Form.Item {...rest} name={[name, 'note']} label="Notes" style={{ marginBottom: 6 }}>
+                                  <Input size="small" placeholder="e.g. First batch 500 units" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 20 }}>
+                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
+                              </Col>
+                            </Row>
+                          </div>
+                        ))}
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ marginTop: 4, borderColor: '#ff4d4f55', color: '#ff4d4f' }}>
+                          Add Urgent / Emergency Delivery (Partial)
+                        </Button>
+                      </div>
+                    )}
+                  </Form.List>
+                </Card>
+              )}
 
               {/* ── Delivery & Payment ── */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
