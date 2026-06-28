@@ -7819,60 +7819,13 @@ export default function Sales() {
                               );
                             }}
                           </Form.Item>
-                          {/* Row 2: Kit Price + Included in Kit Packaging */}
+                          {/* Row 2: Kit Price */}
                           <Row gutter={12}>
                             <Col xs={12} sm={6}>
                               <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
                                 <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
                               </Form.Item>
                             </Col>
-                            {ptHasPersonalized(orderEditTarget?.productType) && (
-                            <Col xs={24} sm={18}>
-                              <Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 0 }}
-                                tooltip="Select which kits or products are physically placed inside this kit's packaging.">
-                                <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder={flatKitOptsEdit1.length > 0 ? 'Select kits / products inside this kit' : 'Add other kits or products first'} options={groupedKitOptsEdit1} />
-                              </Form.Item>
-                              <Form.Item noStyle shouldUpdate>
-                                {({ getFieldValue }) => {
-                                  const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
-                                  if (!sel.length) return null;
-                                  const overallQty = Number(getFieldValue(['kitOrders', kitIndex, 'overallQty'])) || 1;
-                                  return (
-                                    <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
-                                      <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM (inside each kit)</Text>
-                                      {sel.map(id => {
-                                        const kMatch = kits.find(k => k._id === id);
-                                        const sProd = (watchedOrderEditProds || []).find(p => p && (p.name || p.itemName) === id);
-                                        const label = kMatch?.kitName || sProd?.name || sProd?.itemName || flatKitOptsEdit1.find(o => o.value === id)?.label || id;
-                                        const perKitQty = Number(getFieldValue(['kitOrders', kitIndex, 'kitIncludesQty', id])) || 1;
-                                        const totalIncluded = perKitQty * overallQty;
-                                        const standaloneQty = kMatch
-                                          ? (Number((watchedOrderEditKitOrds || []).find(ko => ko?.kitId === id)?.overallQty) || 0)
-                                          : (Number(sProd?.qty) || 0);
-                                        const remainingQty = Math.max(0, standaloneQty - totalIncluded);
-                                        const isOver = standaloneQty > 0 && totalIncluded > standaloneQty;
-                                        return (
-                                          <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
-                                            <Col flex="1">
-                                              <Text style={{ fontSize: 12 }}>{label}</Text>
-                                              {standaloneQty > 0 && (
-                                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
-                                                  Total: {standaloneQty} → Separate: <Text strong style={{ color: isOver ? '#ff4d4f' : '#52c41a' }}>{remainingQty}</Text>
-                                                  {` (${perKitQty}×${overallQty}=${totalIncluded} inside)`}
-                                                </Text>
-                                              )}
-                                              {isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over-allocated by {totalIncluded - standaloneQty}</Text>}
-                                            </Col>
-                                            <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
-                                          </Row>
-                                        );
-                                      })}
-                                    </div>
-                                  );
-                                }}
-                              </Form.Item>
-                            </Col>
-                            )}
                           </Row>
                           {/* Kit Amount Summary Box — KIT AMT | INCL breakdown | TOTAL KIT PRICE */}
                           <Form.Item noStyle shouldUpdate>
@@ -8375,32 +8328,6 @@ export default function Sales() {
                           <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 8 }}>
                             <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
                           </Form.Item></Col>
-                          {ptHasPersonalized(orderEditTarget?.productType) && (<>
-                          <Col xs={24} sm={16}><Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 4 }} tooltip="Items physically inside this kit's packaging">
-                            <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder={flatKitOptsEdit2.length > 0 ? 'Select kits / products inside this kit' : 'Add other kits or products first'} options={groupedKitOptsEdit2} />
-                          </Form.Item>
-                          <Form.Item noStyle shouldUpdate={(p, c) => JSON.stringify(p.kitOrders?.[kitIndex]?.kitIncludes) !== JSON.stringify(c.kitOrders?.[kitIndex]?.kitIncludes)}>
-                            {({ getFieldValue }) => {
-                              const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
-                              if (!sel.length) return null;
-                              return (
-                                <div style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
-                                  <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM</Text>
-                                  {sel.map(id => {
-                                    const optLabel2 = flatKitOptsEdit2.find(o => o.value === id)?.label || id;
-                                    return (
-                                      <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
-                                        <Col flex="1"><Text style={{ fontSize: 12 }}>{optLabel2}</Text></Col>
-                                        <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
-                                      </Row>
-                                    );
-                                  })}
-                                </div>
-                              );
-                            }}
-                          </Form.Item>
-                          </Col>
-                          </>)}
                         </Row>
                         <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.kitPrice !== c.kitOrders?.[kitIndex]?.kitPrice || p.kitOrders?.[kitIndex]?.overallQty !== c.kitOrders?.[kitIndex]?.overallQty}>
                           {({ getFieldValue }) => {
@@ -11048,60 +10975,6 @@ export default function Sales() {
                                         <InputNumber min={0} style={{ width: '100%' }} formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
                                       </Form.Item>
                                     </Col>
-                                    {ptHasPersonalized(record?.productType) && (<>
-                                    <Col xs={24} sm={18}>
-                                      <Form.Item label="Included in Kit Packaging" name={['kitOrders', kitIndex, 'kitIncludes']} style={{ marginBottom: 0 }}
-                                        tooltip="Select which kits or products are physically placed inside this kit's packaging.">
-                                        <Select
-                                          mode="multiple"
-                                          allowClear
-                                          showSearch
-                                          optionFilterProp="label"
-                                          placeholder={flatOptsInline.length > 0 ? 'Select kits / products inside this kit' : 'Add other kits or separate products first'}
-                                          options={groupedOptsInline}
-                                        />
-                                      </Form.Item>
-                                      <Form.Item noStyle shouldUpdate>
-                                        {({ getFieldValue }) => {
-                                          const sel = getFieldValue(['kitOrders', kitIndex, 'kitIncludes']) || [];
-                                          if (!sel.length) return null;
-                                          const overallQty = Number(getFieldValue(['kitOrders', kitIndex, 'overallQty'])) || 1;
-                                          return (
-                                            <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(114,46,209,0.04)', borderRadius: 8 }}>
-                                              <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 4 }}>QTY PER ITEM (inside each kit)</Text>
-                                              {sel.map(id => {
-                                                const kMatch = kits.find(k => k._id === id);
-                                                const sProd = (watchedLeadProducts || []).find(p => p && (p.name || p.itemName) === id);
-                                                const label = kMatch?.kitName || sProd?.name || sProd?.itemName || flatOptsInline.find(o => o.value === id)?.label || id;
-                                                const perKitQty = Number(getFieldValue(['kitOrders', kitIndex, 'kitIncludesQty', id])) || 1;
-                                                const totalIncluded = perKitQty * overallQty;
-                                                const standaloneQty = kMatch
-                                                  ? (Number(watchedKitOrders.find(ko => ko?.kitId === id)?.overallQty) || 0)
-                                                  : (Number(sProd?.qty) || 0);
-                                                const remainingQty = Math.max(0, standaloneQty - totalIncluded);
-                                                const isOver = standaloneQty > 0 && totalIncluded > standaloneQty;
-                                                return (
-                                                  <Row key={id} align="middle" gutter={8} style={{ marginBottom: 4 }}>
-                                                    <Col flex="1">
-                                                      <Text style={{ fontSize: 12 }}>{label}</Text>
-                                                      {standaloneQty > 0 && (
-                                                        <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
-                                                          Total: {standaloneQty} → Separate: <Text strong style={{ color: isOver ? '#ff4d4f' : '#52c41a' }}>{remainingQty}</Text>
-                                                          {` (${perKitQty}×${overallQty}=${totalIncluded} inside)`}
-                                                        </Text>
-                                                      )}
-                                                      {isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over-allocated by {totalIncluded - standaloneQty}</Text>}
-                                                    </Col>
-                                                    <Col><Form.Item name={['kitOrders', kitIndex, 'kitIncludesQty', id]} initialValue={1} noStyle><InputNumber min={1} size="small" style={{ width: 70 }} /></Form.Item></Col>
-                                                  </Row>
-                                                );
-                                              })}
-                                            </div>
-                                          );
-                                        }}
-                                      </Form.Item>
-                                    </Col>
-                                    </>)}
                                   </Row>
                                   {/* ── Kit total price summary (kit price × qty + included items) ── */}
                                   <Form.Item noStyle shouldUpdate>
@@ -13144,7 +13017,7 @@ export default function Sales() {
                       expandRowByClick: true,
                       showExpandColumn: false,
                       expandedRowRender: (record) => (
-                        <ExpandedPartyOrders hotelName={record.hotelName} onView={openOrderDetail} onEdit={openOrderEditModal} />
+                        <ExpandedPartyOrders hotelName={record.hotelName} onView={openOrderDetail} />
                       ),
                     }}
                   />
