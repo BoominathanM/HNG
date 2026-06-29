@@ -396,6 +396,7 @@ export default function Operations() {
     productType: o.productType || o.leadId?.productType || [],
     packagingIncludes: (o.packagingIncludes?.length ? o.packagingIncludes : (o.leadId?.packagingIncludes || [])) || [],
     kitOrders: (o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || [],
+    kitOverallQty: o.kitOverallQty ?? o.leadId?.kitOverallQty ?? 0,
     // Kit display fields — fall back to the populated leadId fields for orders created
     // before kitDisplayUnit was copied onto the Order document itself.
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
@@ -1370,7 +1371,25 @@ export default function Operations() {
             isUrgent: first.isUrgent,
             isEmergencyProduct: group.some((r) => r.isEmergencyProduct),
             isEmergencyGated: group.every((r) => r.isEmergencyGated),
-            qty: group.reduce((sum, r) => sum + Number(r.qty || 0), 0),
+            qty: (() => {
+              const cat = first.category || '';
+              // Show kit assembly count, not the sum of per-product quantities inside the kit.
+              // Personalized outer packing step: use the top-level kit count directly.
+              if (cat === 'personalized' && order?.kitOverallQty) return Number(order.kitOverallQty);
+              // Separate kits (dental/shaving/bath/etc.): sum overallQty of kitOrders routing to this tab.
+              const kos = order?.kitOrders || [];
+              if (kos.length) {
+                const tabLabel = typeKey === 'box' ? 'Box' : typeKey === 'frosted' ? 'Ziplock' : 'Butter Paper';
+                const matching = kos.filter((ko) => {
+                  const du = ko.displayUnit || '';
+                  const tab = displayUnitTabMap[du] || packTabFromString(du);
+                  return tab === tabLabel;
+                });
+                if (matching.length) return matching.reduce((s, ko) => s + (Number(ko.overallQty) || 0), 0);
+              }
+              // Fallback for non-kit or data-missing cases.
+              return group.reduce((sum, r) => sum + Number(r.qty || 0), 0);
+            })(),
             product: 'Kit',
             category: first.category,
             size: order?.kitSize || null,
