@@ -6740,18 +6740,34 @@ export default function Sales() {
                     >
                       <Row align="middle" gutter={[12, 8]}>
                         <Col flex="auto">
-                          <Space wrap size={6}>
-                            <Text strong style={{ color: textColor, fontSize: 13 }}>{sr.product || '—'}</Text>
-                            <Tag color={sr.stickerType === 'Box' ? 'green' : sr.stickerType === 'Frosted Ziplock' ? 'orange' : sr.stickerType === 'Display Unit' ? 'purple' : 'blue'} style={{ borderRadius: 10, fontSize: 11 }}>
-                              {sr.stickerType}
-                            </Tag>
-                            <Tag color={
-                              sr.status === 'Approved' ? 'success' :
-                              sr.status === 'Waiting for Approval' ? 'warning' :
-                              sr.status === 'In Process' || sr.status === 'Printing' ? 'processing' : 'default'
-                            } style={{ borderRadius: 10, fontSize: 11 }}>
-                              {sr.status}
-                            </Tag>
+                          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                            <Space wrap size={6}>
+                              <Text strong style={{ color: textColor, fontSize: 13 }}>
+                                {sr.kitType || sr.product || '—'}
+                              </Text>
+                              {sr.kitType && sr.product && sr.product !== 'Kit' && (
+                                <Text type="secondary" style={{ fontSize: 11 }}>({sr.product})</Text>
+                              )}
+                              <Tag color={sr.stickerType === 'Box' ? 'green' : sr.stickerType === 'Frosted Ziplock' ? 'orange' : sr.stickerType === 'Display Unit' ? 'purple' : 'blue'} style={{ borderRadius: 10, fontSize: 11 }}>
+                                {sr.stickerType}
+                              </Tag>
+                              <Tag color={
+                                sr.status === 'Approved' ? 'success' :
+                                sr.status === 'Waiting for Approval' ? 'warning' :
+                                sr.status === 'In Process' || sr.status === 'Printing' ? 'processing' : 'default'
+                              } style={{ borderRadius: 10, fontSize: 11 }}>
+                                {sr.status}
+                              </Tag>
+                            </Space>
+                            {/* Kit products list — shown for kit-level SRs */}
+                            {sr.kitProducts?.length > 0 && (
+                              <Space wrap size={3}>
+                                <Text type="secondary" style={{ fontSize: 10 }}>Includes:</Text>
+                                {sr.kitProducts.map((p, i) => (
+                                  <Tag key={i} color="geekblue" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{p}</Tag>
+                                ))}
+                              </Space>
+                            )}
                           </Space>
                         </Col>
                         <Col>

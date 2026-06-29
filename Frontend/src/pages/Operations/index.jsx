@@ -997,10 +997,35 @@ export default function Operations() {
           const step = getQueueStep(record);
           const sr = findStickerReq(record);
           const existingHotelDesign = findHotelDesign(record);
+          // Kit context: derive kit type name and products list for kit parent rows
+          const kitTypeName = record.isKitParent
+            ? (record.category === 'personalized' ? 'Personalized Kit'
+              : (record.children?.[0]?.kitName || record.children?.[0]?.kitType || 'Separate Kit'))
+            : '';
+          const kitProductsList = record.isKitParent
+            ? (record.children || []).map((c) => c.product || c.itemName || '').filter(Boolean)
+            : [];
           return (
             <Space wrap size={4}>
               {step === 0 && (
                 <>
+                  {/* Kit type + products label for kit parent rows */}
+                  {record.isKitParent && kitTypeName && (
+                    <Space direction="vertical" size={3} style={{ width: '100%', marginBottom: 4 }}>
+                      <Space size={4}>
+                        <Tag color="purple" style={{ borderRadius: 10, fontSize: 11, fontWeight: 600 }}>{kitTypeName}</Tag>
+                        <Text type="secondary" style={{ fontSize: 10 }}>Design approval covers all kit products</Text>
+                      </Space>
+                      {kitProductsList.length > 0 && (
+                        <Space wrap size={3}>
+                          <Text type="secondary" style={{ fontSize: 10 }}>Includes:</Text>
+                          {kitProductsList.map((p, i) => (
+                            <Tag key={i} color="geekblue" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{p}</Tag>
+                          ))}
+                        </Space>
+                      )}
+                    </Space>
+                  )}
                   {/* If a previously approved design exists for this hotel+product, offer one-click reuse */}
                   {existingHotelDesign && !sr && (
                     <Tooltip title={`Previously approved design from a past order — click to use it directly without re-approval`}>
@@ -1029,9 +1054,11 @@ export default function Operations() {
                               salesApprovedAt: new Date(),
                               opsHeadApproved: true,
                               opsHeadApprovedAt: new Date(),
+                              ...(kitTypeName && { kitType: kitTypeName }),
+                              ...(kitProductsList.length && { kitProducts: kitProductsList }),
                             }).unwrap();
                             advanceStep(record.key, 2);
-                            enqueueSnackbar(`Existing design applied — ${record.product} marked Approved`, { variant: 'success' });
+                            enqueueSnackbar(`Existing design applied — ${kitTypeName || record.product} marked Approved`, { variant: 'success' });
                           } catch (err) {
                             enqueueSnackbar(err?.data?.message || err?.data || 'Failed to apply existing design', { variant: 'error' });
                           }
@@ -1094,6 +1121,8 @@ export default function Operations() {
                             stickerType: queueType,
                             quantity: record.qty,
                             stickerSize: record.size,
+                            ...(kitTypeName && { kitType: kitTypeName }),
+                            ...(kitProductsList.length && { kitProducts: kitProductsList }),
                           }).unwrap();
                           stickerId = created.data._id;
                         }
@@ -1113,6 +1142,23 @@ export default function Operations() {
               {step === 1 && (
                 <>
                   <Tag color="gold">Waiting for Approval</Tag>
+                  {/* Kit type + products for kit parent rows */}
+                  {(record.isKitParent && (sr?.kitType || kitTypeName)) && (
+                    <Space direction="vertical" size={3} style={{ width: '100%', marginBottom: 4 }}>
+                      <Space size={4}>
+                        <Tag color="purple" style={{ borderRadius: 10, fontSize: 11, fontWeight: 600 }}>{sr?.kitType || kitTypeName}</Tag>
+                        <Text type="secondary" style={{ fontSize: 10 }}>Approval covers all kit products</Text>
+                      </Space>
+                      {((sr?.kitProducts?.length > 0) || kitProductsList.length > 0) && (
+                        <Space wrap size={3}>
+                          <Text type="secondary" style={{ fontSize: 10 }}>Includes:</Text>
+                          {(sr?.kitProducts?.length > 0 ? sr.kitProducts : kitProductsList).map((p, i) => (
+                            <Tag key={i} color="geekblue" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{p}</Tag>
+                          ))}
+                        </Space>
+                      )}
+                    </Space>
+                  )}
                   {(uploadedFiles[record.key]?.length > 0 || sr?.designFileUrl) ? (
                     <Space size={4}>
                       <Tag color="green" style={{ fontSize: 11 }}>✓ Design Uploaded</Tag>

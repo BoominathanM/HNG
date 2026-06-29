@@ -165,6 +165,9 @@ export default function OperationDetail() {
     return new Set(tasks.filter((t) => t.product).map((t) => (t.product || '').toLowerCase()));
   }, [orderTasksData]);
 
+  // Per-kit upload state for "Send for Approval" from the product spec table
+  const [kitSpecUploadFiles, setKitSpecUploadFiles] = useState({});
+
   // Kit Packing task state
   const kitPackingTask = useMemo(
     () => (orderTasksData?.data || []).find((t) => t.taskType === 'Kit Packing') || null,
@@ -651,6 +654,12 @@ export default function OperationDetail() {
     try {
       let srId = displayUnitSR?._id;
       if (!srId) {
+        const kitTypeForDU = (order.kitOrders || []).map((ko) => ko.kitName || ko.kitType).filter(Boolean).join(', ')
+          || (order.kitDisplayUnit ? `${order.kitDisplayUnit} Kit` : 'Personalized Kit');
+        const kitProductsForDU = (order.items || [])
+          .filter((it) => it.isKit || it.kitType)
+          .map((it) => it.itemName || it.name || '')
+          .filter(Boolean);
         const created = await createStickerRequest({
           orderId: order.key,
           hotelLogo: order.hotelLogo || order.clientName,
@@ -658,6 +667,8 @@ export default function OperationDetail() {
           stickerType: 'Display Unit',
           quantity: order.qty || 0,
           stickerSize: order.kitSize || order.size || '',
+          kitType: kitTypeForDU,
+          kitProducts: kitProductsForDU,
         }).unwrap();
         srId = created.data._id;
       }
@@ -1382,15 +1393,170 @@ export default function OperationDetail() {
       title: 'Ops Approval',
       key: 'opsApproval',
       fixed: 'right',
-      width: 140,
+      width: 200,
       render: (_, record) => {
+        const isKitItem = !!(record.isKit || record.kitType);
         const sr = resolveKitSR(record) || srForRow(record);
+
+        if (isKitItem) {
+          // Determine kit type name and product list for this display-unit group
+          const kitDUTab = record.displayUnitTab || '';
+          const kitItemsForSameKit = (order?.items || []).filter(
+            (it) => (it.isKit || it.kitType) && (it.displayUnitTab || '') === kitDUTab
+          );
+          const kitTypeName = sr?.kitType
+            || record.kitName || record.kitType
+            || (record.category === 'personalized' ? 'Personalized Kit' : 'Separate Kit');
+          const kitProductsList = sr?.kitProducts?.length
+            ? sr.kitProducts
+            : kitItemsForSameKit.map((it) => it.itemName || it.name || '').filter(Boolean);
+
+          // Only the first item in this kit group shows the "Send for Approval" button
+          const firstKitItemOfType = kitItemsForSameKit[0];
+          const isRepresentativeRow = !firstKitItemOfType || String(firstKitItemOfType.key) === String(record.key);
+
+          const kitInfoBlock = (
+            <Space direction="vertical" size={3} style={{ maxWidth: 190 }}>
+              <Tag color="purple" style={{ borderRadius: 10, fontSize: 11, fontWeight: 600, margin: 0 }}>{kitTypeName}</Tag>
+              {kitProductsList.length > 0 && (
+                <Space wrap size={3}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>Includes:</Text>
+                  {kitProductsList.map((p, i) => (
+                    <Tag key={i} color="geekblue" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{p}</Tag>
+                  ))}
+                </Space>
+              )}
+            </Space>
+          );
+
+          if (!sr) {
+            // Non-representative rows show "covered by kit approval" placeholder
+            if (!isRepresentativeRow) {
+              return (
+                <Space direction="vertical" size={4}>
+                  {kitInfoBlock}
+                  <Tag color="default" style={{ fontSize: 10 }}>Covered by kit approval</Tag>
+                </Space>
+              );
+            }
+            // Representative row: upload design + send for approval for the whole kit
+            const specKey = `kit-${kitDUTab}-${record.kitId || record.kitType || 'kit'}`;
+            const stickerTypeSR = kitDUTab === 'Ziplock' ? 'Frosted Ziplock' : kitDUTab === 'Butter Paper' ? 'Butter Paper' : 'Box';
+            return (
+              <Space direction="vertical" size={6} style={{ maxWidth: 200 }}>
+                {kitInfoBlock}
+                <Upload
+                  beforeUpload={() => false}
+                  fileList={kitSpecUploadFiles[specKey] || []}
+                  onChange={({ fileList }) => setKitSpecUploadFiles((prev) => ({ ...prev, [specKey]: fileList }))}
+                  maxCount={1}
+                  accept="image/*,.pdf"
+                  showUploadList={false}
+                >
+                  <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
+                    {kitSpecUploadFiles[specKey]?.length ? 'Re-upload Design' : 'Upload Design'}
+                  </Button>
+                </Upload>
+                {kitSpecUploadFiles[specKey]?.length > 0 && (
+                  <Tag color="green" style={{ fontSize: 10, margin: 0 }}>✓ Uploaded</Tag>
+                )}
+                <Button
+                  size="small"
+                  type="primary"
+                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                  disabled={!kitSpecUploadFiles[specKey]?.length}
+                  title={!kitSpecUploadFiles[specKey]?.length ? 'Upload kit design file first' : `Send ${kitTypeName} for Sales + Ops approval`}
+                  onClick={async () => {
+                    try {
+                      const created = await createStickerRequest({
+                        orderId: order?.key,
+                        hotelLogo: order?.hotelLogo || order?.clientName,
+                        product: 'Kit',
+                        category: record.category || '',
+                        stickerType: stickerTypeSR,
+                        quantity: record.qty || 0,
+                        stickerSize: order?.kitSize || '',
+                        kitType: kitTypeName,
+                        kitProducts: kitProductsList,
+                      }).unwrap();
+                      await uploadStickerDesign({ id: created.data._id, files: kitSpecUploadFiles[specKey] || [] }).unwrap();
+                      await updateStickerStatus({ id: created.data._id, status: 'Waiting for Approval' }).unwrap();
+                      setKitSpecUploadFiles((prev) => ({ ...prev, [specKey]: [] }));
+                      enqueueSnackbar(`${kitTypeName} design sent for approval — Sales & Ops team notified`, { variant: 'info' });
+                    } catch (err) {
+                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send for approval', { variant: 'error' });
+                    }
+                  }}
+                >
+                  Send for Approval
+                </Button>
+              </Space>
+            );
+          }
+
+          // SR exists — show kit info + approval status
+          if (sr.opsHeadApproved) {
+            return (
+              <Space direction="vertical" size={4}>
+                {kitInfoBlock}
+                <Tooltip title={`Ops OK by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'} — applies to all ${kitTypeName} products`}>
+                  <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
+                    Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+                  </Tag>
+                </Tooltip>
+                {sr.salesApproved && (
+                  <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default' }}>Sales OK</Tag>
+                )}
+              </Space>
+            );
+          }
+          // SR exists, ops not yet approved
+          return (
+            <Space direction="vertical" size={4}>
+              {kitInfoBlock}
+              <Tag color="gold" style={{ fontSize: 10 }}>{sr.status || 'Waiting for Approval'}</Tag>
+              {sr.salesApproved && (
+                <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default' }}>Sales OK</Tag>
+              )}
+              {!isRepresentativeRow ? (
+                <Tooltip title={`Ops OK on the first kit row approves all ${kitProductsList.length} products in this kit`}>
+                  <Tag color="default" style={{ fontSize: 10 }}>Covered by kit approval</Tag>
+                </Tooltip>
+              ) : (
+                <Tooltip title={`Approves entire ${kitTypeName} (${kitProductsList.length} product${kitProductsList.length !== 1 ? 's' : ''})`}>
+                  <Button
+                    size="small"
+                    icon={<CheckCircleOutlined />}
+                    style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
+                    onClick={async () => {
+                      try {
+                        const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
+                        enqueueSnackbar(
+                          res?.data?.status === 'Approved'
+                            ? `${kitTypeName} fully approved — printing can start!`
+                            : `Ops OK recorded for ${kitTypeName} — awaiting Sales approval`,
+                          { variant: 'success' },
+                        );
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                      }
+                    }}
+                  >
+                    Ops OK (Kit)
+                  </Button>
+                </Tooltip>
+              )}
+            </Space>
+          );
+        }
+
+        // Non-kit products — original behavior unchanged
         if (!sr) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
         if (sr.opsHeadApproved) {
           return (
             <Tooltip title={`Approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}`}>
               <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
-                Ops OK Â· {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+                Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
               </Tag>
             </Tooltip>
           );

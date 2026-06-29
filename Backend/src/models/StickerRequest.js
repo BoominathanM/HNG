@@ -31,6 +31,9 @@ const stickerRequestSchema = new mongoose.Schema({
   opsHeadApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   isUrgent: { type: Boolean, default: false },
   dispatchedToOps: { type: Boolean, default: false },
+  // Kit context: which kit this approval covers and what products are packed inside
+  kitType: { type: String, default: '' },
+  kitProducts: [{ type: String }],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
