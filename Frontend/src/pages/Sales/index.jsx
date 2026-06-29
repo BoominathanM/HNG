@@ -895,8 +895,8 @@ function generateWhatsAppText(data) {
     deliveryLine = 'Delivery done by HNG and Transportation Charge taken care by the Client';
   } else if (data.deliveryBy === 'CLIENT' && data.transportationBy === 'CLIENT') {
     deliveryLine = 'Delivery and Transportation Charge taken care by the Client';
-  } else if (data.deliveryBy === 'TTDC' || data.transportationBy === 'TTDC') {
-    deliveryLine = 'Delivery and Transportation Charge taken care by the TTDC';
+  } else if (data.deliveryBy === 'HNG' && data.transportationBy === 'HNG') {
+    deliveryLine = 'Delivery and Transportation Charge taken care by HNG';
   } else {
     deliveryLine = `Delivery by ${data.deliveryBy}, Transportation by ${data.transportationBy}`;
   }
@@ -1688,7 +1688,7 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
       </Col>
       <Col xs={24} sm={12}>
         <Form.Item label="Transport Cost Scope" name="transportationBy">
-          <SelectWithAdd field="transportationBy" defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'TTDC', label: 'TTDC' }]} placeholder="Select or Add" disabled={disabled} />
+          <SelectWithAdd field="transportationBy" defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" disabled={disabled} />
         </Form.Item>
       </Col>
       <Col xs={24} sm={12}>
@@ -1765,26 +1765,6 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
         </Col>
       )}
 
-      {/* Payment proof upload — customer edit only */}
-      {showUpload && !disabled && (
-        <Col xs={24}>
-          <Form.Item
-            label="Payment Proof"
-            name="paymentProofs"
-            valuePropName="fileList"
-            getValueFromEvent={(e) => (Array.isArray(e) ? e : e?.fileList)}
-          >
-            <Upload
-              multiple
-              listType="picture"
-              customRequest={makeCloudinaryRequest('payment-proofs')}
-              accept="image/*,.pdf"
-            >
-              <Button icon={<UploadOutlined />}>Upload Payment Proof (multiple files allowed)</Button>
-            </Upload>
-          </Form.Item>
-        </Col>
-      )}
     </Row>
 
   );
@@ -5367,7 +5347,7 @@ export default function Sales() {
                   {kSticker && <Tag color={kSticker === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Sticker: {kSticker === 'YES' ? 'Yes' : 'No'}</Tag>}
                   {kLogo && <Tag color={kLogo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Logo: {kLogo === 'YES' ? 'Yes' : 'No'}</Tag>}
                   {kPrinting && <Tag color={kPrinting === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Printing: {kPrinting === 'YES' ? 'Yes' : 'No'}</Tag>}
-                  {ko.displayUnitType && <Tag color="magenta" style={{ borderRadius: 12, fontSize: 11 }}>Box Type: {ko.displayUnitType}</Tag>}
+                  {ko.displayUnitType && <Tag color="magenta" style={{ borderRadius: 12, fontSize: 11 }}>{(configDisplayUnitOptions.find(c => c.value === (ko.displayUnit || kitDisplayUnit))?.label || 'Display Unit')} Type: {ko.displayUnitType}</Tag>}
                   {ko.lamination && <Tag color={ko.lamination === 'YES' ? 'gold' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Lamination: {ko.lamination === 'YES' ? 'Yes' : 'No'}</Tag>}
                   {kPrice > 0 && <Tag color="orange" style={{ borderRadius: 12, fontSize: 11 }}>₹{Number(kPrice).toLocaleString()}{kQty > 0 ? ` × ${kQty} = ₹${(Number(kPrice) * kQty).toLocaleString()}` : ''}</Tag>}
                 </div>
@@ -5676,7 +5656,7 @@ export default function Sales() {
                       )}
                       {qKitNamePA && <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Kit Selected</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitNamePA}</Text></Col>}
                       {qKitDUPA && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Display Unit</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{(qKitDUPA || '').replace(/_/g, ' ')}</Text></Col>}
-                      {qKitBoxType && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Box Type</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitBoxType}</Text></Col>}
+                      {qKitBoxType && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>{(configDisplayUnitOptions.find(c => c.value === qKitDUPA)?.label || 'Display Unit')} Type</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitBoxType}</Text></Col>}
                       {qKitSize && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Size</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitSize}</Text></Col>}
                       {qKitSticker && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Sticker</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitSticker)}</Text></Col>}
                       {qKitLogo && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Logo</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitLogo)}</Text></Col>}
@@ -6186,7 +6166,7 @@ export default function Sales() {
                       )}
                       {nKitNamePA && <Col xs={24} sm={12}><Text type="secondary" style={{ fontSize: 11 }}>Kit Selected</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitNamePA}</Text></Col>}
                       {nKitDUPA && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Display Unit</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{(nKitDUPA || '').replace(/_/g, ' ')}</Text></Col>}
-                      {nKitBoxType && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Box Type</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitBoxType}</Text></Col>}
+                      {nKitBoxType && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>{(configDisplayUnitOptions.find(c => c.value === nKitDUPA)?.label || 'Display Unit')} Type</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitBoxType}</Text></Col>}
                       {nKitSize && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Size</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitSize}</Text></Col>}
                       {nKitSticker && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Sticker</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitSticker)}</Text></Col>}
                       {nKitLogo && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Logo</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitLogo)}</Text></Col>}
@@ -6966,7 +6946,7 @@ export default function Sales() {
                       )}
                       {paKitBoxType && (
                         <Col xs={12} sm={6}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Box Type</Text>
+                          <Text type="secondary" style={{ fontSize: 11 }}>{(configDisplayUnitOptions.find(c => c.value === paDisplayUnit)?.label || 'Display Unit')} Type</Text>
                           <Text strong style={{ fontSize: 13, display: 'block' }}>{paKitBoxType}</Text>
                         </Col>
                       )}
@@ -7333,6 +7313,9 @@ export default function Sales() {
                     pushFiles(full.documents || base.documents, 'Document');
                     pushFiles(full.lrFiles || base.lrFiles, 'LR / Dispatch');
                     pushFiles(leadObj.paymentProofs, 'Payment Proof (Lead)');
+                    (full.paymentCollection || base.paymentCollection || []).forEach((entry, ei) => {
+                      if (entry?.proof?.url) allFiles.push({ url: entry.proof.url, name: entry.proof.name || `Entry Proof ${ei + 1}`, category: 'Payment Proof' });
+                    });
                     const logoUrl = full.hotelLogoUrl || base.hotelLogoUrl || leadObj.hotelLogoUrl;
                     if (logoUrl) allFiles.push({ url: logoUrl, name: 'Hotel Logo', category: 'Logo' });
                     if (!allFiles.length) return null;
@@ -8132,7 +8115,7 @@ export default function Sales() {
                 <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}><DatePicker style={{ width: '100%' }} /></Form.Item>
                 <Row gutter={[12, 0]}>
                   <Col xs={24} sm={8}><Form.Item label="Delivery By" name="deliveryBy"><SelectWithAdd field="deliveryBy" defaultOptions={[{ value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Transport Cost Scope" name="transportationBy"><SelectWithAdd field="transportationBy" defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'TTDC', label: 'TTDC' }]} placeholder="Select or Add" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Transport Cost Scope" name="transportationBy"><SelectWithAdd field="transportationBy" defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" /></Form.Item></Col>
                   <Col xs={24} sm={8}>
                     <Form.Item name="forwardingCharge" valuePropName="checked"><Checkbox>Forwarding charge applicable</Checkbox></Form.Item>
                     <Form.Item noStyle shouldUpdate={(p, c) => p.forwardingCharge !== c.forwardingCharge}>
@@ -8198,16 +8181,24 @@ export default function Sales() {
                               <Col xs={24} sm={6}><Form.Item {...rest} name={[name, 'notes']} label="Notes" style={{ marginBottom: 0 }}><Input size="small" placeholder="Ref / notes" /></Form.Item></Col>
                               <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 20 }}><Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} /></Col>
                             </Row>
+                            <Form.Item noStyle shouldUpdate>
+                              {({ getFieldValue: gfv }) => {
+                                const proof = gfv(['paymentCollection', name, 'proof']);
+                                if (!proof?.url) return null;
+                                return (
+                                  <a href={proof.url} target="_blank" rel="noopener noreferrer"
+                                    style={{ fontSize: 11, color: '#1890ff', display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, padding: '3px 8px', borderRadius: 6, background: 'rgba(24,144,255,0.06)', border: '1px solid rgba(24,144,255,0.2)' }}>
+                                    <FileTextOutlined style={{ fontSize: 11 }} />{proof.name || 'View Proof'} ↗
+                                  </a>
+                                );
+                              }}
+                            </Form.Item>
                           </div>
                         ))}
                         <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>+ Add Payment Entry</Button>
                       </>
                     )}
                   </Form.List>
-                  <Divider style={{ margin: '12px 0 10px' }} />
-                  <Upload multiple listType="picture" fileList={orderEditPaymentProofs} customRequest={makeCloudinaryRequest('payment-proofs')} accept="image/*,.pdf" onChange={({ fileList }) => setOrderEditPaymentProofs(fileList)}>
-                    <Button icon={<UploadOutlined />} size="small">Upload Payment Proof</Button>
-                  </Upload>
                   <Form.Item noStyle shouldUpdate>
                     {({ getFieldValue }) => {
                       const rawColl = getFieldValue('paymentCollection');
@@ -8670,6 +8661,18 @@ export default function Sales() {
                               <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
                             </Col>
                           </Row>
+                          <Form.Item noStyle shouldUpdate>
+                            {({ getFieldValue: gfv }) => {
+                              const proof = gfv(['paymentCollection', name, 'proof']);
+                              if (!proof?.url) return null;
+                              return (
+                                <a href={proof.url} target="_blank" rel="noopener noreferrer"
+                                  style={{ fontSize: 11, color: '#1890ff', display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, padding: '3px 8px', borderRadius: 6, background: 'rgba(24,144,255,0.06)', border: '1px solid rgba(24,144,255,0.2)' }}>
+                                  <FileTextOutlined style={{ fontSize: 11 }} />{proof.name || 'View Proof'} ↗
+                                </a>
+                              );
+                            }}
+                          </Form.Item>
                         </div>
                       ))}
                       <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
@@ -8678,18 +8681,6 @@ export default function Sales() {
                     </>
                   )}
                 </Form.List>
-
-                <Divider style={{ margin: '12px 0 10px' }} />
-                <Upload
-                  multiple
-                  listType="picture"
-                  fileList={orderEditPaymentProofs}
-                  customRequest={makeCloudinaryRequest('payment-proofs')}
-                  accept="image/*,.pdf"
-                  onChange={({ fileList }) => setOrderEditPaymentProofs(fileList)}
-                >
-                  <Button icon={<UploadOutlined />} size="small">Upload Payment Proof</Button>
-                </Upload>
 
                 <Form.Item noStyle shouldUpdate>
                   {({ getFieldValue }) => {
