@@ -3533,6 +3533,7 @@ export default function Sales() {
     if (!requireAccess(lead ? 'edit' : 'add')) return;
     setEditingLead(lead);
     setSelectedRecord(lead);
+    setEditingSection(null);
     setGstAddApiData(null);
     setGstAddApiError(null);
     leadForm.resetFields();
@@ -12373,9 +12374,10 @@ export default function Sales() {
                     const existingColl = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
                     const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                     const totalColl = existingColl + newColl;
-                    const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
                     const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'packagingIncludes', 'packagingIncludesQty', 'forwardingCharge', 'forwardingChargeAmount']);
-                    const recordTotal = computeCompositionGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, packagingIncludes: fvKit.packagingIncludes, packagingIncludesQty: fvKit.packagingIncludesQty, forwardingCharge: watchedLeadForwardingCharge ?? fvKit.forwardingCharge, forwardingChargeAmount: watchedLeadForwardingAmount ?? fvKit.forwardingChargeAmount }, kits);
+                    const effectiveFwd = watchedLeadForwardingCharge ?? fvKit.forwardingCharge ?? record.forwardingCharge;
+                    const effectiveFwdAmt = watchedLeadForwardingAmount ?? fvKit.forwardingChargeAmount ?? record.forwardingChargeAmount;
+                    const recordTotal = computeCompositionGrandTotal({ ...record, forwardingCharge: effectiveFwd, forwardingChargeAmount: effectiveFwdAmt }, kits) || Number(record.totalAmount) || 0;
                     const balance = Math.max(0, recordTotal - totalColl);
                     if (recordTotal === 0) return null;
                     return (
@@ -12482,9 +12484,10 @@ export default function Sales() {
                     const existingColl = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
                     const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                     const totalColl = existingColl + newColl;
-                    const safeProducts = Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [];
-                    const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'packagingIncludes', 'packagingIncludesQty', 'forwardingCharge', 'forwardingChargeAmount']);
-                    const recordTotal = computeCompositionGrandTotal({ products: safeProducts, kitOrders: watchedKitOrders, kitPrice: fvKit.kitPrice, kitOverallQty: fvKit.kitOverallQty, packagingIncludes: fvKit.packagingIncludes, packagingIncludesQty: fvKit.packagingIncludesQty, forwardingCharge: watchedLeadForwardingCharge ?? fvKit.forwardingCharge, forwardingChargeAmount: watchedLeadForwardingAmount ?? fvKit.forwardingChargeAmount }, kits);
+                    const fvKit2 = leadForm.getFieldsValue(['forwardingCharge', 'forwardingChargeAmount']);
+                    const effectiveFwd2 = watchedLeadForwardingCharge ?? fvKit2.forwardingCharge ?? record.forwardingCharge;
+                    const effectiveFwdAmt2 = watchedLeadForwardingAmount ?? fvKit2.forwardingChargeAmount ?? record.forwardingChargeAmount;
+                    const recordTotal = computeCompositionGrandTotal({ ...record, forwardingCharge: effectiveFwd2, forwardingChargeAmount: effectiveFwdAmt2 }, kits) || Number(record.totalAmount) || 0;
                     const balance = Math.max(0, recordTotal - totalColl);
                     const status = recordTotal > 0 && totalColl >= recordTotal ? 'Paid' : totalColl > 0 ? 'Partially Paid' : 'Unpaid';
                     const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
