@@ -209,16 +209,34 @@ const mustPrintBeforePackaging = (item) => {
 // Determine an item's ultimate packaging destination (after sticker step completes).
 const getItemPackagingType = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
-  // Kit items: display unit tab is the final packaging destination (overrides packing material).
-  // Uses the item's OWN per-kit display unit (kitTabOf) so each kit in a multi-kit order routes
-  // to its respective tab; falls back to the order-level display unit for single-kit orders.
-  if (isKitItem && kitTabOf(item, order) === 'Butter Paper') return 'butter';
-  if (isKitItem && kitTabOf(item, order) === 'Ziplock') return 'frosted';
-  if (isKitItem && kitTabOf(item, order) === 'Box') return 'box';
+  // ── KIT ITEMS: the DISPLAY UNIT is the single source of routing truth. ──
+  // A kit's packaging destination is its display unit (Box/Ziplock/Butter Paper) and NOTHING
+  // else — the kit's packing material describes the INDIVIDUAL products packed inside it, which
+  // is a separate (personalized-only) sub-step handled in buildProductionQueues, NOT the kit's
+  // own destination. Resolving the display unit fully here (config tab first, then the display
+  // unit NAME) BEFORE any packingMaterial / pm-string / logoType guess prevents a separate kit
+  // whose display unit is e.g. Ziplock from leaking into the Box tab just because its packing
+  // material string happens to contain "box". Uses the item's OWN per-kit display unit (kitTabOf)
+  // so each kit in a multi-kit order routes to its respective tab; falls back to the order-level
+  // display unit for single-kit orders.
+  if (isKitItem) {
+    const tab = kitTabOf(item, order);
+    if (tab === 'Butter Paper') return 'butter';
+    if (tab === 'Ziplock') return 'frosted';
+    if (tab === 'Box') return 'box';
+    // displayUnitTab not resolved (legacy / unregistered display unit) → fall back to the
+    // display unit NAME before considering any packing-material signal.
+    const du = kitDuNameOf(item, order).toLowerCase();
+    if (du.includes('butter')) return 'butter';
+    if (du.includes('ziplock') || du.includes('frosted') || du.includes('pouch')) return 'frosted';
+    if (du.includes('box')) return 'box';
+    // Display unit entirely unresolvable → fall through to the generic fallbacks below so the
+    // kit still lands somewhere (legacy orders with no display unit at all).
+  }
   // Standalone products with sticker=YES stay in the Sticker tab after printing — they do
   // NOT move on to a Box/Ziplock/Butter Paper tab regardless of packingMaterialTab.
   if (!isKitItem && itemNeedsSticker(item)) return 'sticker';
-  // Standalone products without sticker: their own config-resolved packingMaterial tab.
+  // Standalone products (and display-unit-less legacy kits): config-resolved packingMaterial tab.
   if (item.packingMaterialTab === 'Butter Paper') return 'butter';
   if (item.packingMaterialTab === 'Ziplock') return 'frosted';
   if (item.packingMaterialTab === 'Box') return 'box';
@@ -228,13 +246,6 @@ const getItemPackagingType = (item, order) => {
   const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
   if (pm.includes('butter')) return 'butter';
   if (pm.includes('box')) return 'box';
-  // Kit items only: fall back to display unit name for box routing.
-  if (isKitItem) {
-    const du = kitDuNameOf(item, order).toLowerCase();
-    if (du.includes('butter')) return 'butter';
-    if (du.includes('box')) return 'box';
-    if (du.includes('ziplock') || du.includes('frosted') || du.includes('pouch')) return 'frosted';
-  }
   return 'sticker';
 };
 
@@ -407,10 +418,13 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // Kit items can appear in BOTH Box and Frosted tabs simultaneously:
         //   - displayUnitTab drives the KIT ASSEMBLY step (e.g. Frosted for a Ziplock kit)
         //   - packingMaterialTab drives the INDIVIDUAL PRODUCT PACKING step (e.g. Box for paper-box products)
-        // When a kit item has packingMaterialTab='Box' but the display unit routes to Frosted,
-        // include it here for the individual packing step — independent of the kit assembly step.
+        // When a PERSONALIZED kit item has packingMaterialTab='Box' but the display unit routes
+        // to Frosted, include it here for the individual packing step — independent of the kit
+        // assembly step. Restricted to personalized kits: a SEPARATE kit has no inner/outer split,
+        // so it is routed SOLELY by its display unit and must never leak into a different tab.
         const needsBoxPacking = packType === 'box' ||
-          (isKitItem && item.packingMaterialTab === 'Box' && kitTabOf(item, order) !== 'Box');
+          (isKitItem && itemCategoryOf(item) === 'personalized'
+            && item.packingMaterialTab === 'Box' && kitTabOf(item, order) !== 'Box');
         if (!needsBoxPacking) return;
         const product = item.product || item.itemName;
         // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
@@ -489,12 +503,15 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const isKitItem = !!(item.isKit || item.kitType);
         const packType = getItemPackagingType(item, order);
         // Kit items can appear in BOTH Box and Frosted tabs simultaneously (dual-step flow).
-        // When a kit item has packingMaterialTab='Ziplock' but the display unit routes to Box,
-        // include it here for the individual packing step — independent of the kit assembly step.
+        // When a PERSONALIZED kit item has packingMaterialTab='Ziplock' but the display unit
+        // routes to Box, include it here for the individual packing step — independent of the kit
+        // assembly step. Restricted to personalized kits: a SEPARATE kit is routed SOLELY by its
+        // display unit and must never leak into a different tab.
         // Non-kit items: still use the single-source-of-truth packType so sticker=YES items
         // never leak into Frosted even if their packing material string contains 'ziplock'.
         const needsFrostedPacking = packType === 'frosted' ||
-          (isKitItem && item.packingMaterialTab === 'Ziplock' && kitTabOf(item, order) !== 'Ziplock');
+          (isKitItem && itemCategoryOf(item) === 'personalized'
+            && item.packingMaterialTab === 'Ziplock' && kitTabOf(item, order) !== 'Ziplock');
         if (!needsFrostedPacking) return;
         const product = item.product || item.itemName;
         // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
@@ -582,11 +599,14 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
         const packType = getItemPackagingType(item, order);
-        // Kit items can appear in multiple packaging tabs simultaneously (dual-step flow):
-        // when a kit item has packingMaterialTab='Butter Paper' but the display unit routes
-        // elsewhere, include it here for the individual packing step.
+        // PERSONALIZED kit items can appear in multiple packaging tabs simultaneously (dual-step
+        // flow): when such a kit has packingMaterialTab='Butter Paper' but the display unit routes
+        // elsewhere, include it here for the individual packing step. Restricted to personalized
+        // kits: a SEPARATE kit is routed SOLELY by its display unit and must never leak into a
+        // different tab.
         const needsButterPacking = packType === 'butter' ||
-          (isKitItem && item.packingMaterialTab === 'Butter Paper' && kitTabOf(item, order) !== 'Butter Paper');
+          (isKitItem && itemCategoryOf(item) === 'personalized'
+            && item.packingMaterialTab === 'Butter Paper' && kitTabOf(item, order) !== 'Butter Paper');
         if (!needsButterPacking) return;
         const product = item.product || item.itemName;
         // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.

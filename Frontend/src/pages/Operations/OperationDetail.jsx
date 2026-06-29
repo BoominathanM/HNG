@@ -22,7 +22,6 @@ import {
   Tag,
   Tooltip,
   Typography,
-  Upload,
 } from 'antd';
 import {
   AlertFilled,
@@ -42,7 +41,6 @@ import {
   PrinterOutlined,
   TeamOutlined,
   TruckOutlined,
-  UploadOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { enqueueSnackbar } from 'notistack';
@@ -164,9 +162,6 @@ export default function OperationDetail() {
     const tasks = orderTasksData?.data || [];
     return new Set(tasks.filter((t) => t.product).map((t) => (t.product || '').toLowerCase()));
   }, [orderTasksData]);
-
-  // Per-kit upload state for "Send for Approval" from the product spec table
-  const [kitSpecUploadFiles, setKitSpecUploadFiles] = useState({});
 
   // Kit Packing task state
   const kitPackingTask = useMemo(
@@ -292,7 +287,16 @@ export default function OperationDetail() {
         const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, it.logoType);
         const logo = normYNOps(it.logo || (isKitItem ? kitCfg?.logo : ''));
         const displayUnitType = it.displayUnitType || (isKitItem ? kitCfg?.displayUnitType : '') || '';
-        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, logo, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitType, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory, isIncludedInPersonalized };
+        // Effective Required Qty: a kit line stores its count in `overallQty` (the number of kits),
+        // while `qty` is just 1 (one kit unit) — so kit rows must report overallQty, not qty.
+        // Separate products keep their own qty. Falls back through item → kit-config → qty.
+        const kitOverallQty = isKitItem
+          ? (Number(it.overallQty) || Number(kitCfg?.overallQty) || Number(o.kitOverallQty) || 0)
+          : 0;
+        const requiredQty = isKitItem
+          ? (kitOverallQty || Number(it.qty) || 0)
+          : (Number(it.qty) || 0);
+        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, logo, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitType, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory, isIncludedInPersonalized, requiredQty };
       });
     })(),
     readiness: o.readiness || {},
@@ -373,7 +377,7 @@ export default function OperationDetail() {
 
   const openAssignModal = (record, currentOrder) => {
     setAssignModalRecord(record);
-    setTaskRequiredQty(record.qty || 0);
+    setTaskRequiredQty(record.requiredQty != null ? record.requiredQty : (record.qty || 0));
     setSubTasks([{ id: Date.now(), description: '', qty: '', assignee: '' }]);
     assignModalForm.setFieldsValue({
       taskName: record.processTask || '',
@@ -700,8 +704,8 @@ export default function OperationDetail() {
         if (eQty != null && itemQty > eQty) {
           // Partial emergency: split into emergency qty + remaining qty
           return [
-            { ...item, key: `${item.key}-emg`, qty: eQty, lineTotal: null, isEmergencyProduct: true, isEmergencyGated: false },
-            { ...item, key: `${item.key}-rem`, qty: itemQty - eQty, lineTotal: null, isEmergencyProduct: false, isEmergencyGated: !emergencyPhaseDone },
+            { ...item, key: `${item.key}-emg`, qty: eQty, requiredQty: eQty, lineTotal: null, isEmergencyProduct: true, isEmergencyGated: false },
+            { ...item, key: `${item.key}-rem`, qty: itemQty - eQty, requiredQty: itemQty - eQty, lineTotal: null, isEmergencyProduct: false, isEmergencyGated: !emergencyPhaseDone },
           ];
         }
         return [{ ...item, isEmergencyProduct: true, isEmergencyGated: false }];
@@ -1186,9 +1190,11 @@ export default function OperationDetail() {
     },
     {
       title: 'Required Qty',
-      dataIndex: 'qty',
+      key: 'requiredQty',
       align: 'right',
-      render: (value, record) => {
+      render: (_, record) => {
+        // Kit rows report overallQty (the kit count) via requiredQty; products report their qty.
+        const value = record.requiredQty != null ? record.requiredQty : (record.qty || 0);
         const name = record.itemName || record.name || record.kitType;
         const liveStock = record.itemId?.currentStock ?? invMap[name]?.currentStock ?? record.inventoryStock ?? 0;
         const enough = liveStock >= (value || 0);
@@ -1484,66 +1490,13 @@ export default function OperationDetail() {
           );
 
           if (!sr) {
-            // Non-representative rows show "covered by kit approval" placeholder
-            if (!isRepresentativeRow) {
-              return (
-                <Space direction="vertical" size={4}>
-                  {kitInfoBlock}
-                  <Tag color="default" style={{ fontSize: 10 }}>Covered by kit approval</Tag>
-                </Space>
-              );
-            }
-            // Representative row: upload design + send for approval for the whole kit
-            const specKey = `kit-${kitDUTab}-${record.kitId || record.kitType || 'kit'}`;
-            const stickerTypeSR = kitDUTab === 'Ziplock' ? 'Frosted Ziplock' : kitDUTab === 'Butter Paper' ? 'Butter Paper' : 'Box';
+            // No design sent for approval yet — Ops can only approve, not send. Show status only.
             return (
-              <Space direction="vertical" size={6} style={{ maxWidth: 200 }}>
+              <Space direction="vertical" size={4}>
                 {kitInfoBlock}
-                <Upload
-                  beforeUpload={() => false}
-                  fileList={kitSpecUploadFiles[specKey] || []}
-                  onChange={({ fileList }) => setKitSpecUploadFiles((prev) => ({ ...prev, [specKey]: fileList }))}
-                  maxCount={1}
-                  accept="image/*,.pdf"
-                  showUploadList={false}
-                >
-                  <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
-                    {kitSpecUploadFiles[specKey]?.length ? 'Re-upload Design' : 'Upload Design'}
-                  </Button>
-                </Upload>
-                {kitSpecUploadFiles[specKey]?.length > 0 && (
-                  <Tag color="green" style={{ fontSize: 10, margin: 0 }}>✓ Uploaded</Tag>
-                )}
-                <Button
-                  size="small"
-                  type="primary"
-                  style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                  disabled={!kitSpecUploadFiles[specKey]?.length}
-                  title={!kitSpecUploadFiles[specKey]?.length ? 'Upload kit design file first' : `Send ${kitTypeName} for Sales + Ops approval`}
-                  onClick={async () => {
-                    try {
-                      const created = await createStickerRequest({
-                        orderId: order?.key,
-                        hotelLogo: order?.hotelLogo || order?.clientName,
-                        product: 'Kit',
-                        category: record.category || '',
-                        stickerType: stickerTypeSR,
-                        quantity: record.qty || 0,
-                        stickerSize: order?.kitSize || '',
-                        kitType: kitTypeName,
-                        kitProducts: kitProductsList,
-                      }).unwrap();
-                      await uploadStickerDesign({ id: created.data._id, files: kitSpecUploadFiles[specKey] || [] }).unwrap();
-                      await updateStickerStatus({ id: created.data._id, status: 'Waiting for Approval' }).unwrap();
-                      setKitSpecUploadFiles((prev) => ({ ...prev, [specKey]: [] }));
-                      enqueueSnackbar(`${kitTypeName} design sent for approval — Sales & Ops team notified`, { variant: 'info' });
-                    } catch (err) {
-                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send for approval', { variant: 'error' });
-                    }
-                  }}
-                >
-                  Send for Approval
-                </Button>
+                <Tag color="default" style={{ fontSize: 10 }}>
+                  {isRepresentativeRow ? 'Awaiting design' : 'Covered by kit approval'}
+                </Tag>
               </Space>
             );
           }
