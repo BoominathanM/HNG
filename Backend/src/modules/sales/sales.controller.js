@@ -645,7 +645,27 @@ exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
 exports.getComplaints = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
-  if (req.query.orderId) filter.orderId = req.query.orderId;
+
+  // Date range filter on createdAt
+  if (req.query.startDate || req.query.endDate) {
+    filter.createdAt = {};
+    if (req.query.startDate) filter.createdAt.$gte = new Date(req.query.startDate);
+    if (req.query.endDate) {
+      const end = new Date(req.query.endDate);
+      end.setHours(23, 59, 59, 999);
+      filter.createdAt.$lte = end;
+    }
+  }
+
+  // Search by complaintCode, clientName, or linked order's orderCode
+  if (req.query.search) {
+    const rx = new RegExp(req.query.search, 'i');
+    const matchingOrders = await Order.find({ orderCode: rx }).select('_id');
+    const orConditions = [{ complaintCode: rx }, { clientName: rx }];
+    if (matchingOrders.length) orConditions.push({ orderId: { $in: matchingOrders.map(o => o._id) } });
+    filter.$or = orConditions;
+  }
+
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [complaints, total] = await Promise.all([

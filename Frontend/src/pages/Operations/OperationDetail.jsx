@@ -1050,14 +1050,22 @@ export default function OperationDetail() {
       title: 'Product Attributes',
       key: 'productAttrs',
       render: (_, record) => {
-        // Keys already displayed as dedicated columns OR structural (objects/arrays) — skip here
+        // Keys already displayed as dedicated columns OR structural (objects/arrays) — skip here.
+        // 'specification' and 'otherSpecs' are kept here so we can render them explicitly below
+        // with proper labels instead of tiny unlabeled chips.
+        // 'packingMaterialTab' and 'displayUnitTab' are routing fields, not for display.
+        // 'unit' is intentionally NOT skipped so it appears as a spec chip.
         const SKIP_KEYS = new Set([
           'itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent',
-          'unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory',
-          'hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize',
+          'lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory',
+          'hsnCode','discountPercent','discount','logo','sticker','brand','size','defaultSize',
           'specs','displayType','itemId','_id','key','amount','rateValue','total','inventoryStock',
           'printing','stickerPrinting','product','isEmergencyProduct','isEmergencyGated',
-          'productAttributes','attachments','category','kitIncludes','kitIncludesQty','verified','overallQty','kitPrice','displayUnit',
+          'productAttributes','attachments','category','verified','overallQty','kitPrice','displayUnit',
+          // Routing / computed fields — already shown in Display Unit column or not for display
+          'packingMaterialTab','displayUnitTab',
+          // Rendered as explicit labeled blocks below
+          'specification','otherSpecs','kitIncludes','kitIncludesQty',
         ]);
         const attrs = Object.entries(record).filter(([k, v]) => {
           if (SKIP_KEYS.has(k)) return false;
@@ -1078,12 +1086,19 @@ export default function OperationDetail() {
           : [];
         // Merge precedence: order-item flat attrs > its productAttributes > inventory defaults
         const merged = new Map([...invAttrs, ...recAttrs, ...attrs]);
-        // Per-product reference files (spec sheets / design images) uploaded in Sales
+        // Per-product reference files uploaded in Sales
         const atts = (Array.isArray(record.attachments) ? record.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
-        if (merged.size === 0 && atts.length === 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        // Explicit fields: kitIncludes, specification, otherSpecs
+        const kitIncludesRaw = Array.isArray(record.kitIncludes) ? record.kitIncludes : [];
+        const specification = record.specification || '';
+        const otherSpecs = record.otherSpecs || '';
+
+        const hasContent = merged.size > 0 || atts.length > 0 || kitIncludesRaw.length > 0 || specification || otherSpecs;
+        if (!hasContent) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
         const prettyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
         return (
-          <Space direction="vertical" size={5} style={{ maxWidth: 240 }}>
+          <Space direction="vertical" size={6} style={{ maxWidth: 260 }}>
+            {/* Dynamic key-value chips (includes 'unit' and all product-type-specific attrs) */}
             {merged.size > 0 && (
               <Space wrap size={3}>
                 {[...merged.entries()].map(([k, v]) => (
@@ -1092,6 +1107,37 @@ export default function OperationDetail() {
                   </Tag>
                 ))}
               </Space>
+            )}
+            {/* Kit includes — what items are packed inside this kit */}
+            {kitIncludesRaw.length > 0 && (
+              <div>
+                <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 2 }}>Included in Kit:</Text>
+                <Space wrap size={3}>
+                  {kitIncludesRaw.map((v, i) => {
+                    const id = typeof v === 'object' ? (v.id ?? v) : v;
+                    const qty = typeof v === 'object' ? v.qty : null;
+                    return (
+                      <Tag key={i} color="purple" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>
+                        {String(id)}{qty && Number(qty) > 1 ? ` ×${qty}` : ''}
+                      </Tag>
+                    );
+                  })}
+                </Space>
+              </div>
+            )}
+            {/* Per-product specification / instructions entered in Sales */}
+            {specification && (
+              <div>
+                <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 2 }}>Specification:</Text>
+                <Text style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>{specification}</Text>
+              </div>
+            )}
+            {/* Other free-text specs */}
+            {otherSpecs && (
+              <div>
+                <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 2 }}>Other Specs:</Text>
+                <Text style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>{otherSpecs}</Text>
+              </div>
             )}
             {atts.length > 0 && renderAttachmentLinks(atts)}
           </Space>

@@ -1889,8 +1889,16 @@ export default function Sales() {
   const [quotStatusFilter, setQuotStatusFilter] = useState(null);
   const [reminderTypeFilter, setReminderTypeFilter] = useState(null);
   const [complaintStatusFilter, setComplaintStatusFilter] = useState(null);
+  const [complaintSearchText, setComplaintSearchText] = useState('');
+  const [complaintDateRange, setComplaintDateRange] = useState(null);
   const [complaintsPage, setComplaintsPage] = useState(1);
   const [complaintsPageSize, setComplaintsPageSize] = useState(10);
+  const [leadSearchText, setLeadSearchText] = useState('');
+  const [leadDateRange, setLeadDateRange] = useState(null);
+  const [orderSearchText, setOrderSearchText] = useState('');
+  const [orderDateRange, setOrderDateRange] = useState(null);
+  const [quotSearchText, setQuotSearchText] = useState('');
+  const [quotDateRange, setQuotDateRange] = useState(null);
   const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
 
@@ -2723,7 +2731,13 @@ export default function Sales() {
     selectedRecord?._id,
     { skip: viewMode !== 'order-detail' || !selectedRecord?._id }
   );
-  const { data: complaintsRaw } = useGetComplaintsQuery({ page: complaintsPage, limit: complaintsPageSize, ...(complaintStatusFilter ? { status: complaintStatusFilter } : {}) });
+  const { data: complaintsRaw } = useGetComplaintsQuery({
+    page: complaintsPage,
+    limit: complaintsPageSize,
+    ...(complaintStatusFilter ? { status: complaintStatusFilter } : {}),
+    ...(complaintSearchText ? { search: complaintSearchText } : {}),
+    ...(complaintDateRange ? { startDate: complaintDateRange[0], endDate: complaintDateRange[1] } : {}),
+  });
   const { data: partiesRaw } = useGetPartiesQuery();
   const { data: remindersRaw } = useGetRemindersQuery();
   const { data: hotelNamesRaw } = useGetHotelNamesQuery();
@@ -5135,7 +5149,7 @@ export default function Sales() {
   };
 
   const complaintColumns = [
-    { title: 'Complaint ID', dataIndex: 'key', width: 120, render: (v) => <Text strong style={{ color: '#ff4d4f', fontSize: 13 }}>CMP-{v.toString().slice(-4)}</Text> },
+    { title: 'Complaint ID', dataIndex: 'complaintCode', width: 140, render: (v, r) => <Text strong style={{ color: '#ff4d4f', fontSize: 13 }}>{v || `CMP-${(r.key || '').toString().slice(-4)}`}</Text> },
     { title: 'Order ID', dataIndex: 'orderId', width: 105, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
     { title: 'Hotel / Company', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Description', dataIndex: 'description', ellipsis: true, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
@@ -12854,27 +12868,6 @@ export default function Sales() {
 
       <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
         <Tabs onChange={setActiveTab} style={{ padding: '0 16px' }}
-          tabBarExtraContent={
-            <Space size={8}>
-              <div style={{ display: 'flex', alignItems: 'center', background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 8px', borderRadius: 8, border: `1px solid ${borderColor}` }}>
-                <DatePicker.RangePicker
-                  bordered={false}
-                  style={{ width: 260, background: 'transparent' }}
-                  onChange={(dates) => {
-                    if (dates) {
-                      setDateRange([dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')]);
-                    } else {
-                      setDateRange(null);
-                    }
-                  }}
-                />
-              </div>
-              <Input prefix={<SearchOutlined />} placeholder="Search..." value={searchText}
-                onChange={(e) => setSearchText(e.target.value)} allowClear
-                style={{ width: 200, borderRadius: 8 }}
-              />
-            </Space>
-          }
           items={filterTabs([
             {
               key: 'performance',
@@ -12915,7 +12908,7 @@ export default function Sales() {
               label: 'Leads',
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                     <Select
                       allowClear
                       placeholder="Lead Status"
@@ -12929,15 +12922,29 @@ export default function Sales() {
                     </Select>
                     <DatePicker.RangePicker
                       style={{ borderRadius: 8 }}
-                      onChange={(dates) => setDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                      onChange={(dates) => { setLeadDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null); setLeadsPage(1); }}
                       allowClear
+                    />
+                    <Input
+                      prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                      placeholder="Search hotel, company..."
+                      value={leadSearchText}
+                      onChange={(e) => { setLeadSearchText(e.target.value); setLeadsPage(1); }}
+                      allowClear
+                      style={{ width: 220, borderRadius: 8 }}
                     />
                   </div>
                   <Table
-                    dataSource={filtered(leadsData).filter(r => {
-                      if (!dateRange) return true;
-                      const d = r.createdAt ? r.createdAt.slice(0, 10) : '';
-                      return d >= dateRange[0] && d <= dateRange[1];
+                    dataSource={leadsData.filter(r => {
+                      if (leadSearchText) {
+                        const q = leadSearchText.toLowerCase();
+                        if (!['hotelName', 'location', 'salesPerson'].some(k => (r[k] || '').toLowerCase().includes(q))) return false;
+                      }
+                      if (leadDateRange) {
+                        const d = r.createdAt ? r.createdAt.slice(0, 10) : '';
+                        if (d < leadDateRange[0] || d > leadDateRange[1]) return false;
+                      }
+                      return true;
                     })}
                     columns={leadColumns}
                     pagination={{
@@ -12963,15 +12970,7 @@ export default function Sales() {
               label: 'Reminders',
               children: (
                 <div className="table-responsive" style={{ padding: '16px 4px 4px' }}>
-                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                    <Input
-                      prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
-                      placeholder="Search lead, party..."
-                      allowClear
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                      style={{ width: 220, borderRadius: 8 }}
-                    />
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                     <Select
                       allowClear
                       placeholder="Reminder Type"
@@ -12983,6 +12982,14 @@ export default function Sales() {
                         <Option key={t} value={t}>{t}</Option>
                       ))}
                     </Select>
+                    <Input
+                      prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                      placeholder="Search lead, party..."
+                      allowClear
+                      value={searchText}
+                      onChange={(e) => setSearchText(e.target.value)}
+                      style={{ width: 220, borderRadius: 8 }}
+                    />
                   </div>
                   <Table
                     dataSource={remindersData.filter(r => {
@@ -13024,7 +13031,7 @@ export default function Sales() {
               children: (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
                   <div style={{ padding: '12px 4px 0' }}>
-                    <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                       <Select
                         allowClear
                         placeholder="Quotation Status"
@@ -13036,16 +13043,38 @@ export default function Sales() {
                           <Option key={s} value={s}>{s}</Option>
                         ))}
                       </Select>
+                      <DatePicker.RangePicker
+                        style={{ borderRadius: 8 }}
+                        onChange={(dates) => setQuotDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                        allowClear
+                      />
+                      <Input
+                        prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                        placeholder="Search hotel, company..."
+                        value={quotSearchText}
+                        onChange={(e) => setQuotSearchText(e.target.value)}
+                        allowClear
+                        style={{ width: 220, borderRadius: 8 }}
+                      />
                     </div>
                   </div>
                   <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
                     <SectionDivider title="Current Quotations" />
-                    <Table dataSource={filtered(quotationsData).filter(r => !quotStatusFilter || r.status === quotStatusFilter)} columns={quotationColumns} pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }} size="small" rowKey="key"
+                    <Table dataSource={quotationsData.filter(r => {
+                      if (quotStatusFilter && r.status !== quotStatusFilter) return false;
+                      if (quotSearchText) { const q = quotSearchText.toLowerCase(); if (!['hotelName', 'location', 'salesPerson'].some(k => (r[k] || '').toLowerCase().includes(q))) return false; }
+                      if (quotDateRange) { const d = r.createdAt ? r.createdAt.slice(0, 10) : ''; if (d < quotDateRange[0] || d > quotDateRange[1]) return false; }
+                      return true;
+                    })} columns={quotationColumns} pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }} size="small" rowKey="key"
                       scroll={{ x: 'max-content' }} onRow={(record) => ({ onClick: () => openQuotationDetail(record) })} style={{ cursor: 'pointer' }} />
                   </div>
                   <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
                     <SectionDivider title="Negotiations In Progress" />
-                    <Table dataSource={filtered(negotiationsData)} columns={negotiationColumns} pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }} size="small" rowKey="key"
+                    <Table dataSource={negotiationsData.filter(r => {
+                      if (quotSearchText) { const q = quotSearchText.toLowerCase(); if (!['hotelName', 'location', 'salesPerson'].some(k => (r[k] || '').toLowerCase().includes(q))) return false; }
+                      if (quotDateRange) { const d = r.createdAt ? r.createdAt.slice(0, 10) : ''; if (d < quotDateRange[0] || d > quotDateRange[1]) return false; }
+                      return true;
+                    })} columns={negotiationColumns} pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }} size="small" rowKey="key"
                       scroll={{ x: 'max-content' }} onRow={(record) => ({ onClick: () => openNegotiationDetail(record) })} style={{ cursor: 'pointer' }} />
                   </div>
                 </div>
@@ -13056,7 +13085,7 @@ export default function Sales() {
               label: 'Orders',
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                     <Select
                       allowClear
                       placeholder="Order Status"
@@ -13068,9 +13097,27 @@ export default function Sales() {
                         <Option key={s} value={s}>{s}</Option>
                       ))}
                     </Select>
+                    <DatePicker.RangePicker
+                      style={{ borderRadius: 8 }}
+                      onChange={(dates) => setOrderDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                      allowClear
+                    />
+                    <Input
+                      prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                      placeholder="Search hotel, order ID..."
+                      value={orderSearchText}
+                      onChange={(e) => setOrderSearchText(e.target.value)}
+                      allowClear
+                      style={{ width: 220, borderRadius: 8 }}
+                    />
                   </div>
                   <Table
-                    dataSource={[...filtered(ordersData).filter(r => !orderStatusFilter || r.status === orderStatusFilter)].sort((a, b) => ((b.isUrgent || b.isEmergency) ? 1 : 0) - ((a.isUrgent || a.isEmergency) ? 1 : 0))}
+                    dataSource={[...ordersData.filter(r => {
+                      if (orderStatusFilter && r.status !== orderStatusFilter) return false;
+                      if (orderSearchText) { const q = orderSearchText.toLowerCase(); if (!['hotelName', 'location', 'oid'].some(k => (r[k] || '').toLowerCase().includes(q))) return false; }
+                      if (orderDateRange) { const d = r.createdAt ? r.createdAt.slice(0, 10) : ''; if (d < orderDateRange[0] || d > orderDateRange[1]) return false; }
+                      return true;
+                    })].sort((a, b) => ((b.isUrgent || b.isEmergency) ? 1 : 0) - ((a.isUrgent || a.isEmergency) ? 1 : 0))}
                     columns={orderColumns}
                     pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"
@@ -13113,7 +13160,7 @@ export default function Sales() {
               label: 'Complaints',
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
-                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                     <Select
                       allowClear
                       placeholder="Complaint Status"
@@ -13125,6 +13172,19 @@ export default function Sales() {
                       <Option value="Resolved">Resolved</Option>
                       <Option value="In Progress">In Progress</Option>
                     </Select>
+                    <DatePicker.RangePicker
+                      style={{ borderRadius: 8 }}
+                      onChange={(dates) => { setComplaintDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null); setComplaintsPage(1); }}
+                      allowClear
+                    />
+                    <Input
+                      prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                      placeholder="Search Order ID or Complaint ID..."
+                      value={complaintSearchText}
+                      onChange={(e) => { setComplaintSearchText(e.target.value); setComplaintsPage(1); }}
+                      allowClear
+                      style={{ width: 230, borderRadius: 8 }}
+                    />
                     <Button
                       icon={<WarningOutlined />}
                       style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
@@ -13134,7 +13194,7 @@ export default function Sales() {
                     </Button>
                   </div>
                   <Table
-                    dataSource={filtered(complaintsData)}
+                    dataSource={complaintsData}
                     columns={complaintColumns}
                     pagination={{
                       current: complaintsPage,
