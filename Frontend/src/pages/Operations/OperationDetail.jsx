@@ -287,7 +287,7 @@ export default function OperationDetail() {
           ? (it.displayUnitTab || displayUnitTabMap[itemDisplayUnit] || packTabFromString(itemDisplayUnit))
           : (it.displayUnitTab || '');
         const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, it.logoType);
-        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory };
+        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory, isIncludedInPersonalized };
       });
     })(),
     readiness: o.readiness || {},
@@ -323,6 +323,7 @@ export default function OperationDetail() {
     pincode: o.pincode || o.leadId?.pincode || '',
     detailedAddress: o.detailedAddress || o.leadId?.detailedAddress || '',
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
+    kitDisplayUnitType: o.kitDisplayUnitType || o.leadId?.kitDisplayUnitType || '',
     kitSticker: o.kitSticker || o.leadId?.kitSticker || '',
     kitLogo: o.kitLogo || o.leadId?.kitLogo || '',
     kitPrinting: o.kitPrinting || o.leadId?.kitPrinting || '',
@@ -897,11 +898,149 @@ export default function OperationDetail() {
       },
     },
     {
-      title: 'Kit Name',
+      // Own kit column — shows the item's direct kit name and that kit's order-level specs.
+      // When this kit is inside a personalized outer, the outer's details appear in the
+      // separate "Personalized Kit" column immediately to the right.
+      title: 'Kit',
       key: 'kitName',
       render: (_, record) => {
         const kitName = record.kitName || record.kitType;
-        return kitName ? <Tag color="purple" icon={<GiftOutlined />}>{kitName}</Tag> : '-';
+        if (!kitName) return <Text type="secondary">—</Text>;
+
+        const kitOrdersList = order?.kitOrders || [];
+        // Find this item's own kit config (match by kitId first, then by name)
+        const ownKitCfg = kitOrdersList.find((ko) =>
+          (record.kitId && ko.kitId === record.kitId)
+          || (!record.kitId && (ko.kitName === kitName || ko.kitType === kitName))
+        ) || null;
+
+        const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
+        // Use ONLY the own kit's displayUnit — do NOT fall back to record.displayUnit
+        // because for items inside a personalized order, record.displayUnit carries
+        // the outer container's DU (e.g. BOX) rather than the inner kit's own DU.
+        const kDU       = ownKitCfg?.displayUnit || '';
+        const kDUType   = ownKitCfg?.displayUnitType || '';
+        const kSize     = ownKitCfg?.size || '';
+        const kQty      = Number(ownKitCfg?.overallQty) || 0;
+        const kSpec     = ownKitCfg?.specification || '';
+        const kSticker  = ownKitCfg?.sticker || '';
+        const kLogo     = ownKitCfg?.logo || '';
+        const kPrinting = ownKitCfg?.printing || '';
+        const kIncludes = Array.isArray(ownKitCfg?.kitIncludes) ? ownKitCfg.kitIncludes : [];
+        const hasKitSpecs = kDU || kSize || kQty || kSticker || kLogo || kPrinting || kIncludes.length || kSpec;
+
+        return (
+          <Space direction="vertical" size={4} style={{ minWidth: 130 }}>
+            <Tag color="purple" icon={<GiftOutlined />} style={{ margin: 0 }}>{kitName}</Tag>
+            {hasKitSpecs && (
+              <Space direction="vertical" size={3} style={{ paddingLeft: 6, borderLeft: '2px solid rgba(114,46,209,0.3)', marginTop: 2 }}>
+                {kDU && (
+                  <Space size={4}>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Display Unit:</Text>
+                    <Tag color="purple" style={{ fontSize: 10, margin: 0 }}>{String(kDU).replace(/_/g, ' ')}</Tag>
+                  </Space>
+                )}
+                {kDUType && (
+                  <Space size={4}>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Type:</Text>
+                    <Tag color="magenta" style={{ fontSize: 10, margin: 0 }}>{String(kDUType).replace(/_/g, ' ')}</Tag>
+                  </Space>
+                )}
+                {kSize && (
+                  <Space size={4}>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Size:</Text>
+                    <Tag color="geekblue" style={{ fontSize: 10, margin: 0 }}>{kSize}</Tag>
+                  </Space>
+                )}
+                {kQty > 0 && (
+                  <Space size={4}>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Kits:</Text>
+                    <Text strong style={{ fontSize: 11 }}>{kQty}</Text>
+                  </Space>
+                )}
+                {(kSticker || kLogo || kPrinting) && (
+                  <Space wrap size={3}>
+                    {kSticker  && <Tag color={yn(kSticker)  ? 'green' : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Sticker: {yn(kSticker)  ? 'Yes' : 'No'}</Tag>}
+                    {kLogo     && <Tag color={yn(kLogo)     ? 'cyan'  : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Logo: {yn(kLogo)     ? 'Yes' : 'No'}</Tag>}
+                    {kPrinting && <Tag color={yn(kPrinting) ? 'blue'  : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Print: {yn(kPrinting) ? 'Yes' : 'No'}</Tag>}
+                  </Space>
+                )}
+                {kIncludes.length > 0 && (
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 9, display: 'block', marginBottom: 2 }}>Includes:</Text>
+                    <Space wrap size={2}>
+                      {kIncludes.map((v, i) => {
+                        const id  = typeof v === 'object' ? (v.id ?? v) : v;
+                        const qty = typeof v === 'object' ? v.qty : null;
+                        return <Tag key={i} color="purple" style={{ fontSize: 9, margin: 0, borderRadius: 10 }}>{String(id)}{qty && Number(qty) > 1 ? ` ×${qty}` : ''}</Tag>;
+                      })}
+                    </Space>
+                  </div>
+                )}
+                {kSpec && (
+                  <Tooltip title={kSpec}>
+                    <Text type="secondary" style={{ fontSize: 10, maxWidth: 150, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'help' }}>
+                      📝 {kSpec}
+                    </Text>
+                  </Tooltip>
+                )}
+              </Space>
+            )}
+          </Space>
+        );
+      },
+    },
+    {
+      // Shown only when this item's kit is packed inside an outer personalized container.
+      // IMPORTANT: the outer container (BOX, Ziplock, etc.) is stored at ORDER LEVEL —
+      //   order.kitDisplayUnit, order.kitSize, order.kitLogo, order.kitPrinting, etc.
+      // It is NOT a kitOrders entry. kitOrders entries are the INNER kits (e.g. Dental Kit
+      // whose displayUnit is 'Butter paper pouch', category='personalized' for composition).
+      // Looking up kitOrders.find(ko => ko.category==='personalized') would return the inner
+      // Dental Kit and leak its 'Butter paper pouch' here — hence the bug. Use order-level only.
+      title: 'Personalized Kit',
+      key: 'personalizedKit',
+      render: (_, record) => {
+        if (!record.isIncludedInPersonalized) return <Text type="secondary">—</Text>;
+
+        const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
+
+        // Outer container display unit (e.g. 'BOX', 'Ziplock Pouch') is always order-level
+        const pDU       = order?.kitDisplayUnit || '';
+        const pDUType   = order?.kitDisplayUnitType || '';
+        const pName     = pDU || 'Personalized Kit';
+        const pSize     = order?.kitSize || '';
+        const pSticker  = order?.kitSticker  || '';
+        const pLogo     = order?.kitLogo     || '';
+        const pPrinting = order?.kitPrinting || '';
+
+        return (
+          <Space direction="vertical" size={4} style={{ minWidth: 150 }}>
+            {/* Outer container name — the order-level display unit type (e.g. BOX) */}
+            <Tag color="magenta" icon={<GiftOutlined />} style={{ margin: 0 }}>{pName}</Tag>
+            <Space direction="vertical" size={3} style={{ paddingLeft: 6, borderLeft: '2px solid rgba(235,47,150,0.3)', marginTop: 2 }}>
+              {pDUType && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>Type:</Text>
+                  <Tag color="magenta" style={{ fontSize: 10, margin: 0 }}>{String(pDUType).replace(/_/g, ' ')}</Tag>
+                </Space>
+              )}
+              {pSize && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>Size:</Text>
+                  <Tag color="geekblue" style={{ fontSize: 10, margin: 0 }}>{pSize}</Tag>
+                </Space>
+              )}
+              {(pSticker || pLogo || pPrinting) && (
+                <Space wrap size={3}>
+                  {pSticker  && <Tag color={yn(pSticker)  ? 'green' : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Sticker: {yn(pSticker)  ? 'Yes' : 'No'}</Tag>}
+                  {pLogo     && <Tag color={yn(pLogo)     ? 'cyan'  : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Logo: {yn(pLogo)     ? 'Yes' : 'No'}</Tag>}
+                  {pPrinting && <Tag color={yn(pPrinting) ? 'blue'  : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Print: {yn(pPrinting) ? 'Yes' : 'No'}</Tag>}
+                </Space>
+              )}
+            </Space>
+          </Space>
+        );
       },
     },
     {
