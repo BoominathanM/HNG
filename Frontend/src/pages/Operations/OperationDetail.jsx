@@ -290,7 +290,9 @@ export default function OperationDetail() {
           ? (it.displayUnitTab || displayUnitTabMap[itemDisplayUnit] || packTabFromString(itemDisplayUnit))
           : (it.displayUnitTab || '');
         const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, it.logoType);
-        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory, isIncludedInPersonalized };
+        const logo = normYNOps(it.logo || (isKitItem ? kitCfg?.logo : ''));
+        const displayUnitType = it.displayUnitType || (isKitItem ? kitCfg?.displayUnitType : '') || '';
+        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, logo, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitType, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory, isIncludedInPersonalized };
       });
     })(),
     readiness: o.readiness || {},
@@ -326,7 +328,7 @@ export default function OperationDetail() {
     pincode: o.pincode || o.leadId?.pincode || '',
     detailedAddress: o.detailedAddress || o.leadId?.detailedAddress || '',
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
-    kitDisplayUnitType: o.kitDisplayUnitType || o.leadId?.kitDisplayUnitType || '',
+    kitDisplayUnitType: o.kitDisplayUnitType || (Array.isArray(o.kitOrders) && o.kitOrders[0]?.displayUnitType) || o.leadId?.kitDisplayUnitType || (Array.isArray(o.leadId?.kitOrders) && o.leadId?.kitOrders[0]?.displayUnitType) || '',
     kitSticker: o.kitSticker || o.leadId?.kitSticker || '',
     kitLogo: o.kitLogo || o.leadId?.kitLogo || '',
     kitPrinting: o.kitPrinting || o.leadId?.kitPrinting || '',
@@ -909,15 +911,111 @@ export default function OperationDetail() {
       },
     },
     {
-      // Own kit column — shows the item's direct kit name and that kit's order-level specs.
-      // When this kit is inside a personalized outer, the outer's details appear in the
-      // separate "Personalized Kit" column immediately to the right.
-      title: 'Kit',
+      // Kit / Product Spec column — shows kit card for kit items; product spec card for
+      // separate products (those with no kit). Both use the same visual style so every
+      // row in the spec table has a rich, scannable summary.
+      title: 'Kit / Spec',
       key: 'kitName',
       render: (_, record) => {
+        const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
         const kitName = record.kitName || record.kitType;
-        if (!kitName) return <Text type="secondary">—</Text>;
 
+        // ── SEPARATE PRODUCT (no kit) ─────────────────────────────────────────
+        if (!kitName) {
+          const pSize     = record.size || '';
+          const pPacking  = record.packingMaterial || record.packaging || '';
+          const pMat      = record.materialCategory || record.material || '';
+          const pBrand    = record.brand || '';
+          const pSticker  = record.sticker || '';
+          const pLogo     = record.logo || '';
+          const pPrinting = record.printing || '';
+          const pSpec     = record.specification || record.specs || '';
+          const pOther    = record.otherSpecs || '';
+          // Dynamic product attributes (shape, fragrance, colour, etc.)
+          const SKIP_PROD = new Set([
+            'itemName','name','product','kitType','isKit','kitName','kitId','qty','rate','price',
+            'gst','gstPercent','lineTotal','logoType','boxes','packaging','packingMaterial',
+            'material','materialCategory','hsnCode','discountPercent','discount','logo','sticker',
+            'brand','size','defaultSize','specs','displayType','itemId','_id','key','amount',
+            'rateValue','total','inventoryStock','printing','stickerPrinting','isEmergencyProduct',
+            'isEmergencyGated','productAttributes','attachments','category','displayUnit',
+            'displayUnitType','displayUnitTab','packingMaterialTab','isIncludedInPersonalized',
+            'specification','otherSpecs','kitIncludes','kitIncludesQty','isKit',
+          ]);
+          const recAttrs = (record.productAttributes && typeof record.productAttributes === 'object' && !Array.isArray(record.productAttributes))
+            ? Object.entries(record.productAttributes).filter(([k, v]) => !SKIP_PROD.has(k) && v != null && v !== '' && typeof v !== 'object')
+            : [];
+          const flatAttrs = Object.entries(record).filter(([k, v]) => {
+            if (SKIP_PROD.has(k)) return false;
+            if (v == null || v === '') return false;
+            if (typeof v === 'object') return false;
+            return true;
+          });
+          const mergedAttrs = new Map([...recAttrs, ...flatAttrs]);
+          const prettyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
+          const hasAny = pSize || pPacking || pMat || pBrand || pSticker || pLogo || pPrinting || pSpec || pOther || mergedAttrs.size > 0;
+          if (!hasAny) return <Text type="secondary">—</Text>;
+          return (
+            <Space direction="vertical" size={3} style={{ minWidth: 130, paddingLeft: 6, borderLeft: '2px solid rgba(24,144,255,0.3)' }}>
+              {pSize && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>Size:</Text>
+                  <Tag color="geekblue" style={{ fontSize: 10, margin: 0 }}>{pSize}</Tag>
+                </Space>
+              )}
+              {pPacking && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>Packing:</Text>
+                  <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>{pPacking}</Tag>
+                </Space>
+              )}
+              {pMat && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>Material:</Text>
+                  <Tag color="cyan" style={{ fontSize: 10, margin: 0 }}>{pMat}</Tag>
+                </Space>
+              )}
+              {pBrand && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>Brand:</Text>
+                  <Tag style={{ fontSize: 10, margin: 0 }}>{pBrand}</Tag>
+                </Space>
+              )}
+              {(pSticker || pLogo || pPrinting) && (
+                <Space wrap size={3}>
+                  {pSticker && <Tag color={yn(pSticker) ? 'green' : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Sticker: {yn(pSticker) ? 'Yes' : 'No'}</Tag>}
+                  {pLogo    && <Tag color={yn(pLogo)    ? 'cyan'  : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Logo: {yn(pLogo)    ? 'Yes' : 'No'}</Tag>}
+                  {pPrinting && <Tag color={yn(pPrinting) ? 'blue' : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Print: {yn(pPrinting) ? 'Yes' : 'No'}</Tag>}
+                </Space>
+              )}
+              {mergedAttrs.size > 0 && (
+                <Space wrap size={3}>
+                  {[...mergedAttrs.entries()].map(([k, v]) => (
+                    <Tag key={k} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>
+                      {prettyKey(k)}: {String(v)}
+                    </Tag>
+                  ))}
+                </Space>
+              )}
+              {pSpec && (
+                <Tooltip title={pSpec}>
+                  <Text type="secondary" style={{ fontSize: 10, maxWidth: 160, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'help' }}>
+                    📝 {pSpec}
+                  </Text>
+                </Tooltip>
+              )}
+              {pOther && (
+                <Tooltip title={pOther}>
+                  <Text type="secondary" style={{ fontSize: 10, maxWidth: 160, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'help' }}>
+                    📎 {pOther}
+                  </Text>
+                </Tooltip>
+              )}
+            </Space>
+          );
+        }
+
+        // ── KIT ITEM ──────────────────────────────────────────────────────────
         const kitOrdersList = order?.kitOrders || [];
         // Find this item's own kit config (match by kitId first, then by name)
         const ownKitCfg = kitOrdersList.find((ko) =>
@@ -925,7 +1023,6 @@ export default function OperationDetail() {
           || (!record.kitId && (ko.kitName === kitName || ko.kitType === kitName))
         ) || null;
 
-        const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
         // Use ONLY the own kit's displayUnit — do NOT fall back to record.displayUnit
         // because for items inside a personalized order, record.displayUnit carries
         // the outer container's DU (e.g. BOX) rather than the inner kit's own DU.
@@ -1018,7 +1115,9 @@ export default function OperationDetail() {
 
         // Outer container display unit (e.g. 'BOX', 'Ziplock Pouch') is always order-level
         const pDU       = order?.kitDisplayUnit || '';
-        const pDUType   = order?.kitDisplayUnitType || '';
+        const pDUType   = order?.kitDisplayUnitType
+          || (Array.isArray(order?.kitOrders) && order.kitOrders[0]?.displayUnitType)
+          || '';
         const pName     = pDU || 'Personalized Kit';
         const pSize     = order?.kitSize || '';
         const pSticker  = order?.kitSticker  || '';
@@ -1068,51 +1167,6 @@ export default function OperationDetail() {
             {meta.label}
           </Tag>
         );
-      },
-    },
-    {
-      // Display unit for kit items (personalized & separate kits alike) — drives the Box/Ziplock/
-      // Butter routing, so showing it here makes the kit's packaging destination explicit.
-      title: 'Display Unit',
-      key: 'displayUnit',
-      render: (_, record) => {
-        const isKitItem = !!(record.isKit || record.kitType);
-        const du = record.displayUnit || (isKitItem ? (order?.kitDisplayUnit || '') : '');
-        if (!du) return '-';
-        return (
-          <Space direction="vertical" size={0}>
-            <Tag color="purple" style={{ margin: 0 }}>{String(du).replace(/_/g, ' ')}</Tag>
-            {record.displayUnitTab && <Text type="secondary" style={{ fontSize: 10 }}>{record.displayUnitTab}</Text>}
-          </Space>
-        );
-      },
-    },
-    { title: 'Print Type', dataIndex: 'logoType', render: (value) => value ? <Tag color="purple">{value}</Tag> : '-' },
-    {
-      title: 'Sticker',
-      key: 'sticker',
-      render: (_, record) => {
-        const val = (record.sticker || order?.kitSticker || '').toUpperCase();
-        if (!val) return '-';
-        return <Tag color={val === 'YES' ? 'green' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
-      },
-    },
-    {
-      title: 'Logo',
-      key: 'logo',
-      render: (_, record) => {
-        const val = (record.logo || order?.kitLogo || '').toUpperCase();
-        if (!val) return '-';
-        return <Tag color={val === 'YES' ? 'cyan' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
-      },
-    },
-    {
-      title: 'Printing',
-      key: 'printing',
-      render: (_, record) => {
-        const val = (record.printing || order?.kitPrinting || '').toUpperCase();
-        if (!val) return '-';
-        return <Tag color={val === 'YES' ? 'green' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
       },
     },
     {

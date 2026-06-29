@@ -343,6 +343,7 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     productType: req.body.productType || lead.productType,
     kitDisplayUnit: req.body.kitDisplayUnit || lead.kitDisplayUnit || lead.displayUnit || '',
     displayUnit: req.body.displayUnit || lead.displayUnit || lead.kitDisplayUnit || '',
+    kitDisplayUnitType: req.body.kitDisplayUnitType || lead.kitDisplayUnitType || '',
     kitSize: req.body.kitSize || lead.kitSize || '',
     kitSticker: req.body.kitSticker || lead.kitSticker || undefined,
     kitLogo: req.body.kitLogo || lead.kitLogo || undefined,
@@ -530,6 +531,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     // Display/kit fields chosen during lead creation
     displayUnit: resolveField(negObj.displayUnit, lead?.displayUnit),
     kitDisplayUnit: resolveField(negObj.kitDisplayUnit, lead?.kitDisplayUnit),
+    kitDisplayUnitType: resolveField(negObj.kitDisplayUnitType, lead?.kitDisplayUnitType),
     kitSize: resolveField(negObj.kitSize, lead?.kitSize),
     selectedKit: resolveField(negObj.selectedKit, lead?.selectedKit),
     orderCategory,

@@ -319,6 +319,7 @@ export default function Operations() {
           displayUnit: rawItem.displayUnit || prod.displayUnit || '',
           size: rawItem.size || prod.size || '',
           sticker: rawItem.sticker || prod.sticker || '',
+          logo: rawItem.logo || prod.logo || '',
           printing: rawItem.printing || prod.printing || '',
           packingMaterial: rawItem.packingMaterial || rawItem.packaging || prod.packingMaterial || prod.packaging || '',
         };
@@ -327,12 +328,14 @@ export default function Operations() {
         const kitCfg = isKitItem
           ? (kitCfgById[item.kitId] || (kitOrdersList.length === 1 ? kitOrdersList[0] : null))
           : null;
-        // Normalize sticker/printing: old DB rows may store lowercase 'yes'/'no';
+        // Normalize sticker/logo/printing: old DB rows may store lowercase 'yes'/'no';
         // the Sticker-queue checks (item.sticker === 'YES') require uppercase.
-        // For kit items, fall back to the kit-level sticker/printing (entered in the per-kit
+        // For kit items, fall back to the kit-level value (entered in the per-kit
         // Order Details card) so a Sticker=Yes kit still goes through the Print tab first.
         const sticker = normYNOps(item.sticker || item.stickerPrinting || (isKitItem ? kitCfg?.sticker : ''));
+        const logo = normYNOps(item.logo || (isKitItem ? kitCfg?.logo : ''));
         const printing = normYNOps(item.printing || (isKitItem ? kitCfg?.printing : ''));
+        const displayUnitType = item.displayUnitType || (isKitItem ? kitCfg?.displayUnitType : '') || '';
         const pmRaw = item.packingMaterial || item.packaging || '';
         // Config lookup first; string-match fallback for items without a config entry
         // (e.g. orders from before packing config was set up, or unregistered material names).
@@ -370,9 +373,11 @@ export default function Operations() {
           ...item,
           itemName: item.itemName || item.name,
           sticker,
+          logo,
           printing,
           packingMaterialTab,
           displayUnit: itemDisplayUnit,
+          displayUnitType,
           displayUnitTab: itemDisplayUnitTab,
           logoType,
           category: itemCategory,
