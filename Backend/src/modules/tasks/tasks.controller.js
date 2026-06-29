@@ -1,5 +1,6 @@
 const Task = require('../../models/Task');
 const Order = require('../../models/Order');
+const Lead = require('../../models/Lead');
 const DispatchRecord = require('../../models/DispatchRecord');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
@@ -268,6 +269,70 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
     notifyRoles({ modules: ['Dispatch Team', 'Operations'], type: 'dispatch', title: 'Order Ready for Dispatch', message: `All tasks complete — order is now Dispatch Ready`, link: '/dispatch' }).catch(() => {});
   }
   res.status(200).json({ success: true, data: task, orderForwarded });
+});
+
+// Dispatch the order linked to a task, straight from Task Management.
+// Requires every sibling task on the order to be Done and (unless it's a sample
+// order) the order to be fully paid. Marks the DispatchRecord + Order + Lead as
+// Dispatched so the green "Dispatched ✓" state appears everywhere.
+exports.dispatchOrder = asyncHandler(async (req, res, next) => {
+  const task = await Task.findById(req.params.id);
+  if (!task) return next(new AppError('Task not found', 404));
+  if (!task.orderId) return next(new AppError('This task is not linked to an order', 400));
+
+  // Gate 1 — all tasks for the order must be completed.
+  const siblings = await Task.find({ orderId: task.orderId });
+  const allDone = siblings.length > 0 && siblings.every((t) => t.status === 'Done');
+  if (!allDone) {
+    const pending = siblings.filter((t) => t.status !== 'Done').length;
+    return next(new AppError(`${pending} task(s) on this order are not yet completed. Complete all tasks before dispatch.`, 400));
+  }
+
+  const order = await Order.findById(task.orderId).populate('leadId', 'leadType');
+  if (!order) return next(new AppError('Order not found', 404));
+  if (order.status === 'Dispatched') {
+    return next(new AppError('This order has already been dispatched.', 400));
+  }
+
+  // Gate 2 — payment must be settled, unless this is a sample order.
+  const isSample = order.orderCategory === 'SAMPLE' || order.leadId?.leadType === 'SAMPLE';
+  if (!isSample) {
+    const payStatus = await resolveOrderPaymentStatus(order._id).catch(() => 'Pending');
+    if (payStatus !== 'Paid') {
+      return next(new AppError(`Payment is "${payStatus}". Dispatch requires full payment or an approved Emergency Dispatch.`, 400));
+    }
+  }
+
+  // Find (or create) the DispatchRecord and mark it dispatched.
+  let dispatch = await DispatchRecord.findOne({ orderId: order._id });
+  if (!dispatch) {
+    const dispatchCode = await generateCode('DISP');
+    dispatch = await DispatchRecord.create({
+      dispatchCode,
+      orderId: order._id,
+      dispatchType: order.deliveryType === 'Partial' ? 'Partial Dispatch' : 'Full Dispatch',
+      items: (order.items || []).map((it) => ({
+        itemId: it.itemId,
+        itemName: it.itemName,
+        qtyOrdered: it.qty,
+        qtyDispatched: it.qty,
+      })),
+      createdBy: req.user._id,
+    });
+  }
+  dispatch.status = 'Dispatched';
+  dispatch.dispatchedAt = Date.now();
+  await dispatch.save({ validateBeforeSave: false });
+
+  // Mark the order and its lead as Dispatched.
+  await Order.findByIdAndUpdate(order._id, { status: 'Dispatched', taskStatus: 'Completed' });
+  if (order.leadId) {
+    await Lead.findByIdAndUpdate(order.leadId._id || order.leadId, { status: 'Dispatched' });
+  }
+
+  notifyRoles({ modules: ['Dispatch Team', 'Operations', 'Task Management'], type: 'dispatch', title: 'Order Dispatched', message: `Order ${order.orderCode || ''} dispatched from Task Management`, link: '/dispatch' }).catch(() => {});
+
+  res.status(200).json({ success: true, data: { order, dispatch } });
 });
 
 exports.approveEmergency = asyncHandler(async (req, res, next) => {

@@ -18,6 +18,7 @@ router.delete('/time-config/:id', timeConfigCtrl.remove);
 router.post('/', ctrl.createTask);
 router.get('/:id', ctrl.getTask);
 router.patch('/:id/status', ctrl.updateTaskStatus);
+router.patch('/:id/dispatch', ctrl.dispatchOrder);
 router.patch('/:id/approve-emergency', ctrl.approveEmergency);
 router.patch('/:id/request-emergency', ctrl.requestEmergencyDispatch);
 router.patch('/:id/approve-emergency/sales', ctrl.approveEmergencySales);

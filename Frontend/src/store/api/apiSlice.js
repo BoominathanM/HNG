@@ -655,6 +655,10 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/tasks/${id}/approve-emergency`, method: 'patch' }),
       invalidatesTags: ['Tasks'],
     }),
+    dispatchTaskOrder: builder.mutation({
+      query: (id) => ({ url: `/tasks/${id}/dispatch`, method: 'patch' }),
+      invalidatesTags: ['Tasks', 'Orders', 'Operations', 'Dispatch'],
+    }),
     requestEmergencyDispatch: builder.mutation({
       query: ({ id, reason }) => ({ url: `/tasks/${id}/request-emergency`, method: 'patch', data: { reason } }),
       invalidatesTags: ['Tasks', 'Operations', 'Orders'],
@@ -1170,6 +1174,7 @@ export const {
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useApproveEmergencyMutation,
+  useDispatchTaskOrderMutation,
   useRequestEmergencyDispatchMutation,
   useApproveEmergencySalesHeadMutation,
   useApproveEmergencyOpsHeadMutation,

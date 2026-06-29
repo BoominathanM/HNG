@@ -35,7 +35,12 @@ import {
   useGetCompanySettingsQuery,
   useGetSalesOrdersQuery,
   useUpdateSalesOrderMutation,
+  useUpdateSalesQuotationMutation,
   useGetKitsQuery,
+  useUpdateLeadMutation,
+  useGetLeadsQuery,
+  useUpdateNegotiationMutation,
+  useGetNegotiationsQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -321,14 +326,17 @@ const computeKitTaxable = (rec) => {
 };
 
 const sumPaid = (...sources) => {
+  // Take the MAX across ALL sources (collection sum and stored paidAmount) so a payment
+  // recorded in Sales (only on the lead) is reflected even if the order/quotation collection
+  // still shows the old lower amount.
+  let maxPaid = 0;
   for (const src of sources) {
     if (!src) continue;
     const coll = (src.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
-    if (coll > 0) return r2(coll);
-    const paid = Number(src.paidAmount) || Number(src.totalPaid) || Number(src.amountCollected) || Number(src.advancePaidAmount) || Number(src.advancePaid) || Number(src.advanceAmount) || 0;
-    if (paid > 0) return r2(paid);
+    const stored = Number(src.paidAmount) || Number(src.totalPaid) || Number(src.amountCollected) || Number(src.advancePaidAmount) || Number(src.advancePaid) || Number(src.advanceAmount) || 0;
+    maxPaid = Math.max(maxPaid, coll, stored);
   }
-  return 0;
+  return r2(maxPaid);
 };
 
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
@@ -364,6 +372,8 @@ export default function Billing() {
   const { data: companySettingsData } = useGetCompanySettingsQuery();
   const { data: salesOrdersRaw } = useGetSalesOrdersQuery({ limit: 1000 });
   const { data: kitsRaw } = useGetKitsQuery();
+  const { data: leadsRaw } = useGetLeadsQuery({ limit: 1000 });
+  const { data: negotiationsRaw } = useGetNegotiationsQuery({ limit: 1000 });
   const kits = kitsRaw?.data || [];
   const invoiceSettings = companySettingsData?.data || {};
   const [createInvoiceMutation] = useCreateInvoiceMutation();
@@ -372,6 +382,9 @@ export default function Billing() {
   const [createBillingPartyMutation] = useCreateBillingPartyMutation();
   const [updateInvoiceGstMutation] = useUpdateInvoiceGstMutation();
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
+  const [updateSalesQuotationMutation] = useUpdateSalesQuotationMutation();
+  const [updateLeadMutation] = useUpdateLeadMutation();
+  const [updateNegotiationMutation] = useUpdateNegotiationMutation();
 
   // Map each lead id → its converted sales order (the order carries the resolved kitPrice
   // that produces the "Amount to Pay" Sales shows; the lead's kitPrice is often stale).
@@ -440,6 +453,12 @@ export default function Billing() {
       : (inv.status || 'Unpaid');
     return {
       key: inv._id,
+      // Link IDs — required by syncBillingChain to propagate payments to Sales records
+      leadId: linkedLead?._id || quotationLead?._id || linkedOrder?.leadId || null,
+      leadCode: linkedLead?.leadCode || quotationLead?.leadCode || '',
+      orderId: fullOrder?._id || linkedOrder?._id || (typeof inv.orderId === 'string' ? inv.orderId : null),
+      quotationId: linkedQuotation?._id || (typeof inv.quotationId === 'string' ? inv.quotationId : null),
+      negotiationId: linkedOrder?.negotiationId || linkedLead?.negotiationId || null,
       inv: inv.invoiceNumber,
       client: inv.partyId?.name || '—',
       partyPhone: inv.partyId?.phone || '',
@@ -542,6 +561,9 @@ export default function Billing() {
       key: q._id,
       orderId: linkedOrder?._id,
       docType: 'Quotation',
+      // Link IDs — required by syncBillingChain to propagate payment to Sales records
+      leadId: q.leadId,
+      leadCode: q.leadCode || '',
       quot: q.quotCode,
       client: clientDisplay,
       order: q.orderId?.orderCode || '—',
@@ -638,7 +660,10 @@ export default function Billing() {
     const composition = buildDocComposition(o, kits);
     const total = r2(kitTotal > 0 ? kitTotal : (Number(o.total) || (subtotal + effectiveGst + fwdAmt)));
     const collTotal = r2((o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0));
-    const paid = r2(collTotal || Number(o.paidAmount) || Number(o.advancePaid) || Number(o.advancePaidAmount) || 0);
+    // Use MAX so a paidAmount synced from Sales (which only updates the scalar, not the collection)
+    // still shows correctly even when the order collection only has the older entries.
+    const storedPaid = Number(o.paidAmount) || Number(o.advancePaid) || Number(o.advancePaidAmount) || 0;
+    const paid = r2(Math.max(collTotal, storedPaid));
     const balance = Math.max(0, total - paid);
     const halfGst = r2(effectiveGst / 2);
     const status = total > 0
@@ -651,6 +676,11 @@ export default function Billing() {
     return {
       key: o._id,
       docType: 'Order',
+      // Link IDs — required by syncBillingChain to propagate payment to Sales records
+      leadId: o.leadId,
+      leadCode: o.leadCode || '',
+      quotationId: o.quotationId,
+      negotiationId: o.negotiationId,
       // Use 'quot' so the shared column (dataIndex: 'quot') renders the order code
       quot: o.orderCode,
       inv: o.orderCode,
@@ -954,24 +984,120 @@ export default function Billing() {
     setRecordPayOpen(true);
   };
 
+  // Propagate a new paidAmount to every linked record in the lead→quotation→negotiation→order chain.
+  // Also appends a paymentCollection entry to the linked ORDER so Sales' combinedPaymentCollection
+  // shows the Billing payment without requiring a full page refresh.
+  const syncBillingChain = async (sourceDoc, newPaid, paymentEntry) => {
+    if (!newPaid) return;
+    const scalarPatch = { paidAmount: newPaid, advancePaid: newPaid };
+    const allLeads = leadsRaw?.data || [];
+    const allQuots = quotationsData?.data || [];
+    const allNegs = negotiationsRaw?.data || [];
+    const allOrders = salesOrdersRaw?.data || [];
+
+    // Resolve IDs from source document
+    const leadId   = String(sourceDoc.leadId?._id || sourceDoc.leadId || '');
+    const leadCode = sourceDoc.leadCode || '';
+    const quotId   = String(sourceDoc.quotationId?._id || sourceDoc.quotationId || '');
+    const negId    = String(sourceDoc.negotiationId?._id || sourceDoc.negotiationId || '');
+    const orderId  = String(sourceDoc.orderId?._id || sourceDoc.orderId || sourceDoc._id || sourceDoc.key || '');
+
+    const syncIfHigher = async (record, mutFn, extraPatch) => {
+      if (!record) return;
+      const recId = String(record._id || record.key || record.id || '');
+      if (!recId || recId === String(sourceDoc._id || sourceDoc.key || '')) return;
+      if (newPaid > Number(record.paidAmount || 0)) {
+        await mutFn({ id: recId, ...scalarPatch, ...(extraPatch || {}) }).unwrap().catch(() => {});
+      }
+    };
+
+    // Sync scalar paidAmount to lead
+    const chainLead = leadId
+      ? allLeads.find(l => String(l._id || l.key) === leadId)
+      : leadCode ? allLeads.find(l => l.leadCode === leadCode) : null;
+    await syncIfHigher(chainLead, updateLeadMutation);
+
+    // Sync scalar paidAmount to quotation
+    const chainQuot = quotId
+      ? allQuots.find(q => String(q._id || q.key) === quotId)
+      : leadId ? allQuots.find(q => String(q.leadId?._id || q.leadId) === leadId)
+        : leadCode ? allQuots.find(q => q.leadCode === leadCode) : null;
+    await syncIfHigher(chainQuot, updateSalesQuotationMutation);
+
+    // Sync scalar paidAmount to negotiation
+    const chainNeg = negId
+      ? allNegs.find(n => String(n._id || n.key) === negId)
+      : quotId ? allNegs.find(n => String(n.quotationId?._id || n.quotationId) === quotId)
+        : leadId ? allNegs.find(n => String(n.leadId?._id || n.leadId) === leadId) : null;
+    await syncIfHigher(chainNeg, updateNegotiationMutation);
+
+    // Sync to order (only when source is quotation/invoice, not order itself)
+    if (sourceDoc.docType !== 'Order') {
+      const chainOrder = allOrders.find(o => {
+        const oLid = String(o.leadId?._id || o.leadId || '');
+        const oId  = String(o._id || o.key || '');
+        return oId === orderId ||
+               (leadId && oLid === leadId) || (leadCode && o.leadCode === leadCode) ||
+               (quotId && String(o.quotationId?._id || o.quotationId) === quotId) ||
+               (negId  && String(o.negotiationId?._id || o.negotiationId) === negId);
+      });
+      // Also append the paymentCollection entry to the order so Sales shows it immediately
+      const orderEntry = paymentEntry || null;
+      const orderExtraPatch = orderEntry && chainOrder
+        ? { paymentCollection: [...(chainOrder.paymentCollection || []), orderEntry] }
+        : {};
+      await syncIfHigher(chainOrder, updateSalesOrderMutation, orderExtraPatch);
+    }
+  };
+
   const handleSavePayment = async () => {
     if (!recordPayInv?.key) { enqueueSnackbar('No invoice selected', { variant: 'error' }); return; }
+    const newEntry = {
+      paidAmount: (Number(payAmount) || 0) - (Number(payDiscount) || 0),
+      paymentMode: payMode || 'Cash',
+      paymentMethod: payMode || 'Cash',
+      note: payNote || '',
+      notes: payNote || '',
+      paymentDate: new Date().toISOString(),
+      recordedAt: new Date().toISOString(),
+      date: new Date().toISOString(),
+    };
+    const net = newEntry.paidAmount;
     try {
       if (recordPayInv.docType === 'Order') {
-        const net = (Number(payAmount) || 0) - (Number(payDiscount) || 0);
+        // Direct order payment (record on Sales Order)
         const existing = recordPayInv.paymentCollection || [];
         const newPaid = existing.reduce((s, e) => s + Number(e.paidAmount || 0), 0) + net;
         const newBalance = Math.max(0, (recordPayInv.total || 0) - newPaid);
+        const newStatus = (recordPayInv.total || 0) > 0 && newPaid >= (recordPayInv.total || 0) ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Unpaid';
         await updateSalesOrderMutation({
           id: recordPayInv.key,
           paidAmount: newPaid,
+          advancePaid: newPaid,
           balance: newBalance,
-          paymentCollection: [
-            ...existing,
-            { paidAmount: net, paymentMode: payMode || 'Cash', note: payNote || '', date: new Date().toISOString() },
-          ],
+          paymentStatus: newStatus,
+          paymentCollection: [...existing, newEntry],
         }).unwrap();
+        // Pass newEntry so syncBillingChain can also add it to the linked order's collection
+        await syncBillingChain(recordPayInv, newPaid, newEntry);
+      } else if (recordPayInv.docType === 'Quotation') {
+        // Quotation payment — record directly on the quotation
+        const existing = recordPayInv.paymentCollection || [];
+        const newPaid = existing.reduce((s, e) => s + Number(e.paidAmount || 0), 0) + net;
+        const newBalance = Math.max(0, (recordPayInv.total || 0) - newPaid);
+        const newStatus = (recordPayInv.total || 0) > 0 && newPaid >= (recordPayInv.total || 0) ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Unpaid';
+        await updateSalesQuotationMutation({
+          id: recordPayInv.key,
+          paidAmount: newPaid,
+          advancePaid: newPaid,
+          balance: newBalance,
+          status: newStatus,
+          paymentCollection: [...existing, newEntry],
+        }).unwrap();
+        // Pass newEntry so the linked order also gets the collection entry
+        await syncBillingChain(recordPayInv, newPaid, newEntry);
       } else {
+        // Invoice payment (formal invoice via Billing module)
         await recordPaymentMutation({
           id: recordPayInv.key,
           amount: Number(payAmount) || 0,
@@ -987,6 +1113,13 @@ export default function Billing() {
           ...(payChequeDate ? { chequeDate: payChequeDate.format ? payChequeDate.format('YYYY-MM-DD') : payChequeDate } : {}),
           ...(payParty?.key ? { partyId: payParty.key } : {}),
         }).unwrap();
+        // Sync to linked Sales records — use advance (= total paid so far) as the base
+        if (recordPayInv.orderId || recordPayInv.quotationId || recordPayInv.leadId) {
+          // recordPayInv.advance = invPaid (total paid before this payment)
+          const existingPaid = Number(recordPayInv.advance || recordPayInv.paidAmount || 0);
+          const newPaid = existingPaid + net;
+          await syncBillingChain(recordPayInv, newPaid, newEntry);
+        }
       }
       enqueueSnackbar(`Payment of ₹${(payAmount || 0).toLocaleString()} recorded successfully`, { variant: 'success' });
       setRecordPayOpen(false);
@@ -1288,6 +1421,7 @@ export default function Billing() {
 
       {/* Table */}
       <Tabs
+        activeKey={activeKeyFor(activeTab)}
         onChange={(k) => { setActiveTab(k); setQuotStatusFilter('all'); }}
         items={filterTabs([
           {

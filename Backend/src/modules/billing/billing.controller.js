@@ -187,19 +187,34 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
   }
 
   const invoiceTotal = amount || quotation.total;
+  const advanceFromCollection = (quotation.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+  const advanceAmount = advanceFromCollection || Number(quotation.paidAmount) || Number(quotation.advancePaid) || 0;
+
+  // Map quotation items safely: ensure each item has the required Invoice schema fields.
+  // Kit orders may store itemName in kitName; price/qty might be 0 (valid) but must not be undefined.
+  const mappedItems = (quotation.items || []).map((i) => {
+    const raw = i.toObject ? i.toObject() : { ...i };
+    return {
+      ...raw,
+      itemName: raw.itemName || raw.kitName || raw.name || 'Item',
+      price: Number(raw.price ?? raw.kitPrice ?? 0),
+      qty: Number(raw.qty ?? raw.overallQty ?? 1),
+    };
+  });
+
   const invoice = await Invoice.create({
     invoiceNumber: invCode,
     partyId: req.body.partyId,
     orderId: req.body.orderId || linkedOrder?._id,
     quotationId: quotation._id,
-    invoiceType: quotation.type,
-    subtotal: quotation.amount,
-    gstAmount: quotation.gstAmount,
+    invoiceType: quotation.type || 'GST',
+    subtotal: Number(quotation.amount) || 0,
+    gstAmount: Number(quotation.gstAmount) || 0,
     total: invoiceTotal,
-    advanceAmount: (quotation.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0) || quotation.paidAmount || quotation.advancePaid,
-    balanceDue: invoiceTotal - ((quotation.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0) || quotation.paidAmount || quotation.advancePaid || 0),
+    advanceAmount,
+    balanceDue: Math.max(0, invoiceTotal - advanceAmount),
     previousBalance,
-    items: quotation.items,
+    items: mappedItems,
     createdBy: req.user._id,
   });
 

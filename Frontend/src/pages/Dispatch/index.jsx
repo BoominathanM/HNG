@@ -420,7 +420,7 @@ export default function Dispatch() {
 
   // ── Product verify expanded row ────────────────────────────────────────────
   const renderProductPanel = (record) => {
-    const state = productVerify[record.id] || {};
+    const state = productVerify[record.key] || {};
     const products = (record.items || []).map((it, idx) => ({ key: idx, name: it.itemName || it.name || '—', qty: it.qtyDispatched || it.qtyOrdered || 0, boxes: 0 }));
     const verified = state.verifiedProducts || new Set();
 
@@ -444,7 +444,6 @@ export default function Dispatch() {
           columns={[
             { title: 'Product', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
             { title: 'Qty', dataIndex: 'qty', render: (v) => v.toLocaleString() },
-            { title: 'Rate (₹)', dataIndex: 'rate', render: (v) => `₹${v}` },
             { title: 'Boxes', dataIndex: 'boxes', render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space> },
             {
               title: 'Status', key: 'status',
@@ -460,7 +459,7 @@ export default function Dispatch() {
                   icon={<CheckSquareOutlined />}
                   type={verified.has(row.key) ? 'default' : 'primary'}
                   style={verified.has(row.key) ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                  onClick={() => toggleVerifyProduct(record.id, row.key)}
+                  onClick={() => toggleVerifyProduct(record.key, row.key)}
                 >
                   {verified.has(row.key) ? 'Unverify' : 'Verify'}
                 </Button>
@@ -524,11 +523,11 @@ export default function Dispatch() {
       render: (_, r) => (
         <Select
           size="small"
-          value={productVerify[r.id]?.dispatchType || undefined}
+          value={productVerify[r.key]?.dispatchType || undefined}
           placeholder="Select type"
           style={{ width: 145 }}
           onClick={(e) => e.stopPropagation()}
-          onChange={(v) => setDispatchType(r.id, v)}
+          onChange={(v) => setDispatchType(r.key, v)}
         >
           <Option value="Full Dispatch">Full Dispatch</Option>
           <Option value="Partial Dispatch">Partial Dispatch</Option>
@@ -575,7 +574,7 @@ export default function Dispatch() {
   const expandable = {
     expandedRowKeys: expandedRows,
     onExpand: (expanded, record) => {
-      setExpandedRows(expanded ? [...expandedRows, record.id] : expandedRows.filter(k => k !== record.id));
+      setExpandedRows(expanded ? [...expandedRows, record.key] : expandedRows.filter(k => k !== record.key));
     },
     expandedRowRender: (record) => renderProductPanel(record),
     rowExpandable: () => true,

@@ -24,6 +24,7 @@ import {
   useGetSuggestedTasksQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
+  useDispatchTaskOrderMutation,
   useRequestEmergencyDispatchMutation,
   useDeleteTaskMutation,
   useGetUsersQuery,
@@ -69,6 +70,7 @@ export default function Tasks() {
   );
   const [createTask] = useCreateTaskMutation();
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
+  const [dispatchTaskOrder, { isLoading: dispatching }] = useDispatchTaskOrderMutation();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
   const [deleteTask] = useDeleteTaskMutation();
 
@@ -441,21 +443,24 @@ export default function Tasks() {
     setEmergencyDispatchOpen(true);
   };
 
-  // Dispatch pre-flight: verify all tasks on the same order are done before navigating.
+  // Show dispatch info modal with order/task/payment details.
   const handleDispatchClick = (task) => {
-    if (!task.orderId) {
-      navigate('/dispatch');
-      return;
-    }
-    const orderTasks = taskList.filter((t) => t.orderId === task.orderId);
+    const orderTasks = task.orderId ? taskList.filter((t) => t.orderId === task.orderId) : [];
     const notDone = orderTasks.filter((t) => t.status !== 'Completed');
     const unassigned = orderTasks.filter((t) => !t.assignee || t.assignee === '—');
-    if (notDone.length > 0 || unassigned.length > 0) {
-      setDispatchVerifyData({ task, orderTasks, notDone, unassigned });
-      setDispatchVerifyOpen(true);
-      return;
+    setDispatchVerifyData({ task, orderTasks, notDone, unassigned });
+    setDispatchVerifyOpen(true);
+  };
+
+  // Actually dispatch the order linked to the task (marks Order/Lead/DispatchRecord Dispatched).
+  const handleConfirmDispatch = async (task) => {
+    try {
+      await dispatchTaskOrder(task.key).unwrap();
+      enqueueSnackbar(`Order ${task.order || ''} dispatched successfully`, { variant: 'success' });
+      setDispatchVerifyOpen(false);
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to dispatch order', { variant: 'error' });
     }
-    navigate('/dispatch');
   };
 
   // ── Inventory-based task suggestions ─────────────────────────────────
@@ -1615,87 +1620,144 @@ export default function Tasks() {
         })()}
       </Modal>
 
-      {/* ── Dispatch Pre-flight Verification Modal ───────────────────────────── */}
+      {/* ── Dispatch Info Modal ───────────────────────────────────────────────── */}
       <Modal
-        title={<Space><ExclamationCircleOutlined style={{ color: '#fa8c16' }} /><span>Dispatch Verification</span></Space>}
+        title={<Space><ShoppingOutlined style={{ color: '#52c41a' }} /><span>Dispatch Status</span></Space>}
         open={dispatchVerifyOpen}
         onCancel={() => setDispatchVerifyOpen(false)}
-        width={Math.min(620, window.innerWidth - 32)}
-        footer={[
-          <Button key="close" onClick={() => setDispatchVerifyOpen(false)}>Close</Button>,
-        ]}
+        width={Math.min(640, window.innerWidth - 32)}
+        footer={(() => {
+          const t = dispatchVerifyData?.task;
+          const ready = dispatchVerifyData
+            && dispatchVerifyData.notDone.length === 0
+            && dispatchVerifyData.unassigned.length === 0
+            && (t?.isSample || t?.paymentStatus === 'Paid')
+            && t?.orderStatus !== 'Dispatched';
+          return [
+            <Button key="close" onClick={() => setDispatchVerifyOpen(false)}>Close</Button>,
+            ready && (
+              <Button
+                key="dispatch"
+                type="primary"
+                icon={<ShoppingOutlined />}
+                loading={dispatching}
+                onClick={() => handleConfirmDispatch(t)}
+                style={{ background: '#52c41a', border: 'none' }}
+              >
+                Confirm Dispatch
+              </Button>
+            ),
+          ].filter(Boolean);
+        })()}
       >
         {dispatchVerifyData && (() => {
-          const { orderTasks, notDone, unassigned } = dispatchVerifyData;
-          const allOk = notDone.length === 0 && unassigned.length === 0;
+          const { task, orderTasks, notDone, unassigned } = dispatchVerifyData;
+          const completedCount = orderTasks.filter((t) => t.status === 'Completed').length;
+          const allTasksDone = notDone.length === 0;
+          const allAssigned = unassigned.length === 0;
+          const readyToDispatch = allTasksDone && allAssigned;
+          const isPaid = task.paymentStatus === 'Paid';
+          const isSample = task.isSample;
+
           return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
-              {allOk ? (
-                <Alert type="success" showIcon message="All tasks complete — ready to dispatch." style={{ borderRadius: 8 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
+
+              {/* Overall dispatch readiness */}
+              {readyToDispatch && (isPaid || isSample) ? (
+                <Alert
+                  type="success"
+                  showIcon
+                  message="Ready for Dispatch"
+                  description={`All ${orderTasks.length} task(s) on Order ${task.order} are completed and assigned. ${isSample ? 'This is a sample order.' : 'Payment is confirmed.'} You may proceed with dispatch.`}
+                  style={{ borderRadius: 8 }}
+                />
               ) : (
                 <Alert
-                  type="warning"
+                  type={readyToDispatch ? 'warning' : 'error'}
                   showIcon
-                  message="Order Not Ready for Dispatch"
-                  description={`${notDone.length > 0 ? `${notDone.length} task(s) are not yet completed. ` : ''}${unassigned.length > 0 ? `${unassigned.length} task(s) are unassigned. ` : ''}All tasks must be assigned and completed before dispatching.`}
+                  message={!readyToDispatch ? 'Tasks Not Yet Complete' : 'Payment Pending'}
+                  description={
+                    !readyToDispatch
+                      ? `${notDone.length > 0 ? `${notDone.length} task(s) on this order are still incomplete. ` : ''}${unassigned.length > 0 ? `${unassigned.length} task(s) are unassigned. ` : ''}Complete all tasks before dispatching.`
+                      : `All tasks are complete but payment status is "${task.paymentStatus}". Dispatch requires full payment or emergency approval.`
+                  }
                   style={{ borderRadius: 8 }}
                 />
               )}
 
-              {/* Summary row */}
-              <Space wrap>
-                <Tag color={orderTasks.length > 0 ? 'blue' : 'default'}>{orderTasks.length} total task(s)</Tag>
-                <Tag color="success">{orderTasks.filter(t => t.status === 'Completed').length} completed</Tag>
-                {notDone.length > 0 && <Tag color="warning">{notDone.length} pending / in progress</Tag>}
-                {unassigned.length > 0 && <Tag color="error">{unassigned.length} unassigned</Tag>}
-              </Space>
+              {/* Order & payment summary */}
+              <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
+                <Descriptions.Item label="Order ID">
+                  <Text strong style={{ color: '#B11E6A' }}>{task.order || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Client">
+                  <Text strong>{task.client || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Product">{task.product || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Qty">{(task.qty ?? 0).toLocaleString()} units</Descriptions.Item>
+                <Descriptions.Item label="Payment Status">
+                  <Tag color={paymentColor[task.paymentStatus] || 'default'}>{task.paymentStatus || 'N/A'}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Order Type">
+                  {isSample ? <Tag color="purple">Sample</Tag> : <Tag color="default">Regular</Tag>}
+                </Descriptions.Item>
+                {task.deliveryDate && (
+                  <Descriptions.Item label="Expected Delivery" span={2}>{task.deliveryDate}</Descriptions.Item>
+                )}
+              </Descriptions>
 
-              {/* Pending / In Progress tasks */}
-              {notDone.length > 0 && (
-                <div>
-                  <Text style={{ fontSize: 11, color: '#B11E6A', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, display: 'block', marginBottom: 8 }}>
-                    Incomplete Tasks
-                  </Text>
+              {/* Task completion summary */}
+              <div>
+                <Text style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 8 }}>
+                  Task Completion — Order {task.order}
+                </Text>
+                <Space wrap style={{ marginBottom: 10 }}>
+                  <Tag color="blue">{orderTasks.length} total task(s)</Tag>
+                  <Tag color={completedCount === orderTasks.length ? 'success' : 'warning'}>{completedCount} completed</Tag>
+                  {notDone.length > 0 && <Tag color="error">{notDone.length} incomplete</Tag>}
+                  {unassigned.length > 0 && <Tag color="orange">{unassigned.length} unassigned</Tag>}
+                </Space>
+
+                {orderTasks.length > 0 && (
                   <Table
                     size="small"
                     pagination={false}
-                    dataSource={notDone.map((t) => ({ ...t, key: t.key }))}
+                    dataSource={orderTasks.map((t) => ({ ...t, key: t.key }))}
                     style={{ borderRadius: 8, overflow: 'hidden' }}
                     columns={[
-                      { title: 'Task ID', dataIndex: 'id', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                      { title: 'Task ID', dataIndex: 'id', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text> },
                       { title: 'Type', dataIndex: 'type', render: (v) => <Tag color={typeColor[v]} style={{ fontSize: 11 }}>{v}</Tag> },
-                      { title: 'Product', dataIndex: 'product', render: (v) => v || '—' },
+                      { title: 'Product', dataIndex: 'product', render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
                       {
                         title: 'Assigned To', dataIndex: 'assignee',
-                        render: (v) => v && v !== '—'
-                          ? <Space size={4}><Avatar size={16} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>
+                        render: (v) => (v && v !== '—')
+                          ? <Space size={4}><Avatar size={16} icon={<UserOutlined />} style={{ background: '#B11E6A' }} /><Text style={{ fontSize: 12 }}>{v}</Text></Space>
                           : <Tag color="error" style={{ fontSize: 10 }}>Unassigned</Tag>,
                       },
-                      { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={statusColor[v] || 'default'} style={{ fontSize: 11 }}>{v}</Tag> },
+                      {
+                        title: 'Status', dataIndex: 'status',
+                        render: (v) => <Tag color={v === 'Completed' ? 'success' : v === 'In Progress' ? 'processing' : 'default'} style={{ fontSize: 11 }}>{v}</Tag>,
+                      },
                     ]}
                   />
-                </div>
-              )}
+                )}
+              </div>
 
-              {/* Unassigned tasks that are already counted above (only show separately if they're somehow "Completed" but unassigned) */}
-              {unassigned.filter(t => t.status === 'Completed').length > 0 && (
-                <div>
-                  <Text style={{ fontSize: 11, color: '#f5222d', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, display: 'block', marginBottom: 8 }}>
-                    Completed but Unassigned
-                  </Text>
-                  <Table
-                    size="small"
-                    pagination={false}
-                    dataSource={unassigned.filter(t => t.status === 'Completed').map((t) => ({ ...t, key: t.key }))}
-                    style={{ borderRadius: 8, overflow: 'hidden' }}
-                    columns={[
-                      { title: 'Task ID', dataIndex: 'id', render: (v) => <Text strong style={{ color: '#f5222d' }}>{v}</Text> },
-                      { title: 'Type', dataIndex: 'type', render: (v) => <Tag color={typeColor[v]} style={{ fontSize: 11 }}>{v}</Tag> },
-                      { title: 'Product', dataIndex: 'product', render: (v) => v || '—' },
-                      { title: 'Status', dataIndex: 'status', render: (v) => <Tag color="success" style={{ fontSize: 11 }}>{v}</Tag> },
-                    ]}
-                  />
-                </div>
+              {/* What to do next */}
+              {!readyToDispatch && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="What to do next"
+                  description={
+                    <ul style={{ margin: '4px 0 0 0', paddingLeft: 18, fontSize: 13 }}>
+                      {notDone.length > 0 && <li>Complete the {notDone.length} remaining task(s) on this order.</li>}
+                      {unassigned.length > 0 && <li>Assign the {unassigned.length} unassigned task(s) to staff.</li>}
+                      {!isPaid && !isSample && <li>Collect full payment or raise an Emergency Dispatch request.</li>}
+                    </ul>
+                  }
+                  style={{ borderRadius: 8 }}
+                />
               )}
             </div>
           );

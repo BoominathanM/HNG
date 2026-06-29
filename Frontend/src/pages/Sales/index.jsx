@@ -2128,15 +2128,20 @@ export default function Sales() {
       const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
 
       // Any amount already in paidAmount that wasn't backed by collection entries
-      // (e.g. orders created before paymentCollection tracking) must be preserved so
-      // we don't overwrite a real collected amount with a smaller new entry.
+      // (e.g. orders created before paymentCollection tracking, or lead advance not
+      // carried to the order) must be preserved so we don't lose prior payments.
       const existingCollTotal = (orderEditTarget.paymentCollection || []).reduce(
         (s, e) => s + Number(e.paidAmount || 0), 0
       );
-      const uncapturedPaid = Math.max(
-        0,
-        Number(orderEditTarget.paidAmount || 0) - existingCollTotal
-      );
+      // Check linked lead / quotation / negotiation in case the order's own paidAmount
+      // is 0 (advance was stored on the lead but not propagated to the order document).
+      const saveLeadIdStr = String(orderEditTarget.leadId?._id || orderEditTarget.leadId || '');
+      const saveLinkedLead = saveLeadIdStr ? leadsData.find(l => String(l._id || l.key) === saveLeadIdStr || l.leadCode === orderEditTarget.leadCode) : null;
+      const saveLinkedQuot = findLinkedQuotation({ quotationId: orderEditTarget.quotationId, quotationCode: orderEditTarget.quotationCode });
+      const saveLinkedNeg = orderEditTarget.negotiationId ? negotiationsData.find(n => String(n._id || n.key) === String(orderEditTarget.negotiationId?._id || orderEditTarget.negotiationId)) : null;
+      const saveLinkedPaid = Number(saveLinkedLead?.paidAmount) || Number(saveLinkedQuot?.paidAmount) || Number(saveLinkedNeg?.paidAmount) || 0;
+      const saveBasePaid = Math.max(Number(orderEditTarget.paidAmount || 0), saveLinkedPaid);
+      const uncapturedPaid = Math.max(0, saveBasePaid - existingCollTotal);
       const newPaidAmount = (collTotal + uncapturedPaid) > 0
         ? collTotal + uncapturedPaid
         : newAdvance;
@@ -2314,6 +2319,10 @@ export default function Sales() {
         setOrdersData(prev => prev.map(o => o.key === orderEditTarget.key ? updated : o));
         if (selectedRecord?.key === orderEditTarget.key) setSelectedRecord(updated);
         enqueueSnackbar('Order updated successfully', { variant: 'success' });
+        // Sync new paidAmount to the entire lead→quotation→negotiation chain
+        if (updated.paidAmount > 0) {
+          await syncChainPayment(orderEditTarget, updated.paidAmount, 'order');
+        }
         orderEditForm.resetFields();
         setOrderEditPaymentProofs([]);
         setIsOrderEditing(false);
@@ -2328,9 +2337,99 @@ export default function Sales() {
     });
   };
 
+  // ── Payment chain helpers ──────────────────────────────────────────────────────
+  // Resolve the highest paidAmount visible anywhere in the lead→quot→neg→order chain.
+  // Used by the "Add Payment Entry" modal so the balance displayed is always accurate.
+  const computeChainPaid = (rec) => {
+    if (!rec) return 0;
+    const recId    = String(rec._id || rec.key || '');
+    const leadId   = String(rec.leadId?._id || rec.leadId || '');
+    const leadCode = rec.leadCode || '';
+    const quotId   = String(rec.quotationId?._id || rec.quotationId || '');
+    const negId    = String(rec.negotiationId?._id || rec.negotiationId || '');
+    const amounts  = [Number(rec.paidAmount || 0)];
+    const chainLead = leadId
+      ? leadsData.find(l => String(l._id || l.key) === leadId)
+      : leadCode ? leadsData.find(l => l.leadCode === leadCode) : null;
+    if (chainLead) amounts.push(Number(chainLead.paidAmount || 0));
+    const chainQuot = quotId
+      ? quotationsData.find(q => String(q._id || q.key) === quotId)
+      : leadId ? quotationsData.find(q => String(q.leadId?._id || q.leadId) === leadId)
+        : leadCode ? quotationsData.find(q => q.leadCode === leadCode) : null;
+    if (chainQuot) amounts.push(Number(chainQuot.paidAmount || 0));
+    const chainNeg = negId
+      ? negotiationsData.find(n => String(n._id || n.key) === negId)
+      : quotId ? negotiationsData.find(n => String(n.quotationId?._id || n.quotationId) === quotId)
+        : leadId ? negotiationsData.find(n => String(n.leadId?._id || n.leadId) === leadId) : null;
+    if (chainNeg) amounts.push(Number(chainNeg.paidAmount || 0));
+    const chainOrder = ordersData.find(o => {
+      const oLid = String(o.leadId?._id || o.leadId || '');
+      return (leadId && oLid === leadId) || (leadCode && o.leadCode === leadCode) ||
+             (quotId && String(o.quotationId?._id || o.quotationId) === quotId) ||
+             (negId  && String(o.negotiationId?._id || o.negotiationId) === negId) ||
+             (recId  && (oLid === recId || o.leadCode === leadCode));
+    });
+    if (chainOrder) amounts.push(Number(chainOrder.paidAmount || 0));
+    return Math.max(0, ...amounts);
+  };
+
+  // Propagate a new paidAmount to every linked record in the chain (skipping sourceType).
+  // Fires DB mutations and updates local state so all tabs update immediately.
+  const syncChainPayment = async (rec, newPaid, sourceType) => {
+    if (!rec || !newPaid) return;
+    const recId    = String(rec._id || rec.key || '');
+    const leadId   = sourceType === 'lead'   ? recId : String(rec.leadId?._id || rec.leadId || '');
+    const leadCode = rec.leadCode || '';
+    const quotId   = sourceType === 'quotation'   ? recId : String(rec.quotationId?._id || rec.quotationId || '');
+    const negId    = sourceType === 'negotiation' ? recId : String(rec.negotiationId?._id || rec.negotiationId || '');
+    const patch    = { paidAmount: newPaid, advancePaid: newPaid };
+
+    if (sourceType !== 'lead') {
+      const chainLead = leadId
+        ? leadsData.find(l => String(l._id || l.key) === leadId)
+        : leadCode ? leadsData.find(l => l.leadCode === leadCode) : null;
+      if (chainLead && newPaid > Number(chainLead.paidAmount || 0)) {
+        await updateLeadMutation({ id: chainLead._id || chainLead.key, ...patch }).unwrap().catch(() => {});
+        setLeadsData(prev => prev.map(l => String(l._id || l.key) === String(chainLead._id || chainLead.key) ? { ...l, ...patch } : l));
+      }
+    }
+    if (sourceType !== 'quotation') {
+      const chainQuot = quotId
+        ? quotationsData.find(q => String(q._id || q.key) === quotId)
+        : leadId ? quotationsData.find(q => String(q.leadId?._id || q.leadId) === leadId)
+          : leadCode ? quotationsData.find(q => q.leadCode === leadCode) : null;
+      if (chainQuot && newPaid > Number(chainQuot.paidAmount || 0)) {
+        await updateSalesQuotationMutation({ id: chainQuot._id || chainQuot.key, ...patch }).unwrap().catch(() => {});
+        setQuotationsData(prev => prev.map(q => String(q._id || q.key) === String(chainQuot._id || chainQuot.key) ? { ...q, ...patch } : q));
+      }
+    }
+    if (sourceType !== 'negotiation') {
+      const chainNeg = negId
+        ? negotiationsData.find(n => String(n._id || n.key) === negId)
+        : quotId ? negotiationsData.find(n => String(n.quotationId?._id || n.quotationId) === quotId)
+          : leadId ? negotiationsData.find(n => String(n.leadId?._id || n.leadId) === leadId) : null;
+      if (chainNeg && newPaid > Number(chainNeg.paidAmount || 0)) {
+        await updateNegotiationMutation({ id: chainNeg._id || chainNeg.key, ...patch }).unwrap().catch(() => {});
+        setNegotiationsData(prev => prev.map(n => String(n._id || n.key) === String(chainNeg._id || chainNeg.key) ? { ...n, ...patch } : n));
+      }
+    }
+    if (sourceType !== 'order') {
+      const chainOrder = ordersData.find(o => {
+        const oLid = String(o.leadId?._id || o.leadId || '');
+        return (leadId && oLid === leadId) || (leadCode && o.leadCode === leadCode) ||
+               (quotId && String(o.quotationId?._id || o.quotationId) === quotId) ||
+               (negId  && String(o.negotiationId?._id || o.negotiationId) === negId);
+      });
+      if (chainOrder && newPaid > Number(chainOrder.paidAmount || 0)) {
+        await updateSalesOrderMutation({ id: chainOrder._id || chainOrder.key, ...patch }).unwrap().catch(() => {});
+        setOrdersData(prev => prev.map(o => String(o._id || o.key) === String(chainOrder._id || chainOrder.key) ? { ...o, ...patch } : o));
+      }
+    }
+  };
+
   // ── Quick Add Payment Entry — shared handler for lead/quotation/negotiation/order ──
-  const openPayEntry = (type, record) => {
-    setPayEntryTarget({ type, record });
+  const openPayEntry = (type, record, opts = {}) => {
+    setPayEntryTarget({ type, record, precomputedTotal: opts.precomputedTotal, precomputedPaid: opts.precomputedPaid });
     payEntryForm.resetFields();
     setPayEntryProof(null);
   };
@@ -2354,10 +2453,16 @@ export default function Sales() {
         recordedAt: new Date().toISOString(),
       };
       const newCollection = [...(record.paymentCollection || []), newEntry];
-      const newPaidAmount = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const priorCollectionSum = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      const newCollectionSum = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+      // Include any advance paid outside of paymentCollection (e.g., quotation/order carry-over)
+      const extraAdvance = Math.max(0, (Number(record.paidAmount) || Number(record.advancePaid) || 0) - priorCollectionSum);
+      const newPaidAmount = newCollectionSum + extraAdvance;
       const recProducts = record.products?.length ? record.products : itemsToProducts(record.items);
       const recEnrichedSave = { ...record, products: recProducts };
-      const recTotal = r2(computeCompositionGrandTotal(recEnrichedSave, kits)) || r2(computeRecordGrandTotal(recEnrichedSave));
+      const recTotal = payEntryTarget.precomputedTotal != null
+        ? r2(payEntryTarget.precomputedTotal)
+        : r2(computeCompositionGrandTotal(recEnrichedSave, kits)) || r2(computeRecordGrandTotal(recEnrichedSave)) || Number(record.totalAmount) || Number(record.total) || 0;
       const newBalance = Math.max(0, recTotal - newPaidAmount);
       const newStatus = recTotal > 0 && newPaidAmount >= recTotal
         ? 'Paid' : newPaidAmount > 0 ? 'Partially Paid' : 'Unpaid';
@@ -2386,6 +2491,8 @@ export default function Sales() {
         setOrdersData(prev => prev.map(o => (o.key === record.key || o._id === record._id) ? { ...o, ...patch } : o));
         if (selectedRecord?._id === record._id || selectedRecord?.key === record.key) setSelectedRecord(updated);
       }
+      // Sync the new paidAmount to all linked records in the chain
+      await syncChainPayment(record, newPaidAmount, type);
       enqueueSnackbar('Payment entry added', { variant: 'success' });
       setPayEntryTarget(null);
     } catch (err) {
@@ -2407,8 +2514,12 @@ export default function Sales() {
     const rec = payEntryTarget.record;
     const recProducts = rec.products?.length ? rec.products : itemsToProducts(rec.items || []);
     const recEnriched = { ...rec, products: recProducts };
-    const recTotal = r2(computeCompositionGrandTotal(recEnriched, kits)) || r2(computeRecordGrandTotal(recEnriched));
-    const alreadyPaid = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0) || Number(rec.paidAmount) || 0;
+    const recTotal = payEntryTarget.precomputedTotal != null
+      ? r2(payEntryTarget.precomputedTotal)
+      : r2(computeCompositionGrandTotal(recEnriched, kits)) || r2(computeRecordGrandTotal(recEnriched)) || Number(rec.totalAmount) || Number(rec.total) || 0;
+    const alreadyPaid = payEntryTarget.precomputedPaid != null
+      ? r2(payEntryTarget.precomputedPaid)
+      : computeChainPaid(rec);
     const balance = Math.max(0, recTotal - alreadyPaid);
     return (
       <Modal
@@ -2611,6 +2722,7 @@ export default function Sales() {
   const watchedPackagingIncludes = Form.useWatch('packagingIncludes', leadForm) || [];
   const watchedPackagingIncludesQty = Form.useWatch('packagingIncludesQty', leadForm) || {};
   const watchedKitOverallQty = Form.useWatch('kitOverallQty', leadForm);
+  const watchedKitPrice = Form.useWatch('kitPrice', leadForm);
   const watchedPriority = Form.useWatch('priority', leadForm);
   const watchedStatus = Form.useWatch('status', leadForm);
   const watchedSoftwareInterest = Form.useWatch('interestedInSoftware', leadForm);
@@ -3428,23 +3540,32 @@ export default function Sales() {
         }),
       ],
       paymentStatus: (() => {
-        const collectionEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
-        const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-        if (collectionTotal > 0) {
+        const existingCollSum = (selectedRecord?.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        const existingPrior = existingCollSum > 0 ? existingCollSum : (Number(selectedRecord?.paidAmount) || Number(selectedRecord?.advancePaid) || 0);
+        const newEntries = (values.paymentCollection || []).filter(e => Number(e.paidAmount) > 0);
+        const newSum = newEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        const totalPaid = existingPrior + newSum;
+        if (totalPaid > 0) {
           const recordTotal = r2(computeCompositionGrandTotal({ ...values, products: srcProducts, kitOrders: srcKitOrders, kitPrice: pickKit('kitPrice'), kitOverallQty: pickKit('kitOverallQty'), packagingIncludes: srcPackagingIncludes, packagingIncludesQty: values.packagingIncludesQty ?? formStore.packagingIncludesQty, forwardingCharge: values.forwardingCharge ?? formStore.forwardingCharge, forwardingChargeAmount: values.forwardingChargeAmount ?? formStore.forwardingChargeAmount }, kits));
-          return recordTotal > 0 && collectionTotal >= recordTotal ? 'Paid' : 'Partially Paid';
+          return recordTotal > 0 && totalPaid >= recordTotal ? 'Paid' : 'Partially Paid';
         }
         const proofs = paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []);
         if (!proofs.length) return 'Unpaid';
         return values.paymentTerms === 'BEFORE_100' ? 'Paid' : 'Partially Paid';
       })(),
       advancePaid: (() => {
-        const collectionTotal = (values.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-        return collectionTotal || undefined;
+        const existingCollSum = (selectedRecord?.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        const existingPrior = existingCollSum > 0 ? existingCollSum : (Number(selectedRecord?.paidAmount) || Number(selectedRecord?.advancePaid) || 0);
+        const newSum = (values.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        const total = existingPrior + newSum;
+        return total || undefined;
       })(),
       paidAmount: (() => {
-        const collectionTotal = (values.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-        return collectionTotal || undefined;
+        const existingCollSum = (selectedRecord?.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        const existingPrior = existingCollSum > 0 ? existingCollSum : (Number(selectedRecord?.paidAmount) || Number(selectedRecord?.advancePaid) || 0);
+        const newSum = (values.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        const total = existingPrior + newSum;
+        return total || undefined;
       })(),
       priority: Number(values.priority) || 0,
       isPriority: Number(values.priority) > 0,
@@ -3616,6 +3737,10 @@ export default function Sales() {
             setLeadsData(prev => prev.map(l => l.key === editingLead.key ? updated : l));
             enqueueSnackbar('Lead updated', { variant: 'success' });
           }
+          // Sync new paidAmount across the entire chain (quotation/negotiation/order)
+          if (builtPayload.paidAmount > 0) {
+            await syncChainPayment(editingLead, builtPayload.paidAmount, 'lead');
+          }
           setEditingLead(null);
           setSelectedRecord(null);
           setViewMode('table');
@@ -3724,6 +3849,10 @@ export default function Sales() {
         setCustomersData(prev => prev.map(c => c.key === updated.key ? updated : c));
       } else if (updated.leadId) {
         setLeadsData(prev => prev.map(l => l.key === updated.key ? updated : l));
+      }
+      // Sync paidAmount across the entire chain when payment section is saved
+      if (section === 'delivery' && values.paidAmount > 0) {
+        await syncChainPayment(updated, values.paidAmount, 'lead');
       }
       setEditingSection(null);
       enqueueSnackbar('Section updated successfully', { variant: 'success' });
@@ -5456,7 +5585,7 @@ export default function Sales() {
       const isSample = rec.orderCategory === 'SAMPLE' || rec.leadType === 'SAMPLE';
       const recTotal = r2(Number(grandTotal) || computeCompositionGrandTotal(rec, kits) || computeRecordGrandTotal(rec)) || Number(rec.totalAmount) || 0;
       const recCollected = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-      const recPaid = recCollected > 0 ? recCollected : (Number(rec.paidAmount) || Number(rec.advancePaid) || 0);
+      const recPaid = Math.max(recCollected, Number(rec.paidAmount) || Number(rec.advancePaid) || 0);
       const recBalance = Math.max(0, recTotal - recPaid);
       return (
         <>
@@ -5528,6 +5657,7 @@ export default function Sales() {
         kitOrders: qKitOrders,
         kitPrice: q.kitPrice || qLead?.kitPrice,
         kitOverallQty: q.kitOverallQty || qLead?.kitOverallQty,
+        paidAmount: computeChainPaid(q),
       };
       const QUOT_STEPS = [
         { title: 'Draft', description: 'Created' },
@@ -5780,44 +5910,54 @@ export default function Sales() {
                   };
                   return <DetailDeliveryPayment rec={qEnriched} grandTotal={computeCompositionGrandTotal(qEnriched, kits) || computeRecordGrandTotal(qEnriched)} />;
                 })()}
-                {(q.paymentCollection || []).length > 0 && (
-                  <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
-                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: 0.5 }}>
-                      PAYMENT COLLECTION ({q.paymentCollection.length} entr{q.paymentCollection.length > 1 ? 'ies' : 'y'})
-                    </Text>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {q.paymentCollection.map((entry, idx) => (
-                        <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                            <div>
-                              <Space size={8}>
-                                <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
-                                <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
-                                {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
-                              </Space>
-                              <div style={{ paddingLeft: 21, marginTop: 3 }}>
-                                {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
-                                {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                {(() => {
+                  const qLeadForColl = qLeadId ? leadsData.find(l => String(l._id || l.key) === qLeadId) : null;
+                  const qQuotColl = q.paymentCollection || [];
+                  const qLeadColl = (qLeadForColl?.paymentCollection || []).filter(le =>
+                    !qQuotColl.some(qe => qe.recordedAt === le.recordedAt && Number(qe.paidAmount) === Number(le.paidAmount))
+                  );
+                  const qCombinedColl = [...qQuotColl, ...qLeadColl.map(e => ({ ...e, _fromLead: true }))];
+                  if (!qCombinedColl.length) return null;
+                  return (
+                    <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: 0.5 }}>
+                        PAYMENT COLLECTION ({qCombinedColl.length} entr{qCombinedColl.length > 1 ? 'ies' : 'y'})
+                      </Text>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {qCombinedColl.map((entry, idx) => (
+                          <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                              <div>
+                                <Space size={8}>
+                                  <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
+                                  <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                  {entry._fromLead && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead</Tag>}
+                                  {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
+                                </Space>
+                                <div style={{ paddingLeft: 21, marginTop: 3 }}>
+                                  {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
+                                  {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                                </div>
                               </div>
+                              <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
                             </div>
-                            <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
+                            {entry.proof?.url && (
+                              <div style={{ marginTop: 5, paddingLeft: 21 }}>
+                                <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
+                                </a>
+                              </div>
+                            )}
                           </div>
-                          {entry.proof?.url && (
-                            <div style={{ marginTop: 5, paddingLeft: 21 }}>
-                              <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
-                              </a>
-                            </div>
-                          )}
+                        ))}
+                        <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
+                          <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(qCombinedColl.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
                         </div>
-                      ))}
-                      <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
-                        <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(q.paymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
                       </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
                 <div style={{ marginTop: 12 }}>
                   <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('quotation', qEnriched)}>
                     Add Payment Entry
@@ -5970,6 +6110,7 @@ export default function Sales() {
         kitOrders: nKitOrders,
         kitPrice: n.kitPrice || nLead?.kitPrice,
         kitOverallQty: n.kitOverallQty || nLead?.kitOverallQty,
+        paidAmount: computeChainPaid(n),
       };
       const NEG_STEPS = [
         { title: 'Initial', description: 'Quotation reviewed' },
@@ -6292,44 +6433,59 @@ export default function Sales() {
                   };
                   return <DetailDeliveryPayment rec={nEnriched} grandTotal={computeCompositionGrandTotal(nEnriched, kits) || computeRecordGrandTotal(nEnriched)} />;
                 })()}
-                {(n.paymentCollection || []).length > 0 && (
-                  <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
-                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: 0.5 }}>
-                      PAYMENT COLLECTION ({n.paymentCollection.length} entr{n.paymentCollection.length > 1 ? 'ies' : 'y'})
-                    </Text>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {n.paymentCollection.map((entry, idx) => (
-                        <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                            <div>
-                              <Space size={8}>
-                                <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
-                                <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
-                                {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
-                              </Space>
-                              <div style={{ paddingLeft: 21, marginTop: 3 }}>
-                                {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
-                                {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                {(() => {
+                  const nLeadForColl = nLeadId ? leadsData.find(l => String(l._id || l.key) === nLeadId) : null;
+                  const nQuotId = String(n.quotationId?._id || n.quotationId || '');
+                  const nQuotForColl = nQuotId ? quotationsData.find(q => String(q._id || q.key) === nQuotId) : null;
+                  const nNegColl = n.paymentCollection || [];
+                  const linkedEntries = [
+                    ...(nLeadForColl?.paymentCollection || []),
+                    ...(nQuotForColl?.paymentCollection || []),
+                  ].filter(le =>
+                    !nNegColl.some(ne => ne.recordedAt === le.recordedAt && Number(ne.paidAmount) === Number(le.paidAmount))
+                  );
+                  const nCombinedColl = [...nNegColl, ...linkedEntries.map(e => ({ ...e, _fromLinked: true }))];
+                  if (!nCombinedColl.length) return null;
+                  return (
+                    <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: 0.5 }}>
+                        PAYMENT COLLECTION ({nCombinedColl.length} entr{nCombinedColl.length > 1 ? 'ies' : 'y'})
+                      </Text>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {nCombinedColl.map((entry, idx) => (
+                          <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                              <div>
+                                <Space size={8}>
+                                  <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
+                                  <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                  {entry._fromLinked && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead/Quotation</Tag>}
+                                  {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
+                                </Space>
+                                <div style={{ paddingLeft: 21, marginTop: 3 }}>
+                                  {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
+                                  {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                                </div>
                               </div>
+                              <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
                             </div>
-                            <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
+                            {entry.proof?.url && (
+                              <div style={{ marginTop: 5, paddingLeft: 21 }}>
+                                <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
+                                </a>
+                              </div>
+                            )}
                           </div>
-                          {entry.proof?.url && (
-                            <div style={{ marginTop: 5, paddingLeft: 21 }}>
-                              <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
-                              </a>
-                            </div>
-                          )}
+                        ))}
+                        <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
+                          <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(nCombinedColl.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
                         </div>
-                      ))}
-                      <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
-                        <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(n.paymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
                       </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
                 <div style={{ marginTop: 12 }}>
                   <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('negotiation', nEnriched)}>
                     Add Payment Entry
@@ -6565,15 +6721,27 @@ export default function Sales() {
       const oTotal = oKitAwareTotal > 0 ? oKitAwareTotal : (oSubtotal + oGstAmount);
       const oHasKitProducts = (o.products || []).some(p => p && (p.isKit || p.kitType));
       // Enriched rec for CategoryTotalsBreakdown in Payment Summary (uses same data as oKitAwareTotal)
+      // Effective paidAmount = max of order's own, linked lead's, and order's collection sum
+      // so savePayEntry('order', ...) computes extraAdvance correctly even when the order
+      // document hasn't had the lead advance propagated to it yet.
+      const oEffectivePaidAmount = Math.max(
+        Number(o.paidAmount || 0),
+        Number(oLeadForTotal?.paidAmount || 0),
+        (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0)
+      );
       const oEnrichedForBreakdown = oLeadForTotal ? {
         ...oLeadForTotal,
         paymentCollection: o.paymentCollection,
-        paidAmount: o.paidAmount,
+        paidAmount: oEffectivePaidAmount,
         forwardingCharge: o.forwardingCharge ?? oLeadForTotal.forwardingCharge,
         forwardingChargeAmount: o.forwardingChargeAmount ?? oLeadForTotal.forwardingChargeAmount,
-      } : oRecForTotal;
-      // o.paymentCollection is now the best-available source (merged above)
-      const detailCollectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+        // Must carry the ORDER's own id so savePayEntry('order', ...) hits the right document.
+        // oLeadForTotal spreads the lead's _id/key which would cause "Order not found".
+        _id: o._id || o.key,
+        key: o.key || o._id,
+        leadId: o.leadId,
+        leadCode: o.leadCode,
+      } : { ...oRecForTotal, paidAmount: oEffectivePaidAmount };
       const detailAdvance = Number(full.advancePaidAmount ?? full.advancePaid ?? base.advance ?? 0);
       // Fall back to the linked negotiation's (or quotation's) paid amount if the order has no payment data yet
       const linkedNegForDetail = negotiationsData.find(n => String(n.key) === String(base.negotiationId || full.negotiationId?._id || full.negotiationId));
@@ -6583,6 +6751,23 @@ export default function Sales() {
         quotationCode: o.quotationCode || full.quotationId?.quotCode || base.quotationCode,
       });
       const quotFallbackPaid = linkedQuotForDetail?.paidAmount || 0;
+      // Merged payment history: order entries + any lead/quotation/negotiation entries not already present.
+      // Dedup by recordedAt + paidAmount so carry-overs don't appear twice.
+      // Defined BEFORE detailCollectionTotal so the stat cards use the full merged total.
+      const combinedPaymentCollection = (() => {
+        const orderColl = o.paymentCollection || [];
+        const extra = [
+          ...(oLeadForTotal?.paymentCollection || []),
+          ...(linkedQuotForDetail?.paymentCollection || []),
+          ...(linkedNegForDetail?.paymentCollection || []),
+        ].filter(le => !orderColl.some(oe =>
+          oe.recordedAt === le.recordedAt && Number(oe.paidAmount) === Number(le.paidAmount)
+        ));
+        return [...orderColl, ...extra.map(e => ({ ...e, _fromLinked: true }))];
+      })();
+      // Use the fully merged collection so Collected / To Collect stat cards include
+      // payments recorded at the lead, quotation, or negotiation stage.
+      const detailCollectionTotal = combinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const totalCollected = detailCollectionTotal > 0
         ? detailCollectionTotal
         : (Number(full.paidAmount) || detailAdvance || Number(base.paidAmount) || negFallbackPaid || quotFallbackPaid || 0);
@@ -7189,19 +7374,20 @@ export default function Sales() {
                     <Text style={{ fontSize: 13, fontWeight: 700 }}>Amount to Pay</Text>
                     <Text strong style={{ fontSize: 15, color: toCollect > 0 ? '#fa8c16' : '#52c41a' }}>₹{toCollect.toLocaleString()}</Text>
                   </div>
-                  {(o.paymentCollection || []).length > 0 && (
+                  {combinedPaymentCollection.length > 0 && (
                     <div style={{ marginTop: 14, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
                       <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: 0.5 }}>
-                        PAYMENT COLLECTION ({o.paymentCollection.length} entr{o.paymentCollection.length > 1 ? 'ies' : 'y'})
+                        PAYMENT COLLECTION ({combinedPaymentCollection.length} entr{combinedPaymentCollection.length > 1 ? 'ies' : 'y'})
                       </Text>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {o.paymentCollection.map((entry, idx) => (
+                        {combinedPaymentCollection.map((entry, idx) => (
                           <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
                             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                               <div>
                                 <Space size={8}>
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                  {entry._fromLinked && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead</Tag>}
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -7222,7 +7408,7 @@ export default function Sales() {
                         ))}
                         <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
                           <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
-                          <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(o.paymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
+                          <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(combinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
                         </div>
                       </div>
                     </div>
@@ -8232,7 +8418,15 @@ export default function Sales() {
                       const collection = Array.isArray(rawColl) ? rawColl : [];
                       const collTotal = collection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                       const existingCollTotal = (orderEditTarget?.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
-                      const uncapturedPaid = Math.max(0, Number(orderEditTarget?.paidAmount || 0) - existingCollTotal);
+                      // Also consider the linked lead / quotation / negotiation paidAmount —
+                      // the order may not have carried it over if created before the carry-over fix.
+                      const oLeadIdStr = String(orderEditTarget?.leadId?._id || orderEditTarget?.leadId || '');
+                      const oLinkedLead = oLeadIdStr ? leadsData.find(l => String(l._id || l.key) === oLeadIdStr || l.leadCode === orderEditTarget?.leadCode) : null;
+                      const oLinkedQuot = findLinkedQuotation({ quotationId: orderEditTarget?.quotationId, quotationCode: orderEditTarget?.quotationCode });
+                      const oLinkedNeg = orderEditTarget?.negotiationId ? negotiationsData.find(n => String(n._id || n.key) === String(orderEditTarget.negotiationId?._id || orderEditTarget.negotiationId)) : null;
+                      const linkedPaid = Number(oLinkedLead?.paidAmount) || Number(oLinkedQuot?.paidAmount) || Number(oLinkedNeg?.paidAmount) || 0;
+                      const basePaid = Math.max(Number(orderEditTarget?.paidAmount || 0), linkedPaid);
+                      const uncapturedPaid = Math.max(0, basePaid - existingCollTotal);
                       const effectivePaid = collTotal + uncapturedPaid;
                       const prods = getFieldValue('editProducts') || [];
                       const editRec = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [], packagingIncludesQty: getFieldValue('packagingIncludesQty') || orderEditTarget?.packagingIncludesQty || {} };
@@ -9590,6 +9784,37 @@ export default function Sales() {
     const totalValue = calcTotal(record.products);
     // Show per-card edit buttons in both detail view AND when editing an existing record
     const usePerCardEdit = isDetail || !!editingLead;
+
+    // Combined payment history for lead: merges lead + linked order + linked quotation + linked
+    // negotiation entries so payments recorded in Billing (on quotation or order) also appear here.
+    const linkedOrderForLead = !isAddLead && (record._id || record.key)
+      ? ordersData.find(o =>
+          String(o.leadId?._id || o.leadId) === String(record._id || record.key) ||
+          o.leadCode === record.leadCode
+        )
+      : null;
+    const leadCombinedPaymentCollection = (() => {
+      const leadId = String(record._id || record.key || '');
+      const leadCode = record.leadCode || '';
+      const leadColl = record.paymentCollection || [];
+      const orderColl = linkedOrderForLead?.paymentCollection || [];
+      const linkedQuotForLead = !isAddLead && leadId
+        ? quotationsData.find(q =>
+            String(q.leadId?._id || q.leadId) === leadId || q.leadCode === leadCode
+          )
+        : null;
+      const linkedNegForLead = !isAddLead && leadId
+        ? negotiationsData.find(n =>
+            String(n.leadId?._id || n.leadId) === leadId || n.leadCode === leadCode
+          )
+        : null;
+      const quotColl = linkedQuotForLead?.paymentCollection || [];
+      const negColl = linkedNegForLead?.paymentCollection || [];
+      const extra = [...orderColl, ...quotColl, ...negColl].filter(xe =>
+        !leadColl.some(le => le.recordedAt === xe.recordedAt && Number(le.paidAmount) === Number(xe.paidAmount))
+      );
+      return [...leadColl, ...extra.map(e => ({ ...e, _fromLinked: true }))];
+    })();
 
     const InfoRow = ({ label, value }) => (
       <div style={{ padding: '8px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}` }}>
@@ -12095,8 +12320,8 @@ export default function Sales() {
                           })()}
                           {(() => {
                             const recTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || 0;
-                            const recCollected = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-                            const recPaid = recCollected > 0 ? recCollected : (Number(record.paidAmount) || Number(record.advancePaid) || 0);
+                            const recCollected = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                            const recPaid = Math.max(recCollected, Number(record.paidAmount) || Number(record.advancePaid) || 0);
                             const recBalance = Math.max(0, recTotal - recPaid);
                             if (recTotal <= 0) return null;
                             return (
@@ -12130,20 +12355,21 @@ export default function Sales() {
                           )}
                         </div>
                       </Col>}
-                      {record.leadType !== 'SAMPLE' && (record.paymentCollection || []).length > 0 && (
+                      {record.leadType !== 'SAMPLE' && leadCombinedPaymentCollection.length > 0 && (
                         <Col xs={24} style={{ marginTop: 12 }}>
                           <div style={{ padding: '14px 16px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
                             <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10, fontWeight: 600, letterSpacing: 0.5 }}>
-                              PAYMENT COLLECTION ({record.paymentCollection.length} entr{record.paymentCollection.length > 1 ? 'ies' : 'y'})
+                              PAYMENT COLLECTION ({leadCombinedPaymentCollection.length} entr{leadCombinedPaymentCollection.length > 1 ? 'ies' : 'y'})
                             </Text>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              {record.paymentCollection.map((entry, idx) => (
+                              {leadCombinedPaymentCollection.map((entry, idx) => (
                                 <div key={idx} style={{ padding: '8px 12px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
                                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                                     <div>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                         <DollarOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
                                         <Text style={{ fontSize: 13, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                        {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
                                         {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
                                       </div>
                                       <div style={{ paddingLeft: 24, marginTop: 3 }}>
@@ -12165,7 +12391,7 @@ export default function Sales() {
                               <div style={{ padding: '8px 12px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
                                 <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
                                 <Text strong style={{ color: '#52c41a', fontSize: 13 }}>
-                                  ₹{(record.paymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}
+                                  ₹{(leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}
                                 </Text>
                               </div>
                             </div>
@@ -12216,7 +12442,12 @@ export default function Sales() {
                             icon={<PlusOutlined />}
                             size="small"
                             style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }}
-                            onClick={() => openPayEntry('lead', record)}
+                            onClick={() => {
+                              const viewTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || 0;
+                              const viewCollected = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                              const viewPaid = Math.max(viewCollected, Number(record.paidAmount) || Number(record.advancePaid) || 0);
+                              openPayEntry('lead', record, { precomputedTotal: viewTotal, precomputedPaid: viewPaid });
+                            }}
                           >
                             Add Payment Entry
                           </Button>
@@ -12225,6 +12456,79 @@ export default function Sales() {
                     </Row>
                   ) : (
                     <>
+                  {/* Previous Payment Records (read-only, shown in edit mode so history is visible) */}
+                  {record.leadType !== 'SAMPLE' && leadCombinedPaymentCollection.length > 0 && (
+                    <div style={{ marginBottom: 16, padding: '12px 14px', background: isDark ? 'rgba(177,30,106,0.05)' : 'rgba(177,30,106,0.03)', borderRadius: 10, border: '1px solid rgba(177,30,106,0.15)' }}>
+                      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10, fontWeight: 600, letterSpacing: 0.5 }}>
+                        PAYMENT HISTORY ({leadCombinedPaymentCollection.length} entr{leadCombinedPaymentCollection.length > 1 ? 'ies' : 'y'})
+                      </Text>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {leadCombinedPaymentCollection.map((entry, idx) => (
+                          <div key={idx} style={{ padding: '8px 10px', borderRadius: 8, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.12)' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                              <div>
+                                <Space size={8}>
+                                  <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
+                                  <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
+                                  {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
+                                  {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
+                                </Space>
+                                <div style={{ paddingLeft: 21, marginTop: 3 }}>
+                                  {entry.paymentDate && <Text type="secondary" style={{ fontSize: 11 }}>Date: {dayjs(entry.paymentDate).format('DD MMM YYYY')}</Text>}
+                                  {entry.recordedAt && <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>· Recorded {dayjs(entry.recordedAt).format('DD MMM YYYY')}</Text>}
+                                </div>
+                              </div>
+                              <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{Number(entry.paidAmount || 0).toLocaleString()}</Text>
+                            </div>
+                            {entry.proof?.url && (
+                              <div style={{ marginTop: 5, paddingLeft: 21 }}>
+                                <a href={entry.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <FileTextOutlined />{entry.proof.name || 'View Proof'} ↗
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        <div style={{ padding: '6px 10px', background: 'rgba(82,196,26,0.06)', borderRadius: 8, border: '1px solid rgba(82,196,26,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Total Collected</Text>
+                          <Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{(leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0)).toLocaleString()}</Text>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => {
+                          const effectiveFwd = watchedLeadForwardingCharge ?? record.forwardingCharge;
+                          const effectiveFwdAmt = watchedLeadForwardingAmount ?? record.forwardingChargeAmount;
+                          // ADD mode: use form watchers (no stored record). EDIT/DETAIL: use record (matches VIEW).
+                          const isAddMode = !editingLead && !isDetail;
+                          let modalTotal;
+                          let enrichedForModal = record;
+                          if (isAddMode) {
+                            enrichedForModal = {
+                              ...record,
+                              packagingIncludes: watchedPackagingIncludes?.length > 0 ? watchedPackagingIncludes : (record.packagingIncludes || []),
+                              packagingIncludesQty: (watchedPackagingIncludesQty && Object.keys(watchedPackagingIncludesQty || {}).length > 0) ? watchedPackagingIncludesQty : (record.packagingIncludesQty || {}),
+                              kitOverallQty: watchedKitOverallQty ?? record.kitOverallQty,
+                              kitPrice: watchedKitPrice ?? record.kitPrice,
+                              kitOrders: watchedKitOrders?.length > 0 ? watchedKitOrders : (record.kitOrders || []),
+                              products: watchedLeadProducts?.length > 0 ? watchedLeadProducts : (record.products || []),
+                              forwardingCharge: effectiveFwd,
+                              forwardingChargeAmount: effectiveFwdAmt,
+                            };
+                            modalTotal = computeCompositionGrandTotal(enrichedForModal, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                          } else {
+                            modalTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                          }
+                          const fromCollection = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                          const existingColl = Math.max(fromCollection, Number(record.paidAmount) || Number(record.advancePaid) || 0);
+                          const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+                          openPayEntry('lead', enrichedForModal, { precomputedTotal: modalTotal, precomputedPaid: existingColl + newColl });
+                        }}>
+                          Add Payment Entry
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Tentative Date */}
                   <Row gutter={12} style={{ marginBottom: 4 }}>
                     <Col xs={24} sm={12}>
@@ -12338,15 +12642,15 @@ export default function Sales() {
                   )}
 
                   {/* ── Existing saved payment entries (read-only display) ── */}
-                  {(record.paymentCollection || []).length > 0 && (() => {
-                    const existingTotal = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                  {leadCombinedPaymentCollection.length > 0 && (() => {
+                    const existingTotal = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
                     return (
                       <div style={{ marginBottom: 14 }}>
                         <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, display: 'block', marginBottom: 8 }}>
-                          PAYMENT HISTORY ({record.paymentCollection.length} entr{record.paymentCollection.length > 1 ? 'ies' : 'y'})
+                          PAYMENT HISTORY ({leadCombinedPaymentCollection.length} entr{leadCombinedPaymentCollection.length > 1 ? 'ies' : 'y'})
                         </Text>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {record.paymentCollection.map((entry, idx) => (
+                          {leadCombinedPaymentCollection.map((entry, idx) => (
                             <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: isDark ? 'rgba(255,255,255,0.04)' : '#fff', border: '1px solid rgba(177,30,106,0.15)', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <Space size={8} wrap>
@@ -12354,6 +12658,7 @@ export default function Sales() {
                                   <Text style={{ fontSize: 13, fontWeight: 600 }}>
                                     {(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}
                                   </Text>
+                                  {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 22, marginTop: 5, display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -12397,13 +12702,36 @@ export default function Sales() {
 
                   {/* ── Live payment summary: Grand Total / Collected / Balance Due ── */}
                   {(() => {
-                    const existingColl = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                    // Use combined collection (lead + linked order) so stat panel shows the true total
+                    const fromCollection = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                    // Fall back to normalized paidAmount/advancePaid when paymentCollection is empty
+                    // (advance set during quotation/order flow rather than through collection entries).
+                    const existingColl = Math.max(fromCollection, Number(record.paidAmount) || Number(record.advancePaid) || 0);
                     const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                     const totalColl = existingColl + newColl;
-                    const fvKit = leadForm.getFieldsValue(['kitOrders', 'kitPrice', 'kitOverallQty', 'packagingIncludes', 'packagingIncludesQty', 'forwardingCharge', 'forwardingChargeAmount']);
-                    const effectiveFwd = watchedLeadForwardingCharge ?? fvKit.forwardingCharge ?? record.forwardingCharge;
-                    const effectiveFwdAmt = watchedLeadForwardingAmount ?? fvKit.forwardingChargeAmount ?? record.forwardingChargeAmount;
-                    const recordTotal = computeCompositionGrandTotal({ ...record, forwardingCharge: effectiveFwd, forwardingChargeAmount: effectiveFwdAmt }, kits) || Number(record.totalAmount) || 0;
+                    const effectiveFwd = watchedLeadForwardingCharge ?? record.forwardingCharge;
+                    const effectiveFwdAmt = watchedLeadForwardingAmount ?? record.forwardingChargeAmount;
+                    // ADD mode: record={} so use live form watchers for grand total.
+                    // EDIT mode (editingLead set) or DETAIL mode: use stored record directly —
+                    // same as VIEW stat panel — to avoid prepareFormValues normalization drift.
+                    const isAddMode = !editingLead && !isDetail;
+                    let recordTotal;
+                    if (isAddMode) {
+                      const totalFormData = {
+                        ...record,
+                        packagingIncludes: watchedPackagingIncludes.length > 0 ? watchedPackagingIncludes : (record.packagingIncludes || []),
+                        packagingIncludesQty: (watchedPackagingIncludesQty && Object.keys(watchedPackagingIncludesQty).length > 0) ? watchedPackagingIncludesQty : (record.packagingIncludesQty || {}),
+                        kitOverallQty: watchedKitOverallQty ?? record.kitOverallQty,
+                        kitPrice: watchedKitPrice ?? record.kitPrice,
+                        kitOrders: watchedKitOrders.length > 0 ? watchedKitOrders : (record.kitOrders || []),
+                        products: (watchedLeadProducts?.length > 0) ? watchedLeadProducts : (record.products || []),
+                        forwardingCharge: effectiveFwd,
+                        forwardingChargeAmount: effectiveFwdAmt,
+                      };
+                      recordTotal = computeCompositionGrandTotal(totalFormData, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                    } else {
+                      recordTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                    }
                     const balance = Math.max(0, recordTotal - totalColl);
                     if (recordTotal === 0) return null;
                     return (
@@ -12507,13 +12835,31 @@ export default function Sales() {
 
                   {/* Auto-computed payment status (existing + new entries) */}
                   {(() => {
-                    const existingColl = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                    const fromCollection2 = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+                    const existingColl2 = fromCollection2 > 0 ? fromCollection2 : (Number(record.paidAmount) || Number(record.advancePaid) || 0);
                     const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
-                    const totalColl = existingColl + newColl;
-                    const fvKit2 = leadForm.getFieldsValue(['forwardingCharge', 'forwardingChargeAmount']);
-                    const effectiveFwd2 = watchedLeadForwardingCharge ?? fvKit2.forwardingCharge ?? record.forwardingCharge;
-                    const effectiveFwdAmt2 = watchedLeadForwardingAmount ?? fvKit2.forwardingChargeAmount ?? record.forwardingChargeAmount;
-                    const recordTotal = computeCompositionGrandTotal({ ...record, forwardingCharge: effectiveFwd2, forwardingChargeAmount: effectiveFwdAmt2 }, kits) || Number(record.totalAmount) || 0;
+                    const totalColl = existingColl2 + newColl;
+                    // ADD mode: record={} → use form watchers. EDIT/DETAIL: use record (matches VIEW).
+                    const isAddMode2 = !editingLead && !isDetail;
+                    let recordTotal;
+                    if (isAddMode2) {
+                      const effectiveFwd2 = watchedLeadForwardingCharge ?? record.forwardingCharge;
+                      const effectiveFwdAmt2 = watchedLeadForwardingAmount ?? record.forwardingChargeAmount;
+                      const totalFormData2 = {
+                        ...record,
+                        packagingIncludes: watchedPackagingIncludes.length > 0 ? watchedPackagingIncludes : (record.packagingIncludes || []),
+                        packagingIncludesQty: (watchedPackagingIncludesQty && Object.keys(watchedPackagingIncludesQty).length > 0) ? watchedPackagingIncludesQty : (record.packagingIncludesQty || {}),
+                        kitOverallQty: watchedKitOverallQty ?? record.kitOverallQty,
+                        kitPrice: watchedKitPrice ?? record.kitPrice,
+                        kitOrders: watchedKitOrders.length > 0 ? watchedKitOrders : (record.kitOrders || []),
+                        products: (watchedLeadProducts?.length > 0) ? watchedLeadProducts : (record.products || []),
+                        forwardingCharge: effectiveFwd2,
+                        forwardingChargeAmount: effectiveFwdAmt2,
+                      };
+                      recordTotal = computeCompositionGrandTotal(totalFormData2, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                    } else {
+                      recordTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                    }
                     const balance = Math.max(0, recordTotal - totalColl);
                     const status = recordTotal > 0 && totalColl >= recordTotal ? 'Paid' : totalColl > 0 ? 'Partially Paid' : 'Unpaid';
                     const color = status === 'Paid' ? '#52c41a' : status === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';

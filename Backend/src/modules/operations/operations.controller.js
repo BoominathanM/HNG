@@ -6,6 +6,7 @@ const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { computeTaskEstimate } = require('../../utils/taskTime');
+const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 
 // ─── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
 exports.getOrders = asyncHandler(async (req, res) => {
@@ -127,9 +128,16 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
   } else if (req.body.plannedEndTime) {
     timeFields.plannedEndTime = new Date(req.body.plannedEndTime);
   }
+  // Inherit the order's live payment status so a task assigned after payment was
+  // already collected isn't stuck on 'Pending' (which would hide the Dispatch button
+  // in Task Management). Mirrors tasks.controller.js createTask.
+  const paymentFields = (req.body.paymentStatus === undefined)
+    ? { paymentStatus: await resolveOrderPaymentStatus(orderId).catch(() => 'Pending') }
+    : {};
   const task = await Task.create({
     ...req.body,
     ...timeFields,
+    ...paymentFields,
     taskCode,
     orderId,
     createdBy: req.user._id,
@@ -154,6 +162,9 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
   const baseType = req.body.taskType || 'Production';
   const tasks = [];
   const skippedProducts = [];
+  // Resolve the order's live payment status once so each fanned-out task inherits it
+  // (otherwise the Dispatch button stays hidden in Task Management on paid orders).
+  const orderPaymentStatus = await resolveOrderPaymentStatus(order._id).catch(() => 'Pending');
 
   for (let i = 0; i < (order.items || []).length; i++) {
     const it = order.items[i];
@@ -172,6 +183,7 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
       qty: it.qty,
       clientName: order.clientName,
       status: 'Pending',
+      paymentStatus: orderPaymentStatus,
       createdBy: req.user._id,
     }));
   }
