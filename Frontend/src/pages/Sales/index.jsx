@@ -849,17 +849,37 @@ function PersonalizedCompositionPanel({ comp, isDark }) {
 
 // Reusable 3-bucket total panel: Personalized (A) + Separate Kit (B) + Separate Product (C)
 // + Forwarding → Grand Total. Shown across lead/quotation/negotiation/order views & payment.
-function CategoryTotalsBreakdown({ rec, isDark }) {
-  const b = computeRecordBuckets(rec);
+// kitsData must be passed for personalized-with-packagingIncludes orders so the composition-
+// aware calculation (computePersonalizedComposition) is used instead of computeRecordBuckets,
+// which miscounts the A bucket when some kits/products are consumed inside the outer packaging.
+function CategoryTotalsBreakdown({ rec, isDark, kitsData = [] }) {
+  let personalized, separateKit, separateProduct, fwd, grand;
+  if ((rec.packagingIncludes || []).length > 0 && kitsData.length > 0) {
+    const comp = computePersonalizedComposition(rec, kitsData);
+    const B = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
+    const C = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
+    fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
+    personalized = comp.totalPersonalized;
+    separateKit = B;
+    separateProduct = C;
+    grand = r2(personalized + separateKit + separateProduct + fwd);
+  } else {
+    const b = computeRecordBuckets(rec);
+    personalized = b.personalized;
+    separateKit = b.separateKit;
+    separateProduct = b.separateProduct;
+    fwd = b.fwd;
+    grand = b.grand;
+  }
   const rows = [
-    { ...CATEGORY_META[ORDER_CATEGORIES.PERSONALIZED], val: b.personalized },
-    { ...CATEGORY_META[ORDER_CATEGORIES.SEPARATE_KIT], val: b.separateKit },
-    { ...CATEGORY_META[ORDER_CATEGORIES.SEPARATE_PRODUCT], val: b.separateProduct },
+    { ...CATEGORY_META[ORDER_CATEGORIES.PERSONALIZED], val: personalized },
+    { ...CATEGORY_META[ORDER_CATEGORIES.SEPARATE_KIT], val: separateKit },
+    { ...CATEGORY_META[ORDER_CATEGORIES.SEPARATE_PRODUCT], val: separateProduct },
   ];
   const active = rows.filter(r => r.val > 0);
   const border = isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid #eef0f3';
   const labelColor = isDark ? '#cbd5e1' : '#475569';
-  const sumTag = `${active.map(a => a.short).join('+')}${b.fwd > 0 ? '+Fwd' : ''}`;
+  const sumTag = `${active.map(a => a.short).join('+')}${fwd > 0 ? '+Fwd' : ''}`;
   return (
     <div style={{ border, borderRadius: 12, padding: '12px 16px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fafbfc' }}>
       {active.map(r => (
@@ -871,14 +891,14 @@ function CategoryTotalsBreakdown({ rec, isDark }) {
           <span style={{ fontWeight: 600, fontSize: 13 }}>{fmtINR(r.val)}</span>
         </div>
       ))}
-      {b.fwd > 0 && (
+      {fwd > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, color: labelColor }}>
-          <span>Forwarding Charge</span><span style={{ fontWeight: 600 }}>{fmtINR(b.fwd)}</span>
+          <span>Forwarding Charge</span><span style={{ fontWeight: 600 }}>{fmtINR(fwd)}</span>
         </div>
       )}
       <div style={{ borderTop: border, marginTop: 6, paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontWeight: 700, fontSize: 14 }}>Grand Total{active.length > 1 ? ` (${sumTag})` : ''}</span>
-        <span style={{ fontWeight: 800, fontSize: 18, color: '#16a34a' }}>{fmtINR(b.grand)}</span>
+        <span style={{ fontWeight: 800, fontSize: 18, color: '#16a34a' }}>{fmtINR(grand)}</span>
       </div>
     </div>
   );
@@ -5175,7 +5195,7 @@ export default function Sales() {
   if (viewMode !== 'table') {
 
     // ── Shared helpers for detail views ────────────────────────────
-    const DetailProductCards = ({ products = [], totalAmount, kitDisplayUnit, kitSize, kitName, selectedKits = [], kitOrders = [], kitSticker, kitLogo, kitPrinting, kitOverallQty, kitPrice, forwardingCharge, forwardingChargeAmount }) => {
+    const DetailProductCards = ({ products = [], totalAmount, kitDisplayUnit, kitSize, kitName, selectedKits = [], kitOrders = [], kitSticker, kitLogo, kitPrinting, kitOverallQty, kitPrice, forwardingCharge, forwardingChargeAmount, packagingIncludes, packagingIncludesQty }) => {
       const kitProds = products.filter(p => p && (p.isKit || p.kitType));
       const sepProds = products.filter(p => p && !p.isKit && !p.kitType);
       const effectiveKitName = kitName || (kitProds.length > 0 ? (kitProds[0].kitName || kitProds[0].kitType || null) : null);
@@ -5425,7 +5445,7 @@ export default function Sales() {
             <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
               ORDER TOTAL — BY CATEGORY ({products.length} product{products.length !== 1 ? 's' : ''})
             </Text>
-            <CategoryTotalsBreakdown rec={{ products, kitOrders, forwardingCharge, forwardingChargeAmount, kitPrice, kitOverallQty }} isDark={isDark} />
+            <CategoryTotalsBreakdown rec={{ products, kitOrders, forwardingCharge, forwardingChargeAmount, kitPrice, kitOverallQty, packagingIncludes, packagingIncludesQty }} isDark={isDark} kitsData={kits} />
           </div>
         )}
       </div>
@@ -5478,7 +5498,7 @@ export default function Sales() {
           <div style={{ marginTop: 12, padding: '12px 16px', background: recBalance > 0 ? 'rgba(250,140,22,0.06)' : 'rgba(82,196,26,0.06)', borderRadius: 10, border: `1px solid ${recBalance > 0 ? 'rgba(250,140,22,0.25)' : 'rgba(82,196,26,0.25)'}` }}>
             <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 8, letterSpacing: 0.5 }}>PAYMENT SUMMARY</Text>
             <div style={{ marginBottom: 10 }}>
-              <CategoryTotalsBreakdown rec={rec} isDark={isDark} />
+              <CategoryTotalsBreakdown rec={rec} isDark={isDark} kitsData={kits} />
             </div>
             {recPaid > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -5700,6 +5720,8 @@ export default function Sales() {
                       kitPrice={q.kitPrice || qLead?.kitPrice}
                       forwardingCharge={q.forwardingCharge}
                       forwardingChargeAmount={q.forwardingChargeAmount}
+                      packagingIncludes={q.packagingIncludes || qLead?.packagingIncludes}
+                      packagingIncludesQty={q.packagingIncludesQty || qLead?.packagingIncludesQty}
                     />
                   );
                 })()}
@@ -6210,6 +6232,8 @@ export default function Sales() {
                       kitPrice={n.kitPrice || nLead?.kitPrice}
                       forwardingCharge={n.forwardingCharge}
                       forwardingChargeAmount={n.forwardingChargeAmount}
+                      packagingIncludes={n.packagingIncludes || nLead?.packagingIncludes}
+                      packagingIncludesQty={n.packagingIncludesQty || nLead?.packagingIncludesQty}
                     />
                   );
                 })()}
@@ -7082,6 +7106,8 @@ export default function Sales() {
                       kitPrice={o.kitPrice || oLead?.kitPrice}
                       forwardingCharge={o.forwardingCharge}
                       forwardingChargeAmount={o.forwardingChargeAmount}
+                      packagingIncludes={o.packagingIncludes || oLead?.packagingIncludes}
+                      packagingIncludesQty={o.packagingIncludesQty || oLead?.packagingIncludesQty}
                     />
                   );
                 })()}
@@ -7146,7 +7172,7 @@ export default function Sales() {
               {o.orderCategory !== 'SAMPLE' && <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><CreditCardOutlined style={{ color: '#52c41a' }} /><span>Payment Summary</span></Space>}>
                 <div>
-                  <CategoryTotalsBreakdown rec={oEnrichedForBreakdown} isDark={isDark} />
+                  <CategoryTotalsBreakdown rec={oEnrichedForBreakdown} isDark={isDark} kitsData={kits} />
                   {!oHasKitProducts && oGstAmount > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 12, color: isDark ? '#aaa' : '#888' }}>
                       <span>Without GST</span>
@@ -8222,7 +8248,7 @@ export default function Sales() {
                             <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
                             <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
                           </div>
-                          <div style={{ marginTop: 8 }}><CategoryTotalsBreakdown rec={editRec} isDark={isDark} /></div>
+                          <div style={{ marginTop: 8 }}><CategoryTotalsBreakdown rec={editRec} isDark={isDark} kitsData={kits} /></div>
                           {effectivePaid > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><Text type="secondary" style={{ fontSize: 12 }}>Collected</Text><Text strong style={{ fontSize: 13, color: '#52c41a' }}>₹{effectivePaid.toLocaleString()}</Text></div>}
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
                             <Text style={{ fontSize: 12, fontWeight: 700 }}>Amount to Pay</Text>
@@ -8706,7 +8732,7 @@ export default function Sales() {
                           <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
                         </div>
                         <div style={{ marginTop: 8 }}>
-                          <CategoryTotalsBreakdown rec={editRec2} isDark={isDark} />
+                          <CategoryTotalsBreakdown rec={editRec2} isDark={isDark} kitsData={kits} />
                         </div>
                         {effectivePaid > 0 && (
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
@@ -11513,7 +11539,7 @@ export default function Sales() {
                             <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
                               TOTAL ORDER VALUE — BY CATEGORY ({(record.products || []).length} product{(record.products || []).length !== 1 ? 's' : ''})
                             </Text>
-                            <CategoryTotalsBreakdown rec={record} isDark={isDark} />
+                            <CategoryTotalsBreakdown rec={record} isDark={isDark} kitsData={kits} />
                           </div>
                         )}
                       </>
