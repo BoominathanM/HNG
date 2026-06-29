@@ -180,12 +180,10 @@ const isFrostedZiplock = (item, order) => {
 };
 
 // Returns true when an item requires sticker printing.
-// item.sticker='YES' is explicit intent; item.sticker='NO' overrides any logoType='Sticker'
-// inference (handles orders where inferLogoType fell back to 'Sticker' for items with no
-// keyword in their packing material name but sticker printing was explicitly set to No).
-// When item.sticker is unset (legacy orders without the field), logoType='Sticker' still triggers.
-const itemNeedsSticker = (item) =>
-  item.sticker === 'YES' || (item.sticker !== 'NO' && item.logoType === 'Sticker');
+// Only an explicit sticker='YES' (normalized) qualifies — unset/empty/'NO' all return false.
+// This prevents items where sticker was never selected from leaking into the Sticker tab
+// via old logoType='Sticker' inferences stored on legacy records.
+const itemNeedsSticker = (item) => normYNOps(item.sticker) === 'YES';
 
 // Returns true when an item needs a direct printing step (Printing = Yes on the product/kit).
 const itemNeedsPrinting = (item) => String(item.printing ?? '').trim().toUpperCase() === 'YES';
@@ -335,11 +333,10 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const emergencyAllDone = areAllEmergencyItemsDone(order);
       const items = (order.items || []).map((item, idx) => ({ item, idx }))
         .filter(({ item }) => {
-          // Sticker/Print tab shows ONLY items whose destination IS the sticker tab
-          // (packagingType==='sticker'):
-          //   • Sticker=Yes product, or a Printing=Yes product with no box/ziplock/butter packing.
-          //   • A kit appears here only when it has NO packaging display unit — kits WITH a
-          //     Box/Ziplock/Butter display unit route DIRECTLY to that tab (sticker handled there).
+          // Sticker tab shows ONLY items where sticker printing was explicitly requested.
+          // sticker='NO' or sticker unset (empty/undefined) → never route to Sticker tab,
+          // regardless of logoType inference or getItemPackagingType fallback.
+          if (normYNOps(item.sticker) !== 'YES') return false;
           if (getItemPackagingType(item, order) !== 'sticker') return false;
           return itemNeedsPrintStep(item);
         })
