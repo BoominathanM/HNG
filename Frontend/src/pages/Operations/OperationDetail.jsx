@@ -626,20 +626,32 @@ export default function OperationDetail() {
     return stickerRequestMap[`${name}|${record.category || ''}`] || stickerRequestMap[name];
   };
 
-  // Kit-level SR lookup: stickerType → SR (for SRs where product='Kit').
-  // All kit items with the same display-unit tab (Box/Ziplock/Butter Paper) share ONE SR,
-  // so approving once covers every item of that kit type in this order.
-  const kitSRByType = useMemo(() => {
-    const map = {};
-    stickerRequests
-      .filter((sr) => {
-        const srOrderId = String(sr.orderId?._id || sr.orderId || '');
-        return (srOrderId === String(order?.key || '') || sr.orderId?.orderCode === id)
-          && (sr.product || '').toLowerCase() === 'kit';
-      })
-      .forEach((sr) => { map[sr.stickerType || 'Box'] = sr; });
-    return map;
+  // Kit-level SR list (for SRs where product='Kit'). We keep EVERY kit SR — not just one per
+  // display-unit tab — because a Personalized Kit and a Separate Kit can both route to the same
+  // tab (e.g. Box) yet each carries its OWN approval (distinct category/kitType). Collapsing by
+  // stickerType made the later one overwrite the earlier; resolveKitSR now picks the right one.
+  const kitSRList = useMemo(() => {
+    return stickerRequests.filter((sr) => {
+      const srOrderId = String(sr.orderId?._id || sr.orderId || '');
+      return (srOrderId === String(order?.key || '') || sr.orderId?.orderCode === id)
+        && (sr.product || '').toLowerCase() === 'kit';
+    });
   }, [stickerRequests, order?.key, id]);
+
+  // The outer personalized-packaging approval (category='personalized'). In a MIXED order
+  // (personalized outer + separate kits inside), the inner items read as Separate Kit/Product, so
+  // NO spec-table row carries category='personalized' — without this the personalized approval would
+  // never surface. We pull it out separately and pin it to the first personalized-included row below.
+  const personalizedKitSR = useMemo(
+    () => kitSRList.find((sr) => (sr.category || '') === 'personalized') || null,
+    [kitSRList],
+  );
+  // First item that is packed inside the personalized outer — the row we attach the personalized
+  // approval block to (so it shows once, alongside that row's own Separate-Kit approval).
+  const firstPersonalizedRowKey = useMemo(() => {
+    const r = (order?.items || []).find((it) => it.isIncludedInPersonalized);
+    return r ? String(r.key) : null;
+  }, [order?.items]);
 
   // Kit display-unit packaging approval (one per kit order, stickerType='Display Unit').
   // Distinct from the per-product sticker design approval — this is the final sign-off on
@@ -873,13 +885,156 @@ export default function OperationDetail() {
     );
   };
 
-  // Resolve the shared Kit SR for a kit item based on its display-unit tab.
-  // Returns the SR that ALL kit items with the same packaging type share → single approval covers all.
+  // Resolve the Kit SR for a kit item based on its display-unit tab AND composition category/kit.
+  // A Personalized Kit and a Separate Kit can share the same packaging tab (e.g. Box) but each has
+  // its own approval — so match the row's category and kit type, not just the tab. Match precedence:
+  // tab+category+kitType → tab+category → tab+kitType → tab → any. This keeps both approvals visible
+  // side-by-side in the Ops Approval column instead of one replacing the other.
   const resolveKitSR = (record) => {
     if (!(record.isKit || record.kitType)) return null;
     const duTab = record.displayUnitTab || '';
     const st = duTab === 'Ziplock' ? 'Frosted Ziplock' : duTab === 'Butter Paper' ? 'Butter Paper' : 'Box';
-    return kitSRByType[st] || Object.values(kitSRByType)[0] || null;
+    const cat = record.category || '';
+    const kt = (record.kitName || record.kitType || '').toLowerCase();
+    const sameTab = kitSRList.filter((sr) => (sr.stickerType || 'Box') === st);
+    return sameTab.find((sr) => (sr.category || '') === cat && (sr.kitType || '').toLowerCase() === kt)
+      || sameTab.find((sr) => (sr.category || '') === cat)
+      || sameTab.find((sr) => (sr.kitType || '').toLowerCase() === kt)
+      || sameTab[0]
+      || null;
+  };
+
+  // Renders ONE kit-approval block (kit info + status / Ops-OK button) for the Ops Approval column.
+  // Reused for a row's own kit approval AND — in a mixed personalized order — the outer personalized
+  // packaging approval, so both can stack in the same cell without one overwriting the other.
+  const renderKitApprovalBlock = (sr, { kitTypeName, catLabel, catColor, kitProductsList, isRepresentativeRow }) => {
+    const kitInfoBlock = (
+      <Space direction="vertical" size={3} style={{ maxWidth: 190 }}>
+        <Space size={4} wrap>
+          <Tag color="purple" style={{ borderRadius: 10, fontSize: 11, fontWeight: 600, margin: 0 }}>{kitTypeName}</Tag>
+          <Tag style={{ background: `${catColor}1a`, color: catColor, border: `1px solid ${catColor}55`, borderRadius: 10, fontSize: 10, fontWeight: 600, margin: 0 }}>{catLabel}</Tag>
+        </Space>
+        {kitProductsList.length > 0 && (
+          <Space wrap size={3}>
+            <Text type="secondary" style={{ fontSize: 10 }}>Includes:</Text>
+            {kitProductsList.map((p, i) => (
+              <Tag key={i} color="geekblue" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{p}</Tag>
+            ))}
+          </Space>
+        )}
+      </Space>
+    );
+    if (!sr) {
+      return (
+        <Space direction="vertical" size={4}>
+          {kitInfoBlock}
+          <Tag color="default" style={{ fontSize: 10 }}>
+            {isRepresentativeRow ? 'Awaiting design' : 'Covered by kit approval'}
+          </Tag>
+        </Space>
+      );
+    }
+    if (sr.opsHeadApproved) {
+      return (
+        <Space direction="vertical" size={4}>
+          {kitInfoBlock}
+          <Tooltip title={`Ops OK by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'} — applies to all ${kitTypeName} products`}>
+            <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
+              Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+            </Tag>
+          </Tooltip>
+          {sr.salesApproved && (
+            <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default' }}>Sales OK</Tag>
+          )}
+        </Space>
+      );
+    }
+    return (
+      <Space direction="vertical" size={4}>
+        {kitInfoBlock}
+        <Tag color="gold" style={{ fontSize: 10 }}>{sr.status || 'Waiting for Approval'}</Tag>
+        {sr.salesApproved && (
+          <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default' }}>Sales OK</Tag>
+        )}
+        {!isRepresentativeRow ? (
+          <Tooltip title={`Ops OK on the first kit row approves all ${kitProductsList.length} products in this kit`}>
+            <Tag color="default" style={{ fontSize: 10 }}>Covered by kit approval</Tag>
+          </Tooltip>
+        ) : (
+          <Tooltip title={`Approves entire ${catLabel} — ${kitTypeName} (${kitProductsList.length} product${kitProductsList.length !== 1 ? 's' : ''})`}>
+            <Button
+              size="small"
+              icon={<CheckCircleOutlined />}
+              style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
+              onClick={async () => {
+                try {
+                  const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
+                  enqueueSnackbar(
+                    res?.data?.status === 'Approved'
+                      ? `${kitTypeName} fully approved — printing can start!`
+                      : `Ops OK recorded for ${kitTypeName} — awaiting Sales approval`,
+                    { variant: 'success' },
+                  );
+                } catch (err) {
+                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                }
+              }}
+            >
+              Ops OK ({catLabel})
+            </Button>
+          </Tooltip>
+        )}
+      </Space>
+    );
+  };
+
+  // Renders a single design thumbnail (image popover) or a View link for a design file URL.
+  // Reused so the Design column can show BOTH a row's own design AND the outer personalized design.
+  const designThumb = (url, isExisting) => {
+    if (!url) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
+    const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+    if (isImage) {
+      return (
+        <Popover
+          content={
+            <div style={{ textAlign: 'center' }}>
+              <img src={url} alt="design" style={{ maxWidth: 300, maxHeight: 300, borderRadius: 8, objectFit: 'contain' }} />
+              <div style={{ marginTop: 8 }}>
+                <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1890ff' }}>Open full size ↗</a>
+              </div>
+              {isExisting && (
+                <div style={{ marginTop: 6 }}>
+                  <Tag color="green" style={{ fontSize: 11 }}>♻ Previously approved design</Tag>
+                </div>
+              )}
+            </div>
+          }
+          title={isExisting ? 'Existing Approved Design' : 'Uploaded Design'}
+          trigger="click"
+          placement="left"
+        >
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <img
+              src={url}
+              alt="design"
+              style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: `1px solid ${isExisting ? '#52c41a' : '#e0d0e8'}`, cursor: 'pointer' }}
+            />
+            {isExisting && (
+              <div style={{ position: 'absolute', top: -4, right: -4, background: '#52c41a', borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', border: '1px solid #fff' }}>♻</div>
+            )}
+          </div>
+        </Popover>
+      );
+    }
+    return (
+      <Space direction="vertical" size={2}>
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <EyeOutlined style={{ fontSize: 12 }} /> View
+        </a>
+        {isExisting && <Tag color="green" style={{ fontSize: 10, margin: 0 }}>♻ Existing</Tag>}
+      </Space>
+    );
   };
 
   const productColumns = [
@@ -1403,50 +1558,30 @@ export default function OperationDetail() {
         );
         const url = sr?.designFileUrl || existingHD?.designFileUrl;
         const isExisting = !sr?.designFileUrl && !!existingHD?.designFileUrl;
-        if (!url) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
-        const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
-        if (isImage) {
+        const ownNode = designThumb(url, isExisting);
+
+        // In a MIXED personalized order, also show the outer personalized-kit design (pinned to the
+        // first personalized-included row) so BOTH the Separate Kit and Personalized Kit designs show.
+        if (personalizedKitSR?.designFileUrl
+          && record.isIncludedInPersonalized
+          && String(record.key) === String(firstPersonalizedRowKey)
+          && personalizedKitSR._id !== sr?._id) {
           return (
-            <Popover
-              content={
-                <div style={{ textAlign: 'center' }}>
-                  <img src={url} alt="design" style={{ maxWidth: 300, maxHeight: 300, borderRadius: 8, objectFit: 'contain' }} />
-                  <div style={{ marginTop: 8 }}>
-                    <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1890ff' }}>Open full size ↗</a>
-                  </div>
-                  {isExisting && (
-                    <div style={{ marginTop: 6 }}>
-                      <Tag color="green" style={{ fontSize: 11 }}>♻ Previously approved design</Tag>
-                    </div>
-                  )}
-                </div>
-              }
-              title={isExisting ? 'Existing Approved Design' : 'Uploaded Design'}
-              trigger="click"
-              placement="left"
-            >
-              <div style={{ position: 'relative', display: 'inline-block' }}>
-                <img
-                  src={url}
-                  alt="design"
-                  style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: `1px solid ${isExisting ? '#52c41a' : '#e0d0e8'}`, cursor: 'pointer' }}
-                />
-                {isExisting && (
-                  <div style={{ position: 'absolute', top: -4, right: -4, background: '#52c41a', borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', border: '1px solid #fff' }}>♻</div>
-                )}
-              </div>
-            </Popover>
+            <Space direction="vertical" size={8} style={{ width: '100%' }} split={<div style={{ borderTop: '1px dashed rgba(127,127,127,0.3)', width: '100%' }} />}>
+              <Space direction="vertical" size={2}>
+                <Tag color="purple" style={{ fontSize: 9, margin: 0, borderRadius: 8 }}>Personalized Kit</Tag>
+                {designThumb(personalizedKitSR.designFileUrl, false)}
+              </Space>
+              <Space direction="vertical" size={2}>
+                <Tag color="cyan" style={{ fontSize: 9, margin: 0, borderRadius: 8 }}>
+                  {record.category === 'separate_kit' ? 'Separate Kit' : 'This Item'}
+                </Tag>
+                {ownNode}
+              </Space>
+            </Space>
           );
         }
-        return (
-          <Space direction="vertical" size={2}>
-            <a href={url} target="_blank" rel="noopener noreferrer"
-              style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-              <EyeOutlined style={{ fontSize: 12 }} /> View
-            </a>
-            {isExisting && <Tag color="green" style={{ fontSize: 10, margin: 0 }}>♻ Existing</Tag>}
-          </Space>
-        );
+        return ownNode;
       },
     },
     {
@@ -1458,138 +1593,97 @@ export default function OperationDetail() {
         const isKitItem = !!(record.isKit || record.kitType);
         const sr = resolveKitSR(record) || srForRow(record);
 
-        if (isKitItem) {
-          // Determine kit type name and product list for this display-unit group
-          const kitDUTab = record.displayUnitTab || '';
-          const kitItemsForSameKit = (order?.items || []).filter(
-            (it) => (it.isKit || it.kitType) && (it.displayUnitTab || '') === kitDUTab
-          );
-          const kitTypeName = sr?.kitType
-            || record.kitName || record.kitType
-            || (record.category === 'personalized' ? 'Personalized Kit' : 'Separate Kit');
-          const kitProductsList = sr?.kitProducts?.length
-            ? sr.kitProducts
-            : kitItemsForSameKit.map((it) => it.itemName || it.name || '').filter(Boolean);
-
-          // Only the first item in this kit group shows the "Send for Approval" button
-          const firstKitItemOfType = kitItemsForSameKit[0];
-          const isRepresentativeRow = !firstKitItemOfType || String(firstKitItemOfType.key) === String(record.key);
-
-          const kitInfoBlock = (
-            <Space direction="vertical" size={3} style={{ maxWidth: 190 }}>
-              <Tag color="purple" style={{ borderRadius: 10, fontSize: 11, fontWeight: 600, margin: 0 }}>{kitTypeName}</Tag>
-              {kitProductsList.length > 0 && (
-                <Space wrap size={3}>
-                  <Text type="secondary" style={{ fontSize: 10 }}>Includes:</Text>
-                  {kitProductsList.map((p, i) => (
-                    <Tag key={i} color="geekblue" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{p}</Tag>
-                  ))}
-                </Space>
-              )}
-            </Space>
-          );
-
-          if (!sr) {
-            // No design sent for approval yet — Ops can only approve, not send. Show status only.
-            return (
-              <Space direction="vertical" size={4}>
-                {kitInfoBlock}
-                <Tag color="default" style={{ fontSize: 10 }}>
-                  {isRepresentativeRow ? 'Awaiting design' : 'Covered by kit approval'}
-                </Tag>
-              </Space>
+        // The row's OWN approval cell (kit-level or per-product).
+        const baseCell = (() => {
+          if (isKitItem) {
+            // Group by display-unit tab AND composition category AND kit identity — so a Personalized
+            // Kit and a Separate Kit sharing the same tab (e.g. Box) each get their OWN representative
+            // row + approval, instead of one being swallowed under "covered by kit approval".
+            const kitDUTab = record.displayUnitTab || '';
+            const recCat = record.category || '';
+            const recKit = (record.kitName || record.kitType || '').toLowerCase();
+            const kitItemsForSameKit = (order?.items || []).filter(
+              (it) => (it.isKit || it.kitType)
+                && (it.displayUnitTab || '') === kitDUTab
+                && (it.category || '') === recCat
+                && (it.kitName || it.kitType || '').toLowerCase() === recKit
             );
+            // Composition label (Personalized Kit / Separate Kit) so the same packaging tab is told apart.
+            const catLabel = record.category === 'personalized' ? 'Personalized Kit'
+              : record.category === 'separate_kit' ? 'Separate Kit'
+              : (ORDER_CATEGORY_META[record.category]?.label || 'Kit');
+            const kitTypeName = sr?.kitType || record.kitName || record.kitType || catLabel;
+            const kitProductsList = sr?.kitProducts?.length
+              ? sr.kitProducts
+              : kitItemsForSameKit.map((it) => it.itemName || it.name || '').filter(Boolean);
+            const firstKitItemOfType = kitItemsForSameKit[0];
+            const isRepresentativeRow = !firstKitItemOfType || String(firstKitItemOfType.key) === String(record.key);
+            const catColor = ORDER_CATEGORY_META[record.category]?.color || '#7c3aed';
+            return renderKitApprovalBlock(sr, { kitTypeName, catLabel, catColor, kitProductsList, isRepresentativeRow });
           }
 
-          // SR exists — show kit info + approval status
+          // Non-kit products — original behavior unchanged
+          if (!sr) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
           if (sr.opsHeadApproved) {
             return (
-              <Space direction="vertical" size={4}>
-                {kitInfoBlock}
-                <Tooltip title={`Ops OK by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'} — applies to all ${kitTypeName} products`}>
-                  <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
-                    Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
-                  </Tag>
-                </Tooltip>
-                {sr.salesApproved && (
-                  <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default' }}>Sales OK</Tag>
-                )}
-              </Space>
+              <Tooltip title={`Approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}`}>
+                <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
+                  Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+                </Tag>
+              </Tooltip>
             );
           }
-          // SR exists, ops not yet approved
           return (
-            <Space direction="vertical" size={4}>
-              {kitInfoBlock}
-              <Tag color="gold" style={{ fontSize: 10 }}>{sr.status || 'Waiting for Approval'}</Tag>
-              {sr.salesApproved && (
-                <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default' }}>Sales OK</Tag>
-              )}
-              {!isRepresentativeRow ? (
-                <Tooltip title={`Ops OK on the first kit row approves all ${kitProductsList.length} products in this kit`}>
-                  <Tag color="default" style={{ fontSize: 10 }}>Covered by kit approval</Tag>
-                </Tooltip>
-              ) : (
-                <Tooltip title={`Approves entire ${kitTypeName} (${kitProductsList.length} product${kitProductsList.length !== 1 ? 's' : ''})`}>
-                  <Button
-                    size="small"
-                    icon={<CheckCircleOutlined />}
-                    style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
-                    onClick={async () => {
-                      try {
-                        const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
-                        enqueueSnackbar(
-                          res?.data?.status === 'Approved'
-                            ? `${kitTypeName} fully approved — printing can start!`
-                            : `Ops OK recorded for ${kitTypeName} — awaiting Sales approval`,
-                          { variant: 'success' },
-                        );
-                      } catch (err) {
-                        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-                      }
-                    }}
-                  >
-                    Ops OK (Kit)
-                  </Button>
-                </Tooltip>
-              )}
+            <Button
+              size="small"
+              icon={<CheckCircleOutlined />}
+              style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
+              onClick={async () => {
+                try {
+                  const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
+                  enqueueSnackbar(
+                    res?.data?.status === 'Approved'
+                      ? 'Design fully approved — printing can start!'
+                      : 'Ops Head approval recorded — awaiting Sales approval',
+                    { variant: 'success' },
+                  );
+                } catch (err) {
+                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                }
+              }}
+            >
+              Ops OK
+            </Button>
+          );
+        })();
+
+        // In a MIXED personalized order the outer personalized-packaging approval has no row of its
+        // own (inner items read as Separate Kit/Product). Surface it once — pinned to the first
+        // personalized-included row — so BOTH the personalized AND the separate-kit approvals show in
+        // this column without one replacing the other. Works for kit OR product pin rows.
+        if (personalizedKitSR
+          && record.isIncludedInPersonalized
+          && String(record.key) === String(firstPersonalizedRowKey)
+          && personalizedKitSR._id !== sr?._id) {
+          const pProducts = personalizedKitSR.kitProducts?.length
+            ? personalizedKitSR.kitProducts
+            : (order?.items || []).filter((it) => it.isIncludedInPersonalized)
+              .map((it) => it.itemName || it.name || '').filter(Boolean);
+          const persBlock = renderKitApprovalBlock(personalizedKitSR, {
+            kitTypeName: personalizedKitSR.kitType || 'Personalized Kit',
+            catLabel: 'Personalized Kit',
+            catColor: ORDER_CATEGORY_META.personalized.color,
+            kitProductsList: pProducts,
+            isRepresentativeRow: true,
+          });
+          return (
+            <Space direction="vertical" size={8} style={{ width: '100%' }} split={<div style={{ borderTop: '1px dashed rgba(127,127,127,0.3)', width: '100%' }} />}>
+              {persBlock}
+              {baseCell}
             </Space>
           );
         }
-
-        // Non-kit products — original behavior unchanged
-        if (!sr) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
-        if (sr.opsHeadApproved) {
-          return (
-            <Tooltip title={`Approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}`}>
-              <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
-                Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
-              </Tag>
-            </Tooltip>
-          );
-        }
-        return (
-          <Button
-            size="small"
-            icon={<CheckCircleOutlined />}
-            style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
-            onClick={async () => {
-              try {
-                const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
-                enqueueSnackbar(
-                  res?.data?.status === 'Approved'
-                    ? 'Design fully approved — printing can start!'
-                    : 'Ops Head approval recorded — awaiting Sales approval',
-                  { variant: 'success' },
-                );
-              } catch (err) {
-                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-              }
-            }}
-          >
-            Ops OK
-          </Button>
-        );
+        return baseCell;
       },
     },
     {

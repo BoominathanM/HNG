@@ -6941,6 +6941,13 @@ export default function Sales() {
                               <Tag color={sr.stickerType === 'Box' ? 'green' : sr.stickerType === 'Frosted Ziplock' ? 'orange' : sr.stickerType === 'Display Unit' ? 'purple' : 'blue'} style={{ borderRadius: 10, fontSize: 11 }}>
                                 {sr.stickerType}
                               </Tag>
+                              {/* Composition category so a Personalized Kit and a Separate Kit in the
+                                  same packaging tab are told apart (each keeps its own approval). */}
+                              {(sr.category === 'personalized' || sr.category === 'separate_kit') && (
+                                <Tag color={sr.category === 'personalized' ? 'purple' : 'cyan'} style={{ borderRadius: 10, fontSize: 11 }}>
+                                  {sr.category === 'personalized' ? 'Personalized Kit' : 'Separate Kit'}
+                                </Tag>
+                              )}
                               <Tag color={
                                 sr.status === 'Approved' ? 'success' :
                                 sr.status === 'Waiting for Approval' ? 'warning' :
