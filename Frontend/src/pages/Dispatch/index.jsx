@@ -12,7 +12,7 @@ import {
   InboxOutlined, FilterOutlined, GlobalOutlined,
   ExportOutlined, CheckSquareOutlined, WalletOutlined, UserOutlined,
   PhoneOutlined, FileTextOutlined, DollarCircleOutlined,
-  AlertFilled, ExperimentOutlined,
+  AlertFilled, ExperimentOutlined, CalendarOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -21,6 +21,7 @@ import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetDispatchesQuery,
+  useGetTodaysDispatchesQuery,
   useGetPickupExpensesQuery,
   useGetCompanySettingsQuery,
   useUploadDispatchLRMutation,
@@ -115,11 +116,12 @@ export default function Dispatch() {
 
   // ── Dispatch orders — RTK Query ─────────────────────────────────────────
   const { data: dispatchData } = useGetDispatchesQuery({ page: dispatchPage, limit: dispatchPageSize, ...(dispatchStatusFilter ? { status: dispatchStatusFilter } : {}) });
+  const { data: todaysDispatchData } = useGetTodaysDispatchesQuery();
   const [uploadLR] = useUploadDispatchLRMutation();
   const [confirmDispatch] = useConfirmDispatchMutation();
   const [verifyItem] = useVerifyItemMutation();
 
-  const dispatchOrders = useMemo(() => (dispatchData?.data || []).map((d) => {
+  const normalizeDispatch = (d) => {
     const isSample = d.orderId?.orderCategory === 'SAMPLE' || d.orderId?.leadId?.leadType === 'SAMPLE';
     return {
       key: d._id,
@@ -140,6 +142,7 @@ export default function Dispatch() {
       invoiceNumber: d.invoiceNumber,
       createdAt: d.createdAt,
       dispatchedAt: d.dispatchedAt,
+      deliveryDate: d.orderId?.expectedDeliveryDate || null,
       items: d.items || [],
       contactPerson: d.orderId?.contactPerson || d.orderId?.clientName || '—',
       phone: d.orderId?.phone || d.orderId?.clientPhone || '—',
@@ -148,7 +151,10 @@ export default function Dispatch() {
       state: d.orderId?.state || '—',
       pincode: d.orderId?.pincode || '—',
     };
-  }), [dispatchData]);
+  };
+
+  const dispatchOrders = useMemo(() => (dispatchData?.data || []).map(normalizeDispatch), [dispatchData]);
+  const todayDispatchOrders = useMemo(() => (todaysDispatchData?.data || []).map(normalizeDispatch), [todaysDispatchData]);
 
   // Transport records (real Transport collection, created on LR upload).
   const { data: transportRaw } = useGetTransportsQuery();
@@ -479,75 +485,110 @@ export default function Dispatch() {
   };
 
   // ── Columns ────────────────────────────────────────────────────────────────
-  const buildColumns = (showTodayActions = false) => [
-    {
-      title: 'Order', dataIndex: 'id', width: 120,
-      render: (v, r) => (
-        <Space direction="vertical" size={2}>
-          <Space size={4}>
-            {r.isEmergency && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
-            {r.orderCategory === 'SAMPLE' && <ExperimentOutlined style={{ color: '#722ed1', fontSize: 13 }} />}
-            <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
-          </Space>
-          {r.isEmergency && <Tag color="red" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency</Tag>}
-          {r.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Sample Order</Tag>}
+  const buildColumns = (showTodayActions = false) => {
+    const deliveryDateCol = {
+      title: (
+        <Space size={4}>
+          <CalendarOutlined style={{ color: '#B11E6A' }} />
+          Delivery Date
         </Space>
       ),
-    },
-    { title: 'Client', dataIndex: 'client', width: 150, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Destination', dataIndex: 'destination', width: 120, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
-    { title: 'Location', dataIndex: 'address', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Created Date', dataIndex: 'createdAt', width: 160, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</Text> },
-    { title: 'Sales Person', dataIndex: 'salesPerson', width: 115, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Product', dataIndex: 'product', width: 145, responsive: ['md'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    {
-      title: 'Boxes', dataIndex: 'boxes', width: 80, responsive: ['sm'],
-      render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ fontSize: 13 }}>{v}</Text></Space>,
-    },
-    { title: 'Weight', dataIndex: 'weight', width: 90, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    {
-      title: 'Payment', dataIndex: 'payment', width: 115,
+      dataIndex: 'deliveryDate',
+      width: 140,
       render: (v) => {
-        if (v === 'N/A') return <Tag color="default" style={{ borderRadius: 20, fontSize: 13, fontWeight: 600 }}>N/A</Tag>;
-        const c = v === 'Paid' ? '#2e7d32' : v === 'Partial' ? '#c77700' : '#B11E6A';
-        return <Tag style={{ borderRadius: 20, fontSize: 13, background: `${c}22`, color: c, border: `1px solid ${c}44` }}>{v}</Tag>;
+        if (!v) return <Text type="secondary" style={{ fontSize: 13 }}>—</Text>;
+        const date = new Date(v);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const isOverdue = date < today;
+        return (
+          <Space direction="vertical" size={0}>
+            <Text strong style={{ fontSize: 13, color: isOverdue ? '#ff4d4f' : '#2e7d32' }}>
+              {date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+            </Text>
+            {isOverdue && <Tag color="red" style={{ fontSize: 10, lineHeight: '14px' }}>Overdue</Tag>}
+          </Space>
+        );
       },
-    },
-    { title: 'Transport', dataIndex: 'transport', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    {
-      title: 'Status', dataIndex: 'status', width: 140,
-      render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, fontSize: 13, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag>,
-    },
-    {
-      title: 'Dispatch Type', key: 'dispatchType', width: 160,
-      render: (_, r) => (
-        <Select
-          size="small"
-          value={productVerify[r.key]?.dispatchType || undefined}
-          placeholder="Select type"
-          style={{ width: 145 }}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(v) => setDispatchType(r.key, v)}
-        >
-          <Option value="Full Dispatch">Full Dispatch</Option>
-          <Option value="Partial Dispatch">Partial Dispatch</Option>
-        </Select>
-      ),
-    },
-    {
-      title: 'Actions', key: 'actions', width: 110,
-      render: (_, r) => (
-        <Space onClick={(e) => e.stopPropagation()}>
-          <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/dispatch/${r.key}`)} />
-          <Button size="small" icon={<PrinterOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => openPrintModal(r)} />
-          {showTodayActions && (
-            <Button size="small" icon={<ExportOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
-              onClick={() => exportCSV([r], `${r.id}-export.csv`)} />
-          )}
-        </Space>
-      ),
-    },
-  ];
+    };
+
+    const baseCols = [
+      {
+        title: 'Order', dataIndex: 'id', width: 120,
+        render: (v, r) => (
+          <Space direction="vertical" size={2}>
+            <Space size={4}>
+              {r.isEmergency && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
+              {r.orderCategory === 'SAMPLE' && <ExperimentOutlined style={{ color: '#722ed1', fontSize: 13 }} />}
+              <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
+            </Space>
+            {r.isEmergency && <Tag color="red" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency</Tag>}
+            {r.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Sample Order</Tag>}
+          </Space>
+        ),
+      },
+      { title: 'Client', dataIndex: 'client', width: 150, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      { title: 'Destination', dataIndex: 'destination', width: 120, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+      { title: 'Location', dataIndex: 'address', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      { title: 'Created Date', dataIndex: 'createdAt', width: 160, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</Text> },
+      { title: 'Sales Person', dataIndex: 'salesPerson', width: 115, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      { title: 'Product', dataIndex: 'product', width: 145, responsive: ['md'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      {
+        title: 'Boxes', dataIndex: 'boxes', width: 80, responsive: ['sm'],
+        render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ fontSize: 13 }}>{v}</Text></Space>,
+      },
+      { title: 'Weight', dataIndex: 'weight', width: 90, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      {
+        title: 'Payment', dataIndex: 'payment', width: 115,
+        render: (v) => {
+          if (v === 'N/A') return <Tag color="default" style={{ borderRadius: 20, fontSize: 13, fontWeight: 600 }}>N/A</Tag>;
+          const c = v === 'Paid' ? '#2e7d32' : v === 'Partial' ? '#c77700' : '#B11E6A';
+          return <Tag style={{ borderRadius: 20, fontSize: 13, background: `${c}22`, color: c, border: `1px solid ${c}44` }}>{v}</Tag>;
+        },
+      },
+      { title: 'Transport', dataIndex: 'transport', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      {
+        title: 'Status', dataIndex: 'status', width: 140,
+        render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, fontSize: 13, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag>,
+      },
+      {
+        title: 'Dispatch Type', key: 'dispatchType', width: 160,
+        render: (_, r) => (
+          <Select
+            size="small"
+            value={productVerify[r.key]?.dispatchType || undefined}
+            placeholder="Select type"
+            style={{ width: 145 }}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(v) => setDispatchType(r.key, v)}
+          >
+            <Option value="Full Dispatch">Full Dispatch</Option>
+            <Option value="Partial Dispatch">Partial Dispatch</Option>
+          </Select>
+        ),
+      },
+      {
+        title: 'Actions', key: 'actions', width: 110,
+        render: (_, r) => (
+          <Space onClick={(e) => e.stopPropagation()}>
+            <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/dispatch/${r.key}`)} />
+            <Button size="small" icon={<PrinterOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => openPrintModal(r)} />
+            {showTodayActions && (
+              <Button size="small" icon={<ExportOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
+                onClick={() => exportCSV([r], `${r.id}-export.csv`)} />
+            )}
+          </Space>
+        ),
+      },
+    ];
+
+    // Insert Delivery Date column right after Order+Client for Today's Orders tab
+    if (showTodayActions) {
+      baseCols.splice(2, 0, deliveryDateCol);
+    }
+
+    return baseCols;
+  };
 
   const transportColumns = [
     { title: 'LR Number', dataIndex: 'lrNumber', width: 115, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
@@ -561,14 +602,15 @@ export default function Dispatch() {
     { title: 'Status', dataIndex: 'status', width: 105, render: (v) => <Tag color={v === 'Delivered' ? 'success' : 'processing'} style={{ fontSize: 13 }}>{v}</Tag> },
   ];
 
-  const filteredOrders = dispatchOrders.filter((o) => {
-    const s = !searchText || o.id.toLowerCase().includes(searchText.toLowerCase()) || o.client.toLowerCase().includes(searchText.toLowerCase()) || o.address.toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
+  const applyFilters = (orders) => orders.filter((o) => {
+    const s = !searchText || (o.id || '').toLowerCase().includes(searchText.toLowerCase()) || (o.client || '').toLowerCase().includes(searchText.toLowerCase()) || (o.address || '').toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
     const p = paymentFilter === 'All' || o.payment === paymentFilter;
     return s && p;
   });
 
-  // Today's Orders = scheduled for today (dispatch day / expected delivery), not creation date.
-  const todayOrders = filteredOrders.filter(o => isToday(o.dispatchedAt || o.expectedDeliveryDate || o.createdAt));
+  const filteredOrders = applyFilters(dispatchOrders);
+  // Today's Orders — sourced from the backend's dedicated /dispatch/today endpoint.
+  const todayOrders = applyFilters(todayDispatchOrders);
 
   // Expandable config for all orders table
   const expandable = {
@@ -698,7 +740,7 @@ export default function Dispatch() {
                       <div>
                         {filtersRow}
                         <Card
-                          title={<Text strong style={{ color: textColor }}>Today's Dispatch Orders</Text>}
+                          title={<Space><CalendarOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Orders with Delivery Date Today</Text></Space>}
                           extra={
                             <Button
                               size="small"
@@ -716,7 +758,7 @@ export default function Dispatch() {
                             {todayOrders.length === 0 ? (
                               <div style={{ textAlign: 'center', padding: '32px', color: isDark ? '#aaa' : '#888' }}>
                                 <CarOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block', color: '#B11E6A55' }} />
-                                No orders created today.
+                                No orders with delivery date today.
                               </div>
                             ) : (
                               <Table

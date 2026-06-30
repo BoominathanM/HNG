@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, InputNumber, Upload, Typography, Space,
   Steps, Descriptions, Alert, Tag, Checkbox,
-  Select, Table, Divider,
+  Select, Table, Divider, Spin,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -12,6 +12,7 @@ import {
   ArrowLeftOutlined, PrinterOutlined, SaveOutlined, ThunderboltOutlined,
   InboxOutlined, CheckCircleOutlined, FileDoneOutlined, CheckSquareOutlined,
   LinkOutlined, BellOutlined, CarOutlined, WhatsAppOutlined, EditOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -52,7 +53,7 @@ export default function DispatchDetail() {
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
 
-  const { data: dispatchData } = useGetDispatchQuery(id, { skip: !id });
+  const { data: dispatchData, isLoading: dispatchLoading, isFetching: dispatchFetching } = useGetDispatchQuery(id, { skip: !id });
   const [confirmDispatch] = useConfirmDispatchMutation();
   const [uploadLR] = useUploadDispatchLRMutation();
   const [verifyItem] = useVerifyItemMutation();
@@ -355,10 +356,18 @@ export default function DispatchDetail() {
     }
   };
 
+  if (dispatchLoading || dispatchFetching) {
+    return (
+      <div className="page-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
+        <Spin indicator={<LoadingOutlined style={{ fontSize: 36, color: '#B11E6A' }} spin />} tip="Loading dispatch details..." />
+      </div>
+    );
+  }
+
   if (!order) {
     return (
       <div className="page-container">
-        <Alert type="error" message={`Order "${id}" not found.`} showIcon style={{ borderRadius: 8 }} />
+        <Alert type="error" message={`Dispatch record "${id}" not found.`} showIcon style={{ borderRadius: 8 }} />
         <Button style={{ marginTop: 12 }} icon={<ArrowLeftOutlined />} onClick={() => navigate('/dispatch')}>Back to Dispatch</Button>
       </div>
     );

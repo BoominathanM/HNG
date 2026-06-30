@@ -36,16 +36,18 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, total, page, data: dispatches });
 });
 
-// Today's dispatches — orders scheduled for today (by expected delivery / dispatch day), not creation date.
+// Today's dispatches — dispatch records whose linked order has expectedDeliveryDate = today.
 exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  const dispatches = await DispatchRecord.find({
-    $or: [
-      { dispatchedAt: { $gte: start, $lte: end } },
-      { updatedAt: { $gte: start, $lte: end }, status: { $in: ['Draft', 'Confirmed'] } },
-    ],
-  }).populate({ path: 'orderId', select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency leadId paymentTerms', populate: { path: 'leadId', select: 'leadType' } }).sort('-updatedAt').lean();
+  // Find all orders whose expected delivery date falls today.
+  const todayOrderIds = await Order.find({
+    expectedDeliveryDate: { $gte: start, $lte: end },
+  }).distinct('_id');
+  const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
+    .populate({ path: 'orderId', select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency leadId paymentTerms', populate: { path: 'leadId', select: 'leadType' } })
+    .sort('orderId')
+    .lean();
   await Promise.all(dispatches.map(async (d) => {
     d.orderPaymentStatus = d.orderId?._id
       ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending')
