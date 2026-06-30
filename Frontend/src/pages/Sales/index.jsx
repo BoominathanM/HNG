@@ -1137,15 +1137,21 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     return inventoryItems.filter((item) => kitProductNames.has(item.name ?? item.label ?? item.value));
   }, [isKit, kitType, inventoryItems, kits, form, fieldName, name]);
 
+  // Stable _id of the selected inventory item — set on select and preserved as a hidden field.
+  // When multiple inventory items share the same name (e.g. two "Soap" records), this is the
+  // only reliable way to identify which one the user actually picked.
+  const inventoryItemId = Form.useWatch([fieldName, name, 'inventoryItemId'], form);
+
   // For kit items, kitType is the registered Form.Item field; selectedName (name field) can get
   // cleared when the conditional Form.Item switches from non-kit to kit mode on first render.
-  // Use kitType as primary lookup for kit items to avoid that stale-undefined issue.
+  // Use inventoryItemId (precise) first, then fall back to name-match for legacy rows.
   const invItem = React.useMemo(
     () => {
+      if (inventoryItemId) return inventoryItemsData.find((i) => i._id === inventoryItemId);
       const lookupKey = isKit ? kitType : selectedName;
       return lookupKey ? inventoryItemsData.find((i) => i.itemName === lookupKey) : undefined;
     },
-    [isKit, kitType, selectedName, inventoryItemsData],
+    [inventoryItemId, isKit, kitType, selectedName, inventoryItemsData],
   );
 
   // An inventory item stores its allowed packing materials / material categories / brands
@@ -1195,6 +1201,8 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const handleProductSelect = (value) => {
     const item = inventoryItemsData.find((i) => i._id === value);
     if (!item) return;
+    // Persist the _id so duplicate-name lookups resolve to the exact chosen item.
+    form.setFieldValue([fieldName, name, 'inventoryItemId'], item._id);
     // flushSync forces a synchronous React render so the InputNumber receives its
     // new value prop before the browser paints — prevents the "click to reveal" lag.
     flushSync(() => {
@@ -1242,6 +1250,8 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
       <Form.Item {...rest} name={[name, 'isKit']} hidden noStyle><Input /></Form.Item>
       <Form.Item {...rest} name={[name, 'kitName']} hidden noStyle><Input /></Form.Item>
       <Form.Item {...rest} name={[name, 'kitId']} hidden noStyle><Input /></Form.Item>
+      {/* Stores the inventory _id so duplicate-name items can be distinguished precisely */}
+      <Form.Item {...rest} name={[name, 'inventoryItemId']} hidden noStyle><Input /></Form.Item>
       {/* Card Header (Editable) */}
       <div style={{
         background: isDark ? 'rgba(177,30,106,0.1)' : 'rgba(177,30,106,0.04)',
@@ -1264,8 +1274,16 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 name={[name, 'name']}
                 style={{ marginBottom: 0 }}
                 rules={[{ required: true, message: 'Product required' }]}
-                getValueProps={(val) => ({ value: inventoryItemsData.find(i => i.itemName === val)?._id ?? val })}
-                getValueFromEvent={(val) => inventoryItemsData.find(i => i._id === val)?.itemName ?? val}
+                getValueProps={(val) => ({
+                  value: inventoryItemId
+                    ? inventoryItemId
+                    : (inventoryItemsData.find(i => i.itemName === val)?._id ?? val),
+                })}
+                getValueFromEvent={(val) => {
+                  const item = inventoryItemsData.find(i => i._id === val);
+                  if (item) form.setFieldValue([fieldName, name, 'inventoryItemId'], item._id);
+                  return item?.itemName ?? val;
+                }}
               >
                 <Select
                   showSearch
@@ -1277,6 +1295,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   style={{ width: '100%' }}
                   options={inventoryItems}
                   onSelect={handleProductSelect}
+                  onClear={() => form.setFieldValue([fieldName, name, 'inventoryItemId'], undefined)}
                   notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No items in inventory</span>}
                   optionRender={(option) => {
                     const stock = option.data.currentStock ?? 0;
@@ -1306,8 +1325,16 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   name={[name, 'kitType']}
                   style={{ marginBottom: 0 }}
                   rules={[{ required: true, message: 'Kit required' }]}
-                  getValueProps={(val) => ({ value: inventoryItemsData.find(i => i.itemName === val)?._id ?? val })}
-                  getValueFromEvent={(val) => inventoryItemsData.find(i => i._id === val)?.itemName ?? val}
+                  getValueProps={(val) => ({
+                    value: inventoryItemId
+                      ? inventoryItemId
+                      : (inventoryItemsData.find(i => i.itemName === val)?._id ?? val),
+                  })}
+                  getValueFromEvent={(val) => {
+                    const item = inventoryItemsData.find(i => i._id === val);
+                    if (item) form.setFieldValue([fieldName, name, 'inventoryItemId'], item._id);
+                    return item?.itemName ?? val;
+                  }}
                 >
                   <Select
                     showSearch
@@ -1321,6 +1348,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     onSelect={(selectedId) => {
                       const item = inventoryItemsData.find(i => i._id === selectedId);
                       form.setFieldValue([fieldName, name, 'name'], item?.itemName ?? selectedId);
+                      if (item) form.setFieldValue([fieldName, name, 'inventoryItemId'], item._id);
                       if (!item) return;
                       flushSync(() => {
                         form.setFieldValue([fieldName, name, 'rate'], item.sellingPrice ?? 0);
