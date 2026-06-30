@@ -12,7 +12,7 @@ import {
   ArrowLeftOutlined, PrinterOutlined, SaveOutlined, ThunderboltOutlined,
   InboxOutlined, CheckCircleOutlined, FileDoneOutlined, CheckSquareOutlined,
   LinkOutlined, BellOutlined, CarOutlined, WhatsAppOutlined, EditOutlined,
-  LoadingOutlined,
+  LoadingOutlined, GiftOutlined, AppstoreOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -96,6 +96,14 @@ export default function DispatchDetail() {
     }
     const inv = rawInvoices[0];
     const halfGst = Math.round((inv.gstAmount || 0) / 2 * 100) / 100;
+
+    // Extract linked order (populated by API) for kit composition data
+    const linkedOrder = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const srcProds = linkedOrder?.products?.length
+      ? linkedOrder.products
+      : (linkedOrder?.items?.length ? linkedOrder.items : []);
+    const srcKitOrders = linkedOrder?.kitOrders || [];
+
     const invoiceData = {
       inv: inv.invoiceNumber,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
@@ -105,15 +113,17 @@ export default function DispatchDetail() {
       taxableAmount: inv.subtotal || 0,
       cgst: halfGst,
       sgst: halfGst,
-      forwardingCharge: 0,
+      // Use boolean+amount pattern matching DocumentTemplate expectations
+      forwardingCharge: order?.forwardingCharge || false,
+      forwardingChargeAmount: order?.forwardingChargeAmount || 0,
       customer: {
         name: inv.partyId?.name || order?.client || '—',
         mobile: inv.partyId?.phone || order?.phone || '',
         gstin: inv.partyId?.gstNumber || '',
         address: inv.partyId?.address || order?.detailedAddress || '',
-        city: inv.partyId?.city || order?.city || '',
+        city: [order?.city, order?.state, order?.pincode].filter(Boolean).join(', ') || inv.partyId?.city || '',
         pan: inv.partyId?.pan || '',
-        placeOfSupply: inv.partyId?.state || 'Tamil Nadu',
+        placeOfSupply: order?.state || inv.partyId?.state || 'Tamil Nadu',
       },
       items: (inv.items || []).filter(Boolean).map(i => ({
         name: i.itemName,
@@ -124,6 +134,10 @@ export default function DispatchDetail() {
         taxAmt: i.taxAmt || 0,
         amount: i.lineTotal ?? ((i.price || 0) * (i.qty || 0)),
       })),
+      // Kit composition — DocumentTemplate's computeDocSections picks these up and
+      // renders the category-aware A/B/C sections matching the Billing invoice format.
+      products: srcProds,
+      kitOrders: srcKitOrders,
     };
     const html = generatePrintHTML('invoice', invoiceData, invoiceSettings);
     const win = window.open('', '_blank', 'width=900,height=700');
@@ -166,6 +180,7 @@ export default function DispatchDetail() {
       total: o.total || 0,
       // dispatch line items (these carry _id for per-product verification)
       items: (d.items && d.items.length ? d.items : (o.items || [])),
+      kitOrders: o.kitOrders || [],
       lrData: d.lrData || null,
     };
   }, [dispatchData]);
@@ -373,7 +388,122 @@ export default function DispatchDetail() {
     );
   }
 
-  const products = (order?.items || []).map((item, i) => ({ key: i + 1, itemId: item._id, name: item.product || item.name || item.itemName, qty: item.qty || item.qtyOrdered || 0, rate: item.rate || item.price || 0, boxes: item.boxes || 0, verified: item.verified }));
+  // Build kit-grouped product rows for the verification table.
+  // `products` = verifiable units (personalized kit headers count as ONE unit; separate items are individual).
+  // `groupedProducts` = all display rows including kit header + child item rows.
+  const buildGroupedProducts = () => {
+    const rawItems = (order?.items || []).filter(it => !it.isKit);
+    const kitOrdersList = order?.kitOrders || [];
+    const hasKitMeta = rawItems.some(it => it.kitId || it.kitType);
+    const orderBoxes = order?.boxes || 0;
+
+    const toRow = (item, i, type = 'product', extra = {}) => ({
+      key: item._id || `${type}_${i}`,
+      itemId: item._id,
+      name: item.product || item.name || item.itemName,
+      boxes: item.boxes || 0,
+      verified: item.verified,
+      type,
+      ...extra,
+    });
+
+    if (!kitOrdersList.length && !hasKitMeta) {
+      const flat = rawItems.map((item, i) => toRow(item, i, 'product', { boxes: orderBoxes }));
+      return { products: flat, groupedProducts: flat };
+    }
+
+    const rows = [];
+    const verifiable = [];
+
+    if (kitOrdersList.length > 0) {
+      kitOrdersList.forEach((ko, ki) => {
+        const kitId = String(ko.kitId || '');
+        const kitName = ko.kitName || ko.kitType || `Kit ${ki + 1}`;
+        const overallQty = Number(ko.overallQty) || 0;
+        const isPersonalized = (ko.category || 'separate_kit') === 'personalized';
+        const headerKey = `_kh_${kitId || ki}`;
+
+        const headerRow = {
+          key: headerKey,
+          type: 'kit_header',
+          kitName,
+          qty: overallQty,
+          // Personalized kits use the order-level box count; others use 0 as placeholder
+          boxes: isPersonalized ? orderBoxes : 0,
+          category: ko.category || 'separate_kit',
+          isPersonalized,
+          verified: false,
+        };
+        rows.push(headerRow);
+        // Personalized kit = ONE verifiable unit at kit level (not per-item)
+        if (isPersonalized) verifiable.push(headerRow);
+
+        const kitItems = hasKitMeta
+          ? rawItems.filter(it => {
+              if (kitId && it.kitId) return String(it.kitId) === kitId;
+              const refLow = (it.kitType || it.kitName || '').toLowerCase();
+              const koLow = (ko.kitName || ko.kitType || '').toLowerCase();
+              return refLow && koLow && refLow === koLow;
+            })
+          : (kitOrdersList.length === 1 ? rawItems : []);
+
+        kitItems.forEach((item, ii) => {
+          const totalQty = Number(item.qty) || 0;
+          const perKitQty = overallQty > 0 ? Math.round(totalQty / overallQty) : null;
+          // Personalized items are display-only — verification handled at kit header level
+          const itemType = isPersonalized ? 'personalized_item' : 'kit_item';
+          const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0 });
+          rows.push(row);
+          if (!isPersonalized) verifiable.push(row);
+        });
+      });
+
+      const usedKitIds = new Set(kitOrdersList.map(ko => String(ko.kitId)).filter(Boolean));
+      const sepItems = rawItems.filter(it => {
+        if (it.kitId && usedKitIds.has(String(it.kitId))) return false;
+        if (hasKitMeta && (it.kitType || it.kitName)) return false;
+        if (!hasKitMeta && kitOrdersList.length === 1) return false;
+        return true;
+      });
+      if (sepItems.length > 0) {
+        rows.push({ key: '_sep_hdr', type: 'kit_header', kitName: 'Separate Products', qty: null, boxes: 0, category: 'separate_product' });
+        sepItems.forEach((item, i) => {
+          const row = toRow(item, i, 'product', { boxes: item.boxes || orderBoxes });
+          rows.push(row);
+          verifiable.push(row);
+        });
+      }
+    } else {
+      const kitGroups = {};
+      const kitGroupOrder = [];
+      rawItems.forEach(it => {
+        const gKey = String(it.kitId || it.kitType || '');
+        if (gKey) {
+          if (!kitGroups[gKey]) { kitGroups[gKey] = { items: [], name: it.kitType || it.kitName || gKey }; kitGroupOrder.push(gKey); }
+          kitGroups[gKey].items.push(it);
+        }
+      });
+      kitGroupOrder.forEach(gKey => {
+        const grp = kitGroups[gKey];
+        rows.push({ key: `_kh_${gKey}`, type: 'kit_header', kitName: grp.name, qty: null, boxes: 0, category: 'separate_kit' });
+        grp.items.forEach((item, ii) => { const row = toRow(item, ii, 'kit_item'); rows.push(row); verifiable.push(row); });
+      });
+      rawItems.filter(it => !it.kitId && !it.kitType).forEach((item, i) => {
+        const row = toRow(item, i, 'product', { boxes: item.boxes || orderBoxes });
+        rows.push(row);
+        verifiable.push(row);
+      });
+    }
+
+    if (verifiable.length === 0) {
+      const flat = rawItems.map((item, i) => toRow(item, i, 'product', { boxes: orderBoxes }));
+      return { products: flat, groupedProducts: flat };
+    }
+
+    return { products: verifiable, groupedProducts: rows };
+  };
+  const { products, groupedProducts } = buildGroupedProducts();
+
   // Doc: every product must be verified before dispatch can be confirmed.
   const allProductsVerified = products.length > 0 && products.every((p) => verifiedProducts.has(p.key) || p.verified);
   const lrUploaded = lrFileList.length > 0;
@@ -584,22 +714,106 @@ export default function DispatchDetail() {
                     <Table
                       size="small"
                       pagination={false}
-                      dataSource={products}
+                      dataSource={groupedProducts}
                       style={{ borderRadius: 0 }}
                       columns={[
-                        { title: 'Product Name', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
-                        { title: 'Qty', dataIndex: 'qty', render: (v) => v.toLocaleString() },
-                        { title: 'Rate (₹)', dataIndex: 'rate', render: (v) => `₹${v}` },
-                        { title: 'Boxes', dataIndex: 'boxes', render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space> },
+                        {
+                          title: 'Product / Kit',
+                          dataIndex: 'name',
+                          // kit_header and personalized_item both span all 4 columns
+                          onCell: (row) => {
+                            if (row.type === 'kit_header' || row.type === 'personalized_item') return { colSpan: 4 };
+                            return {};
+                          },
+                          render: (v, row) => {
+                            if (row.type === 'kit_header') {
+                              const catMeta = {
+                                personalized:     { icon: <GiftOutlined />, bg: '#ede9fe', color: '#5b21b6', label: 'Personalized Kit' },
+                                separate_kit:     { icon: <GiftOutlined />, bg: '#e0f2fe', color: '#0369a1', label: 'Separate Kit' },
+                                separate_product: { icon: <AppstoreOutlined />, bg: '#fce7f3', color: '#9d174d', label: 'Products' },
+                              };
+                              const cm = catMeta[row.category] || catMeta.separate_kit;
+                              return (
+                                <div style={{ background: cm.bg, padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 8, margin: '-1px -1px' }}>
+                                  <span style={{ color: cm.color }}>{cm.icon}</span>
+                                  <Text strong style={{ color: cm.color, fontSize: 12 }}>{row.kitName}</Text>
+                                  {row.qty != null && (
+                                    <Tag style={{ borderRadius: 12, background: `${cm.color}15`, color: cm.color, border: `1px solid ${cm.color}44`, fontSize: 11 }}>
+                                      {row.qty} kit{row.qty !== 1 ? 's' : ''}
+                                    </Tag>
+                                  )}
+                                  <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: cm.color, border: `1px solid ${cm.color}33` }}>
+                                    {cm.label}
+                                  </Tag>
+                                  {/* Personalized kit: show boxes + single verify inline in the header */}
+                                  {row.isPersonalized && (
+                                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <Space size={4}>
+                                        <InboxOutlined style={{ color: cm.color }} />
+                                        <Text style={{ color: cm.color, fontSize: 12 }}>{row.boxes} box{row.boxes !== 1 ? 'es' : ''}</Text>
+                                      </Space>
+                                      {verifiedProducts.has(row.key) ? (
+                                        <Button size="small" icon={<CheckSquareOutlined />}
+                                          style={{ borderColor: '#52c41a', color: '#52c41a' }}
+                                          onClick={() => toggleVerify(row.key, null)}
+                                        >Unverify</Button>
+                                      ) : (
+                                        <Button size="small" icon={<CheckSquareOutlined />}
+                                          style={{ background: '#B11E6A', border: 'none', color: '#fff' }}
+                                          onClick={() => toggleVerify(row.key, null)}
+                                        >Verify Kit</Button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                            // personalized_item or kit_item or product
+                            return (
+                              <Space size={4}>
+                                {(row.type === 'kit_item' || row.type === 'personalized_item') && (
+                                  <span style={{ color: '#ccc', fontSize: 13, marginLeft: 8 }}>└</span>
+                                )}
+                                <Text style={{ fontSize: 12, color: row.type === 'personalized_item' ? '#888' : 'inherit' }}>{v}</Text>
+                                {row.perKitQty != null && (
+                                  <Text style={{ fontSize: 10, color: '#bbb' }}>({row.perKitQty}/kit)</Text>
+                                )}
+                              </Space>
+                            );
+                          },
+                        },
+                        {
+                          title: 'Boxes', dataIndex: 'boxes',
+                          onCell: (row) => {
+                            if (row.type === 'kit_header') return { colSpan: 0 };
+                            if (row.type === 'personalized_item') return { colSpan: 0 };
+                            return {};
+                          },
+                          render: (v, row) => row.type === 'kit_header' || row.type === 'personalized_item' ? null : (
+                            <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space>
+                          ),
+                        },
                         {
                           title: 'Status', key: 'status',
-                          render: (_, row) => verifiedProducts.has(row.key)
-                            ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
-                            : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>,
+                          onCell: (row) => {
+                            if (row.type === 'kit_header') return { colSpan: 0 };
+                            if (row.type === 'personalized_item') return { colSpan: 0 };
+                            return {};
+                          },
+                          render: (_, row) => (row.type === 'kit_header' || row.type === 'personalized_item') ? null : (
+                            verifiedProducts.has(row.key)
+                              ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
+                              : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>
+                          ),
                         },
                         {
                           title: 'Action', key: 'action',
-                          render: (_, row) => (
+                          onCell: (row) => {
+                            if (row.type === 'kit_header') return { colSpan: 0 };
+                            if (row.type === 'personalized_item') return { colSpan: 0 };
+                            return {};
+                          },
+                          render: (_, row) => (row.type === 'kit_header' || row.type === 'personalized_item') ? null : (
                             <Button size="small" icon={<CheckSquareOutlined />}
                               style={verifiedProducts.has(row.key) ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
                               onClick={() => toggleVerify(row.key, row.itemId)}

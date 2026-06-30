@@ -186,7 +186,6 @@ export default function TaskDetail() {
                   {t.assignedTo?.role && <Tag style={{ fontSize: 11 }}>{t.assignedTo.role}</Tag>}
                 </Space>
               </Descriptions.Item>
-              <Descriptions.Item label="Due Date">{t.dueDate ? t.dueDate.slice(0, 10) : '—'}</Descriptions.Item>
               {t.printingType && (
                 <Descriptions.Item label="Printing Type">{t.printingType}</Descriptions.Item>
               )}
