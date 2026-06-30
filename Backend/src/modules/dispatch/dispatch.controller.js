@@ -58,7 +58,13 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
 
 exports.getDispatch = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id)
-    .populate({ path: 'orderId', populate: { path: 'leadId', select: 'leadType' } })
+    .populate({
+      path: 'orderId',
+      populate: [
+        { path: 'leadId', select: 'leadType hotelName contactPerson phone email destination detailedAddress address city state pincode salesPerson products' },
+        { path: 'assignedTo', select: 'fullName' },
+      ],
+    })
     .populate('pickupEmpId', 'fullName phone');
   if (!dispatch) return next(new AppError('Dispatch record not found', 404));
   res.status(200).json({ success: true, data: dispatch });

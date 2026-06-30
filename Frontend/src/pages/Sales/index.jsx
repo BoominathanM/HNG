@@ -22,6 +22,7 @@ import {
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
+import { buildDocComposition } from '../../utils/docComposition';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import {
@@ -1991,16 +1992,33 @@ export default function Sales() {
     const gstAmt = r2(calcGstAmount(products));
     const fwdEnabled = !!(src.forwardingCharge ?? order.forwardingCharge);
     const fwdAmt = fwdEnabled ? r2(Number(src.forwardingChargeAmount ?? order.forwardingChargeAmount) || 0) : 0;
-    const total = Number(src.totalAmount) || Number(order.totalAmount) || 0;
+    // Pre-built personalized composition (outer packaging folded into Section A, included
+    // kits/products broken out, remaining in B/C) so the downloaded invoice matches the
+    // Billing invoice exactly. Null when there is no personalized packaging → flat fallback.
+    const compRec = {
+      products,
+      kitOrders,
+      kitPrice: src.kitPrice ?? order.kitPrice,
+      kitOverallQty: src.kitOverallQty ?? order.kitOverallQty,
+      packagingIncludes: src.packagingIncludes || order.packagingIncludes || [],
+      packagingIncludesQty: src.packagingIncludesQty || order.packagingIncludesQty || {},
+      forwardingCharge: fwdEnabled,
+      forwardingChargeAmount: fwdAmt,
+    };
+    const composition = buildDocComposition(compRec, kits);
+    const total = composition
+      ? computeCompositionGrandTotal(compRec, kits)
+      : (Number(src.totalAmount) || Number(order.totalAmount) || 0);
     const data = {
       items,
       products,
       kitOrders,
+      composition,
       quot: linkedQuot?.qid || quotCodeFromPopulated || order.quotCode || src.qid || src.quotCode || order.oid,
       date: src.date ? dayjs(src.date).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY'),
-      taxableAmount: r2(calcTotal(products)),
-      cgst: r2(gstAmt / 2),
-      sgst: r2(gstAmt / 2),
+      taxableAmount: composition ? composition.taxable : r2(calcTotal(products)),
+      cgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
+      sgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
       total,
@@ -2046,18 +2064,32 @@ export default function Sales() {
     const fwdEnabled = !!rec.forwardingCharge;
     const fwdAmt = fwdEnabled ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
     const docCode = rec.qid || rec.quotCode || rec.nid || rec.negCode || rec.oid || rec.orderCode;
+    // Pre-built personalized composition so the downloaded quotation/negotiation matches the
+    // Billing invoice exactly. Null when there is no personalized packaging → flat fallback.
+    const compRec = {
+      products,
+      kitOrders,
+      kitPrice: rec.kitPrice,
+      kitOverallQty: rec.kitOverallQty,
+      packagingIncludes: rec.packagingIncludes || [],
+      packagingIncludesQty: rec.packagingIncludesQty || {},
+      forwardingCharge: fwdEnabled,
+      forwardingChargeAmount: fwdAmt,
+    };
+    const composition = buildDocComposition(compRec, kits);
     const data = {
       items,
       products,
       kitOrders,
+      composition,
       quot: docCode,
       date: rec.date ? dayjs(rec.date).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY'),
-      taxableAmount: r2(calcTotal(products)),
-      cgst: r2(gstAmt / 2),
-      sgst: r2(gstAmt / 2),
+      taxableAmount: composition ? composition.taxable : r2(calcTotal(products)),
+      cgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
+      sgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
-      total: Number(rec.totalAmount) || 0,
+      total: composition ? computeCompositionGrandTotal(compRec, kits) : (Number(rec.totalAmount) || 0),
       customer: {
         name: rec.billingName || rec.hotelName || rec.clientName || '',
         address: rec.detailedAddress || rec.address || '',

@@ -26,7 +26,9 @@ import {
   useUploadBoxPhotosMutation,
   useGetInvoicesQuery,
   useGetCompanySettingsQuery,
+  useGetKitsQuery,
 } from '../../store/api/apiSlice';
+import { buildDocComposition } from '../../utils/docComposition';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 
 const { Title, Text } = Typography;
@@ -71,6 +73,8 @@ export default function DispatchDetail() {
     { skip: !dispatchOrderId }
   );
   const { data: companySettingsData } = useGetCompanySettingsQuery();
+  const { data: kitsRaw } = useGetKitsQuery();
+  const kits = kitsRaw?.data || [];
   const invoiceSettings = companySettingsData?.data || {};
 
   const handleBoxPhotoUpload = async (type, file) => {
@@ -104,15 +108,29 @@ export default function DispatchDetail() {
       : (linkedOrder?.items?.length ? linkedOrder.items : []);
     const srcKitOrders = linkedOrder?.kitOrders || [];
 
+    // Pre-built personalized composition (outer packaging folded into Section A's total,
+    // included kits/products broken out, remaining in B/C) so the printed invoice matches the
+    // Billing invoice exactly. Null when there is no personalized packaging → flat fallback.
+    const composition = buildDocComposition({
+      products: linkedOrder?.products || [],
+      kitOrders: srcKitOrders,
+      kitPrice: linkedOrder?.kitPrice,
+      kitOverallQty: linkedOrder?.kitOverallQty,
+      packagingIncludes: linkedOrder?.packagingIncludes || [],
+      packagingIncludesQty: linkedOrder?.packagingIncludesQty || {},
+    }, kits);
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
     const invoiceData = {
       inv: inv.invoiceNumber,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       type: inv.invoiceType || 'GST',
       total: inv.total || 0,
-      gst: inv.gstAmount || 0,
-      taxableAmount: inv.subtotal || 0,
-      cgst: halfGst,
-      sgst: halfGst,
+      gst: composition ? composition.gst : (inv.gstAmount || 0),
+      taxableAmount: composition ? composition.taxable : (inv.subtotal || 0),
+      cgst: composition ? r2(composition.gst / 2) : halfGst,
+      sgst: composition ? r2(composition.gst / 2) : halfGst,
+      composition,
       // Use boolean+amount pattern matching DocumentTemplate expectations
       forwardingCharge: order?.forwardingCharge || false,
       forwardingChargeAmount: order?.forwardingChargeAmount || 0,
@@ -149,11 +167,19 @@ export default function DispatchDetail() {
   const order = useMemo(() => {
     const d = dispatchData?.data;
     if (!d) return null;
-    // getDispatch populates `orderId` as a nested object — read order context from there,
-    // falling back to any denormalized fields on the dispatch root.
+    // getDispatch populates `orderId` as a nested object — read order context from there.
+    // The order carries the real customer/address fields; the lead is a fallback for any
+    // that weren't denormalized onto the order at conversion time.
     const o = (d.orderId && typeof d.orderId === 'object') ? d.orderId : {};
+    const lead = (o.leadId && typeof o.leadId === 'object') ? o.leadId : {};
+    // Resolve dispatch line items, then derive a product summary + total qty from them
+    // (the order's top-level product/qty are often empty for kit/multi-item orders).
+    const lineItems = (d.items && d.items.length ? d.items : (o.items || []));
+    const itemNames = lineItems.map((it) => it.product || it.itemName || it.name).filter(Boolean);
+    const derivedProduct = o.product || lead.products?.map((p) => p.productName || p.itemName || p.name).filter(Boolean).join(', ') || itemNames.join(', ') || '';
+    const derivedQty = o.qty || lineItems.reduce((sum, it) => sum + (Number(it.qty || it.qtyOrdered) || 0), 0) || 0;
     // Sample orders bypass payment — no payment is expected for samples.
-    const isSample = o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE';
+    const isSample = o.orderCategory === 'SAMPLE' || lead.leadType === 'SAMPLE';
     // Credit orders are dispatched before payment — payment is due after delivery.
     const isCredit = o.paymentTerms === 'CREDIT_10_30';
     // Payment is "Confirmed" for dispatch purposes once the order balance is cleared, or credit terms apply.
@@ -161,19 +187,19 @@ export default function DispatchDetail() {
     return {
       key: d._id, id: o.orderCode || d.orderCode || d._id,
       orderObjectId: o._id || d.orderId,
-      client: o.clientName || d.clientName || '—', contactPerson: o.contactPerson || d.contactPerson || '—',
-      phone: o.clientPhone || d.clientPhone || '', email: o.clientEmail || d.clientEmail || '',
-      product: o.product || d.product || '', qty: o.qty || d.qty || 0,
+      client: o.clientName || lead.hotelName || '—', contactPerson: o.contactPerson || lead.contactPerson || '—',
+      phone: o.clientPhone || lead.phone || '', email: o.email || o.clientEmail || lead.email || '',
+      product: derivedProduct, qty: derivedQty,
       boxes: d.boxes || 0, weight: d.weight || '',
       basePaymentConfirmed,
       isCredit,
       creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
       payment: isCredit ? 'Credit' : (basePaymentConfirmed ? 'Confirmed' : 'Pending'),
-      address: o.address || d.address || '', destination: o.destination || d.destination || '',
-      detailedAddress: d.detailedAddress || '',
-      city: d.city || '', state: d.state || '', pincode: d.pincode || '',
+      destination: o.destination || lead.destination || '',
+      detailedAddress: o.detailedAddress || lead.detailedAddress || lead.address || '',
+      city: o.city || lead.city || '', state: o.state || lead.state || '', pincode: o.pincode || lead.pincode || '',
       transport: d.transportName || '', status: d.status || '',
-      salesPerson: o.assignedTo?.fullName || d.salesPerson || '',
+      salesPerson: o.assignedTo?.fullName || o.salesPerson || lead.salesPerson || '',
       isSample,
       forwardingCharge: o.forwardingCharge || false,
       forwardingChargeAmount: o.forwardingChargeAmount || 0,
@@ -263,9 +289,8 @@ export default function DispatchDetail() {
   <tr><th>Client</th><td>${order.client}</td><th>Contact</th><td>${order.contactPerson}</td></tr>
   <tr><th>Phone</th><td>${order.phone}</td><th>Email</th><td>${order.email}</td></tr>
   <tr><th>Destination</th><td>${order.destination || '—'}</td><th>Address</th><td>${order.detailedAddress}, ${order.city}, ${order.state} — ${order.pincode}</td></tr>
-  <tr><th>Product</th><td>${order.product}</td><th>Quantity</th><td>${order.qty.toLocaleString()} units</td></tr>
-  <tr><th>Boxes</th><td>${order.boxes}</td><th>Weight</th><td>${order.weight}</td></tr>
-  <tr><th>Transport</th><td>${order.transport || '—'}</td><th>Sales Person</th><td>${order.salesPerson}</td></tr>
+  <tr><th>Product</th><td>${order.product || '—'}</td><th>Weight</th><td>${order.weight || '—'}</td></tr>
+  <tr><th>Transport</th><td>${order.transport || '—'}</td><th>Sales Person</th><td>${order.salesPerson || '—'}</td></tr>
   <tr><th>Payment</th><td>${order.payment}</td><th>Status</th><td>${order.status}</td></tr>
 </table>
 </body></html>`);
@@ -584,12 +609,8 @@ export default function DispatchDetail() {
                     <span>{order.detailedAddress},<br />{order.city}, {order.state} — {order.pincode}</span>
                   </Space>
                 </Descriptions.Item>
-                <Descriptions.Item label="Product">{order.product}</Descriptions.Item>
-                <Descriptions.Item label="Quantity">{order.qty.toLocaleString()} units</Descriptions.Item>
-                <Descriptions.Item label="Boxes">
-                  <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text strong>{order.boxes}</Text></Space>
-                </Descriptions.Item>
-                <Descriptions.Item label="Weight">{order.weight}</Descriptions.Item>
+                <Descriptions.Item label="Product">{order.product || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Weight">{order.weight || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Transport">{order.transport || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Sales Person">{order.salesPerson}</Descriptions.Item>
                 <Descriptions.Item label="Payment">
@@ -635,11 +656,6 @@ export default function DispatchDetail() {
                   <Col xs={24} sm={12}>
                     <Form.Item label="Transport Name" name="transport">
                       <Input placeholder="e.g. Fast Cargo" defaultValue={order.transport !== '-' ? order.transport : ''} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Form.Item label="Box Count (Verify)" name="boxes">
-                      <Input type="number" defaultValue={order.boxes} prefix={<InboxOutlined />} />
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>

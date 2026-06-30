@@ -24,6 +24,12 @@ const DEFAULT_LOGO = '/hng logo new.png';
 // remain visible — so the customer sees the bundle price, not the internal breakdown.
 const HIDE_LINE_AMOUNTS = true;
 
+// When true, the per-line RATE (unit price) values inside each category section
+// (kit-level price, component rows, and product line rows) are hidden in quotations
+// & invoices — so the customer never sees the individual product prices, only the
+// bundle/section totals. The RATE column header is kept for column alignment.
+const HIDE_LINE_RATES = true;
+
 const SAMPLE_ITEMS = [
   { name: 'ROOM FRESHNER LAVENDER 5 LITRE', qty: 5, unit: 'PCS', rate: 680, taxRate: 18, taxAmt: 612, amount: 4012 },
   { name: 'ROOM FRESHNER BRUTE 5 LITRE', qty: 1, unit: 'PCS', rate: 1500, taxRate: 18, taxAmt: 270, amount: 1770 },
@@ -312,7 +318,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
         html += `
           <tr style="background:${cs.sub};">
             <td colspan="4" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
-              ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}${price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
+              ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}${!HIDE_LINE_RATES && price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
             </td>
             <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
           </tr>`;
@@ -323,7 +329,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
                 &ndash;&nbsp;${comp.name}
               </td>
               <td style="padding:5px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;font-weight:700;">${comp.perKit != null ? comp.perKit : '—'}</td>
-              <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${comp.rate.toLocaleString()}</td>
+              <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${HIDE_LINE_RATES ? '' : comp.rate.toLocaleString()}</td>
               <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${taxPct(comp.gstRate != null ? comp.gstRate : comp.gst)}</td>
               <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:10px;color:#555;">${HIDE_LINE_AMOUNTS ? '' : rs(comp.amount)}</td>
             </tr>`;
@@ -335,7 +341,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
               ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}
             </td>
             <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
-            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${price > 0 ? price.toLocaleString() : '—'}</td>
+            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_RATES ? '' : (price > 0 ? price.toLocaleString() : '—')}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
           </tr>`;
@@ -347,7 +353,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
         <tr style="background:#fff;">
           <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">${p.name}</td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.perKit != null ? p.perKit : '—'}</td>
-          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.rate.toLocaleString()}</td>
+          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_RATES ? '' : p.rate.toLocaleString()}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${taxPct(p.gstRate)}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
         </tr>`;
@@ -381,7 +387,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
         html += `
           <tr style="background:${cs.sub};">
             <td colspan="4" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
-              ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}${price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
+              ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}${!HIDE_LINE_RATES && price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
             </td>
             <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
           </tr>`;
@@ -392,7 +398,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
                 &ndash;&nbsp;${comp.name}
               </td>
               <td style="padding:5px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;font-weight:700;">${comp.perKit != null ? comp.perKit : '—'}</td>
-              <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${comp.rate.toLocaleString()}</td>
+              <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${HIDE_LINE_RATES ? '' : comp.rate.toLocaleString()}</td>
               <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:10px;color:#555;">${taxPct(comp.gstRate != null ? comp.gstRate : comp.gst)}</td>
               <td style="padding:5px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:10px;color:#555;">${HIDE_LINE_AMOUNTS ? '' : rs(comp.amount)}</td>
             </tr>`;
@@ -404,7 +410,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
               ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}
             </td>
             <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
-            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${price > 0 ? price.toLocaleString() : '—'}</td>
+            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_RATES ? '' : (price > 0 ? price.toLocaleString() : '—')}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">—</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
           </tr>`;
@@ -430,7 +436,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
         <tr style="background:${cs.sub};">
           <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">${p.name}</td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.perKit != null ? p.perKit : '—'}</td>
-          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.rate.toLocaleString()}</td>
+          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_RATES ? '' : p.rate.toLocaleString()}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${taxPct(p.gstRate)}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
         </tr>`;
@@ -458,7 +464,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
           ${item.name}${cfg.show.hsn && (item.hsn || item.hsnCode) ? `<br/><span style="color:#666;font-size:10px;">HSN: ${item.hsn || item.hsnCode}</span>` : ''}
         </td>
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:center;">${item.perKit != null ? item.perKit : '—'}</td>
-        <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${(item.rate || 0).toLocaleString()}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${HIDE_LINE_RATES ? '' : (item.rate || 0).toLocaleString()}</td>
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:right;">${cfg.show.taxRate ? `${item.taxRate || 0}%` : '—'}</td>
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};font-size:11px;text-align:right;">${(item.amount || 0).toLocaleString()}</td>
       </tr>`).join('');
@@ -673,7 +679,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                   {hasComponents ? (
                     <tr style={{ background: cs.sub }}>
                       <td colSpan={4} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
-                        {ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}{price > 0 ? ` — ${rs(price)}/kit` : ''}
+                        {ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}{!HIDE_LINE_RATES && price > 0 ? ` — ${rs(price)}/kit` : ''}
                       </td>
                       <td style={{ ...td, textAlign: 'right', fontWeight: 700, borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
                     </tr>
@@ -681,7 +687,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                     <tr style={{ background: cs.sub }}>
                       <td style={{ ...td, paddingLeft: 24 }}>{ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}</td>
                       <td style={{ ...td, textAlign: 'center' }}>—</td>
-                      <td style={{ ...td, textAlign: 'right' }}>{price > 0 ? price.toLocaleString() : '—'}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{HIDE_LINE_RATES ? '' : (price > 0 ? price.toLocaleString() : '—')}</td>
                       <td style={{ ...td, textAlign: 'right' }}>—</td>
                       <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
                     </tr>
@@ -690,7 +696,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                     <tr key={`pkit-${i}-comp-${j}`} style={{ background: '#fff' }}>
                       <td style={{ ...td, paddingLeft: 40, fontSize: 10, color: '#555' }}>–&nbsp;{comp.name}</td>
                       <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555', fontWeight: 700 }}>{comp.perKit != null ? comp.perKit : '—'}</td>
-                      <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>{comp.rate.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>{HIDE_LINE_RATES ? '' : comp.rate.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>{taxPct(comp.gstRate != null ? comp.gstRate : comp.gst)}</td>
                       <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(comp.amount)}</td>
                     </tr>
@@ -702,7 +708,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
               <tr key={`pprod-${i}`} style={{ background: '#fff' }}>
                 <td style={{ ...td, paddingLeft: 24 }}>{p.name}</td>
                 <td style={{ ...td, textAlign: 'center' }}>{p.perKit != null ? p.perKit : '—'}</td>
-                <td style={{ ...td, textAlign: 'right' }}>{p.rate.toLocaleString()}</td>
+                <td style={{ ...td, textAlign: 'right' }}>{HIDE_LINE_RATES ? '' : p.rate.toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{taxPct(p.gstRate)}</td>
                 <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
               </tr>
@@ -737,7 +743,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                   {hasComponents ? (
                     <tr style={{ background: cs.sub }}>
                       <td colSpan={4} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
-                        {ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}{price > 0 ? ` — ${rs(price)}/kit` : ''}
+                        {ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}{!HIDE_LINE_RATES && price > 0 ? ` — ${rs(price)}/kit` : ''}
                       </td>
                       <td style={{ ...td, textAlign: 'right', fontWeight: 700, borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
                     </tr>
@@ -745,7 +751,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                     <tr style={{ background: cs.sub }}>
                       <td style={{ ...td, paddingLeft: 24 }}>{ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}</td>
                       <td style={{ ...td, textAlign: 'center' }}>—</td>
-                      <td style={{ ...td, textAlign: 'right' }}>{price > 0 ? price.toLocaleString() : '—'}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{HIDE_LINE_RATES ? '' : (price > 0 ? price.toLocaleString() : '—')}</td>
                       <td style={{ ...td, textAlign: 'right' }}>—</td>
                       <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
                     </tr>
@@ -754,7 +760,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                     <tr key={`skit-${i}-comp-${j}`} style={{ background: '#fff' }}>
                       <td style={{ ...td, paddingLeft: 40, fontSize: 10, color: '#555' }}>–&nbsp;{comp.name}</td>
                       <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555', fontWeight: 700 }}>{comp.perKit != null ? comp.perKit : '—'}</td>
-                      <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>{comp.rate.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>{HIDE_LINE_RATES ? '' : comp.rate.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555' }}>{taxPct(comp.gstRate != null ? comp.gstRate : comp.gst)}</td>
                       <td style={{ ...td, textAlign: 'right', fontSize: 10, color: '#555', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(comp.amount)}</td>
                     </tr>
@@ -783,7 +789,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
               <tr key={`sprod-${i}`} style={{ background: cs.sub }}>
                 <td style={{ ...td, paddingLeft: 24 }}>{p.name}</td>
                 <td style={{ ...td, textAlign: 'center' }}>{p.perKit != null ? p.perKit : '—'}</td>
-                <td style={{ ...td, textAlign: 'right' }}>{p.rate.toLocaleString()}</td>
+                <td style={{ ...td, textAlign: 'right' }}>{HIDE_LINE_RATES ? '' : p.rate.toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{taxPct(p.gstRate)}</td>
                 <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
               </tr>
@@ -897,7 +903,7 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
                   )}
                 </td>
                 <td style={{ ...td, textAlign: 'center' }}>{item.perKit != null ? item.perKit : '—'}</td>
-                <td style={{ ...td, textAlign: 'right' }}>{(item.rate || 0).toLocaleString()}</td>
+                <td style={{ ...td, textAlign: 'right' }}>{HIDE_LINE_RATES ? '' : (item.rate || 0).toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>
                   {cfg.show.taxRate ? `${item.taxRate || 0}%` : '—'}
                 </td>
