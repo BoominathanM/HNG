@@ -1951,22 +1951,36 @@ export default function Sales() {
       ? order.quotationId?.quotCode
       : null;
     const products = (src.products?.length ? src.products : order.products) || [];
+    const kitOrders = (src.kitOrders?.length ? src.kitOrders : order.kitOrders) || [];
+    // items[] is kept for tax computation fallback inside DocumentTemplate
     const items = products.filter(Boolean).map(p => {
       const qty = Number(p.qty) || 0;
-      const rate = Number(p.rate) || 0;
+      const rate = Number(p.rate) || Number(p.price) || 0;
       const taxRate = Number(p.gstPercent ?? p.gst ?? 0);
       const taxAmt = r2(qty * rate * taxRate / 100);
-      return { name: p.name || '', qty, unit: p.unit || 'PCS', rate, taxRate, taxAmt, amount: qty * rate + taxAmt };
+      return { name: p.name || p.itemName || '', qty, unit: p.unit || 'PCS', rate, taxRate, taxAmt, amount: r2(qty * rate + taxAmt) };
     });
+    const gstAmt = r2(calcGstAmount(products));
+    const fwdEnabled = !!(src.forwardingCharge ?? order.forwardingCharge);
+    const fwdAmt = fwdEnabled ? r2(Number(src.forwardingChargeAmount ?? order.forwardingChargeAmount) || 0) : 0;
+    const total = Number(src.totalAmount) || Number(order.totalAmount) || 0;
     const data = {
       items,
+      products,
+      kitOrders,
       quot: linkedQuot?.qid || quotCodeFromPopulated || order.quotCode || src.qid || src.quotCode || order.oid,
       date: src.date ? dayjs(src.date).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY'),
+      taxableAmount: r2(calcTotal(products)),
+      cgst: r2(gstAmt / 2),
+      sgst: r2(gstAmt / 2),
+      forwardingCharge: fwdEnabled,
+      forwardingChargeAmount: fwdAmt,
+      total,
       customer: {
         name: src.billingName || src.hotelName || src.clientName || '',
-        address: src.detailedAddress || '',
+        address: src.detailedAddress || src.address || '',
         city: [src.city, src.state, src.pincode].filter(Boolean).join(', '),
-        mobile: src.phone || '',
+        mobile: src.phone || src.clientPhone || '',
         gstin: src.gstNumber || '',
         pan: '',
         placeOfSupply: src.state || '',
@@ -1981,6 +1995,60 @@ export default function Sales() {
       const a = document.createElement('a');
       a.href = blobUrl;
       a.download = `quotation-${data.quot || 'doc'}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+  };
+
+  // Download any record (quotation / negotiation) directly — no linked-quotation lookup.
+  // Uses the record's own products/kitOrders so negotiated prices are shown as-is.
+  const handleDownloadDirect = (rec, filename) => {
+    const products = (rec.products || []).filter(Boolean);
+    const kitOrders = (rec.kitOrders || []).filter(Boolean);
+    const items = products.map(p => {
+      const qty = Number(p.qty) || 0;
+      const rate = Number(p.rate) || Number(p.price) || 0;
+      const taxRate = Number(p.gstPercent ?? p.gst ?? 0);
+      const taxAmt = r2(qty * rate * taxRate / 100);
+      return { name: p.name || p.itemName || '', qty, unit: p.unit || 'PCS', rate, taxRate, taxAmt, amount: r2(qty * rate + taxAmt) };
+    });
+    const gstAmt = r2(calcGstAmount(products));
+    const fwdEnabled = !!rec.forwardingCharge;
+    const fwdAmt = fwdEnabled ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
+    const docCode = rec.qid || rec.quotCode || rec.nid || rec.negCode || rec.oid || rec.orderCode;
+    const data = {
+      items,
+      products,
+      kitOrders,
+      quot: docCode,
+      date: rec.date ? dayjs(rec.date).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY'),
+      taxableAmount: r2(calcTotal(products)),
+      cgst: r2(gstAmt / 2),
+      sgst: r2(gstAmt / 2),
+      forwardingCharge: fwdEnabled,
+      forwardingChargeAmount: fwdAmt,
+      total: Number(rec.totalAmount) || 0,
+      customer: {
+        name: rec.billingName || rec.hotelName || rec.clientName || '',
+        address: rec.detailedAddress || rec.address || '',
+        city: [rec.city, rec.state, rec.pincode].filter(Boolean).join(', '),
+        mobile: rec.phone || rec.clientPhone || '',
+        gstin: rec.gstNumber || '',
+        pan: '',
+        placeOfSupply: rec.state || '',
+      },
+    };
+    const html = generatePrintHTML('quotation', data, invoiceSettings);
+    const blob = new Blob([html], { type: 'text/html' });
+    const blobUrl = URL.createObjectURL(blob);
+    const win = window.open(blobUrl, '_blank');
+    if (!win) {
+      enqueueSnackbar('Popup blocked — downloading as file instead.', { variant: 'info' });
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename || `quotation-${docCode || 'doc'}.html`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -5032,6 +5100,9 @@ export default function Sales() {
       render: (_, r) => (
         <Space size={4}>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedRecord(r); setViewMode('negotiation-detail'); }} /></Tooltip>
+          <Tooltip title="Download Quotation">
+            <Button size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); handleDownloadDirect(r, `negotiation-${r.nid || 'doc'}.html`); }} />
+          </Tooltip>
           <Tooltip title="Convert to Order">
             <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertNegotiationToOrder(r)}>
               → Order
@@ -5103,6 +5174,9 @@ export default function Sales() {
         <Space size={4}>
           <Tooltip title="View">
             <Button size="small" icon={<EyeOutlined />} onClick={() => openQuotationDetail(r)} />
+          </Tooltip>
+          <Tooltip title="Download Quotation">
+            <Button size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); handleDownloadDirect(r, `quotation-${r.qid || 'doc'}.html`); }} />
           </Tooltip>
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
@@ -5672,6 +5746,7 @@ export default function Sales() {
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('quotations'); }} style={{ borderRadius: 8 }}>Back to Quotations</Button>
             <Space wrap>
               <Button icon={<EditOutlined />} onClick={() => editExistingQuotation(q)} style={{ borderRadius: 8 }}>Edit Products</Button>
+              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} onClick={() => handleDownloadDirect(q, `quotation-${q.qid || 'doc'}.html`)}>Download Quotation</Button>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(q)}>WhatsApp</Button>
               <Button style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => convertToNegotiation(q)}>Convert to Negotiation</Button>
               <Button style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => startOrderFromQuotation(q)}>Convert to Order</Button>
@@ -6125,6 +6200,7 @@ export default function Sales() {
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('quotations'); }} style={{ borderRadius: 8 }}>Back to Quotations & Negotiations</Button>
             <Space wrap>
               <Button icon={<EditOutlined />} onClick={() => editNegotiation(n)} style={{ borderRadius: 8, background: '#fa8c16', color: '#fff', border: 'none' }}>Submit Counter Offer</Button>
+              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} onClick={() => handleDownloadDirect(n, `negotiation-${n.nid || 'doc'}.html`)}>Download Quotation</Button>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(n)}>WhatsApp</Button>
               {(n.flowStep || 0) >= 2 && (
                 <Button style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => convertNegotiationToOrder(n)}>Convert to Order</Button>

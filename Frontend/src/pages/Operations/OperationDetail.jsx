@@ -67,6 +67,7 @@ import {
   useGetTaskTimeConfigsQuery,
 } from '../../store/api/apiSlice';
 import { estimateSecFor, secToHuman, perUnitLabel } from '../../utils/taskTime';
+import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import {
   buildProductionQueues,
   canAssignTaskFromChecks,
@@ -205,7 +206,11 @@ export default function OperationDetail() {
     orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
     specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || o.leadId?.paymentTerms || '',
     paymentReminderDate: o.paymentReminderDate,
-    totalAmount: o.total || 0,
+    totalAmount: (() => {
+      const prods = o.products?.length ? o.products : (o.leadId?.products || []);
+      const kitAware = computeRecordGrandTotal({ ...o, products: prods });
+      return kitAware > 0 ? kitAware : (Number(o.total) || 0);
+    })(),
     advance: o.advancePaidAmount ?? o.advancePaid ?? 0,
     paidAmount: (() => {
       const backendPaid = Number(o.paidAmount) || 0;
@@ -213,6 +218,9 @@ export default function OperationDetail() {
       const adv = o.advancePaidAmount ?? o.advancePaid ?? 0;
       return backendPaid > 0 ? backendPaid : (collTotal > 0 ? collTotal : adv);
     })(),
+    // Use the backend-stored balance (updated by Sales payment flow) as authoritative;
+    // fall back to null so the render knows to compute it when absent.
+    storedBalance: o.balance != null ? Number(o.balance) : null,
     expectedDelivery: o.expectedDeliveryDate
       ? new Date(o.expectedDeliveryDate).toISOString().slice(0, 10)
       : o.expectedDelivery
@@ -1886,33 +1894,6 @@ export default function OperationDetail() {
                 </Col>
               </Row>
 
-              {/* Financial Summary — hidden for sample orders */}
-              {order.orderCategory !== 'SAMPLE' && (
-                <>
-                  <Row gutter={[16, 10]}>
-                    <Col xs={12} sm={8}>
-                      <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Total Amount</Text>
-                      <Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{(order.totalAmount ?? 0).toLocaleString()}</Text>
-                    </Col>
-                    <Col xs={12} sm={8}>
-                      <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Amount Paid</Text>
-                      <Text strong style={{ color: '#52c41a', fontSize: 16 }}>₹{(order.paidAmount ?? order.advance ?? 0).toLocaleString()}</Text>
-                    </Col>
-                    <Col xs={12} sm={8}>
-                      <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Balance Due</Text>
-                      <Text strong style={{ color: Math.max(0, (order.totalAmount ?? 0) - (order.paidAmount ?? order.advance ?? 0)) > 0 ? '#fa8c16' : '#52c41a', fontSize: 16 }}>
-                        ₹{Math.max(0, (order.totalAmount ?? 0) - (order.paidAmount ?? order.advance ?? 0)).toLocaleString()}
-                      </Text>
-                    </Col>
-                  </Row>
-                  <Row gutter={[16, 10]}>
-                    <Col xs={12} sm={8}>
-                      <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Advance Paid</Text>
-                      <Text strong style={{ color: '#52c41a' }}>₹{(order.advance ?? 0).toLocaleString()}</Text>
-                    </Col>
-                  </Row>
-                </>
-              )}
               <Row gutter={[16, 10]}>
                 <Col xs={12} sm={8}>
                   <Text style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>Expected Delivery</Text>

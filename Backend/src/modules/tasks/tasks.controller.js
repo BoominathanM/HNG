@@ -131,14 +131,16 @@ exports.getTask = asyncHandler(async (req, res, next) => {
   }
 
   // Merge inventory master with any packaging fields captured on the order line item.
+  // productAttributes is the nested spec bag; top-level fields are preferred but fall through.
+  const attrs = lineItem?.productAttributes || {};
   result.productDetails = {
-    brand: inv?.brand || lineItem?.material || '',
-    packingMaterial: inv?.packingMaterial || lineItem?.packaging || '',
-    materialCategory: inv?.materialCategory || inv?.category || '',
-    category: inv?.category || '',
+    brand: inv?.brand || lineItem?.brand || attrs.brand || lineItem?.material || '',
+    packingMaterial: inv?.packingMaterial || lineItem?.packingMaterial || attrs.packingMaterial || lineItem?.packaging || '',
+    materialCategory: inv?.materialCategory || inv?.category || lineItem?.materialCategory || attrs.materialCategory || '',
+    category: inv?.category || lineItem?.category || '',
     unit: inv?.unit || lineItem?.unit || '',
     size: lineItem?.size || inv?.defaultSize || '',
-    hsnCode: inv?.hsnCode || '',
+    hsnCode: inv?.hsnCode || lineItem?.hsnCode || '',
     source: inv ? 'inventory' : (lineItem ? 'order' : 'none'),
   };
 
