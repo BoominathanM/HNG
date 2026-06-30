@@ -32,6 +32,7 @@ export const apiSlice = createApi({
     'Reminders', 'Transport', 'Pickups', 'HotelDesigns', 'SuggestedTasks',
     'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
     'GstConfig', 'TaskTimeConfig',
+    'MaterialStocks',
   ],
   endpoints: (builder) => ({
 
@@ -355,6 +356,28 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/inventory/kits/${id}`, method: 'delete' }),
       invalidatesTags: ['Kits'],
     }),
+    // Material Stocks (packing materials purchased & stored)
+    getMaterialStocks: builder.query({
+      query: (params) => ({ url: '/inventory/material-stocks', params }),
+      providesTags: ['MaterialStocks'],
+    }),
+    createMaterialStock: builder.mutation({
+      query: (data) => ({ url: '/inventory/material-stocks', method: 'post', data }),
+      invalidatesTags: ['MaterialStocks'],
+    }),
+    updateMaterialStock: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/inventory/material-stocks/${id}`, method: 'put', data }),
+      invalidatesTags: ['MaterialStocks'],
+    }),
+    deleteMaterialStock: builder.mutation({
+      query: (id) => ({ url: `/inventory/material-stocks/${id}`, method: 'delete' }),
+      invalidatesTags: ['MaterialStocks'],
+    }),
+    uploadMaterialStockInvoice: builder.mutation({
+      query: ({ id, formData }) => ({ url: `/inventory/material-stocks/${id}/upload-invoice`, method: 'post', data: formData }),
+      invalidatesTags: ['MaterialStocks'],
+    }),
+
     // Packing Material Config
     getPackingConfig: builder.query({
       query: () => ({ url: '/inventory/packing-config' }),
@@ -763,6 +786,10 @@ export const apiSlice = createApi({
       query: ({ id, ...data }) => ({ url: `/operations/stickers/${id}/status`, method: 'patch', data }),
       invalidatesTags: ['Stickers'],
     }),
+    uploadStickerInvoice: builder.mutation({
+      query: ({ id, formData }) => ({ url: `/operations/stickers/${id}/upload-invoice`, method: 'post', data: formData }),
+      invalidatesTags: ['Stickers'],
+    }),
     sendToStickerTeam: builder.mutation({
       // Accept an array, { ids }, { items:[{id|_id}] }, or { id } and normalize to an id array.
       query: (arg) => {
@@ -1108,6 +1135,12 @@ export const {
   useCreatePackingConfigMutation,
   useUpdatePackingConfigMutation,
   useDeletePackingConfigMutation,
+  // Material Stocks
+  useGetMaterialStocksQuery,
+  useCreateMaterialStockMutation,
+  useUpdateMaterialStockMutation,
+  useDeleteMaterialStockMutation,
+  useUploadMaterialStockInvoiceMutation,
   // Financial
   useGetPendingRequestsQuery,
   useApproveFinancialRequestMutation,
@@ -1193,6 +1226,7 @@ export const {
   useCreateStickerRequestMutation,
   useUploadStickerDesignMutation,
   useUpdateStickerStatusMutation,
+  useUploadStickerInvoiceMutation,
   useSendToStickerTeamMutation,
   // Notifications
   useGetNotificationsQuery,

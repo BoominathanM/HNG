@@ -46,10 +46,16 @@ import {
   useCreatePackingConfigMutation,
   useUpdatePackingConfigMutation,
   useDeletePackingConfigMutation,
+  useGetMaterialStocksQuery,
+  useCreateMaterialStockMutation,
+  useUpdateMaterialStockMutation,
+  useDeleteMaterialStockMutation,
+  useUploadMaterialStockInvoiceMutation,
 } from '../../store/api/apiSlice';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
 import PhoneInput from '../../components/common/PhoneInput';
 import { emailRules, phoneValidator } from '../../utils/validation';
+import { downloadFile } from '../../utils/fileDownload';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -111,7 +117,7 @@ const PRODUCT_FIELD_DEFS = {
   paste: [
     { key: 'brand', label: 'Brand', field: 'paste_brand', options: PASTE_BRANDS, mode: 'multiple' },
     { key: 'size', label: 'Sizes (gram)', field: 'paste_size', options: SIZES_SOAP, mode: 'multiple' },
-    { key: 'packingMaterial', label: 'Packing Material', field: 'paste_packingMaterial', options: KIT_PACKING, mode: 'multiple' },
+    { key: 'packingMaterial', label: 'Packing Material', field: 'paste_packingMaterial', usePackingConfig: true, options: [], mode: 'multiple' },
     { key: 'sticker', label: 'Sticker', field: 'paste_sticker', options: YES_NO },
     { key: 'printing', label: 'Printing', field: 'paste_printing', options: YES_NO },
   ],
@@ -497,6 +503,93 @@ export default function Inventory() {
     try {
       await deletePackingConfig(id).unwrap();
       enqueueSnackbar('Deleted', { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Delete failed', { variant: 'error' });
+    }
+  };
+
+  /* ── Material Stocks ── */
+  const { data: materialStocksData, refetch: refetchMaterialStocks } = useGetMaterialStocksQuery();
+  const [createMaterialStock] = useCreateMaterialStockMutation();
+  const [updateMaterialStock] = useUpdateMaterialStockMutation();
+  const [deleteMaterialStock] = useDeleteMaterialStockMutation();
+  const [uploadMaterialStockInvoice] = useUploadMaterialStockInvoiceMutation();
+  const materialStocksList = useMemo(() => materialStocksData?.data || [], [materialStocksData]);
+  const [materialStockModal, setMaterialStockModal] = useState(false);
+  const [editingMaterialStock, setEditingMaterialStock] = useState(null);
+  const [materialStockForm] = Form.useForm();
+  const [materialStockSearch, setMaterialStockSearch] = useState('');
+  const [materialStockInvoiceUploading, setMaterialStockInvoiceUploading] = useState(false);
+  const [materialStockInvoiceFile, setMaterialStockInvoiceFile] = useState(null);
+  const makeUploadMs = useCloudinaryUpload();
+
+  const filteredMaterialStocks = useMemo(() => {
+    const q = materialStockSearch.toLowerCase();
+    return materialStocksList.filter(s =>
+      !q || s.packingMaterial.toLowerCase().includes(q) || (s.size || '').toLowerCase().includes(q) || (s.vendor || '').toLowerCase().includes(q)
+    );
+  }, [materialStocksList, materialStockSearch]);
+
+  const openMaterialStockModal = (item = null) => {
+    if (!requireAccess(item ? 'edit' : 'add')) return;
+    setEditingMaterialStock(item);
+    setMaterialStockInvoiceFile(null);
+    materialStockForm.resetFields();
+    if (item) {
+      materialStockForm.setFieldsValue({
+        packingMaterial: item.packingMaterial,
+        size: item.size,
+        stockCount: item.stockCount,
+        purchaseDate: item.purchaseDate ? dayjs(item.purchaseDate) : null,
+        vendor: item.vendor,
+        notes: item.notes,
+      });
+    }
+    setMaterialStockModal(true);
+  };
+
+  const handleSaveMaterialStock = async () => {
+    try {
+      const values = await materialStockForm.validateFields();
+      const payload = {
+        ...values,
+        purchaseDate: values.purchaseDate ? values.purchaseDate.toISOString() : undefined,
+      };
+      let saved;
+      if (editingMaterialStock) {
+        saved = await updateMaterialStock({ id: editingMaterialStock._id, ...payload }).unwrap();
+        enqueueSnackbar('Material stock updated', { variant: 'success' });
+      } else {
+        saved = await createMaterialStock(payload).unwrap();
+        enqueueSnackbar('Material stock added', { variant: 'success' });
+      }
+      // Upload invoice if a file was selected
+      if (materialStockInvoiceFile) {
+        setMaterialStockInvoiceUploading(true);
+        try {
+          const fd = new FormData();
+          const f = materialStockInvoiceFile?.originFileObj || materialStockInvoiceFile;
+          if (f) {
+            fd.append('invoice', f);
+            await uploadMaterialStockInvoice({ id: saved?.data?._id || editingMaterialStock?._id, formData: fd }).unwrap();
+          }
+        } catch { /* file upload failure is non-critical */ }
+        setMaterialStockInvoiceUploading(false);
+      }
+      setMaterialStockModal(false);
+      setEditingMaterialStock(null);
+      setMaterialStockInvoiceFile(null);
+    } catch (e) {
+      if (e?.errorFields) return;
+      enqueueSnackbar(e?.data?.message || 'Failed to save material stock', { variant: 'error' });
+    }
+  };
+
+  const handleDeleteMaterialStock = async (id) => {
+    if (!requireAccess('delete')) return;
+    try {
+      await deleteMaterialStock(id).unwrap();
+      enqueueSnackbar('Material stock deleted', { variant: 'success' });
     } catch {
       enqueueSnackbar('Delete failed', { variant: 'error' });
     }
@@ -1509,6 +1602,113 @@ export default function Inventory() {
             )
           },
 
+          /* ── Tab: Material Stocks ── */
+          {
+            key: 'material_stocks',
+            label: <Space><ContainerOutlined />Material Stocks</Space>,
+            children: (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <Card
+                  style={{ borderRadius: 14, border: `1px solid ${borderColor}`, background: cardBg }}
+                  styles={{ body: { padding: '16px 20px' } }}
+                  title={
+                    <Space>
+                      <ContainerOutlined style={{ color: '#B11E6A' }} />
+                      <Text strong style={{ color: textColor }}>Packing Material Stocks</Text>
+                      <Tag color="geekblue" style={{ borderRadius: 20 }}>{filteredMaterialStocks.length}</Tag>
+                    </Space>
+                  }
+                  extra={
+                    <Space size={8}>
+                      <Input
+                        placeholder="Search material, size, vendor…"
+                        prefix={<SearchOutlined style={{ color: '#aaa' }} />}
+                        value={materialStockSearch}
+                        onChange={e => setMaterialStockSearch(e.target.value)}
+                        allowClear
+                        style={{ width: 220, borderRadius: 8, height: 34 }}
+                      />
+                      <Button
+                        type="primary" icon={<PlusOutlined />}
+                        style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 }}
+                        onClick={() => openMaterialStockModal()}
+                      >
+                        Add Purchase
+                      </Button>
+                    </Space>
+                  }
+                >
+                  <Table
+                    size="small"
+                    dataSource={filteredMaterialStocks.map(s => ({ ...s, key: s._id }))}
+                    pagination={{ pageSize: 10, showSizeChanger: false }}
+                    style={{ borderRadius: 10, overflow: 'hidden' }}
+                    columns={[
+                      {
+                        title: 'Packing Material',
+                        dataIndex: 'packingMaterial',
+                        render: v => <Text strong style={{ color: textColor }}>{v}</Text>,
+                      },
+                      {
+                        title: 'Size',
+                        dataIndex: 'size',
+                        render: v => v ? <Tag color="geekblue" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text>,
+                      },
+                      {
+                        title: 'Stock Count',
+                        dataIndex: 'stockCount',
+                        align: 'right',
+                        render: v => <Text strong style={{ color: v === 0 ? '#ff4d4f' : '#389e0d', fontSize: 14 }}>{v ?? 0}</Text>,
+                      },
+                      {
+                        title: 'Purchase Date',
+                        dataIndex: 'purchaseDate',
+                        render: v => v ? dayjs(v).format('DD MMM YYYY') : '—',
+                      },
+                      {
+                        title: 'Vendor',
+                        dataIndex: 'vendor',
+                        render: v => v || <Text type="secondary">—</Text>,
+                      },
+                      {
+                        title: 'Invoice',
+                        dataIndex: 'invoiceFile',
+                        render: (inv) => {
+                          if (!inv?.url) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                          return (
+                            <Button
+                              type="link"
+                              size="small"
+                              icon={<DownloadOutlined style={{ fontSize: 12 }} />}
+                              style={{ fontSize: 12, color: '#1890ff', padding: 0, height: 'auto' }}
+                              onClick={() => downloadFile(inv.url, inv.name || 'invoice')}
+                            >
+                              Save
+                            </Button>
+                          );
+                        },
+                      },
+                      {
+                        title: 'Action', key: 'action', width: 90,
+                        render: (_, row) => (
+                          <Space size={6}>
+                            <Button size="small" icon={<EditOutlined />} onClick={() => openMaterialStockModal(row)} />
+                            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteMaterialStock(row._id)} />
+                          </Space>
+                        ),
+                      },
+                    ]}
+                  />
+                  {filteredMaterialStocks.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                      <Text type="secondary">No material stocks found. Click "Add Purchase" to record a new packing material purchase.</Text>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            ),
+          },
+
           /* ── Tab: Packing Material Configuration ── */
           {
             key: 'packing_config',
@@ -1612,6 +1812,79 @@ export default function Inventory() {
         ])}
         activeKey={activeKeyFor(activeInvTab)}
       />
+
+      {/* ═══════════════════════════════════════
+          MATERIAL STOCK ADD / EDIT MODAL
+      ═══════════════════════════════════════ */}
+      <Modal
+        open={materialStockModal}
+        title={
+          <Space>
+            <ContainerOutlined style={{ color: '#B11E6A' }} />
+            <span style={{ fontWeight: 700 }}>{editingMaterialStock ? 'Edit Material Stock' : 'Add Packing Material Purchase'}</span>
+          </Space>
+        }
+        onCancel={() => { setMaterialStockModal(false); setEditingMaterialStock(null); setMaterialStockInvoiceFile(null); }}
+        onOk={handleSaveMaterialStock}
+        okText={editingMaterialStock ? 'Update' : 'Add'}
+        okButtonProps={{ style: { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }, loading: materialStockInvoiceUploading }}
+        width={520}
+        destroyOnClose
+      >
+        <Form form={materialStockForm} layout="vertical" style={{ marginTop: 12 }}>
+          <Row gutter={12}>
+            <Col span={14}>
+              <Form.Item label="Packing Material" name="packingMaterial" rules={[{ required: true, message: 'Enter material name' }]}>
+                <Input placeholder="e.g. Bottles, Boxes, Pouches, Caps…" style={{ borderRadius: 8 }} />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item label="Size" name="size">
+                <Input placeholder="e.g. 100ml, 30×20cm" style={{ borderRadius: 8 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Stock Count" name="stockCount" rules={[{ required: true, message: 'Enter stock count' }]}>
+                <InputNumber min={0} style={{ width: '100%', borderRadius: 8 }} placeholder="0" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Purchase Date" name="purchaseDate">
+                <DatePicker style={{ width: '100%', borderRadius: 8 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="Vendor / Supplier" name="vendor">
+            <Input placeholder="Vendor name" style={{ borderRadius: 8 }} />
+          </Form.Item>
+          <Form.Item label="Notes" name="notes">
+            <Input.TextArea rows={2} placeholder="Optional notes…" style={{ borderRadius: 8 }} />
+          </Form.Item>
+          <Form.Item label="Upload Invoice (optional)">
+            <Upload
+              maxCount={1}
+              accept=".jpg,.jpeg,.png,.pdf,.svg"
+              beforeUpload={(file) => { setMaterialStockInvoiceFile(file); return false; }}
+              onRemove={() => setMaterialStockInvoiceFile(null)}
+              fileList={materialStockInvoiceFile ? [materialStockInvoiceFile] : []}
+            >
+              <Button icon={<UploadOutlined />} style={{ borderRadius: 8 }}>Choose Invoice File</Button>
+            </Upload>
+            {editingMaterialStock?.invoiceFile?.url && !materialStockInvoiceFile && (
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Current invoice: </Text>
+                <Button type="link" size="small" icon={<DownloadOutlined style={{ fontSize: 12 }} />}
+                  style={{ fontSize: 12, padding: 0, height: 'auto' }}
+                  onClick={() => downloadFile(editingMaterialStock.invoiceFile.url, editingMaterialStock.invoiceFile.name || 'invoice')}>
+                  Save
+                </Button>
+              </div>
+            )}
+          </Form.Item>
+        </Form>
+      </Modal>
 
       {/* ═══════════════════════════════════════
           PACKING CONFIG ADD / EDIT MODAL

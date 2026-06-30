@@ -72,6 +72,7 @@ import {
   useGetPackingConfigQuery,
   useApproveEmergencyOpsHeadMutation,
   useGetHotelDesignsQuery,
+  useUploadStickerInvoiceMutation,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -141,6 +142,7 @@ export default function Operations() {
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
   const [createStickerRequest] = useCreateStickerRequestMutation();
   const [uploadStickerDesign] = useUploadStickerDesignMutation();
+  const [uploadStickerInvoice] = useUploadStickerInvoiceMutation();
   const [updateStickerStatus] = useUpdateStickerStatusMutation();
   const [sendToStickerTeam] = useSendToStickerTeamMutation();
   const [assignTask] = useAssignTaskMutation();
@@ -527,6 +529,8 @@ export default function Operations() {
   const [printingStatuses, setPrintingStatuses] = useState({});
 
   const [uploadedFiles, setUploadedFiles] = useState({});
+  const [invoiceFiles, setInvoiceFiles] = useState({});
+  const [invoiceUploading, setInvoiceUploading] = useState({});
 
   const handleUpload = (itemKey, fileList) => {
     setUploadedFiles((prev) => ({ ...prev, [itemKey]: fileList }));
@@ -1281,6 +1285,57 @@ export default function Operations() {
               {step === 3 && (
                 <>
                   <Tag color="magenta">Printing</Tag>
+                  {/* Upload invoice from print vendor */}
+                  <Upload
+                    beforeUpload={() => false}
+                    fileList={invoiceFiles[record.key] || []}
+                    onChange={({ fileList }) => setInvoiceFiles(prev => ({ ...prev, [record.key]: fileList }))}
+                    maxCount={1}
+                    accept=".jpg,.jpeg,.png,.pdf"
+                    showUploadList={false}
+                    disabled={!!invoiceUploading[record.key]}
+                  >
+                    <Button
+                      size="small"
+                      icon={<UploadOutlined />}
+                      style={{ borderColor: '#722ed155', color: '#722ed1' }}
+                      disabled={!!invoiceUploading[record.key]}
+                    >
+                      {sr?.invoiceFile?.url ? 'Re-upload Invoice' : 'Upload Invoice'}
+                    </Button>
+                  </Upload>
+                  {invoiceFiles[record.key]?.length > 0 && (
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={!!invoiceUploading[record.key]}
+                      style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                      onClick={async () => {
+                        if (!sr?._id) { enqueueSnackbar('No sticker request found to attach invoice', { variant: 'warning' }); return; }
+                        const f = invoiceFiles[record.key]?.[0]?.originFileObj || invoiceFiles[record.key]?.[0];
+                        if (!f) return;
+                        setInvoiceUploading(prev => ({ ...prev, [record.key]: true }));
+                        try {
+                          const fd = new FormData();
+                          fd.append('invoice', f);
+                          await uploadStickerInvoice({ id: sr._id, formData: fd }).unwrap();
+                          setInvoiceFiles(prev => ({ ...prev, [record.key]: [] }));
+                          enqueueSnackbar(
+                            sr?.invoiceFile?.url
+                              ? 'Invoice re-uploaded successfully'
+                              : 'Invoice uploaded successfully',
+                            { variant: 'success' }
+                          );
+                        } catch (err) {
+                          enqueueSnackbar(err?.data?.message || 'Invoice upload failed', { variant: 'error' });
+                        } finally {
+                          setInvoiceUploading(prev => ({ ...prev, [record.key]: false }));
+                        }
+                      }}
+                    >
+                      {sr?.invoiceFile?.url ? 'Re-send Invoice' : 'Send Invoice'}
+                    </Button>
+                  )}
                   <Button
                     size="small"
                     icon={<TruckOutlined />}

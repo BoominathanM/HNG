@@ -265,6 +265,23 @@ exports.uploadStickerDesign = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: sticker });
 });
 
+exports.uploadStickerInvoice = asyncHandler(async (req, res, next) => {
+  if (!req.file) return next(new AppError('Please upload an invoice file', 400));
+  const sticker = await StickerRequest.findByIdAndUpdate(
+    req.params.id,
+    {
+      invoiceFile: {
+        name: req.file.originalname || req.file.filename || 'invoice',
+        url: req.file.path,
+        public_id: req.file.filename || '',
+      },
+    },
+    { new: true }
+  );
+  if (!sticker) return next(new AppError('Sticker request not found', 404));
+  res.status(200).json({ success: true, data: sticker });
+});
+
 exports.updateStickerStatus = asyncHandler(async (req, res, next) => {
   const sticker = await StickerRequest.findByIdAndUpdate(
     req.params.id,

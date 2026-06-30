@@ -2,9 +2,18 @@ const express = require('express');
 const router = express.Router();
 const ctrl = require('./inventory.controller');
 const packingConfigCtrl = require('./packingConfig.controller');
+const materialStockCtrl = require('./materialStock.controller');
 const { protect } = require('../../middleware/auth');
+const upload = require('../../config/multer');
 
 router.use(protect);
+
+// Material Stocks (packing materials purchased & stored)
+router.get('/material-stocks', materialStockCtrl.getAll);
+router.post('/material-stocks', materialStockCtrl.create);
+router.put('/material-stocks/:id', materialStockCtrl.update);
+router.delete('/material-stocks/:id', materialStockCtrl.remove);
+router.post('/material-stocks/:id/upload-invoice', upload.single('invoice'), materialStockCtrl.uploadInvoice);
 
 // Packing Material Configuration
 router.get('/packing-config', packingConfigCtrl.getAll);

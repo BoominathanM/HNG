@@ -31,6 +31,12 @@ const stickerRequestSchema = new mongoose.Schema({
   opsHeadApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   isUrgent: { type: Boolean, default: false },
   dispatchedToOps: { type: Boolean, default: false },
+  // Invoice uploaded by the design team after printing (shown in Operations product spec table)
+  invoiceFile: {
+    name: { type: String, default: '' },
+    url: { type: String, default: '' },
+    public_id: { type: String, default: '' },
+  },
   // Kit context: which kit this approval covers and what products are packed inside
   kitType: { type: String, default: '' },
   kitProducts: [{ type: String }],

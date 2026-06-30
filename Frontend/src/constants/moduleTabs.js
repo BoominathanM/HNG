@@ -44,6 +44,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'history', label: 'Stock History' },
     { key: 'livecheck', label: 'Live Staff Checking' },
     { key: 'kit', label: 'Kit' },
+    { key: 'material_stocks', label: 'Material Stocks' },
     { key: 'packing_config', label: 'Packing Material Configuration' },
   ],
   Purchase: [

@@ -3116,43 +3116,6 @@ export default function Sales() {
     }
   }, [watchedLeadProducts]);
 
-  // Track previously-consumed counts so we can undo them when packagingIncludes changes.
-  const prevKitConsumedRef = React.useRef({});
-
-  // When packagingIncludes/Qty or outerQty changes, auto-update each included kit's
-  // overallQty = max(0, currentQty + prevConsumed - newConsumed) so the per-kit card
-  // reflects the standalone (not-packaged) count.
-  useEffect(() => {
-    const piRaw = leadForm.getFieldValue('packagingIncludes') || [];
-    const piQtyMap = leadForm.getFieldValue('packagingIncludesQty') || {};
-    const outerQty = Number(leadForm.getFieldValue('kitOverallQty')) || 1;
-    const kitOrds = leadForm.getFieldValue('kitOrders') || [];
-    const selKits = leadForm.getFieldValue('selectedKits') || [];
-
-    // Build map: kitId → new consumed count
-    const piIds = Array.isArray(piRaw) && piRaw.length && typeof piRaw[0] === 'object'
-      ? piRaw.map(p => p.id) : piRaw;
-    const newConsumed = {};
-    piIds.forEach(id => { newConsumed[id] = (Number(piQtyMap[id]) || 1) * outerQty; });
-
-    // Also clear consumed for kits no longer in packagingIncludes
-    Object.keys(prevKitConsumedRef.current).forEach(id => { if (!piIds.includes(id)) newConsumed[id] = 0; });
-
-    const prev = prevKitConsumedRef.current;
-    const updatedOrds = kitOrds.map(ko => {
-      if (!ko || !ko.kitId) return ko;
-      const prevC = prev[ko.kitId] || 0;
-      const newC = newConsumed[ko.kitId] ?? prevC; // no change if not in map
-      if (prevC === newC) return ko;
-      const currentQty = Number(ko.overallQty) || 0;
-      return { ...ko, overallQty: Math.max(0, currentQty + prevC - newC) };
-    });
-
-    const hasChange = updatedOrds.some((ko, i) => ko?.overallQty !== kitOrds[i]?.overallQty);
-    if (hasChange) leadForm.setFieldValue('kitOrders', updatedOrds);
-
-    prevKitConsumedRef.current = { ...prev, ...newConsumed };
-  }, [watchedPackagingIncludes, watchedPackagingIncludesQty, watchedKitOverallQty]);
 
   const [createLeadMutation] = useCreateLeadMutation();
   const [createPartyMutation] = useCreatePartyMutation();
@@ -5062,14 +5025,24 @@ export default function Sales() {
           <Tooltip title="Edit">
             <Button size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); openAddLead(r); }} />
           </Tooltip>
-          <Tooltip title="Convert to Quotation">
-            <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 13 }}
-              onClick={(e) => { e.stopPropagation(); startQuotationFromLead(r); }}>→ Quotation</Button>
-          </Tooltip>
-          <Tooltip title="Convert to Negotiation">
-            <Button size="small" style={{ background: '#722ed1', color: '#fff', border: 'none', fontSize: 13 }}
-              onClick={(e) => { e.stopPropagation(); convertLeadToNegotiation(r); }}>→ Negotiation</Button>
-          </Tooltip>
+          {(() => {
+            const rowLinkedOrder = ordersData.find(o =>
+              (o.leadCode && o.leadCode === r.leadId) ||
+              (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
+            );
+            return !rowLinkedOrder && (
+              <>
+                <Tooltip title="Convert to Quotation">
+                  <Button size="small" style={{ background: '#B11E6A', color: '#fff', border: 'none', fontSize: 13 }}
+                    onClick={(e) => { e.stopPropagation(); startQuotationFromLead(r); }}>→ Quotation</Button>
+                </Tooltip>
+                <Tooltip title="Convert to Negotiation">
+                  <Button size="small" style={{ background: '#722ed1', color: '#fff', border: 'none', fontSize: 13 }}
+                    onClick={(e) => { e.stopPropagation(); convertLeadToNegotiation(r); }}>→ Negotiation</Button>
+                </Tooltip>
+              </>
+            );
+          })()}
         </Space>
       ),
     },
@@ -9976,7 +9949,7 @@ export default function Sales() {
                   style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }}
                   onClick={() => sendViaWhatsApp(record)}
                 >WhatsApp</Button>
-                {record.leadId && !record.customerId && (
+                {record.leadId && !record.customerId && !linkedOrderForLead && (
                   <>
                     <Button icon={<FileTextOutlined />}
                       style={{ background: '#B11E6A', color: '#fff', border: 'none', borderRadius: 8 }}
@@ -13181,7 +13154,7 @@ export default function Sales() {
                             onClick={() => openAddLead(record)}
                           >Edit Details</Button>
                         </Col>
-                        {(record.leadId && !record.customerId) && (
+                        {(record.leadId && !record.customerId && !linkedOrderForLead) && (
                           <>
                             <Col span={12} style={{ marginTop: 12 }}>
                               <Button icon={<FileTextOutlined />} block
@@ -13429,6 +13402,11 @@ export default function Sales() {
                   </div>
                   <Table
                     dataSource={leadsData.filter(r => {
+                      const hasOrder = ordersData.some(o =>
+                        (o.leadCode && o.leadCode === r.leadId) ||
+                        (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
+                      );
+                      if (hasOrder) return false;
                       if (leadSearchText) {
                         const q = leadSearchText.toLowerCase();
                         if (!['hotelName', 'location', 'salesPerson'].some(k => (r[k] || '').toLowerCase().includes(q))) return false;

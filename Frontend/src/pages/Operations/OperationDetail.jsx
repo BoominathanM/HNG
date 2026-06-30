@@ -68,6 +68,7 @@ import {
 } from '../../store/api/apiSlice';
 import { estimateSecFor, secToHuman, perUnitLabel } from '../../utils/taskTime';
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
+import { downloadFile } from '../../utils/fileDownload';
 import {
   buildProductionQueues,
   canAssignTaskFromChecks,
@@ -1589,7 +1590,120 @@ export default function OperationDetail() {
             </Space>
           );
         }
+        // For kit items, only show design on the representative (first) row of each kit
+        if (record.isKit || record.kitType) {
+          const kitDUTab = record.displayUnitTab || '';
+          const recCat = record.category || '';
+          const recKit = (record.kitName || record.kitType || '').toLowerCase();
+          const kitItemsForDesign = (order?.items || []).filter(
+            (it) => (it.isKit || it.kitType)
+              && (it.displayUnitTab || '') === kitDUTab
+              && (it.category || '') === recCat
+              && (it.kitName || it.kitType || '').toLowerCase() === recKit
+          );
+          const firstKitItem = kitItemsForDesign[0];
+          const isRepresentativeRow = !firstKitItem || String(firstKitItem.key) === String(record.key);
+          if (!isRepresentativeRow) return <Text type="secondary">—</Text>;
+        }
         return ownNode;
+      },
+    },
+    {
+      title: 'Invoice',
+      key: 'invoice',
+      width: 160,
+      render: (_, record) => {
+        // Helper: render a single invoice block (badge + save button + filename).
+        const invBlock = (inv, catMeta) => (
+          <Space direction="vertical" size={3}>
+            <Tag style={{ background: `${catMeta.color}1a`, color: catMeta.color, border: `1px solid ${catMeta.color}55`, borderRadius: 10, fontSize: 10, margin: 0 }}>{catMeta.label}</Tag>
+            <Button type="link" size="small" icon={<DownloadOutlined style={{ fontSize: 11 }} />}
+              style={{ fontSize: 11, color: '#1890ff', padding: 0, height: 'auto' }}
+              onClick={() => downloadFile(inv.url, inv.name || 'invoice')}>
+              Save
+            </Button>
+            {inv.name && <Text type="secondary" style={{ fontSize: 10, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{inv.name}</Text>}
+          </Space>
+        );
+        const noInvBlock = (catMeta) => (
+          <Space direction="vertical" size={2}>
+            <Tag style={{ background: `${catMeta.color}1a`, color: catMeta.color, border: `1px solid ${catMeta.color}55`, borderRadius: 10, fontSize: 10, margin: 0 }}>{catMeta.label}</Tag>
+            <Text type="secondary" style={{ fontSize: 11 }}>No invoice</Text>
+          </Space>
+        );
+
+        // ── CASE A: outer personalized kit row ────────────────────────────────────────────
+        // When the personalized kit is its own spec-table row (category='personalized'),
+        // resolveKitSR can miss the invoice because its stickerType filter may not align.
+        // Use personalizedKitSR directly — it's already found from kitSRList by category only.
+        if ((record.isKit || record.kitType) && (record.category || '') === 'personalized') {
+          const inv = personalizedKitSR?.invoiceFile;
+          const catMeta = ORDER_CATEGORY_META.personalized;
+          return inv?.url ? invBlock(inv, catMeta) : noInvBlock(catMeta);
+        }
+
+        // ── CASE B: mixed order — pin personalized invoice to the first included row ───────
+        // In orders where the outer personalized kit is NOT a spec-table row, pin its invoice
+        // to the first isIncludedInPersonalized row (same pattern as the Design column).
+        if (personalizedKitSR?.invoiceFile?.url
+          && record.isIncludedInPersonalized
+          && String(record.key) === String(firstPersonalizedRowKey)) {
+          const persInv = personalizedKitSR.invoiceFile;
+          const persMeta = ORDER_CATEGORY_META.personalized;
+          const ownSr = resolveKitSR(record) || srForRow(record);
+          const ownInv = ownSr?.invoiceFile;
+          const ownCat = record.category || 'separate_kit';
+          const ownMeta = ORDER_CATEGORY_META[ownCat] || ORDER_CATEGORY_META.separate_product;
+          return (
+            <Space direction="vertical" size={8} style={{ width: '100%' }}
+              split={<div style={{ borderTop: '1px dashed rgba(127,127,127,0.3)', width: '100%' }} />}>
+              {invBlock(persInv, persMeta)}
+              {ownInv?.url ? invBlock(ownInv, ownMeta) : noInvBlock(ownMeta)}
+            </Space>
+          );
+        }
+
+        // ── CASE C: regular kit rows — representative-row guard ───────────────────────────
+        if (record.isKit || record.kitType) {
+          const kitDUTab = record.displayUnitTab || '';
+          const recCat = record.category || '';
+          const recKit = (record.kitName || record.kitType || '').toLowerCase();
+          const kitItemsForInv = (order?.items || []).filter(
+            (it) => (it.isKit || it.kitType)
+              && (it.displayUnitTab || '') === kitDUTab
+              && (it.category || '') === recCat
+              && (it.kitName || it.kitType || '').toLowerCase() === recKit
+          );
+          const firstKitItem = kitItemsForInv[0];
+          const isRepresentativeRow = !firstKitItem || String(firstKitItem.key) === String(record.key);
+          if (!isRepresentativeRow) return <Text type="secondary">—</Text>;
+        }
+
+        // ── CASE C continued: resolve invoice SR ──────────────────────────────────────────
+        const sr = (() => {
+          if (record.isKit || record.kitType) {
+            const tabSr = resolveKitSR(record);
+            if (tabSr?.invoiceFile?.url) return tabSr;
+            const cat = record.category || '';
+            const kt = (record.kitName || record.kitType || '').toLowerCase();
+            const allOrderSRs = stickerRequests.filter((s) => {
+              const srOId = String(s.orderId?._id || s.orderId || '');
+              return srOId === String(order?.key || '') || s.orderId?.orderCode === id;
+            });
+            const withInvoice = allOrderSRs.find((s) => {
+              if (!s.invoiceFile?.url) return false;
+              if (cat && s.category && s.category !== cat) return false;
+              if (kt && s.kitType && (s.kitType || '').toLowerCase() !== kt) return false;
+              return true;
+            });
+            return withInvoice || tabSr;
+          }
+          return srForRow(record);
+        })();
+        const inv = sr?.invoiceFile;
+        const cat = record.category || (record.isKit ? 'separate_kit' : 'separate_product');
+        const catMeta = ORDER_CATEGORY_META[cat] || ORDER_CATEGORY_META.separate_product;
+        return inv?.url ? invBlock(inv, catMeta) : noInvBlock(catMeta);
       },
     },
     {
@@ -1626,6 +1740,7 @@ export default function OperationDetail() {
               : kitItemsForSameKit.map((it) => it.itemName || it.name || '').filter(Boolean);
             const firstKitItemOfType = kitItemsForSameKit[0];
             const isRepresentativeRow = !firstKitItemOfType || String(firstKitItemOfType.key) === String(record.key);
+            if (!isRepresentativeRow) return <Text type="secondary">—</Text>;
             const catColor = ORDER_CATEGORY_META[record.category]?.color || '#7c3aed';
             return renderKitApprovalBlock(sr, { kitTypeName, catLabel, catColor, kitProductsList, isRepresentativeRow });
           }

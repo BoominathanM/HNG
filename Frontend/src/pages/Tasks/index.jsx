@@ -594,7 +594,7 @@ export default function Tasks() {
         <Space direction="vertical" size={2}>
           {r.status === 'Pending' && (
             <Button size="small" type="primary" icon={<PlayCircleOutlined />}
-              onClick={() => handleStartTask(r.id)} style={{ background: '#1890ff', border: 'none' }}>
+              onClick={(e) => { e.stopPropagation(); handleStartTask(r.id); }} style={{ background: '#1890ff', border: 'none' }}>
               Start
             </Button>
           )}
@@ -602,7 +602,7 @@ export default function Tasks() {
             <Space direction="vertical" size={3}>
               <Tag color="processing" icon={<ClockCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>In Process</Tag>
               <Button size="small" type="primary" icon={<CheckOutlined />}
-                onClick={() => handleCompleteTask(r.id)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+                onClick={(e) => { e.stopPropagation(); handleCompleteTask(r.id); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
                 Done
               </Button>
             </Space>
