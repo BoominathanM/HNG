@@ -554,6 +554,14 @@ export default function Billing() {
     // paymentCollection from lead is authoritative (Sales reads the same source)
     const paid = sumPaid(linkedOrder, lead, q);
     const balance = r2(Math.max(0, total - paid));
+    // Authoritative payment collection — pick the source whose recorded payments are most
+    // complete (matches `paid = sumPaid(...)`) so a manually-recorded payment ACCUMULATES on
+    // top of prior ones instead of overwriting them when saved back to the quotation/order.
+    const collSum = (c) => (c || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+    const paymentCollection = [linkedOrder, lead, q]
+      .filter(Boolean)
+      .map((src) => src.paymentCollection || [])
+      .reduce((best, c) => (collSum(c) > collSum(best) ? c : best), []);
     const qStatus = total > 0
       ? (r2(paid) >= r2(total) ? 'Paid' : paid > 0 ? 'Partially Paid' : 'Unpaid')
       : (q.status || 'Unpaid');
@@ -577,6 +585,8 @@ export default function Billing() {
       balance,
       type: q.type,
       status: qStatus,
+      // Carried so handleSavePayment accumulates new manual payments instead of wiping prior ones
+      paymentCollection,
       note: q.note || '',
       taxableAmount: kitMoney.taxable || q.amount || 0,
       cgst: kitMoney.gst ? r2(kitMoney.gst / 2) : halfGst,
@@ -1081,9 +1091,15 @@ export default function Billing() {
         // Pass newEntry so syncBillingChain can also add it to the linked order's collection
         await syncBillingChain(recordPayInv, newPaid, newEntry);
       } else if (recordPayInv.docType === 'Quotation') {
-        // Quotation payment — record directly on the quotation
+        // Quotation payment — record directly on the quotation.
+        // Base the new total on the actual prior paid (collection sum OR the already-paid
+        // `advance` synced from the linked order/lead) so we never wipe earlier payments.
         const existing = recordPayInv.paymentCollection || [];
-        const newPaid = existing.reduce((s, e) => s + Number(e.paidAmount || 0), 0) + net;
+        const priorPaid = Math.max(
+          existing.reduce((s, e) => s + Number(e.paidAmount || 0), 0),
+          Number(recordPayInv.advance || recordPayInv.paidAmount || 0)
+        );
+        const newPaid = priorPaid + net;
         const newBalance = Math.max(0, (recordPayInv.total || 0) - newPaid);
         const newStatus = (recordPayInv.total || 0) > 0 && newPaid >= (recordPayInv.total || 0) ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Unpaid';
         await updateSalesQuotationMutation({
