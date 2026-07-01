@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Form, Input, Select, Switch, Button, Typography,
@@ -133,6 +133,7 @@ const initRoles = [
 
 export default function Settings() {
   const makeUpload = useCloudinaryUpload();
+  const handleProfilePhotoUpload = useMemo(() => makeUpload('settings/profiles'), [makeUpload]);
   const { filterTabs } = useTabAccess('Settings');
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg     = isDark ? '#1E1E2E' : '#ffffff';
@@ -311,10 +312,22 @@ export default function Settings() {
   const [deletedSearch, setDeletedSearch] = useState('');
   const [deletedModuleFilter, setDeletedModuleFilter] = useState('all');
 
+  const getRolesForDept = (dept) => {
+    if (!dept) return [];
+    const defaults = DEPT_ROLES[dept] || [];
+    const allUsers = usersData?.data || [];
+    const dbRoles = allUsers
+      .filter(u => u.department === dept)
+      .map(u => u.role)
+      .filter(Boolean);
+    const custom = customDeptRoles[dept] || [];
+    return Array.from(new Set([...defaults, ...dbRoles, ...custom]));
+  };
+
   const addRole = (e) => {
     e.preventDefault();
     if (!newRole || !watchedDept) return;
-    const existing = [...(DEPT_ROLES[watchedDept] || []), ...(customDeptRoles[watchedDept] || [])];
+    const existing = getRolesForDept(watchedDept);
     if (!existing.includes(newRole)) {
       setCustomDeptRoles(prev => ({
         ...prev,
@@ -632,14 +645,12 @@ export default function Settings() {
                                 </div>
                               )}
                             >
-                              {[
-                                ...(DEPT_ROLES[watchedDept] || []),
-                                ...(customDeptRoles[watchedDept] || []),
-                              ].map(r => <Option key={r} value={r}>{r}</Option>)}
+                              {getRolesForDept(watchedDept).map(r => <Option key={r} value={r}>{r}</Option>)}
                             </Select>
                           </Form.Item>
                         </Col>
                       </Row>
+
 
                       {watchedDept === 'Sales' && (
                         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} style={{ background: subBg, padding: 16, borderRadius: 12, marginBottom: 20, border: '1px solid #B11E6A22' }}>
@@ -759,7 +770,7 @@ export default function Settings() {
                               <Upload
                                 showUploadList={false}
                                 accept="image/*"
-                                customRequest={makeUpload('settings/profiles')}
+                                customRequest={handleProfilePhotoUpload}
                                 onChange={(info) => {
                                   // customRequest stores the Cloudinary URL on the file (and its
                                   // response). Read both so the URL is captured reliably.

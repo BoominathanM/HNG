@@ -88,18 +88,21 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
   const { productIndex, product } = req.body;
   const orderId = req.params.id;
 
-  // Prevent duplicate: same product slot on the same order already has a task
+  // Prevent duplicate: same product slot + same task name on the same order already
+  // has a task. Task name is part of the key so a product can have several
+  // differently-named tasks (e.g. "Packing" and "Sealing") assigned separately.
   const dupFilter = { orderId };
   if (productIndex !== undefined && productIndex !== null && !isNaN(productIndex)) {
     dupFilter.productIndex = Number(productIndex);
   } else if (product) {
     dupFilter.product = product;
   }
+  if (req.body.taskName) dupFilter.taskName = req.body.taskName;
   if (Object.keys(dupFilter).length > 1) {
     const existing = await Task.findOne(dupFilter);
     if (existing) {
       return next(new AppError(
-        `A task for "${product || `product #${productIndex}`}" on this order already exists (${existing.taskCode}). Delete the existing task first if you need to reassign.`,
+        `A "${req.body.taskName || 'task'}" task for "${product || `product #${productIndex}`}" on this order already exists (${existing.taskCode}). Delete the existing task first if you need to reassign.`,
         409
       ));
     }
@@ -116,17 +119,28 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
   const taskCode = await generateCode('TASK');
   // Estimate from the configured per-unit time × qty. plannedStartTime = assignment
   // time (or the start time picked in the modal); plannedEndTime = start + estimate.
-  const { timePerUnitSec, estimatedDurationSec } = await computeTaskEstimate({
-    taskName: req.body.taskName, taskType: req.body.taskType, product: req.body.product, qty: req.body.qty,
-  });
+  // The Assign Task modals now compute the estimate client-side by summing each
+  // sub-task's own task-name × qty (a single parent taskName lookup can't reproduce
+  // that aggregate), so trust an explicitly-sent estimate instead of recomputing it.
   const plannedStartTime = req.body.plannedStartTime ? new Date(req.body.plannedStartTime) : new Date();
   const timeFields = { plannedStartTime };
-  if (timePerUnitSec > 0) {
-    timeFields.timePerUnitSec = timePerUnitSec;
-    timeFields.estimatedDurationSec = estimatedDurationSec;
-    timeFields.plannedEndTime = new Date(plannedStartTime.getTime() + estimatedDurationSec * 1000);
-  } else if (req.body.plannedEndTime) {
-    timeFields.plannedEndTime = new Date(req.body.plannedEndTime);
+  if (req.body.estimatedDurationSec !== undefined) {
+    if (req.body.timePerUnitSec !== undefined) timeFields.timePerUnitSec = req.body.timePerUnitSec;
+    timeFields.estimatedDurationSec = req.body.estimatedDurationSec;
+    timeFields.plannedEndTime = req.body.plannedEndTime
+      ? new Date(req.body.plannedEndTime)
+      : new Date(plannedStartTime.getTime() + req.body.estimatedDurationSec * 1000);
+  } else {
+    const { timePerUnitSec, estimatedDurationSec } = await computeTaskEstimate({
+      taskName: req.body.taskName, taskType: req.body.taskType, product: req.body.product, qty: req.body.qty,
+    });
+    if (timePerUnitSec > 0) {
+      timeFields.timePerUnitSec = timePerUnitSec;
+      timeFields.estimatedDurationSec = estimatedDurationSec;
+      timeFields.plannedEndTime = new Date(plannedStartTime.getTime() + estimatedDurationSec * 1000);
+    } else if (req.body.plannedEndTime) {
+      timeFields.plannedEndTime = new Date(req.body.plannedEndTime);
+    }
   }
   // Inherit the order's live payment status so a task assigned after payment was
   // already collected isn't stuck on 'Pending' (which would hide the Dispatch button
@@ -162,6 +176,13 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
   const baseType = req.body.taskType || 'Production';
   const tasks = [];
   const skippedProducts = [];
+  // Optional per-product assignee, e.g. [{ productIndex, assignedTo, assigneeName }] —
+  // lets one bulk call assign each product to a different Task Management staff member.
+  const assignmentByIndex = new Map(
+    (req.body.assignments || [])
+      .filter((a) => a && a.productIndex !== undefined && a.productIndex !== null)
+      .map((a) => [Number(a.productIndex), a])
+  );
   // Resolve the order's live payment status once so each fanned-out task inherits it
   // (otherwise the Dispatch button stays hidden in Task Management on paid orders).
   const orderPaymentStatus = await resolveOrderPaymentStatus(order._id).catch(() => 'Pending');
@@ -173,6 +194,7 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
       continue;
     }
     const taskCode = await generateCode('TASK');
+    const assignment = assignmentByIndex.get(i);
     tasks.push(await Task.create({
       taskCode,
       orderId: order._id,
@@ -184,6 +206,8 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
       clientName: order.clientName,
       status: 'Pending',
       paymentStatus: orderPaymentStatus,
+      assignedTo: assignment?.assignedTo || undefined,
+      assigneeName: assignment?.assigneeName || undefined,
       createdBy: req.user._id,
     }));
   }

@@ -2,7 +2,8 @@ import React, { useState, useRef, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
-  Typography, Space, DatePicker, Upload, InputNumber, Divider, List, Tabs, Descriptions
+  Typography, Space, DatePicker, Upload, InputNumber, Divider, List, Tabs, Descriptions,
+  Collapse, Checkbox, Avatar, Badge
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -10,7 +11,7 @@ import {
   EyeOutlined, FileTextOutlined, ContactsOutlined, TeamOutlined,
   LeftOutlined, CheckOutlined, ThunderboltOutlined, RobotOutlined,
   CameraOutlined, SafetyCertificateOutlined, ShoppingOutlined,
-  WalletOutlined, WarningOutlined, ShopOutlined
+  WalletOutlined, WarningOutlined, ShopOutlined, UserOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -20,6 +21,7 @@ import { emailRules, phoneValidator } from '../../utils/validation';
 import dayjs from 'dayjs';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
+import { MODULE_TAB_DEFS } from '../../constants/moduleTabs';
 import {
   useGetVendorsQuery,
   useCreateVendorMutation,
@@ -30,14 +32,42 @@ import {
   useGenerateAiSummaryMutation,
   useCreateExpenseMutation,
   useGetUsersQuery,
+  useCreateUserMutation,
+  useUpdateUserMutation,
+  useDeleteUserMutation,
   useGetCompanySettingsQuery,
   useUpdateCompanySettingsMutation,
-} from '../../store/api/apiSlice';
+} from '../../store/api/apiSlice';const MODULES = [
+  'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
+  'Staff Management', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing', 'Parties & Ledger',
+  'Financial', 'Expenses', 'Reports', 'Notifications', 'Integration', 'Settings',
+];
 
+const MODULE_PERM_TYPES = {
+  Dashboard: ['read'],
+  'Sales Team': ['read', 'add', 'edit', 'delete'],
+  Operations: ['read', 'add', 'edit', 'delete'],
+  'Task Management': ['read', 'add', 'edit', 'delete'],
+  'Dispatch Team': ['read', 'add', 'edit', 'delete'],
+  'Staff Management': ['read', 'add', 'edit', 'delete'],
+  Inventory: ['read', 'add', 'edit', 'delete'],
+  Purchase: ['read', 'add', 'edit', 'delete'],
+  'Vendors & Suppliers': ['read', 'add', 'edit', 'delete'],
+  Billing: ['read', 'add', 'edit', 'delete'],
+  'Parties & Ledger': ['read', 'add', 'edit', 'delete'],
+  Financial: ['read', 'add', 'edit', 'delete'],
+  Expenses: ['read', 'add', 'edit', 'delete'],
+  Reports: ['read'],
+  Notifications: ['read'],
+  Integration: ['read', 'add', 'edit', 'delete'],
+  Settings: ['read', 'add', 'edit', 'delete'],
+};
+
+const ALL_PERMS = { read: true, add: true, edit: true, delete: true };
+const NO_PERMS  = { read: false, add: false, edit: false, delete: false };
+const MODULE_TABS = MODULE_TAB_DEFS;
 const { Title, Text } = Typography;
 const { Option } = Select;
-
-
 const exportToCSV = (headers, rows, filename) => {
   const csv = [headers, ...rows]
     .map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))
@@ -52,13 +82,24 @@ const exportToCSV = (headers, rows, filename) => {
 };
 
 export default function VendorsSuppliers() {
+  const [printingSupplierForm] = Form.useForm();
   const makeUpload = useCloudinaryUpload();
+  const handleProfilePhotoUpload = useMemo(() => makeUpload('settings/profiles'), [makeUpload]);
   const { filterTabs } = useTabAccess('Vendors & Suppliers');
   const { requireAccess } = usePageAccess('Vendors & Suppliers');
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
+  const subBg = isDark ? '#2a2a3a' : '#fafafa';
+  const watchedRole = Form.useWatch('role', printingSupplierForm);
+  const visibleModules = watchedRole ? MODULES : [];
+
+  /* ── Users state — RTK Query ── */
+  const { data: usersData } = useGetUsersQuery();
+  const [createUser] = useCreateUserMutation();
+  const [updateUser] = useUpdateUserMutation();
+  const [deleteUser] = useDeleteUserMutation();
 
   /* ── Vendors state — RTK Query ── */
   const { data: vendorData, isLoading: vendorsLoading } = useGetVendorsQuery({ type: 'raw_material', limit: 500 });
@@ -96,17 +137,16 @@ export default function VendorsSuppliers() {
     totalPaid: 0,
     pending: 0,
   })), [vendorData]);
-
-  const printingSuppliers = useMemo(() => (printingData?.data || []).map((v) => ({
-    key: v._id,
-    type: v.supplierType || 'Box',
-    name: v.name,
-    phone: v.phone,
-    email: v.email,
-    taxId: v.taxId,
-    address: v.address,
-    bank: v.bankDetails,
-  })), [printingData]);
+  const printingSuppliers = useMemo(() => (usersData?.data || []).filter(u => u.department === 'Vendors').map((u) => ({
+    key: u._id,
+    type: u.role || 'Box',
+    name: u.fullName,
+    phone: u.mobile,
+    email: u.email,
+    taxId: u.taxId || '',
+    address: u.address || '',
+    bank: u.bankDetails || '',
+  })), [usersData]);
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
   const [vendorSearch, setVendorSearch] = useState('');
   const [vendorFilter, setVendorFilter] = useState('all');
@@ -131,10 +171,7 @@ export default function VendorsSuppliers() {
   const [vendorBillFile, setVendorBillFile] = useState(null);
   const [vendorBillScanLoading, setVendorBillScanLoading] = useState(false);
   const [vendorBillForm] = Form.useForm();
-  const [purchaseExpenses, setPurchaseExpenses] = useState([]);
-
-  /* ── Vendor users (from Settings > Users with dept = Vendors) ── */
-  const { data: usersData } = useGetUsersQuery();
+  const [purchaseExpenses, setPurchaseExpenses] = useState([]);  /* ── Vendor users (from Settings > Users with dept = Vendors) ── */
   const vendorUsers = useMemo(() => {
     const all = usersData?.data || [];
     return all.filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper'].includes(u.role));
@@ -163,7 +200,36 @@ export default function VendorsSuppliers() {
   const [printingTypeFilter, setPrintingTypeFilter] = useState('all');
   const [viewPrintingSupplier, setViewPrintingSupplier] = useState(null);
   const [showAddPrintingSupplierModal, setShowAddPrintingSupplierModal] = useState(false);
-  const [printingSupplierForm] = Form.useForm();
+
+  const [customDeptRoles, setCustomDeptRoles] = useState({});
+  const [newRole, setNewRole] = useState('');
+  const [userProfilePhotoUrl, setUserProfilePhotoUrl] = useState(null);
+
+  const getRolesForDept = (dept) => {
+    if (!dept) return [];
+    const defaults = ['Sticker', 'Box', 'Ziplock', 'Butter Paper'];
+    const allUsers = usersData?.data || [];
+    const dbRoles = allUsers
+      .filter(u => u.department === dept)
+      .map(u => u.role)
+      .filter(Boolean);
+    const custom = customDeptRoles[dept] || [];
+    return Array.from(new Set([...defaults, ...dbRoles, ...custom]));
+  };
+
+  const addRole = (e) => {
+    e.preventDefault();
+    if (!newRole) return;
+    const dept = 'Vendors';
+    const existing = getRolesForDept(dept);
+    if (!existing.includes(newRole)) {
+      setCustomDeptRoles(prev => ({
+        ...prev,
+        [dept]: [...(prev[dept] || []), newRole],
+      }));
+    }
+    setNewRole('');
+  };
 
   /* ── Camera capture ── */
   const [showCameraModal, setShowCameraModal] = useState(false);
@@ -262,21 +328,27 @@ export default function VendorsSuppliers() {
   const handleAddPrintingSupplier = async (vals) => {
     if (!requireAccess('add')) return;
     try {
-      await createVendor({
-        name: vals.name,
-        phone: vals.phone || '',
-        email: vals.email || '',
-        taxId: vals.taxId || '',
-        address: vals.address || '',
-        bankDetails: vals.bank || '',
-        supplierType: vals.type || '',
-        vendorType: 'printing',
-      }).unwrap();
+      const allValues = printingSupplierForm.getFieldsValue(true);
+      const payload = {
+        fullName: vals.name,
+        email: vals.email,
+        mobile: vals.mobile,
+        role: vals.role,
+        status: vals.status || 'Active',
+        department: 'Vendors',
+        password: vals.password,
+        permissions: allValues.perms || vals.perms || {},
+        tabAccess: allValues.tabAccess || vals.tabAccess || {},
+        ...(userProfilePhotoUrl ? { avatarUrl: userProfilePhotoUrl } : {}),
+      };
+
+      await createUser(payload).unwrap();
       printingSupplierForm.resetFields();
+      setUserProfilePhotoUrl(null);
       setShowAddPrintingSupplierModal(false);
       enqueueSnackbar('Printing supplier added successfully', { variant: 'success' });
     } catch (err) {
-      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to add printing supplier', { variant: 'error' });
+      enqueueSnackbar(err?.data || err?.message || 'Failed to add printing supplier', { variant: 'error' });
     }
   };
 
@@ -598,16 +670,6 @@ export default function VendorsSuppliers() {
                           { title: 'Name', dataIndex: 'name', width: 180, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
                           { title: 'Phone', dataIndex: 'phone', width: 145, render: v => <Text>{v || '—'}</Text> },
                           { title: 'Email', dataIndex: 'email', width: 200, render: v => <Text>{v || '—'}</Text> },
-                          { title: 'Tax ID (GST/PAN)', dataIndex: 'taxId', width: 155, render: v => <Text>{v || '—'}</Text> },
-                          { title: 'Address', dataIndex: 'address', width: 160, render: v => <Text>{v || '—'}</Text> },
-                          {
-                            title: 'Orders', key: 'orders', width: 80,
-                            render: (_, r) => (
-                              <Tag color="geekblue" style={{ borderRadius: 10, fontWeight: 600, cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setViewPrintingSupplier(r); }}>
-                                {r.orders?.length || 0}
-                              </Tag>
-                            ),
-                          },
                         ]}
                       />
                     </div>
@@ -670,61 +732,220 @@ export default function VendorsSuppliers() {
       </Modal>
 
       {/* ──────── Add Printing Supplier Modal ──────── */}
+      {/* ──────── Add Printing Supplier Modal ──────── */}
       <Modal
         open={showAddPrintingSupplierModal}
-        onCancel={() => { setShowAddPrintingSupplierModal(false); printingSupplierForm.resetFields(); }}
+        onCancel={() => { setShowAddPrintingSupplierModal(false); printingSupplierForm.resetFields(); setUserProfilePhotoUrl(null); }}
         footer={null}
-        width={500}
+        width={Math.min(760, window.innerWidth - 24)}
         centered
-        title={<Text strong style={{ fontSize: 16 }}>Add Printing Supplier</Text>}
+        style={{ top: 20 }}
+        title={<Text strong style={{ fontSize: 18 }}>Add Printing Supplier</Text>}
       >
-        <Form form={printingSupplierForm} layout="vertical" onFinish={handleAddPrintingSupplier} style={{ marginTop: 12 }}>
-          <Form.Item label="Supplier Type" name="type" rules={[{ required: true, message: 'Select type' }]}>
-            <Select placeholder="Select type" style={{ height: 40 }}>
-              <Option value="Sticker">Sticker</Option>
-              <Option value="Box">Box</Option>
-              <Option value="Ziplock">Ziplock</Option>
-              <Option value="Butter Paper">Butter Paper</Option>
-            </Select>
-          </Form.Item>
-          <Row gutter={12}>
-            <Col xs={24} sm={14}>
-              <Form.Item label={<span>Name <span style={{ color: '#ff4d4f' }}>*</span></span>} name="name" rules={[{ required: true, message: 'Required' }]}>
-                <Input placeholder="Supplier name" style={{ borderRadius: 8, height: 40 }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={10}>
-              <Form.Item label="Phone" name="phone" rules={[phoneValidator(false)]}>
-                <PhoneInput placeholder="Phone number" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col xs={24} sm={12}>
-              <Form.Item label="Email" name="email" rules={emailRules(false)}>
-                <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item label="Tax ID (GST/PAN)" name="taxId">
-                <Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Address" name="address">
-            <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
-          </Form.Item>
-          <Form.Item label="Bank Details" name="bank">
-            <Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} />
-          </Form.Item>
-          <Form.Item label="Notes" name="notes">
-            <Input.TextArea placeholder="Any additional info..." rows={3} style={{ borderRadius: 8 }} />
-          </Form.Item>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <Button onClick={() => { setShowAddPrintingSupplierModal(false); printingSupplierForm.resetFields(); }}>Cancel</Button>
-            <Button htmlType="submit" type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save Supplier</Button>
-          </div>
-        </Form>
+        <div style={{ maxHeight: 'calc(100vh - 150px)', overflowY: 'auto', paddingRight: 10, paddingBottom: 10 }}>
+          <Form form={printingSupplierForm} layout="vertical" onFinish={handleAddPrintingSupplier} style={{ marginTop: 16 }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Full Name" name="name" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Enter full name" style={{ borderRadius: 8, height: 40 }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Email Address" name="email" rules={emailRules(true)}>
+                  <Input placeholder="Enter email" style={{ borderRadius: 8, height: 40 }} />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24} sm={8}>
+                <Form.Item label="Mobile" name="mobile" rules={[{ required: true, message: 'Required' }, phoneValidator(true)]}>
+                  <PhoneInput placeholder="Mobile number" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item label="Department" name="department" initialValue="Vendors">
+                  <Input value="Vendors" disabled style={{ borderRadius: 8, height: 40 }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item label="Role" name="role" rules={[{ required: true, message: 'Required' }]}>
+                  <Select
+                    placeholder="Select role"
+                    style={{ width: '100%', height: 40 }}
+                    dropdownRender={(menu) => (
+                      <div style={{ padding: '4px 0' }}>
+                        {menu}
+                        <Divider style={{ margin: '4px 0' }} />
+                        <div style={{ display: 'flex', gap: 4, padding: '4px 8px' }}>
+                          <Input
+                            placeholder="New Role"
+                            value={newRole}
+                            size="small"
+                            onChange={(e) => setNewRole(e.target.value)}
+                            onKeyDown={(e) => e.stopPropagation()}
+                            style={{ flex: 1 }}
+                          />
+                          <Button type="text" size="small" icon={<PlusOutlined />} onClick={addRole} style={{ color: '#B11E6A' }}>
+                            Add
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  >
+                    {getRolesForDept('Vendors').map(r => <Option key={r} value={r}>{r}</Option>)}
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  label="Password"
+                  name="password"
+                  validateTrigger="onChange"
+                  rules={[{ required: true, min: 6, message: 'Min 6 characters' }]}
+                >
+                  <Input.Password placeholder="Min 6 characters" style={{ borderRadius: 8, height: 40 }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  label="Confirm Password"
+                  name="confirm"
+                  validateTrigger="onChange"
+                  dependencies={['password']}
+                  rules={[
+                    ({ getFieldValue }) => ({
+                      validator(_, value) {
+                        const pwd = getFieldValue('password');
+                        if (!pwd && !value) {
+                          return Promise.reject(new Error('Please confirm your password'));
+                        }
+                        if (pwd && !value) {
+                          return Promise.reject(new Error('Please confirm your password'));
+                        }
+                        if (value && pwd !== value) {
+                          return Promise.reject(new Error('Passwords do not match'));
+                        }
+                        return Promise.resolve();
+                      },
+                    }),
+                  ]}
+                >
+                  <Input.Password placeholder="Confirm password" style={{ borderRadius: 8, height: 40 }} />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Status" name="status" initialValue="Active" rules={[{ required: true, message: 'Required' }]}>
+                  <Select style={{ height: 40 }}>
+                    <Option value="Active">Active</Option>
+                    <Option value="Inactive">Inactive</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Profile Photo">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <Avatar
+                      size={40}
+                      src={userProfilePhotoUrl || undefined}
+                      icon={<UserOutlined />}
+                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', flexShrink: 0 }}
+                    />
+                    <Upload
+                      showUploadList={false}
+                      accept="image/*"
+                      customRequest={handleProfilePhotoUpload}
+                      onChange={(info) => {
+                        const url = info.file.response?.url || info.file.url;
+                        if (info.file.status === 'done' && url) {
+                          setUserProfilePhotoUrl(url);
+                          enqueueSnackbar('Photo uploaded', { variant: 'success' });
+                        } else if (info.file.status === 'error') {
+                          enqueueSnackbar('Photo upload failed', { variant: 'error' });
+                        }
+                      }}
+                    >
+                      <Button icon={<UploadOutlined />} style={{ borderRadius: 8, flex: 1, height: 40 }}>
+                        {userProfilePhotoUrl ? 'Change Photo' : 'Upload Image'}
+                      </Button>
+                    </Upload>
+                  </div>
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <div style={{ marginBottom: 16 }}>
+              <Text strong style={{ display: 'block', marginBottom: 8 }}>Page &amp; Tab Access Permissions</Text>
+              {!watchedRole && (
+                <div style={{ background: subBg, borderRadius: 8, padding: '12px 16px', border: `1px solid ${borderColor}`, textAlign: 'center' }}>
+                  <Text style={{ fontSize: 12, color: '#aaa' }}>Select a role above to configure page & tab access</Text>
+                </div>
+              )}
+              {visibleModules.length > 0 && (
+                <Collapse
+                  ghost
+                  expandIconPosition="end"
+                  style={{ background: subBg, borderRadius: 8, border: `1px solid ${borderColor}` }}
+                  items={visibleModules.map(mod => ({
+                    key: mod,
+                    label: <Text strong style={{ fontSize: 13 }}>{mod}</Text>,
+                    children: (
+                      <div>
+                        {/* Page-level CRUD permissions */}
+                        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                          {MODULE_PERM_TYPES[mod].includes('read') && (
+                            <Form.Item name={['perms', mod, 'read']} valuePropName="checked" style={{ margin: 0 }}>
+                              <Checkbox>Read</Checkbox>
+                            </Form.Item>
+                          )}
+                          {MODULE_PERM_TYPES[mod].includes('add') && (
+                            <Form.Item name={['perms', mod, 'add']} valuePropName="checked" style={{ margin: 0 }}>
+                              <Checkbox>Add</Checkbox>
+                            </Form.Item>
+                          )}
+                          {MODULE_PERM_TYPES[mod].includes('edit') && (
+                            <Form.Item name={['perms', mod, 'edit']} valuePropName="checked" style={{ margin: 0 }}>
+                              <Checkbox>Edit</Checkbox>
+                            </Form.Item>
+                          )}
+                          {MODULE_PERM_TYPES[mod].includes('delete') && (
+                            <Form.Item name={['perms', mod, 'delete']} valuePropName="checked" style={{ margin: 0 }}>
+                              <Checkbox>Delete</Checkbox>
+                            </Form.Item>
+                          )}
+                        </div>
+                        {/* Tab-level access */}
+                        {MODULE_TABS[mod]?.length > 0 && (
+                          <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
+                            <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Tab Access:</Text>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                              {MODULE_TABS[mod].map(tab => (
+                                <Form.Item key={tab.key} name={['tabAccess', mod, tab.key]} valuePropName="checked" style={{ margin: 0 }}>
+                                  <Checkbox style={{ fontSize: 12 }}>{tab.label}</Checkbox>
+                                </Form.Item>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  }))}
+                />
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${borderColor}`, paddingTop: 16 }}>
+              <Button onClick={() => { setShowAddPrintingSupplierModal(false); printingSupplierForm.resetFields(); setUserProfilePhotoUrl(null); }} style={{ borderRadius: 8 }}>Cancel</Button>
+              <Button type="primary" htmlType="submit" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 }}>Save Supplier</Button>
+            </div>
+          </Form>
+        </div>
       </Modal>
 
       {/* ──────── Add Vendor Modal ──────── */}

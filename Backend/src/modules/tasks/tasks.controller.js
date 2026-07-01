@@ -13,10 +13,21 @@ const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 // per-unit time × qty. plannedStartTime defaults to now (the assignment time);
 // plannedEndTime is start + estimate. Returns only the fields we want to set.
 async function buildTimeFields(body = {}) {
-  const { taskName, taskType, product, qty } = body;
-  const { timePerUnitSec, estimatedDurationSec } = await computeTaskEstimate({ taskName, taskType, product, qty });
   const plannedStartTime = body.plannedStartTime ? new Date(body.plannedStartTime) : new Date();
   const fields = { plannedStartTime };
+  // The Assign Task modals now compute the estimate client-side by summing each
+  // sub-task's own task-name × qty (a single parent taskName lookup can't reproduce
+  // that aggregate), so trust an explicitly-sent estimate instead of recomputing it.
+  if (body.estimatedDurationSec !== undefined) {
+    if (body.timePerUnitSec !== undefined) fields.timePerUnitSec = body.timePerUnitSec;
+    fields.estimatedDurationSec = body.estimatedDurationSec;
+    fields.plannedEndTime = body.plannedEndTime
+      ? new Date(body.plannedEndTime)
+      : new Date(plannedStartTime.getTime() + body.estimatedDurationSec * 1000);
+    return fields;
+  }
+  const { taskName, taskType, product, qty } = body;
+  const { timePerUnitSec, estimatedDurationSec } = await computeTaskEstimate({ taskName, taskType, product, qty });
   if (timePerUnitSec > 0) {
     fields.timePerUnitSec = timePerUnitSec;
     fields.estimatedDurationSec = estimatedDurationSec;
@@ -32,6 +43,20 @@ exports.getTasks = asyncHandler(async (req, res) => {
   if (req.query.status) filter.status = req.query.status;
   if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
   if (req.query.orderId) filter.orderId = req.query.orderId;
+  // Visibility scoping (same rule as Sales getLeads/getOrders):
+  // - Admin / Super Admin / Manager / Head: all tasks
+  // - Everyone else (Executive, etc.): only tasks they created or are assigned to
+  if (req.user && req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
+    const role = req.user.role || '';
+    const isManagerOrHead = /manager|head/i.test(role);
+    if (!isManagerOrHead) {
+      filter.$or = [
+        { createdBy: req.user._id },
+        { assignedTo: req.user._id },
+        { 'subTasks.assignedTo': req.user._id },
+      ];
+    }
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [tasks, total] = await Promise.all([
@@ -150,7 +175,9 @@ exports.getTask = asyncHandler(async (req, res, next) => {
 exports.createTask = asyncHandler(async (req, res, next) => {
   const { orderId, productIndex, product } = req.body;
 
-  // Prevent duplicate when linked to an order + specific product slot
+  // Prevent duplicate when linked to an order + specific product slot + task name.
+  // Task name is part of the key so a product can have several differently-named
+  // tasks (e.g. "Packing" and "Sealing") assigned separately.
   if (orderId) {
     const dupFilter = { orderId };
     if (productIndex !== undefined && productIndex !== null && !isNaN(productIndex)) {
@@ -158,11 +185,12 @@ exports.createTask = asyncHandler(async (req, res, next) => {
     } else if (product) {
       dupFilter.product = product;
     }
+    if (req.body.taskName) dupFilter.taskName = req.body.taskName;
     if (Object.keys(dupFilter).length > 1) {
       const existing = await Task.findOne(dupFilter);
       if (existing) {
         return next(new AppError(
-          `A task for "${product || `product #${productIndex}`}" on this order already exists (${existing.taskCode}). Delete the existing task first if you need to reassign.`,
+          `A "${req.body.taskName || 'task'}" task for "${product || `product #${productIndex}`}" on this order already exists (${existing.taskCode}). Delete the existing task first if you need to reassign.`,
           409
         ));
       }

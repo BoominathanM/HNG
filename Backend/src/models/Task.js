@@ -9,7 +9,7 @@ const taskSchema = new mongoose.Schema({
   productIndex: Number, // links task to a specific order line item (per-product tasks)
   printingType: String,
   qty: Number,
-  assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff' },
+  assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   assigneeName: String,
   clientName: String,
   priority: { type: String, enum: ['Normal', 'Medium', 'High', 'Urgent'], default: 'Normal' },
@@ -25,7 +25,7 @@ const taskSchema = new mongoose.Schema({
   subTasks: [{
     label: String,
     qty: Number,
-    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff' },
+    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     assigneeName: String,
     done: { type: Boolean, default: false },
   }],

@@ -589,6 +589,17 @@ exports.getOrders = asyncHandler(async (req, res) => {
     const re = new RegExp(req.query.search, 'i');
     filter.$or = [{ orderCode: re }, { clientName: re }];
   }
+  // Visibility scoping (same rule as getLeads):
+  // - Admin / Super Admin / Manager / Head: all orders
+  // - Everyone else (Executive, etc.): only orders they created or are assigned to
+  if (req.user && req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
+    const role = req.user.role || '';
+    const isManagerOrHead = /manager|head/i.test(role);
+    if (!isManagerOrHead) {
+      const visibility = [{ createdBy: req.user._id }, { assignedTo: req.user._id }];
+      filter.$and = (filter.$and || []).concat([{ $or: visibility }]);
+    }
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [orders, total] = await Promise.all([
