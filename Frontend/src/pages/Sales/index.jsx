@@ -605,12 +605,17 @@ function computeCompositionGrandTotal(formData = {}, kitsData = []) {
 }
 
 // Combine kitIncludes (id[]) + kitIncludesQty ({id:qty}) into [{id,qty}] for persistence.
+// Handles both input formats: [id] strings (form format) and [{id,qty}] objects (backend format).
 function normalizeKitOrdersForSave(kitOrders = [], productType) {
   return (kitOrders || []).map(o => {
-    const ids = (o.kitIncludes || []);
-    const combined = ids.length > 0
-      ? ids.map(id => ({ id, qty: Number(o.kitIncludesQty?.[id]) || 1 }))
-      : undefined;
+    const rawIncludes = (o.kitIncludes || []);
+    let combined;
+    if (rawIncludes.length > 0) {
+      const isObjFormat = rawIncludes[0] != null && typeof rawIncludes[0] === 'object' && rawIncludes[0].id != null;
+      combined = isObjFormat
+        ? rawIncludes.map(item => ({ id: item.id, qty: Number(item.qty) || 1 }))
+        : rawIncludes.map(id => ({ id, qty: Number(o.kitIncludesQty?.[id]) || 1 }));
+    }
     const { kitIncludesQty, ...rest } = o;
     return {
       ...rest,
@@ -2196,7 +2201,17 @@ export default function Sales() {
         const single = pickKit('selectedKit');
         return single ? [single] : [];
       })(),
-      kitOrders: pickKit('kitOrders') || [],
+      kitOrders: (pickKit('kitOrders') || []).map(ko => {
+        const rawIncludes = ko.kitIncludes || [];
+        const isObjFmt = rawIncludes.length > 0 && rawIncludes[0] != null && typeof rawIncludes[0] === 'object' && rawIncludes[0].id != null;
+        return {
+          ...ko,
+          kitIncludes: isObjFmt ? rawIncludes.map(item => item.id) : rawIncludes,
+          kitIncludesQty: isObjFmt
+            ? Object.fromEntries(rawIncludes.map(item => [item.id, item.qty || 1]))
+            : (ko.kitIncludesQty || {}),
+        };
+      }),
       hotelName: order.hotelName || order.clientName || '',
       billingName: order.billingName || order.clientName || '',
       contactPerson: order.contactPerson || '',
@@ -3317,7 +3332,12 @@ export default function Sales() {
   }, [negotiationsRaw]);
   useEffect(() => {
     if (ordersRaw?.data) setOrdersData((ordersRaw.data).map((o) => {
-      const normalizedProducts = o.products?.length ? o.products : itemsToProducts(o.items);
+      // Fall back to the lead's products when the order has none — handles orders created
+      // from a hotel-only lead before products were added to the lead.
+      const normalizedProducts = o.products?.length ? o.products
+        : (o.items?.length ? itemsToProducts(o.items) : null)
+        ?? (o.leadId?.products?.length ? o.leadId.products : null)
+        ?? (o.leadId?.items?.length ? itemsToProducts(o.leadId.items) : []);
       const advance = o.advancePaidAmount ?? o.advancePaid ?? (typeof o.advance === 'number' ? o.advance : 0);
       const collectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       // paidAmount from backend is the authoritative total collected; use it when collection entries aren't in list response
@@ -3374,8 +3394,10 @@ export default function Sales() {
         pincode: o.pincode || o.leadId?.pincode,
         destination: o.destination || o.leadId?.destination,
         hotelType: o.hotelType || o.leadId?.hotelType,
-        rooms: o.rooms ?? o.leadId?.rooms,
-        occupancy: o.occupancy ?? o.leadId?.occupancy,
+        rooms: o.rooms ?? o.numRooms ?? o.rowsInHotel ?? o.leadId?.rowsInHotel ?? o.leadId?.numRooms ?? o.leadId?.rooms,
+        occupancy: o.occupancy ?? o.generalOccupancy ?? o.leadId?.generalOccupancy ?? o.leadId?.occupancy,
+        branch: o.branch || o.leadId?.branch || '',
+        pocDesignation: o.pocDesignation || o.leadId?.pocDesignation || '',
         deliveryBy: o.deliveryBy || o.leadId?.deliveryBy,
         transportationBy: o.transportationBy || o.leadId?.transportationBy,
         forwardingCharge: o.forwardingCharge ?? o.leadId?.forwardingCharge,
@@ -3401,6 +3423,12 @@ export default function Sales() {
         kitOrders: (Array.isArray(o.kitOrders) && o.kitOrders.length > 0 ? o.kitOrders : null)
           || (Array.isArray(o.leadId?.kitOrders) && o.leadId.kitOrders.length > 0 ? o.leadId.kitOrders : null)
           || [],
+        packagingIncludes: (Array.isArray(o.packagingIncludes) && o.packagingIncludes.length > 0 ? o.packagingIncludes : null)
+          ?? (Array.isArray(o.leadId?.packagingIncludes) && o.leadId.packagingIncludes.length > 0 ? o.leadId.packagingIncludes : null)
+          ?? [],
+        packagingIncludesQty: (Object.keys(o.packagingIncludesQty || {}).length > 0 ? o.packagingIncludesQty : null)
+          ?? (Object.keys(o.leadId?.packagingIncludesQty || {}).length > 0 ? o.leadId.packagingIncludesQty : null)
+          ?? {},
         kitSticker: o.kitSticker || o.leadId?.kitSticker,
         kitLogo: o.kitLogo || o.leadId?.kitLogo,
         kitPrinting: o.kitPrinting || o.leadId?.kitPrinting,
@@ -3432,7 +3460,13 @@ export default function Sales() {
     const quotCodeFromDetail = typeof full.quotationId === 'object'
       ? full.quotationId?.quotCode
       : null;
-    const prods = full.products?.length ? full.products : itemsToProducts(full.items || []);
+    // leadId is populated in the single-order API — use it as a product source if the order
+    // itself has none (hotel-only lead, products added after conversion).
+    const leadProds = full.leadId?.products?.length ? full.leadId.products
+      : (full.leadId?.items?.length ? itemsToProducts(full.leadId.items) : null);
+    const prods = full.products?.length ? full.products
+      : (full.items?.length ? itemsToProducts(full.items) : null)
+      ?? leadProds ?? [];
     const collTotal = (full.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const adv = Number(full.advancePaidAmount ?? full.advancePaid ?? 0);
     const paidFull = Number(full.paidAmount) || 0;
@@ -3448,11 +3482,23 @@ export default function Sales() {
     const total = kitAwareFull > 0 ? kitAwareFull : (rawTotalFull > 0 ? rawTotalFull : Number(full.total) || 0);
     const newStatus = paidTotal > 0 && total > 0 ? (paidTotal >= total ? 'Paid' : 'Partially Paid') : undefined;
     const quotCode = full.quotationId?.quotCode || full.quotationCode;
+    // Effective kit+product fields from the full order (or its populated lead fallback)
+    const fullKitOrders = (full.kitOrders?.length > 0 ? full.kitOrders : null) ?? (full.leadId?.kitOrders?.length > 0 ? full.leadId.kitOrders : null);
+    const fullSelectedKits = (full.selectedKits?.length > 0 ? full.selectedKits : null) ?? (full.leadId?.selectedKits?.length > 0 ? full.leadId.selectedKits : null);
+    const fullPkgIncludes = (full.packagingIncludes?.length > 0 ? full.packagingIncludes : null) ?? (full.leadId?.packagingIncludes?.length > 0 ? full.leadId.packagingIncludes : null);
+    const fullPkgQty = (Object.keys(full.packagingIncludesQty||{}).length > 0 ? full.packagingIncludesQty : null) ?? (Object.keys(full.leadId?.packagingIncludesQty||{}).length > 0 ? full.leadId.packagingIncludesQty : null);
     setOrdersData(prev => prev.map(o => {
       if (o._id !== orderId && o.key !== orderId) return o;
       return {
         ...o,
         ...(quotCodeFromDetail ? { quotCode: quotCodeFromDetail } : {}),
+        // Sync product/kit fields from the fully populated single-order response so the
+        // detail view always shows complete data even for orders created from hotel-only leads.
+        ...(prods.length > 0 ? { products: prods } : {}),
+        ...(fullKitOrders ? { kitOrders: fullKitOrders } : {}),
+        ...(fullSelectedKits ? { selectedKits: fullSelectedKits } : {}),
+        ...(full.productType ? { productType: full.productType } : {}),
+        ...(!o.packagingIncludes?.length && fullPkgIncludes ? { packagingIncludes: fullPkgIncludes, packagingIncludesQty: fullPkgQty || {} } : {}),
         ...(paidTotal > 0 ? { paidAmount: paidTotal, balance: Math.max(0, total - paidTotal) } : {}),
         ...(newStatus ? { paymentStatus: newStatus } : {}),
       };
@@ -3808,10 +3854,12 @@ export default function Sales() {
         const prevStatus = editingLead.status;
         const statusChanged = values.status && values.status !== prevStatus;
         const builtPayload = buildLeadPayload(values);
+        // Use builtPayload (normalized: tagged products, normalized kitOrders, field aliases)
+        // instead of raw form `values` so local state is immediately consistent with what was
+        // sent to the backend — avoids stale data if the user converts before RTK re-fetch.
         const updated = {
           ...editingLead,
-          ...values,
-          paymentStatus: builtPayload.paymentStatus,
+          ...builtPayload,
           statusHistory: statusChanged
             ? [...(editingLead.statusHistory || []), { status: values.status, changedAt: now }]
             : (editingLead.statusHistory || []),
@@ -3827,6 +3875,25 @@ export default function Sales() {
           } else {
             setLeadsData(prev => prev.map(l => l.key === editingLead.key ? updated : l));
             enqueueSnackbar('Lead updated', { variant: 'success' });
+          }
+          // Sync kit/product fields from the updated lead into any linked orders that were
+          // created before the kit details were added (hotel-only lead scenario). Only fills
+          // fields that are missing on the order — never overwrites order-specific data.
+          const updLeadId = String(editingLead._id || editingLead.key || '');
+          if (updLeadId) {
+            setOrdersData(prev => prev.map(o => {
+              const oLeadId = String(o.leadId?._id || o.leadId || '');
+              if (!oLeadId || oLeadId !== updLeadId) return o;
+              return {
+                ...o,
+                ...(!o.kitOrders?.length && builtPayload.kitOrders?.length ? { kitOrders: builtPayload.kitOrders } : {}),
+                ...(!o.selectedKits?.length && builtPayload.selectedKits?.length ? { selectedKits: builtPayload.selectedKits } : {}),
+                ...(!o.products?.length && builtPayload.products?.length ? { products: builtPayload.products } : {}),
+                ...(!o.packagingIncludes?.length && builtPayload.packagingIncludes?.length
+                  ? { packagingIncludes: builtPayload.packagingIncludes, packagingIncludesQty: builtPayload.packagingIncludesQty }
+                  : {}),
+              };
+            }));
           }
           // Sync new paidAmount across the entire chain (quotation/negotiation/order)
           if (builtPayload.paidAmount > 0) {
@@ -5958,8 +6025,8 @@ export default function Sales() {
                       kitPrice={q.kitPrice || qLead?.kitPrice}
                       forwardingCharge={q.forwardingCharge}
                       forwardingChargeAmount={q.forwardingChargeAmount}
-                      packagingIncludes={q.packagingIncludes || qLead?.packagingIncludes}
-                      packagingIncludesQty={q.packagingIncludesQty || qLead?.packagingIncludesQty}
+                      packagingIncludes={q.packagingIncludes?.length ? q.packagingIncludes : (qLead?.packagingIncludes || [])}
+                      packagingIncludesQty={Object.keys(q.packagingIncludesQty||{}).length ? q.packagingIncludesQty : (qLead?.packagingIncludesQty || {})}
                     />
                   );
                 })()}
@@ -6482,8 +6549,8 @@ export default function Sales() {
                       kitPrice={n.kitPrice || nLead?.kitPrice}
                       forwardingCharge={n.forwardingCharge}
                       forwardingChargeAmount={n.forwardingChargeAmount}
-                      packagingIncludes={n.packagingIncludes || nLead?.packagingIncludes}
-                      packagingIncludesQty={n.packagingIncludesQty || nLead?.packagingIncludesQty}
+                      packagingIncludes={n.packagingIncludes?.length ? n.packagingIncludes : (nLead?.packagingIncludes || [])}
+                      packagingIncludesQty={Object.keys(n.packagingIncludesQty||{}).length ? n.packagingIncludesQty : (nLead?.packagingIncludesQty || {})}
                     />
                   );
                 })()}
@@ -6800,6 +6867,19 @@ export default function Sales() {
         hotelType: base.hotelType || full.hotelType || lead.hotelType,
         rooms: base.rooms || full.rooms || lead.rooms || lead.numRooms || lead.rowsInHotel,
         occupancy: base.occupancy || full.occupancy || lead.occupancy || lead.generalOccupancy,
+        branch: base.branch || full.branch || lead.branch || '',
+        pocDesignation: base.pocDesignation || full.pocDesignation || lead.pocDesignation || '',
+        // packagingIncludes: order first, then populated lead (covers hotel-only→kit-edit scenario)
+        packagingIncludes: (Array.isArray(base.packagingIncludes) && base.packagingIncludes.length > 0 ? base.packagingIncludes : null)
+          ?? (Array.isArray(full.packagingIncludes) && full.packagingIncludes.length > 0 ? full.packagingIncludes : null)
+          ?? (Array.isArray(lead?.packagingIncludes) && lead.packagingIncludes.length > 0 ? lead.packagingIncludes : null)
+          ?? (Array.isArray(orderLeadFull?.packagingIncludes) && orderLeadFull.packagingIncludes.length > 0 ? orderLeadFull.packagingIncludes : null)
+          ?? [],
+        packagingIncludesQty: (Object.keys(base.packagingIncludesQty || {}).length > 0 ? base.packagingIncludesQty : null)
+          ?? (Object.keys(full.packagingIncludesQty || {}).length > 0 ? full.packagingIncludesQty : null)
+          ?? (Object.keys(lead?.packagingIncludesQty || {}).length > 0 ? lead.packagingIncludesQty : null)
+          ?? (Object.keys(orderLeadFull?.packagingIncludesQty || {}).length > 0 ? orderLeadFull.packagingIncludesQty : null)
+          ?? {},
       };
       const ORDER_STEPS = [
         { title: 'Confirmed', description: 'Order placed' },
@@ -7407,8 +7487,8 @@ export default function Sales() {
                       kitPrice={o.kitPrice || oLead?.kitPrice}
                       forwardingCharge={o.forwardingCharge}
                       forwardingChargeAmount={o.forwardingChargeAmount}
-                      packagingIncludes={o.packagingIncludes || oLead?.packagingIncludes}
-                      packagingIncludesQty={o.packagingIncludesQty || oLead?.packagingIncludesQty}
+                      packagingIncludes={o.packagingIncludes?.length ? o.packagingIncludes : (oLead?.packagingIncludes || [])}
+                      packagingIncludesQty={Object.keys(o.packagingIncludesQty||{}).length ? o.packagingIncludesQty : (oLead?.packagingIncludesQty || {})}
                     />
                   );
                 })()}

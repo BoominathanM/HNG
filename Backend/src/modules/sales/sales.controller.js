@@ -337,9 +337,11 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     type: req.body.billType === 'GST' ? 'GST' : 'Non-GST',
     items,
     // Carry the full product composition (rich Sales UI + 3-bucket totals read these)
-    products: req.body.products || lead.products || [],
-    kitOrders: req.body.kitOrders || lead.kitOrders || [],
-    selectedKits: req.body.selectedKits || lead.selectedKits || [],
+    // Use length check instead of || so an empty [] from a hotel-only lead doesn't win over
+    // products that were added later (empty array is truthy, so `[] || lead.products` = []).
+    products: (req.body.products?.length > 0 ? req.body.products : null) ?? (lead.products?.length > 0 ? lead.products : null) ?? [],
+    kitOrders: (req.body.kitOrders?.length > 0 ? req.body.kitOrders : null) ?? (lead.kitOrders?.length > 0 ? lead.kitOrders : null) ?? [],
+    selectedKits: (req.body.selectedKits?.length > 0 ? req.body.selectedKits : null) ?? (lead.selectedKits?.length > 0 ? lead.selectedKits : null) ?? [],
     productType: req.body.productType || lead.productType,
     kitDisplayUnit: req.body.kitDisplayUnit || lead.kitDisplayUnit || lead.displayUnit || '',
     displayUnit: req.body.displayUnit || lead.displayUnit || lead.kitDisplayUnit || '',
@@ -381,8 +383,8 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     branch: lead.branch || '',
     destination: lead.destination || '',
     // Kit packaging includes — critical for personalized kit orders to survive to Order
-    packagingIncludes: req.body.packagingIncludes || lead.packagingIncludes || [],
-    packagingIncludesQty: req.body.packagingIncludesQty || lead.packagingIncludesQty || {},
+    packagingIncludes: (req.body.packagingIncludes?.length > 0 ? req.body.packagingIncludes : null) ?? (lead.packagingIncludes?.length > 0 ? lead.packagingIncludes : null) ?? [],
+    packagingIncludesQty: (Object.keys(req.body.packagingIncludesQty || {}).length > 0 ? req.body.packagingIncludesQty : null) ?? lead.packagingIncludesQty ?? {},
     // Emergency / partial-delivery data so it survives lead → negotiation → order
     splitDates: req.body.splitDates || lead.splitDates || [],
     isEmergency: !!(req.body.isEmergency) || !!(lead.isEmergency) || !!(lead.splitDates?.length),
@@ -478,9 +480,12 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     paymentStatus: negObj.paymentStatus || 'Unpaid',
     type: negotiation.type,
     items: negotiation.items,
-    products: negObj.products || lead?.products || [],
-    kitOrders: negObj.kitOrders || lead?.kitOrders || [],
-    selectedKits: negObj.selectedKits || lead?.selectedKits || [],
+    // Use length check: empty [] from a hotel-only negotiation must fall back to the lead's
+    // products (which may have been added after the negotiation was created). [] is truthy so
+    // `[] || lead.products` would return [] — length check avoids that trap.
+    products: (negObj.products?.length > 0 ? negObj.products : null) ?? (lead?.products?.length > 0 ? lead?.products : null) ?? [],
+    kitOrders: (negObj.kitOrders?.length > 0 ? negObj.kitOrders : null) ?? (lead?.kitOrders?.length > 0 ? lead?.kitOrders : null) ?? [],
+    selectedKits: (negObj.selectedKits?.length > 0 ? negObj.selectedKits : null) ?? (lead?.selectedKits?.length > 0 ? lead?.selectedKits : null) ?? [],
     productType: resolveField(negObj.productType, lead?.productType),
     kitSticker: resolveField(negObj.kitSticker, lead?.kitSticker),
     kitLogo: resolveField(negObj.kitLogo, lead?.kitLogo),
@@ -526,8 +531,8 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     branch: resolveField(negObj.branch, lead?.branch),
     destination: resolveField(negObj.destination, lead?.destination),
     // Kit packaging includes (top-level, across all kits in a personalized order)
-    packagingIncludes: negObj.packagingIncludes || lead?.packagingIncludes || [],
-    packagingIncludesQty: negObj.packagingIncludesQty || lead?.packagingIncludesQty || {},
+    packagingIncludes: (negObj.packagingIncludes?.length > 0 ? negObj.packagingIncludes : null) ?? (lead?.packagingIncludes?.length > 0 ? lead?.packagingIncludes : null) ?? [],
+    packagingIncludesQty: (Object.keys(negObj.packagingIncludesQty || {}).length > 0 ? negObj.packagingIncludesQty : null) ?? lead?.packagingIncludesQty ?? {},
     // Display/kit fields chosen during lead creation
     displayUnit: resolveField(negObj.displayUnit, lead?.displayUnit),
     kitDisplayUnit: resolveField(negObj.kitDisplayUnit, lead?.kitDisplayUnit),
@@ -587,7 +592,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [orders, total] = await Promise.all([
-    Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').populate('leadId', 'leadType hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders kitSticker kitLogo kitPrinting kitPrice kitOverallQty productType splitDates isEmergency isUrgent').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').populate('leadId', 'leadType hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rowsInHotel generalOccupancy branch pocDesignation deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders packagingIncludes packagingIncludesQty kitSticker kitLogo kitPrinting kitPrice kitOverallQty productType products items splitDates isEmergency isUrgent').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     Order.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: orders });
@@ -597,7 +602,7 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null })
     .populate('clientPartyId')
     .populate('assignedTo', 'fullName email')
-    .populate('leadId', 'leadCode hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rooms occupancy deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders splitDates isEmergency isUrgent leadType')
+    .populate('leadId', 'leadCode hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rowsInHotel generalOccupancy branch pocDesignation deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders packagingIncludes packagingIncludesQty products items splitDates isEmergency isUrgent leadType')
     .populate('negotiationId', 'negCode')
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));
