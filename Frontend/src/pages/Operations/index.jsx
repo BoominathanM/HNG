@@ -1514,8 +1514,14 @@ export default function Operations() {
 
     // Cluster rows by order-composition category (personalized → separate kit → separate product)
     // so each category reads as a group within the queue, keeping emergency items first inside each.
+    // Recency (newest order first) is the primary key — same as the other tabs — so the category
+    // clustering only groups rows belonging to the SAME order, never pulls an older order ahead.
     const CATEGORY_ORDER = { personalized: 0, separate_kit: 1, separate_product: 2 };
+    const orderRank = new Map(apiOrders.map((o, idx) => [o.id, idx]));
     tableSource = [...tableSource].sort((a, b) => {
+      const ra = orderRank.has(a.orderId) ? orderRank.get(a.orderId) : Number.MAX_SAFE_INTEGER;
+      const rb = orderRank.has(b.orderId) ? orderRank.get(b.orderId) : Number.MAX_SAFE_INTEGER;
+      if (ra !== rb) return ra - rb;
       const ca = CATEGORY_ORDER[a.category] ?? 3;
       const cb = CATEGORY_ORDER[b.category] ?? 3;
       if (ca !== cb) return ca - cb;

@@ -38,6 +38,37 @@ async function buildTimeFields(body = {}) {
   return fields;
 }
 
+// Forward an order to Dispatch: mark it Dispatch Ready and create its DispatchRecord
+// (idempotent). Used both when all sibling tasks finish normally, and when an emergency
+// dispatch is fully approved (Sales Head + Ops Head) — which intentionally bypasses the
+// "every task Done" requirement, since that's the whole point of an emergency dispatch.
+async function forwardOrderToDispatch(orderId, userId) {
+  const order = await Order.findByIdAndUpdate(
+    orderId,
+    { status: 'Dispatch Ready', taskStatus: 'Completed' },
+    { new: true }
+  );
+  if (!order) return null;
+  const existing = await DispatchRecord.findOne({ orderId: order._id });
+  if (!existing) {
+    const dispatchCode = await generateCode('DISP');
+    await DispatchRecord.create({
+      dispatchCode,
+      orderId: order._id,
+      status: 'Draft',
+      dispatchType: order.deliveryType === 'Partial' ? 'Partial Dispatch' : 'Full Dispatch',
+      items: (order.items || []).map((it) => ({
+        itemId: it.itemId,
+        itemName: it.itemName,
+        qtyOrdered: it.qty,
+        qtyDispatched: it.qty,
+      })),
+      createdBy: userId,
+    });
+  }
+  return order;
+}
+
 exports.getTasks = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
@@ -186,6 +217,10 @@ exports.createTask = asyncHandler(async (req, res, next) => {
       dupFilter.product = product;
     }
     if (req.body.taskName) dupFilter.taskName = req.body.taskName;
+    // Also key on assignee: kit-packing splits the same task name (e.g. "Packing")
+    // across multiple assignees/rows in one submission, which must NOT be treated
+    // as a duplicate — only a literal repeat (same product+task name+assignee) is.
+    if (req.body.assignedTo) dupFilter.assignedTo = req.body.assignedTo;
     if (Object.keys(dupFilter).length > 1) {
       const existing = await Task.findOne(dupFilter);
       if (existing) {
@@ -260,32 +295,8 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
         // All product tasks done but Kit Packing not yet assigned — signal the UI.
         await Order.findByIdAndUpdate(task.orderId, { taskStatus: 'Kit Packing Required' });
       } else {
-        const order = await Order.findByIdAndUpdate(
-          task.orderId,
-          { status: 'Dispatch Ready', taskStatus: 'Completed' },
-          { new: true }
-        );
+        await forwardOrderToDispatch(task.orderId, req.user._id);
         orderForwarded = true;
-        // Create a DispatchRecord so the order surfaces in the Dispatch UI (idempotent).
-        if (order) {
-          const existing = await DispatchRecord.findOne({ orderId: order._id });
-          if (!existing) {
-            const dispatchCode = await generateCode('DISP');
-            await DispatchRecord.create({
-              dispatchCode,
-              orderId: order._id,
-              status: 'Draft',
-              dispatchType: order.deliveryType === 'Partial' ? 'Partial Dispatch' : 'Full Dispatch',
-              items: (order.items || []).map((it) => ({
-                itemId: it.itemId,
-                itemName: it.itemName,
-                qtyOrdered: it.qty,
-                qtyDispatched: it.qty,
-              })),
-              createdBy: req.user._id,
-            });
-          }
-        }
       }
     }
   }
@@ -301,19 +312,22 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: task, orderForwarded });
 });
 
-// Dispatch the order linked to a task, straight from Task Management.
+// Forward the order linked to a task from Task Management into the Dispatch queue.
 // Requires every sibling task on the order to be Done and (unless it's a sample
-// order) the order to be fully paid. Marks the DispatchRecord + Order + Lead as
-// Dispatched so the green "Dispatched ✓" state appears everywhere.
+// order) the order to be fully paid. This only makes the order Dispatch Ready and
+// ensures its DispatchRecord exists — it does NOT mark the order/lead as Dispatched.
+// The actual "Dispatched" status is only set from the Dispatch module itself
+// (dispatch.controller.js confirmDispatch/uploadLR), so Sales/Dispatch don't show
+// an order as dispatched just because it was handed off from Task Management.
 exports.dispatchOrder = asyncHandler(async (req, res, next) => {
   const task = await Task.findById(req.params.id);
   if (!task) return next(new AppError('Task not found', 404));
   if (!task.orderId) return next(new AppError('This task is not linked to an order', 400));
 
-  // Gate 1 — all tasks for the order must be completed.
+  // Gate 1 — all tasks for the order must be completed (bypassed for an approved Emergency Dispatch).
   const siblings = await Task.find({ orderId: task.orderId });
   const allDone = siblings.length > 0 && siblings.every((t) => t.status === 'Done');
-  if (!allDone) {
+  if (!allDone && !task.emergencyApproved) {
     const pending = siblings.filter((t) => t.status !== 'Done').length;
     return next(new AppError(`${pending} task(s) on this order are not yet completed. Complete all tasks before dispatch.`, 400));
   }
@@ -324,43 +338,22 @@ exports.dispatchOrder = asyncHandler(async (req, res, next) => {
     return next(new AppError('This order has already been dispatched.', 400));
   }
 
-  // Gate 2 — payment must be settled, unless this is a sample order.
+  // Gate 2 — payment must be settled, unless this is a sample order or an approved Emergency Dispatch.
   const isSample = order.orderCategory === 'SAMPLE' || order.leadId?.leadType === 'SAMPLE';
-  if (!isSample) {
+  if (!isSample && !task.emergencyApproved) {
     const payStatus = await resolveOrderPaymentStatus(order._id).catch(() => 'Pending');
     if (payStatus !== 'Paid') {
       return next(new AppError(`Payment is "${payStatus}". Dispatch requires full payment or an approved Emergency Dispatch.`, 400));
     }
   }
 
-  // Find (or create) the DispatchRecord and mark it dispatched.
-  let dispatch = await DispatchRecord.findOne({ orderId: order._id });
-  if (!dispatch) {
-    const dispatchCode = await generateCode('DISP');
-    dispatch = await DispatchRecord.create({
-      dispatchCode,
-      orderId: order._id,
-      dispatchType: order.deliveryType === 'Partial' ? 'Partial Dispatch' : 'Full Dispatch',
-      items: (order.items || []).map((it) => ({
-        itemId: it.itemId,
-        itemName: it.itemName,
-        qtyOrdered: it.qty,
-        qtyDispatched: it.qty,
-      })),
-      createdBy: req.user._id,
-    });
-  }
-  dispatch.status = 'Dispatched';
-  dispatch.dispatchedAt = Date.now();
-  await dispatch.save({ validateBeforeSave: false });
+  // Forward the order into the Dispatch queue (Dispatch Ready + a Draft DispatchRecord).
+  // Do NOT mark it Dispatched here — that only happens from an explicit action inside
+  // the Dispatch module itself, so this hand-off doesn't prematurely flip Sales/Dispatch status.
+  await forwardOrderToDispatch(order._id, req.user._id);
+  const dispatch = await DispatchRecord.findOne({ orderId: order._id });
 
-  // Mark the order and its lead as Dispatched.
-  await Order.findByIdAndUpdate(order._id, { status: 'Dispatched', taskStatus: 'Completed' });
-  if (order.leadId) {
-    await Lead.findByIdAndUpdate(order.leadId._id || order.leadId, { status: 'Dispatched' });
-  }
-
-  notifyRoles({ modules: ['Dispatch Team', 'Operations', 'Task Management'], type: 'dispatch', title: 'Order Dispatched', message: `Order ${order.orderCode || ''} dispatched from Task Management`, link: '/dispatch' }).catch(() => {});
+  notifyRoles({ modules: ['Dispatch Team', 'Operations', 'Task Management'], type: 'dispatch', title: 'Order Ready for Dispatch', message: `Order ${order.orderCode || ''} sent to Dispatch from Task Management`, link: '/dispatch' }).catch(() => {});
 
   res.status(200).json({ success: true, data: { order, dispatch } });
 });
@@ -456,6 +449,9 @@ exports.approveEmergencyOps = asyncHandler(async (req, res, next) => {
     await Order.findByIdAndUpdate(task.orderId, {
       $set: { emergencyOpsApproved: true, emergencyApproved: true },
     });
+    // Fully-approved emergency dispatch skips the "every task Done" wait — forward the
+    // order to the Dispatch queue right away so it shows up in the Dispatch module.
+    await forwardOrderToDispatch(task.orderId, req.user._id);
   }
 
   notifyRoles({
@@ -463,8 +459,8 @@ exports.approveEmergencyOps = asyncHandler(async (req, res, next) => {
     userIds: [task.assignedTo],
     type: 'task',
     title: 'Emergency Dispatch Fully Approved',
-    message: `Task ${task.taskCode} — Sales + Ops approved. Emergency dispatch can proceed immediately.`,
-    link: '/tasks',
+    message: `Task ${task.taskCode} — Sales + Ops approved. Order forwarded to Dispatch.`,
+    link: '/dispatch',
   }).catch(() => {});
 
   res.status(200).json({ success: true, data: task });

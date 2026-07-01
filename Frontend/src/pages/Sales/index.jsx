@@ -2615,6 +2615,10 @@ export default function Sales() {
         balance: newBalance,
         paymentStatus: newStatus,
         advancePaid: newPaidAmount,
+        // Once a Payment Pending order is fully paid, move it into production — same
+        // transition the old "Record Payment" quick action used to make.
+        ...(type === 'order' && newStatus === 'Paid' && record.status === 'Payment Pending'
+          ? { status: 'In Production' } : {}),
       };
       const updated = { ...record, ...patch };
       if (type === 'lead') {
@@ -4628,15 +4632,6 @@ export default function Sales() {
     }
   };
 
-  const recordPayment = async (order) => {
-    try {
-      await updateSalesOrderStatusMutation({ id: order.key, status: 'In Production' }).unwrap();
-      enqueueSnackbar('Payment recorded and Order is now in production!', { variant: 'success' });
-    } catch (err) {
-      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record payment', { variant: 'error' });
-    }
-  };
-
   const convertOrderToInvoice = async (order) => {
     try {
       await updateSalesOrderStatusMutation({ id: order.key, status: 'Payment Pending' }).unwrap();
@@ -5413,7 +5408,7 @@ export default function Sales() {
           </Tooltip>
           {r.status === 'Payment Pending' && (
             <Tooltip title="Record Payment">
-              <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => recordPayment(r)}>
+              <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => openPayEntry('order', r)}>
                 Record Payment
               </Button>
             </Tooltip>

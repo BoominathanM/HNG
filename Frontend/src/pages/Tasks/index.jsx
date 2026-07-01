@@ -495,14 +495,15 @@ export default function Tasks() {
     setDispatchVerifyOpen(true);
   };
 
-  // Actually dispatch the order linked to the task (marks Order/Lead/DispatchRecord Dispatched).
+  // Forward the order linked to the task into the Dispatch queue (Dispatch Ready).
+  // Actual "Dispatched" status is only set from within the Dispatch module itself.
   const handleConfirmDispatch = async (task) => {
     try {
       await dispatchTaskOrder(task.key).unwrap();
-      enqueueSnackbar(`Order ${task.order || ''} dispatched successfully`, { variant: 'success' });
+      enqueueSnackbar(`Order ${task.order || ''} sent to Dispatch`, { variant: 'success' });
       setDispatchVerifyOpen(false);
     } catch (e) {
-      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to dispatch order', { variant: 'error' });
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to send order to Dispatch', { variant: 'error' });
     }
   };
 
@@ -1730,7 +1731,7 @@ export default function Tasks() {
                 onClick={() => handleConfirmDispatch(t)}
                 style={{ background: '#52c41a', border: 'none' }}
               >
-                Confirm Dispatch
+                Send to Dispatch
               </Button>
             ),
           ].filter(Boolean);
