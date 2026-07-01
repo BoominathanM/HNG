@@ -129,14 +129,14 @@ export default function Dispatch() {
       client: d.orderId?.clientName || '—',
       product: d.orderId?.product || '—',
       qty: d.orderId?.qty || 0,
-      boxes: 0,
-      weight: '—',
+      boxes: d.boxes || 0,
+      weight: d.weight || '—',
       payment: isSample ? 'N/A' : (d.orderPaymentStatus || 'Pending'),
       status: d.status === 'Dispatched' ? 'Dispatched' : d.status === 'Confirmed' ? 'Ready to Dispatch' : 'Packing',
       orderCategory: isSample ? 'SAMPLE' : (d.orderId?.orderCategory || 'ORDER'),
       isSample,
       isEmergency: !!(d.orderId?.isEmergency),
-      transport: d.lrNumber || '—',
+      transport: d.transportName || d.lrNumber || '—',
       lrNumber: d.lrNumber,
       trackingUrl: d.trackingUrl,
       invoiceNumber: d.invoiceNumber,
@@ -144,9 +144,13 @@ export default function Dispatch() {
       dispatchedAt: d.dispatchedAt,
       deliveryDate: d.orderId?.expectedDeliveryDate || null,
       items: d.items || [],
+      // Customer / address fields (now populated from the order)
+      destination: d.orderId?.destination || '—',
+      salesPerson: d.orderId?.assignedTo?.fullName || '—',
       contactPerson: d.orderId?.contactPerson || d.orderId?.clientName || '—',
-      phone: d.orderId?.phone || d.orderId?.clientPhone || '—',
-      detailedAddress: d.orderId?.detailedAddress || d.orderId?.address || '—',
+      phone: d.orderId?.clientPhone || d.orderId?.phone || '—',
+      email: d.orderId?.email || '—',
+      detailedAddress: d.orderId?.detailedAddress || '—',
       city: d.orderId?.city || '—',
       state: d.orderId?.state || '—',
       pincode: d.orderId?.pincode || '—',
@@ -415,19 +419,35 @@ export default function Dispatch() {
     if (!expandedRows.includes(orderId)) setExpandedRows(r => [...r, orderId]);
   };
 
-  const toggleVerifyProduct = (orderId, productKey) => {
+  const toggleVerifyProduct = async (orderId, productKey, itemId) => {
+    const willVerify = !productVerify[orderId]?.verifiedProducts?.has(productKey);
     setProductVerify(prev => {
       const existing = prev[orderId] || { verifiedProducts: new Set() };
       const next = new Set(existing.verifiedProducts);
       next.has(productKey) ? next.delete(productKey) : next.add(productKey);
       return { ...prev, [orderId]: { ...existing, verifiedProducts: next } };
     });
+    // Persist to backend when marking verified (only unverify is UI-only — backend has no unverify)
+    if (willVerify && itemId) {
+      try {
+        await verifyItem({ id: orderId, itemId }).unwrap();
+      } catch {
+        enqueueSnackbar('Failed to save verification', { variant: 'error' });
+      }
+    }
   };
 
   // ── Product verify expanded row ────────────────────────────────────────────
   const renderProductPanel = (record) => {
     const state = productVerify[record.key] || {};
-    const products = (record.items || []).map((it, idx) => ({ key: idx, name: it.itemName || it.name || '—', qty: it.qtyDispatched || it.qtyOrdered || 0, boxes: 0 }));
+    const products = (record.items || []).map((it, idx) => ({
+      key: idx,
+      itemId: it._id,
+      name: it.itemName || it.name || '—',
+      qty: it.qtyDispatched || it.qtyOrdered || 0,
+      boxes: it.boxes || 0,
+      dbVerified: it.verified || false,
+    }));
     const verified = state.verifiedProducts || new Set();
 
     return (
@@ -453,23 +473,28 @@ export default function Dispatch() {
             { title: 'Boxes', dataIndex: 'boxes', render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space> },
             {
               title: 'Status', key: 'status',
-              render: (_, row) => verified.has(row.key)
-                ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
-                : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>,
+              render: (_, row) => {
+                const isVerified = verified.has(row.key) || row.dbVerified;
+                return isVerified
+                  ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
+                  : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>;
+              },
             },
             {
               title: 'Action', key: 'action',
-              render: (_, row) => (
-                <Button
-                  size="small"
-                  icon={<CheckSquareOutlined />}
-                  type={verified.has(row.key) ? 'default' : 'primary'}
-                  style={verified.has(row.key) ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                  onClick={() => toggleVerifyProduct(record.key, row.key)}
-                >
-                  {verified.has(row.key) ? 'Unverify' : 'Verify'}
-                </Button>
-              ),
+              render: (_, row) => {
+                const isVerified = verified.has(row.key) || row.dbVerified;
+                return (
+                  <Button
+                    size="small"
+                    icon={<CheckSquareOutlined />}
+                    style={isVerified ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
+                    onClick={() => toggleVerifyProduct(record.key, row.key, row.itemId)}
+                  >
+                    {isVerified ? 'Unverify' : 'Verify'}
+                  </Button>
+                );
+              },
             },
           ]}
         />
@@ -477,7 +502,7 @@ export default function Dispatch() {
         {products.length > 0 && (
           <div style={{ marginTop: 8, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>
             <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
-            {verified.size} / {products.length} products verified
+            {products.filter(p => verified.has(p.key) || p.dbVerified).length} / {products.length} products verified
           </div>
         )}
       </div>
@@ -529,10 +554,9 @@ export default function Dispatch() {
       },
       { title: 'Client', dataIndex: 'client', width: 150, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
       { title: 'Destination', dataIndex: 'destination', width: 120, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
-      { title: 'Location', dataIndex: 'address', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      { title: 'Location', dataIndex: 'city', width: 120, responsive: ['lg'], render: (v, r) => <Text style={{ fontSize: 13 }}>{v && r.state ? `${v}, ${r.state}` : v || r.state || '—'}</Text> },
       { title: 'Created Date', dataIndex: 'createdAt', width: 160, responsive: ['md'], render: (v) => <Text style={{ fontSize: 13 }}>{v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</Text> },
       { title: 'Sales Person', dataIndex: 'salesPerson', width: 115, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-      { title: 'Product', dataIndex: 'product', width: 145, responsive: ['md'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
       {
         title: 'Boxes', dataIndex: 'boxes', width: 80, responsive: ['sm'],
         render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ fontSize: 13 }}>{v}</Text></Space>,
@@ -616,6 +640,18 @@ export default function Dispatch() {
   const expandable = {
     expandedRowKeys: expandedRows,
     onExpand: (expanded, record) => {
+      if (expanded && !productVerify[record.key]) {
+        // Seed verified set from DB items so status persists after refresh
+        const dbVerifiedKeys = new Set(
+          (record.items || [])
+            .map((it, idx) => (it.verified ? idx : null))
+            .filter((v) => v !== null)
+        );
+        setProductVerify(prev => ({
+          ...prev,
+          [record.key]: { ...(prev[record.key] || {}), verifiedProducts: dbVerifiedKeys },
+        }));
+      }
       setExpandedRows(expanded ? [...expandedRows, record.key] : expandedRows.filter(k => k !== record.key));
     },
     expandedRowRender: (record) => renderProductPanel(record),

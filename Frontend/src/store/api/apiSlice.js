@@ -265,6 +265,10 @@ export const apiSlice = createApi({
       query: ({ id, formData }) => ({ url: `/dispatch/${id}/box-photos`, method: 'post', data: formData }),
       invalidatesTags: ['Dispatch'],
     }),
+    addBoxPhotoUrl: builder.mutation({
+      query: ({ id, type, url }) => ({ url: `/dispatch/${id}/box-photo-url`, method: 'patch', data: { type, url } }),
+      invalidatesTags: ['Dispatch'],
+    }),
     getTodaysDispatches: builder.query({
       query: () => ({ url: '/dispatch/today' }),
       providesTags: ['Dispatch'],
@@ -1094,6 +1098,7 @@ export const {
   useConfirmDispatchMutation,
   useVerifyInvoiceMutation,
   useUploadBoxPhotosMutation,
+  useAddBoxPhotoUrlMutation,
   useGetTodaysDispatchesQuery,
   useGetTransportsQuery,
   useUpdateTransportStatusMutation,

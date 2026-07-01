@@ -18,7 +18,14 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   const limit = parseInt(req.query.limit) || 10;
   const [dispatches, total] = await Promise.all([
     DispatchRecord.find(filter)
-      .populate({ path: 'orderId', select: 'orderCode clientName total orderCategory isEmergency leadId paymentTerms', populate: { path: 'leadId', select: 'leadType' } })
+      .populate({
+        path: 'orderId',
+        select: 'orderCode clientName total orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo expectedDeliveryDate',
+        populate: [
+          { path: 'leadId', select: 'leadType' },
+          { path: 'assignedTo', select: 'fullName' },
+        ],
+      })
       .populate('pickupEmpId', 'fullName')
       .sort('-createdAt')
       .skip((page - 1) * limit)
@@ -45,7 +52,14 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
     expectedDeliveryDate: { $gte: start, $lte: end },
   }).distinct('_id');
   const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
-    .populate({ path: 'orderId', select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency leadId paymentTerms', populate: { path: 'leadId', select: 'leadType' } })
+    .populate({
+      path: 'orderId',
+      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo',
+      populate: [
+        { path: 'leadId', select: 'leadType' },
+        { path: 'assignedTo', select: 'fullName' },
+      ],
+    })
     .sort('orderId')
     .lean();
   await Promise.all(dispatches.map(async (d) => {
@@ -67,7 +81,12 @@ exports.getDispatch = asyncHandler(async (req, res, next) => {
     })
     .populate('pickupEmpId', 'fullName phone');
   if (!dispatch) return next(new AppError('Dispatch record not found', 404));
-  res.status(200).json({ success: true, data: dispatch });
+  const plain = dispatch.toObject();
+  const ordObjectId = plain.orderId?._id;
+  plain.orderPaymentStatus = ordObjectId
+    ? await resolveOrderPaymentStatus(ordObjectId).catch(() => 'Pending')
+    : 'Pending';
+  res.status(200).json({ success: true, data: plain });
 });
 
 exports.createDispatch = asyncHandler(async (req, res) => {
@@ -103,6 +122,9 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   // FormData sends booleans as strings; treat 'false' (string or boolean) as disabled.
   dispatch.autoNotify = req.body.autoNotify !== false && req.body.autoNotify !== 'false';
   dispatch.sendWhatsapp = req.body.sendWhatsapp !== false && req.body.sendWhatsapp !== 'false';
+  if (req.body.transport) dispatch.transportName = req.body.transport;
+  if (req.body.weight !== undefined && req.body.weight !== '') dispatch.weight = req.body.weight;
+  if (req.body.boxes !== undefined) dispatch.boxes = Number(req.body.boxes) || 0;
   if (req.file) dispatch.invoiceFileUrl = req.file.path;
   dispatch.dispatchedAt = Date.now();
   await dispatch.save({ validateBeforeSave: false });
@@ -177,7 +199,7 @@ exports.verifyInvoice = asyncHandler(async (req, res, next) => {
 exports.uploadBoxPhotos = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id);
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
-  const urls = (req.files || []).map((f) => `f.path`);
+  const urls = (req.files || []).map((f) => f.path);
   const type = req.body.type || req.query.type;
   if (type === 'close') dispatch.closeBoxPhotos = [...(dispatch.closeBoxPhotos || []), ...urls];
   else dispatch.openBoxPhotos = [...(dispatch.openBoxPhotos || []), ...urls];
@@ -185,13 +207,32 @@ exports.uploadBoxPhotos = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: dispatch });
 });
 
+// Store a pre-uploaded Cloudinary URL for an open/close box photo.
+// Called by the frontend after it uploads the file directly to Cloudinary.
+exports.addBoxPhotoUrl = asyncHandler(async (req, res, next) => {
+  const { type, url } = req.body;
+  if (!url) return next(new AppError('url is required', 400));
+  const dispatch = await DispatchRecord.findById(req.params.id);
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  if (type === 'close') dispatch.closeBoxPhotos = [...(dispatch.closeBoxPhotos || []), url];
+  else dispatch.openBoxPhotos = [...(dispatch.openBoxPhotos || []), url];
+  await dispatch.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, data: dispatch });
+});
+
 exports.saveAsDraft = asyncHandler(async (req, res, next) => {
+  const existing = await DispatchRecord.findById(req.params.id);
+  if (!existing) return next(new AppError('Dispatch not found', 404));
+  // Never downgrade a Confirmed or Dispatched record back to Draft.
+  const { status: _ignored, ...safeBody } = req.body;
+  const keepStatus = existing.status === 'Confirmed' || existing.status === 'Dispatched'
+    ? existing.status
+    : 'Draft';
   const dispatch = await DispatchRecord.findByIdAndUpdate(
     req.params.id,
-    { ...req.body, status: 'Draft' },
+    { ...safeBody, status: keepStatus },
     { new: true }
   );
-  if (!dispatch) return next(new AppError('Dispatch not found', 404));
   res.status(200).json({ success: true, data: dispatch });
 });
 
@@ -206,6 +247,7 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
     if (req.body[k] !== undefined && req.body[k] !== '') update[k] = req.body[k];
   });
   if (req.file) update.lrFileUrl = req.file.path;
+  else if (req.body.lrFileUrl) update.lrFileUrl = req.body.lrFileUrl;
   const dispatch = await DispatchRecord.findByIdAndUpdate(req.params.id, update, { new: true }).populate('orderId', 'orderCode clientName assignedTo clientPhone');
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
 

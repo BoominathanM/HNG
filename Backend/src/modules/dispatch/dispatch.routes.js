@@ -19,6 +19,7 @@ router.patch('/:id/draft', ctrl.saveAsDraft);
 router.post('/:id/upload-invoice', upload.single('invoice'), ctrl.uploadInvoice);
 router.post('/:id/verify-invoice', ctrl.verifyInvoice);
 router.post('/:id/box-photos', upload.array('photos', 10), ctrl.uploadBoxPhotos);
+router.patch('/:id/box-photo-url', ctrl.addBoxPhotoUrl);
 router.post('/:id/confirm', upload.single('invoice'), ctrl.confirmDispatch);
 router.patch('/:id/lr', upload.single('lr'), ctrl.uploadLR);
 router.patch('/:id/items/:itemId/verify', upload.single('photo'), ctrl.verifyItem);

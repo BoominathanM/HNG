@@ -77,19 +77,26 @@ export default function DispatchDetail() {
   const kits = kitsRaw?.data || [];
   const invoiceSettings = companySettingsData?.data || {};
 
-  const handleBoxPhotoUpload = async (type, file) => {
+  // customRequest for box photo Upload components.
+  // Uploads directly to POST /dispatch/:id/box-photos (Cloudinary + DB save in one step).
+  const makeBoxUpload = (type) => async ({ file, onSuccess, onError }) => {
+    const fd = new FormData();
+    fd.append('photos', file);
+    fd.append('type', type);
     try {
-      const fd = new FormData();
-      fd.append('photos', file);
-      fd.append('type', type);
-      await uploadBoxPhotos({ id, formData: fd }).unwrap();
-      if (type === 'open') setOpenBoxCount((n) => n + 1);
-      else setCloseBoxCount((n) => n + 1);
-      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo uploaded`, { variant: 'success' });
+      const result = await uploadBoxPhotos({ id, formData: fd }).unwrap();
+      const photos = type === 'close' ? result.data?.closeBoxPhotos : result.data?.openBoxPhotos;
+      const url = (photos || []).slice(-1)[0] || '';
+      file.url = url;
+      file.thumbUrl = url;
+      onSuccess(result.data, file);
+      if (type === 'open') setOpenBoxCount(result.data?.openBoxPhotos?.length || 0);
+      else setCloseBoxCount(result.data?.closeBoxPhotos?.length || 0);
+      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo saved`, { variant: 'success' });
     } catch {
-      enqueueSnackbar('Box photo upload failed', { variant: 'error' });
+      onError(new Error('Upload failed'));
+      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo upload failed`, { variant: 'error' });
     }
-    return false; // prevent antd auto-upload
   };
 
   const handlePrintInvoice = () => {
@@ -182,8 +189,10 @@ export default function DispatchDetail() {
     const isSample = o.orderCategory === 'SAMPLE' || lead.leadType === 'SAMPLE';
     // Credit orders are dispatched before payment — payment is due after delivery.
     const isCredit = o.paymentTerms === 'CREDIT_10_30';
+    // orderPaymentStatus resolved live from invoices (mirrors Dispatch list logic).
+    const livePayStatus = d.orderPaymentStatus || 'Pending';
     // Payment is "Confirmed" for dispatch purposes once the order balance is cleared, or credit terms apply.
-    const basePaymentConfirmed = isSample || isCredit || (o.balance != null && o.balance <= 0) || o.status === 'Completed' || d.paymentStatus === 'Paid';
+    const basePaymentConfirmed = isSample || isCredit || livePayStatus === 'Paid' || (o.balance != null && o.balance <= 0) || o.status === 'Completed';
     return {
       key: d._id, id: o.orderCode || d.orderCode || d._id,
       orderObjectId: o._id || d.orderId,
@@ -194,7 +203,7 @@ export default function DispatchDetail() {
       basePaymentConfirmed,
       isCredit,
       creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
-      payment: isCredit ? 'Credit' : (basePaymentConfirmed ? 'Confirmed' : 'Pending'),
+      payment: isCredit ? 'Credit' : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (basePaymentConfirmed ? 'Confirmed' : 'Pending'))),
       destination: o.destination || lead.destination || '',
       detailedAddress: o.detailedAddress || lead.detailedAddress || lead.address || '',
       city: o.city || lead.city || '', state: o.state || lead.state || '', pincode: o.pincode || lead.pincode || '',
@@ -207,7 +216,25 @@ export default function DispatchDetail() {
       // dispatch line items (these carry _id for per-product verification)
       items: (d.items && d.items.length ? d.items : (o.items || [])),
       kitOrders: o.kitOrders || [],
-      lrData: d.lrData || null,
+      // Stored verification photos
+      openBoxPhotos: d.openBoxPhotos || [],
+      closeBoxPhotos: d.closeBoxPhotos || [],
+      // Stored LR / tracking details
+      storedTransportName: d.transportName || '',
+      storedWeight: d.weight || '',
+      storedBoxes: d.boxes || 0,
+      storedDispatchType: d.dispatchType || null,
+      storedInvoiceNumber: d.invoiceNumber || '',
+      storedInvoiceDate: d.invoiceDate || null,
+      storedLrNumber: d.lrNumber || '',
+      storedTrackingUrl: d.trackingUrl || '',
+      storedLrDate: d.lrDate || '',
+      storedFromCity: d.fromCity || '',
+      storedToCity: d.toCity || '',
+      storedFreight: d.freight || '',
+      storedPackages: d.packages || '',
+      storedEstimatedDelivery: d.estimatedDelivery || '',
+      storedLrFileUrl: d.lrFileUrl || '',
     };
   }, [dispatchData]);
 
@@ -215,14 +242,100 @@ export default function DispatchDetail() {
   const [lrForm] = Form.useForm();
   const [trackingForm] = Form.useForm();
 
+  // Live-watch form fields so the Order Details table reflects values as the user types.
+  const liveTransport = Form.useWatch('transport', form);
+  const liveWeight = Form.useWatch('weight', form);
+  const liveBoxes = Form.useWatch('boxes', form);
+  const liveTrackingUrl = Form.useWatch('trackingUrl', trackingForm);
+
   // Forwarding charge — editable at dispatch time; if raised above original, payment is pending.
   const [localFwdAmount, setLocalFwdAmount] = useState(null); // null = not yet initialised
+  // Track if we've already initialised the form from stored data (avoids re-setting on every re-render).
+  const [formInitialized, setFormInitialized] = useState(false);
+
   // Initialise once order data arrives
   useEffect(() => {
     if (order && localFwdAmount === null) {
       setLocalFwdAmount(order.forwardingChargeAmount || 0);
     }
   }, [order, localFwdAmount]);
+
+  // Pre-populate form + state from stored dispatch data on first load.
+  useEffect(() => {
+    if (!order || formInitialized) return;
+    setFormInitialized(true);
+
+    // Main dispatch verification form
+    form.setFieldsValue({
+      transport: order.storedTransportName || (order.transport !== '—' ? order.transport : ''),
+      weight: order.storedWeight || (order.weight !== '—' ? order.weight : ''),
+      boxes: order.storedBoxes || order.boxes || 0,
+      dispatchType: order.storedDispatchType || undefined,
+      invoiceNumber: order.storedInvoiceNumber || '',
+    });
+
+    // Sync dispatchType state so the product verification table shows
+    if (order.storedDispatchType) {
+      setDispatchType(order.storedDispatchType);
+    }
+
+    // Dispatched status
+    if (order.status === 'Confirmed' || order.status === 'Dispatched') {
+      setDispatched(true);
+    }
+
+    // Box photo counts from stored arrays
+    if (order.openBoxPhotos.length > 0) setOpenBoxCount(order.openBoxPhotos.length);
+    if (order.closeBoxPhotos.length > 0) setCloseBoxCount(order.closeBoxPhotos.length);
+
+    // Pre-populate LR/tracking forms from stored data
+    if (order.storedLrNumber || order.storedTrackingUrl || order.storedLrDate) {
+      lrForm.setFieldsValue({
+        lrNumber: order.storedLrNumber,
+        lrDate: order.storedLrDate,
+        transportName: order.storedTransportName,
+        fromCity: order.storedFromCity,
+        toCity: order.storedToCity,
+        weight: order.storedWeight,
+        freight: order.storedFreight,
+        packages: order.storedPackages,
+        estimatedDelivery: order.storedEstimatedDelivery,
+      });
+      trackingForm.setFieldsValue({
+        trackingUrl: order.storedTrackingUrl,
+        trackingLR: order.storedLrNumber,
+      });
+      // Show AI parsed summary section if we have stored LR data
+      if (order.storedLrNumber || order.storedLrDate) {
+        setAiParsed({
+          lrNumber: order.storedLrNumber,
+          lrDate: order.storedLrDate,
+          transportName: order.storedTransportName,
+          fromCity: order.storedFromCity,
+          toCity: order.storedToCity,
+          weight: order.storedWeight,
+          freight: order.storedFreight,
+          packages: order.storedPackages,
+          estimatedDelivery: order.storedEstimatedDelivery,
+        });
+      }
+    }
+
+    // Finished dispatch state
+    if (order.status === 'Dispatched' && order.storedLrNumber) {
+      setFinishedDispatch(true);
+    }
+
+    // Show stored LR file in the upload component
+    if (order.storedLrFileUrl) {
+      setLrFileList([{
+        uid: 'lr-stored',
+        name: 'Lorry Receipt',
+        status: 'done',
+        url: order.storedLrFileUrl,
+      }]);
+    }
+  }, [order, formInitialized, form, lrForm, trackingForm]);
 
   // Effective forwarding amount (may be overridden by dispatcher)
   const effectiveFwdAmount = localFwdAmount ?? (order?.forwardingChargeAmount || 0);
@@ -303,9 +416,9 @@ export default function DispatchDetail() {
     try {
       const formData = new FormData();
       const vals = form.getFieldsValue();
-      formData.append('transport', vals.transport || order.transport || '');
-      formData.append('boxes', vals.boxes ?? order.boxes ?? 0);
-      formData.append('weight', vals.weight ?? order.weight ?? '');
+      formData.append('transport', vals.transport || order.storedTransportName || order.transport || '');
+      formData.append('boxes', vals.boxes ?? order.storedBoxes ?? order.boxes ?? 0);
+      formData.append('weight', vals.weight ?? order.storedWeight ?? order.weight ?? '');
       formData.append('dispatchType', vals.dispatchType || dispatchType || 'Full Dispatch');
       formData.append('invoiceNumber', vals.invoiceNumber || '');
       if (vals.invoiceDate) formData.append('invoiceDate', vals.invoiceDate.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate);
@@ -327,13 +440,30 @@ export default function DispatchDetail() {
   const handleSaveDraft = async () => {
     try {
       const vals = form.getFieldsValue();
+      const lrVals = lrForm.getFieldsValue();
+      const trackVals = trackingForm.getFieldsValue();
+      const lrFileUrl = lrFileList?.[0]?.url || lrFileList?.[0]?.response?.url || undefined;
       await saveAsDraft({
         id,
         dispatchType: vals.dispatchType || dispatchType || undefined,
         invoiceNumber: vals.invoiceNumber || undefined,
         invoiceDate: vals.invoiceDate?.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate,
+        transportName: lrVals.transportName || vals.transport || undefined,
+        weight: lrVals.weight || vals.weight || undefined,
+        boxes: vals.boxes ?? undefined,
         autoNotify: notifyAuto,
         sendWhatsapp: notifyWhatsApp,
+        // Lorry Receipt + Tracking section — persist so it survives a reload even
+        // before "Finished Dispatch" is clicked.
+        lrNumber: lrVals.lrNumber || trackVals.trackingLR || undefined,
+        trackingUrl: trackVals.trackingUrl || undefined,
+        lrFileUrl,
+        lrDate: lrVals.lrDate || undefined,
+        fromCity: lrVals.fromCity || undefined,
+        toCity: lrVals.toCity || undefined,
+        freight: lrVals.freight || undefined,
+        packages: lrVals.packages || undefined,
+        estimatedDelivery: lrVals.estimatedDelivery || undefined,
       }).unwrap();
       enqueueSnackbar('Saved as draft', { variant: 'success' });
     } catch {
@@ -358,36 +488,23 @@ export default function DispatchDetail() {
     try {
       const lrVals = lrForm.getFieldsValue();
       const trackVals = trackingForm.getFieldsValue();
-      const lrFile = lrFileList?.[0]?.originFileObj;
-      let payload;
-      if (lrFile) {
-        // Send multipart so the LR receipt file is actually uploaded (route uses upload.single('lr')).
-        const fd = new FormData();
-        fd.append('lr', lrFile);
-        Object.entries({
-          lrNumber: lrVals.lrNumber || trackVals.trackingLR || '',
-          trackingUrl: trackVals.trackingUrl || '',
-          lrDate: lrVals.lrDate || '', transportName: lrVals.transportName || '',
-          packages: lrVals.packages || '', fromCity: lrVals.fromCity || '',
-          toCity: lrVals.toCity || '', weight: lrVals.weight || '',
-          freight: lrVals.freight || '', estimatedDelivery: lrVals.estimatedDelivery || '',
-        }).forEach(([k, v]) => fd.append(k, v));
-        payload = { id, formData: fd };
-      } else {
-        payload = {
-          id,
-          lrNumber: lrVals.lrNumber || trackVals.trackingLR || '',
-          trackingUrl: trackVals.trackingUrl || '',
-          lrDate: lrVals.lrDate || '',
-          transportName: lrVals.transportName || '',
-          packages: lrVals.packages || '',
-          fromCity: lrVals.fromCity || '',
-          toCity: lrVals.toCity || '',
-          weight: lrVals.weight || '',
-          freight: lrVals.freight || '',
-          estimatedDelivery: lrVals.estimatedDelivery || '',
-        };
-      }
+      // The LR file is already on Cloudinary (uploaded via customRequest / makeUpload).
+      // Pass the stored URL directly — no need to re-upload.
+      const lrFileUrl = lrFileList?.[0]?.url || lrFileList?.[0]?.response?.url || '';
+      const payload = {
+        id,
+        lrNumber: lrVals.lrNumber || trackVals.trackingLR || '',
+        trackingUrl: trackVals.trackingUrl || '',
+        lrFileUrl,
+        lrDate: lrVals.lrDate || '',
+        transportName: lrVals.transportName || '',
+        packages: lrVals.packages || '',
+        fromCity: lrVals.fromCity || '',
+        toCity: lrVals.toCity || '',
+        weight: lrVals.weight || '',
+        freight: lrVals.freight || '',
+        estimatedDelivery: lrVals.estimatedDelivery || '',
+      };
       await uploadLR(payload).unwrap();
       setFinishedDispatch(true);
       enqueueSnackbar(`Dispatch Finished! Notifications sent to Sales (${order.salesPerson}) and Customer (${order.client}) via WhatsApp.`, { variant: 'success' });
@@ -610,8 +727,21 @@ export default function DispatchDetail() {
                   </Space>
                 </Descriptions.Item>
                 <Descriptions.Item label="Product">{order.product || '—'}</Descriptions.Item>
-                <Descriptions.Item label="Weight">{order.weight || '—'}</Descriptions.Item>
-                <Descriptions.Item label="Transport">{order.transport || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Weight">
+                  {liveWeight || order.weight
+                    ? <Text strong>{liveWeight || order.weight}</Text>
+                    : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
+                <Descriptions.Item label="Boxes">
+                  {(liveBoxes != null && liveBoxes !== '') || order.boxes
+                    ? <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text strong>{liveBoxes ?? order.boxes ?? 0}</Text></Space>
+                    : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
+                <Descriptions.Item label="Transport">
+                  {liveTransport || order.transport
+                    ? <Text strong>{liveTransport || order.transport}</Text>
+                    : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
                 <Descriptions.Item label="Sales Person">{order.salesPerson}</Descriptions.Item>
                 <Descriptions.Item label="Payment">
                   {order.isSample
@@ -651,23 +781,27 @@ export default function DispatchDetail() {
               styles={{ body: { padding: 16 } }}
             >
               <Form form={form} layout="vertical" size="small">
-                {/* Row 1: Transport, Boxes, Weight, Dispatch Type */}
+                {/* Row 1: Transport, Weight, Boxes, Dispatch Type */}
                 <Row gutter={12}>
                   <Col xs={24} sm={12}>
                     <Form.Item label="Transport Name" name="transport">
-                      <Input placeholder="e.g. Fast Cargo" defaultValue={order.transport !== '-' ? order.transport : ''} />
+                      <Input placeholder="e.g. Fast Cargo" />
                     </Form.Item>
                   </Col>
-                  <Col xs={24} sm={12}>
+                  <Col xs={12} sm={6}>
                     <Form.Item label="Weight (Verify)" name="weight">
-                      <Input placeholder="kg" defaultValue={order.weight} />
+                      <Input placeholder="kg" suffix="kg" />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={12} sm={6}>
+                    <Form.Item label="Boxes" name="boxes">
+                      <InputNumber min={0} placeholder="0" style={{ width: '100%' }} prefix={<InboxOutlined style={{ color: '#B11E6A' }} />} />
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>
                     <Form.Item label="Dispatch Type" name="dispatchType">
                       <Select
                         placeholder="Select dispatch type"
-                        value={dispatchType}
                         onChange={(v) => { setDispatchType(v); setVerifiedProducts(new Set()); }}
                       >
                         <Option value="Full Dispatch">Full Dispatch</Option>
@@ -851,7 +985,18 @@ export default function DispatchDetail() {
                       validateStatus={openBoxCount === 0 ? 'error' : 'success'}
                       help={openBoxCount === 0 ? 'At least one open-box photo is required' : `${openBoxCount} photo(s) uploaded`}
                     >
-                      <Upload listType="picture" multiple beforeUpload={(file) => handleBoxPhotoUpload('open', file)} accept="image/*">
+                      <Upload
+                        listType="picture"
+                        multiple
+                        customRequest={makeBoxUpload('open')}
+                        accept="image/*"
+                        defaultFileList={(order?.openBoxPhotos || []).map((url, i) => ({
+                          uid: `open-stored-${i}`,
+                          name: `Open photo ${i + 1}`,
+                          status: 'done',
+                          url,
+                        }))}
+                      >
                         <Button icon={<CameraOutlined />} block>Open Box</Button>
                       </Upload>
                     </Form.Item>
@@ -862,7 +1007,18 @@ export default function DispatchDetail() {
                       validateStatus={closeBoxCount === 0 ? 'error' : 'success'}
                       help={closeBoxCount === 0 ? 'At least one closed-box photo is required' : `${closeBoxCount} photo(s) uploaded`}
                     >
-                      <Upload listType="picture" multiple beforeUpload={(file) => handleBoxPhotoUpload('close', file)} accept="image/*">
+                      <Upload
+                        listType="picture"
+                        multiple
+                        customRequest={makeBoxUpload('close')}
+                        accept="image/*"
+                        defaultFileList={(order?.closeBoxPhotos || []).map((url, i) => ({
+                          uid: `close-stored-${i}`,
+                          name: `Closed photo ${i + 1}`,
+                          status: 'done',
+                          url,
+                        }))}
+                      >
                         <Button icon={<CameraOutlined />} block>Close Box</Button>
                       </Upload>
                     </Form.Item>
@@ -1091,8 +1247,7 @@ export default function DispatchDetail() {
                               size="small"
                               style={{ padding: 0, color: '#B11E6A' }}
                               onClick={() => {
-                                const url = document.querySelector('input[placeholder*="track"]')?.value;
-                                if (url) window.open(url, '_blank');
+                                if (liveTrackingUrl) window.open(liveTrackingUrl, '_blank');
                               }}
                             >
                               Open

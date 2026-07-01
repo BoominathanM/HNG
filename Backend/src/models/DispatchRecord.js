@@ -21,6 +21,7 @@ const dispatchRecordSchema = new mongoose.Schema({
   freight: String,
   packages: String,
   estimatedDelivery: String,
+  boxes: { type: Number, default: 0 },
   // Open/Close box verification photos (multiple allowed)
   openBoxPhotos: [String],
   closeBoxPhotos: [String],
