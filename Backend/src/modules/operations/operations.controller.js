@@ -233,8 +233,10 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
 
 // Persist the per-row Printing Status (Yet to Receive / Received / Closed) shown in the
 // Operations product spec table. Rows key by item._id when present, else by array index
-// (mirrors the frontend's `key: it._id ? String(it._id) : String(idx)`), and printingStatus
-// is not part of the schema — it survives via the item sub-schema's strict:false.
+// (mirrors the frontend's `key: it._id ? String(it._id) : String(idx)`). printingStatus
+// isn't declared on the item sub-schema — it survives via strict:false, but ONLY when set
+// through subdoc.set(); plain `subdoc.printingStatus = x` assignment is invisible to
+// Mongoose for undeclared paths (never reaches _doc), so it silently fails to save.
 exports.updateItemPrintingStatus = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
   if (!order) return next(new AppError('Order not found', 404));
@@ -244,7 +246,7 @@ exports.updateItemPrintingStatus = asyncHandler(async (req, res, next) => {
   if (!Number.isInteger(targetIdx) || !order.items[targetIdx]) {
     return next(new AppError('Order item not found', 404));
   }
-  order.items[targetIdx].printingStatus = req.body.printingStatus;
+  order.items[targetIdx].set('printingStatus', req.body.printingStatus);
   order.markModified('items');
   await order.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, data: order });
