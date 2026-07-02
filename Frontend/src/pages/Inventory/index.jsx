@@ -79,6 +79,7 @@ const PRODUCT_FIELD_DEFS = {
     { key: 'size', label: 'Sizes (gram)', field: 'soap_size', options: SIZES_SOAP, mode: 'multiple' },
     { key: 'stickerShape', label: 'Sticker Shape', field: 'soap_stickerShape', options: SOAP_SHAPES },
     { key: 'fragrance', label: 'Fragrance', field: 'soap_fragrance', options: [], mode: 'multiple' },
+    { key: 'color', label: 'Color', field: 'soap_color', options: [], mode: 'multiple' },
     { key: 'packingMaterial', label: 'Packing Material', field: 'soap_packingMaterial', usePackingConfig: true, options: [], mode: 'multiple' },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'soap_stickerPrinting', options: YES_NO },
     { key: 'printing', label: 'Printing', field: 'soap_printing', options: YES_NO },

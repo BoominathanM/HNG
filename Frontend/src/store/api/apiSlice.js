@@ -666,6 +666,10 @@ export const apiSlice = createApi({
       query: () => ({ url: '/tasks/suggested' }),
       providesTags: ['SuggestedTasks', 'Tasks', 'Inventory'],
     }),
+    getEmergencyRequests: builder.query({
+      query: () => ({ url: '/tasks/emergency-requests' }),
+      providesTags: ['Tasks'],
+    }),
     getTask: builder.query({
       query: (id) => ({ url: `/tasks/${id}` }),
       providesTags: (result, error, id) => [{ type: 'Tasks', id }],
@@ -1209,6 +1213,7 @@ export const {
   // Tasks
   useGetTasksQuery,
   useGetTaskQuery,
+  useGetEmergencyRequestsQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useApproveEmergencyMutation,

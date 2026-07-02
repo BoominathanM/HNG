@@ -427,6 +427,20 @@ exports.approveEmergency = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: task });
 });
 
+// List every task with an active emergency-dispatch request, most recent first.
+// An order can have several products (= several tasks), each raised as its own
+// emergency request — Sales/Operations need one row per task, not a single
+// order-level snapshot, or requests raised after the first one get hidden.
+exports.getEmergencyRequests = asyncHandler(async (req, res) => {
+  const filter = { emergencyRequested: true };
+  if (req.query.orderId) filter.orderId = req.query.orderId;
+  const tasks = await Task.find(filter)
+    .sort('-emergencyRequestedAt')
+    .populate('orderId', 'orderCode clientName hotelName')
+    .lean();
+  res.status(200).json({ success: true, data: tasks });
+});
+
 // Request emergency dispatch — flags the task and linked order, notifies Sales + Ops heads
 exports.requestEmergencyDispatch = asyncHandler(async (req, res, next) => {
   const task = await Task.findById(req.params.id);

@@ -71,6 +71,7 @@ import {
   useGetCompanySettingsQuery,
   useGetPackingConfigQuery,
   useApproveEmergencyOpsHeadMutation,
+  useGetEmergencyRequestsQuery,
   useGetHotelDesignsQuery,
   useUploadStickerInvoiceMutation,
 } from '../../store/api/apiSlice';
@@ -148,8 +149,32 @@ export default function Operations() {
   const [assignTask] = useAssignTaskMutation();
   const [setOrderEmergency] = useSetOrderEmergencyMutation();
   const [approveStickerRequest] = useApproveStickerRequestMutation();
-  const [approveEmergencyOpsHead, { isLoading: approvingOps }] = useApproveEmergencyOpsHeadMutation();
+  const [approveEmergencyOpsHead] = useApproveEmergencyOpsHeadMutation();
   const [emergencyOpsApprovalOrder, setEmergencyOpsApprovalOrder] = useState(null);
+  const [approvingEmergencyTaskId, setApprovingEmergencyTaskId] = useState(null);
+  const { data: emergencyRequestsRaw } = useGetEmergencyRequestsQuery();
+  // Group active emergency-dispatch requests by order — one entry per product/Task
+  // that raised "Emergency Dispatch" in Task Management (see Sales/index.jsx for the
+  // matching map — an order can have several products each with their own request).
+  const emergencyRequestsByOrder = useMemo(() => {
+    const map = {};
+    (emergencyRequestsRaw?.data || []).forEach((t) => {
+      const oid = (t.orderId?._id || t.orderId)?.toString();
+      if (!oid) return;
+      if (!map[oid]) map[oid] = [];
+      map[oid].push({
+        taskId: t._id,
+        taskCode: t.taskCode,
+        product: t.product || t.taskName || 'Product',
+        reason: t.emergencyReason || '',
+        requestedAt: t.emergencyRequestedAt,
+        salesApproved: !!t.emergencySalesApproved,
+        opsApproved: !!t.emergencyOpsApproved,
+        approved: !!t.emergencyApproved,
+      });
+    });
+    return map;
+  }, [emergencyRequestsRaw]);
 
   const stickerRequests = stickerData?.data || [];
 
@@ -240,12 +265,9 @@ export default function Operations() {
     totalAmount: o.total || 0, advance: o.advancePaid || 0,
     expectedDelivery: o.expectedDeliveryDate || o.leadId?.orderDeliveryDate || null,
     isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
-    emergencyDispatchRequested: o.emergencyDispatchRequested || false,
-    emergencySalesApproved: o.emergencySalesApproved || false,
-    emergencyOpsApproved: o.emergencyOpsApproved || false,
-    emergencyApproved: o.emergencyApproved || false,
-    emergencyTaskId: o.emergencyTaskId ? o.emergencyTaskId.toString() : null,
-    emergencyReason: o.emergencyReason || '',
+    // Per-product emergency-dispatch requests for this order — one entry per Task
+    // that raised "Emergency Dispatch" in Task Management, most recent first.
+    emergencyRequests: emergencyRequestsByOrder[o._id] || [],
     // Fall back to linked lead's splitDates so emergency products identified on the lead
     // (before order creation) are still reflected in the Operations queue.
     splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
@@ -418,7 +440,7 @@ export default function Operations() {
     })(),
     logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
     logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
-  })), [ordersData, packingMaterialTabMap, displayUnitTabMap]);
+  })), [ordersData, packingMaterialTabMap, displayUnitTabMap, emergencyRequestsByOrder]);
 
   const [queueSteps, setQueueSteps] = useState({});
   const [dispatchTimes, setDispatchTimes] = useState({}); // orderId → { date, time }
@@ -693,27 +715,39 @@ export default function Operations() {
               }}
             />
           </Tooltip>
-          {record.emergencyDispatchRequested && record.emergencySalesApproved && !record.emergencyOpsApproved && (
-            <Tooltip title="Sales Head has approved. Click to review and approve as Operations Head.">
-              <Button
-                size="small"
-                danger
-                icon={<AlertFilled />}
-                style={{ fontWeight: 600 }}
-                onClick={(e) => { e.stopPropagation(); setEmergencyOpsApprovalOrder(record); }}
-              >
-                Approve Emergency
-              </Button>
-            </Tooltip>
-          )}
-          {record.emergencyDispatchRequested && !record.emergencySalesApproved && (
-            <Tooltip title="Emergency dispatch requested — awaiting Sales Head approval first">
-              <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>Awaiting Sales</Tag>
-            </Tooltip>
-          )}
-          {record.emergencyApproved && (
-            <Tag color="success" style={{ fontSize: 10, margin: 0 }}>Emergency Approved</Tag>
-          )}
+          {(() => {
+            const reqs = record.emergencyRequests || [];
+            if (reqs.length === 0) return null;
+            const readyForOps = reqs.filter((x) => x.salesApproved && !x.opsApproved);
+            const awaitingSales = reqs.filter((x) => !x.salesApproved);
+            const allApproved = reqs.every((x) => x.approved);
+            if (readyForOps.length > 0) {
+              return (
+                <Tooltip title={`${readyForOps.length} product${readyForOps.length > 1 ? 's' : ''} approved by Sales Head. Click to review and approve as Operations Head.`}>
+                  <Button
+                    size="small"
+                    danger
+                    icon={<AlertFilled />}
+                    style={{ fontWeight: 600 }}
+                    onClick={(e) => { e.stopPropagation(); setEmergencyOpsApprovalOrder(record); }}
+                  >
+                    Approve Emergency ({readyForOps.length})
+                  </Button>
+                </Tooltip>
+              );
+            }
+            if (awaitingSales.length > 0) {
+              return (
+                <Tooltip title="Emergency dispatch requested — awaiting Sales Head approval first">
+                  <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>Awaiting Sales ({awaitingSales.length})</Tag>
+                </Tooltip>
+              );
+            }
+            if (allApproved) {
+              return <Tag color="success" style={{ fontSize: 10, margin: 0 }}>Emergency Approved</Tag>;
+            }
+            return null;
+          })()}
         </Space>
       ),
     },
@@ -2241,47 +2275,70 @@ export default function Operations() {
         open={!!emergencyOpsApprovalOrder}
         onCancel={() => setEmergencyOpsApprovalOrder(null)}
         width={Math.min(560, window.innerWidth - 32)}
-        footer={[
-          <Button key="cancel" onClick={() => setEmergencyOpsApprovalOrder(null)}>Cancel</Button>,
-          <Button key="approve" type="primary" danger loading={approvingOps}
-            onClick={async () => {
-              try {
-                await approveEmergencyOpsHead(emergencyOpsApprovalOrder.emergencyTaskId).unwrap();
-                enqueueSnackbar('Emergency dispatch fully approved. Dispatch team has been notified.', { variant: 'success' });
-                setEmergencyOpsApprovalOrder(null);
-              } catch (err) {
-                enqueueSnackbar(err?.data?.message || 'Approval failed', { variant: 'error' });
-              }
-            }}>
-            Confirm & Approve Emergency Dispatch
-          </Button>,
-        ]}
+        footer={[<Button key="cancel" onClick={() => setEmergencyOpsApprovalOrder(null)}>Close</Button>]}
       >
-        {emergencyOpsApprovalOrder && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
-            <Alert type="error" showIcon
-              message="Emergency Dispatch — Payment Pending — Final Approval Required"
-              description={`This order is complete but payment has NOT been collected. The Sales Head has already approved this emergency dispatch request. As Operations Head, your approval is the final step — it authorizes the dispatch team to proceed with delivery immediately despite the pending payment.${emergencyOpsApprovalOrder.emergencyReason ? `\n\nReason given: "${emergencyOpsApprovalOrder.emergencyReason}"` : ''}`}
-              style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
-            />
-            <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
-              <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{emergencyOpsApprovalOrder.id}</span></Descriptions.Item>
-              <Descriptions.Item label="Client">{emergencyOpsApprovalOrder.clientName}</Descriptions.Item>
-              <Descriptions.Item label="Total Amount">₹{(emergencyOpsApprovalOrder.totalAmount || 0).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Payment Status"><Tag color="error">Pending</Tag></Descriptions.Item>
-            </Descriptions>
-            <Alert type="success" showIcon
-              message="Sales Head Approval: Received ✓"
-              description="The Sales Head has reviewed and approved this emergency dispatch. Your approval completes the authorization."
-              style={{ borderRadius: 8 }}
-            />
-            <Alert type="warning" showIcon
-              message="What happens after your approval?"
-              description="The dispatch team will receive an immediate notification to proceed with delivery. This action cannot be undone."
-              style={{ borderRadius: 8 }}
-            />
-          </div>
-        )}
+        {emergencyOpsApprovalOrder && (() => {
+          // Re-derive the live row so the list updates in place as each product is
+          // approved, instead of freezing on the snapshot taken when the modal opened.
+          const liveOrder = apiOrders.find((o) => o.key === emergencyOpsApprovalOrder.key) || emergencyOpsApprovalOrder;
+          const requests = liveOrder.emergencyRequests || [];
+          const pending = requests.filter((x) => x.salesApproved && !x.opsApproved);
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              <Alert type="error" showIcon
+                message="Emergency Dispatch — Payment Pending — Final Approval Required"
+                description="This order is complete but payment has NOT been collected. The Sales Head has already approved emergency dispatch for one or more products. As Operations Head, your approval per product is the final step — it authorizes the dispatch team to proceed with delivery immediately despite the pending payment."
+                style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
+              />
+              <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
+                <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{liveOrder.id}</span></Descriptions.Item>
+                <Descriptions.Item label="Client">{liveOrder.hotelLogo}</Descriptions.Item>
+                <Descriptions.Item label="Total Amount">₹{(liveOrder.totalAmount || 0).toLocaleString()}</Descriptions.Item>
+                <Descriptions.Item label="Payment Status"><Tag color="error">Pending</Tag></Descriptions.Item>
+              </Descriptions>
+              {pending.length === 0 ? (
+                <Alert type="success" showIcon message="All Sales-approved emergency requests for this order have been approved by Operations." style={{ borderRadius: 8 }} />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <Text strong>Products awaiting your approval ({pending.length})</Text>
+                  {pending.map((req) => (
+                    <div key={req.taskId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, border: '1px solid #ffccc7', background: '#fff2f0', borderRadius: 8, padding: '8px 12px' }}>
+                      <div>
+                        <Text strong>{req.product}</Text>
+                        {req.reason && <div><Text type="secondary" style={{ fontSize: 12 }}>Reason: {req.reason}</Text></div>}
+                      </div>
+                      <Button size="small" type="primary" danger
+                        loading={approvingEmergencyTaskId === req.taskId}
+                        onClick={async () => {
+                          setApprovingEmergencyTaskId(req.taskId);
+                          try {
+                            await approveEmergencyOpsHead(req.taskId).unwrap();
+                            enqueueSnackbar(`Emergency dispatch fully approved for "${req.product}". Dispatch team has been notified.`, { variant: 'success' });
+                          } catch (err) {
+                            enqueueSnackbar(err?.data?.message || 'Approval failed', { variant: 'error' });
+                          } finally {
+                            setApprovingEmergencyTaskId(null);
+                          }
+                        }}>
+                        Approve
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Alert type="success" showIcon
+                message="Sales Head Approval: Received ✓"
+                description="The Sales Head has reviewed and approved these emergency dispatch requests. Your approval per product completes its authorization."
+                style={{ borderRadius: 8 }}
+              />
+              <Alert type="warning" showIcon
+                message="What happens after your approval?"
+                description="The dispatch team will receive an immediate notification per approved product to proceed with delivery. This action cannot be undone."
+                style={{ borderRadius: 8 }}
+              />
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );
