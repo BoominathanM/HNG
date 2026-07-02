@@ -35,6 +35,7 @@ import { motion } from 'framer-motion';
 import { enqueueSnackbar } from 'notistack';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import PhoneInput from '../../components/common/PhoneInput';
+import VendorBankFields from '../../components/common/VendorBankFields';
 import { emailRules, phoneValidator } from '../../utils/validation';
 import dayjs from 'dayjs';
 
@@ -54,6 +55,13 @@ const exportToCSV = (headers, rows, filename) => {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+};
+
+const formatBankDetails = (bank) => {
+  if (!bank) return '';
+  if (typeof bank === 'string') return bank;
+  if (bank.method === 'upi') return [bank.upiId, bank.upiNumber].filter(Boolean).join(' · ');
+  return [bank.bankName, bank.accountHolderName, bank.accountNo, bank.ifsc].filter(Boolean).join(' · ');
 };
 
 // All data loaded from backend API via useEffect below
@@ -493,7 +501,9 @@ export default function Purchase() {
         phone: vals.sup_phone || '',
         email: vals.sup_email || '',
         address: vals.sup_address || '',
-        type: 'raw_material',
+        taxId: vals.sup_tax || '',
+        bankDetails: vals.bankDetails || {},
+        vendorType: 'raw_material',
       }).unwrap();
       supplierForm.resetFields();
       setShowAddSupplierModal(false);
@@ -612,7 +622,13 @@ export default function Purchase() {
         sup_email: 'contact@globalchem.in',
         sup_tax: '27AABCG1234F1Z5',
         sup_address: 'Andheri East, Mumbai, MH 400069',
-        sup_bank: 'HDFC Bank — A/C 50100123456789 | IFSC HDFC0001234',
+        bankDetails: {
+          method: 'bank',
+          accountHolderName: 'Global Chem Supplies Pvt. Ltd.',
+          accountNo: '50100123456789',
+          ifsc: 'HDFC0001234',
+          bankName: 'HDFC Bank',
+        },
         sup_notes: 'Preferred supplier for chemical raw materials. NET-30 payment terms.',
       });
       setSupplierScanLoading(false);
@@ -861,7 +877,7 @@ export default function Purchase() {
   const handleAddSupplierInline = () => {
     addSupplierInlineForm.validateFields().then(async vals => {
       try {
-        await createVendorMutation({ name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', bankDetails: vals.bank || '', type: 'raw_material' }).unwrap();
+        await createVendorMutation({ name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', taxId: vals.tax || '', bankDetails: vals.bankDetails || {}, vendorType: 'raw_material' }).unwrap();
         setShowAddSupplierInlineModal(false);
         addSupplierInlineForm.resetFields();
         enqueueSnackbar(`Supplier "${vals.name}" added!`, { variant: 'success' });
@@ -874,7 +890,7 @@ export default function Purchase() {
   const handleAddVendorInline = () => {
     addVendorInlineForm.validateFields().then(async vals => {
       try {
-        await createVendorMutation({ name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '' }).unwrap();
+        await createVendorMutation({ name: vals.name, phone: vals.phone || '', email: vals.email || '', address: vals.address || '', taxId: vals.tax || '', bankDetails: vals.bankDetails || {} }).unwrap();
         setShowAddVendorInlineModal(false);
         addVendorInlineForm.resetFields();
         enqueueSnackbar(`Vendor "${vals.name}" added!`, { variant: 'success' });
@@ -2757,9 +2773,7 @@ export default function Purchase() {
           <Form.Item label="GST / Tax ID" name="tax">
             <Input placeholder="GSTIN" />
           </Form.Item>
-          <Form.Item label="Bank Details" name="bank">
-            <Input.TextArea rows={2} placeholder="Bank, A/C, IFSC" />
-          </Form.Item>
+          <VendorBankFields form={addSupplierInlineForm} namePrefix="bankDetails" labelSize={14} />
           <div style={{ display: 'flex', gap: 8 }}>
             <Button style={{ flex: 1 }} onClick={() => { setShowAddSupplierInlineModal(false); addSupplierInlineForm.resetFields(); }}>Cancel</Button>
             <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }} onClick={handleAddSupplierInline}>
@@ -2806,6 +2820,7 @@ export default function Purchase() {
           <Form.Item label="GST / Tax ID" name="tax">
             <Input placeholder="GSTIN" />
           </Form.Item>
+          <VendorBankFields form={addVendorInlineForm} namePrefix="bankDetails" labelSize={14} />
           <div style={{ display: 'flex', gap: 8 }}>
             <Button style={{ flex: 1 }} onClick={() => { setShowAddVendorInlineModal(false); addVendorInlineForm.resetFields(); }}>Cancel</Button>
             <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#1890ff,#096dd9)', border: 'none', fontWeight: 700 }} onClick={handleAddVendorInline}>
@@ -3641,9 +3656,8 @@ export default function Purchase() {
           <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="sup_address" style={{ marginBottom: 12 }}>
             <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
           </Form.Item>
-          <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="sup_bank" style={{ marginBottom: 12 }}>
-            <Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} />
-          </Form.Item>
+          <Divider style={{ margin: '4px 0 12px' }} orientationMargin={0} orientation="left"><Text style={{ fontSize: 12, color: '#aaa' }}>Bank Details</Text></Divider>
+          <VendorBankFields form={supplierForm} namePrefix="bankDetails" />
           <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="sup_notes" style={{ marginBottom: 12 }}>
             <Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} />
           </Form.Item>
@@ -3870,11 +3884,11 @@ export default function Purchase() {
                       <Text type="secondary" style={{ fontSize: 11 }}>ADDRESS</Text>
                       <div><Text style={{ fontSize: 12 }}>{sup.address}</Text></div>
                     </Col>
-                    {sup.bank && (
+                    {formatBankDetails(sup.bank) && (
                       <Col span={24}>
                         <Text type="secondary" style={{ fontSize: 11 }}>BANK DETAILS</Text>
                         <div style={{ padding: '6px 10px', background: isDark ? '#1a1a2e' : '#fafafa', borderRadius: 6, border: `1px solid ${isDark ? '#2a2d40' : '#e8e8e8'}`, marginTop: 4 }}>
-                          <Text style={{ fontSize: 12, fontWeight: 600 }}>{sup.bank}</Text>
+                          <Text style={{ fontSize: 12, fontWeight: 600 }}>{formatBankDetails(sup.bank)}</Text>
                         </div>
                       </Col>
                     )}

@@ -54,6 +54,7 @@ import {
 } from '../../store/api/apiSlice';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
 import PhoneInput from '../../components/common/PhoneInput';
+import VendorBankFields from '../../components/common/VendorBankFields';
 import { emailRules, phoneValidator } from '../../utils/validation';
 import { downloadFile } from '../../utils/fileDownload';
 
@@ -716,7 +717,7 @@ export default function Inventory() {
       const vals = supplierForm.getFieldsValue();
       const result = await createVendorMutation({
         name: vals.sup_name, phone: vals.sup_phone, email: vals.sup_email,
-        address: vals.sup_address, type: 'raw_material', taxId: vals.sup_tax, bankDetails: vals.sup_bank,
+        address: vals.sup_address, vendorType: 'raw_material', taxId: vals.sup_tax, bankDetails: vals.bankDetails || {},
       }).unwrap();
       setSelectedSupplier({ id: result.data?._id || result._id, name: vals.sup_name, phone: vals.sup_phone, address: vals.sup_address });
       supplierForm.resetFields();
@@ -732,7 +733,7 @@ export default function Inventory() {
       const vals = vendorForm.getFieldsValue();
       const result = await createVendorMutation({
         name: vals.cust_name, phone: vals.cust_phone, email: vals.cust_email,
-        address: vals.cust_address, type: 'customer', taxId: vals.cust_tax, bankDetails: vals.cust_bank,
+        address: vals.cust_address, type: 'customer', taxId: vals.cust_tax, bankDetails: vals.bankDetails || {},
       }).unwrap();
       setSelectedVendor({ id: result.data?._id || result._id, name: vals.cust_name, phone: vals.cust_phone, address: vals.cust_address });
       vendorForm.resetFields();
@@ -1020,8 +1021,10 @@ export default function Inventory() {
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
           <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
+          {/* Add Stock / Sell Stock — hidden per request
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
+          */}
         </Space>
       ),
     },
@@ -2246,7 +2249,7 @@ export default function Inventory() {
               ))}
             </Card>
 
-            {/* Quick actions */}
+            {/* Quick actions — Add Stock / Sell Stock hidden per request
             <Row gutter={10}>
               <Col span={12}>
                 <Button block icon={<DownloadOutlined />} type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', height: 42, borderRadius: 10, fontWeight: 700 }} onClick={() => { setDetailItem(null); openReceive(detailItem); }}>
@@ -2259,6 +2262,7 @@ export default function Inventory() {
                 </Button>
               </Col>
             </Row>
+            */}
           </div>
         )}
       </Drawer>
@@ -2535,8 +2539,7 @@ export default function Inventory() {
       </Modal>
 
       {/* ═══════════════════════════════════════
-          ADD STOCK DRAWER (Receive Goods)
-      ═══════════════════════════════════════ */}
+          ADD STOCK DRAWER (Receive Goods) — hidden per request
       <Drawer
         open={receiveOpen}
         onClose={() => { setReceiveOpen(false); setSelectedSupplier(null); setShowAddSupplier(false); receiveForm.resetFields(); supplierForm.resetFields(); }}
@@ -2668,17 +2671,17 @@ export default function Inventory() {
                   <Col span={10}><Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="sup_tax" style={{ marginBottom: 10 }}><Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
                 </Row>
                 <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="sup_address" style={{ marginBottom: 10 }}><Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} /></Form.Item>
-                <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="sup_bank" style={{ marginBottom: 10 }}><Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} /></Form.Item>
+                <VendorBankFields form={supplierForm} namePrefix="bankDetails" labelSize={13} />
                 <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="sup_notes" style={{ marginBottom: 10 }}><Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} /></Form.Item>
               </>
             ),
           })}
         </div>
       </Drawer>
+      ═══════════════════════════════════════ */}
 
       {/* ═══════════════════════════════════════
-          SELL STOCK DRAWER (Issue Goods)
-      ═══════════════════════════════════════ */}
+          SELL STOCK DRAWER (Issue Goods) — hidden per request
       <Drawer
         open={issueOpen}
         onClose={() => { setIssueOpen(false); setSelectedVendor(null); setShowAddVendor(false); issueForm.resetFields(); vendorForm.resetFields(); }}
@@ -2796,16 +2799,14 @@ export default function Inventory() {
                   <Col span={10}><Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="cust_tax" style={{ marginBottom: 10 }}><Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} /></Form.Item></Col>
                 </Row>
                 <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="cust_address" style={{ marginBottom: 10 }}><Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} /></Form.Item>
-                <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="cust_bank" style={{ marginBottom: 10 }}><Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} /></Form.Item>
-                <Row gutter={10}>
-                  <Col span={14}><Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="cust_notes" style={{ marginBottom: 10 }}><Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} /></Form.Item></Col>
-                  <Col span={10}><Form.Item label={<Text style={{ fontSize: 13 }}>Discount (%)</Text>} name="cust_discount" style={{ marginBottom: 10 }}><InputNumber min={0} max={100} placeholder="0" style={{ width: '100%', borderRadius: 8, height: 40 }} /></Form.Item></Col>
-                </Row>
+                <VendorBankFields form={vendorForm} namePrefix="bankDetails" labelSize={13} />
+                <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="cust_notes" style={{ marginBottom: 10 }}><Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} /></Form.Item>
               </>
             ),
           })}
         </div>
       </Drawer>
+      */}
 
     </div>
   );

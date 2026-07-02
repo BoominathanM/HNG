@@ -1,5 +1,18 @@
 const mongoose = require('mongoose');
 
+const bankDetailsSchema = new mongoose.Schema({
+  method: { type: String, enum: ['bank', 'upi'], default: 'bank' },
+  accountHolderName: String,
+  accountNo: String,
+  ifsc: String,
+  bankName: String,
+  branchName: String,
+  upiId: String,
+  upiNumber: String,
+  phone: String,
+  email: String,
+}, { _id: false, strict: false });
+
 const vendorSchema = new mongoose.Schema({
   vendorCode: { type: String, unique: true },
   name: { type: String, required: [true, 'Vendor name is required'], trim: true },
@@ -7,8 +20,7 @@ const vendorSchema = new mongoose.Schema({
   email: { type: String, lowercase: true },
   taxId: String,
   address: String,
-  bankDetails: String,
-  discountPercent: { type: Number, default: 0 },
+  bankDetails: bankDetailsSchema,
   vendorType: { type: String, enum: ['raw_material', 'printing'], default: 'raw_material' },
   supplierType: String,
   status: { type: String, enum: ['Active', 'Inactive', 'Blacklisted'], default: 'Active' },

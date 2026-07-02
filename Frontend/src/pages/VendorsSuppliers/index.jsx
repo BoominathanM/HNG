@@ -17,6 +17,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import PhoneInput from '../../components/common/PhoneInput';
+import VendorBankFields from '../../components/common/VendorBankFields';
 import { emailRules, phoneValidator } from '../../utils/validation';
 import dayjs from 'dayjs';
 import useTabAccess from '../../hooks/useTabAccess';
@@ -131,7 +132,6 @@ export default function VendorsSuppliers() {
     address: v.address,
     taxId: v.taxId,
     bankDetails: v.bankDetails,
-    discountPercent: v.discountPercent,
     status: v.status,
     aiSummary: v.aiSummary,
     totalPaid: 0,
@@ -293,8 +293,7 @@ export default function VendorsSuppliers() {
         email: vals.cust_email || '',
         taxId: vals.cust_tax || '',
         address: vals.cust_address || '',
-        bankDetails: vals.cust_bank || '',
-        discountPercent: Number(vals.cust_discount) || 0,
+        bankDetails: vals.bankDetails || {},
         vendorType: 'raw_material',
       }).unwrap();
       vendorForm.resetFields();
@@ -316,9 +315,14 @@ export default function VendorsSuppliers() {
         cust_email: 'procurement@hilton.in',
         cust_tax: '27AABHH5678K1Z2',
         cust_address: 'Koregaon Park, Pune, MH 411001',
-        cust_bank: 'ICICI Bank — A/C 007601234567 | IFSC ICIC0000076',
+        bankDetails: {
+          method: 'bank',
+          accountHolderName: 'Hilton Hotels & Resorts',
+          accountNo: '007601234567',
+          ifsc: 'ICIC0000076',
+          bankName: 'ICICI Bank',
+        },
         cust_notes: 'Premium hotel chain. Monthly billing cycle.',
-        cust_discount: 8,
       });
       setVendorScanLoading(false);
       enqueueSnackbar('AI extracted vendor details from the document!', { variant: 'success' });
@@ -1022,21 +1026,11 @@ export default function VendorsSuppliers() {
           <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="cust_address" style={{ marginBottom: 12 }}>
             <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
           </Form.Item>
-          <Form.Item label={<Text style={{ fontSize: 13 }}>Bank Details</Text>} name="cust_bank" style={{ marginBottom: 12 }}>
-            <Input placeholder="Account / IFSC" style={{ borderRadius: 8, height: 40 }} />
+          <Divider style={{ margin: '4px 0 12px' }} orientationMargin={0} orientation="left"><Text style={{ fontSize: 12, color: '#aaa' }}>Bank Details</Text></Divider>
+          <VendorBankFields form={vendorForm} namePrefix="bankDetails" />
+          <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="cust_notes" style={{ marginBottom: 12 }}>
+            <Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} />
           </Form.Item>
-          <Row gutter={10}>
-            <Col span={14}>
-              <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="cust_notes" style={{ marginBottom: 12 }}>
-                <Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} />
-              </Form.Item>
-            </Col>
-            <Col span={10}>
-              <Form.Item label={<Text style={{ fontSize: 13 }}>Discount (%)</Text>} name="cust_discount" style={{ marginBottom: 12 }}>
-                <InputNumber min={0} max={100} placeholder="0" style={{ width: '100%', borderRadius: 8, height: 40 }} />
-              </Form.Item>
-            </Col>
-          </Row>
           <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
             <Button onClick={() => setShowAddVendorModal(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
             <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Save Vendor</Button>
