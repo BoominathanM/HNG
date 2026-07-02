@@ -3193,6 +3193,7 @@ export default function Sales() {
   const [approveEmergencySalesHead] = useApproveEmergencySalesHeadMutation();
   const [emergencySalesApprovalOrder, setEmergencySalesApprovalOrder] = useState(null);
   const [approvingEmergencyTaskId, setApprovingEmergencyTaskId] = useState(null);
+  const [approvingAllEmergency, setApprovingAllEmergency] = useState(false);
   const { data: emergencyRequestsRaw } = useGetEmergencyRequestsQuery();
   // Group active emergency-dispatch requests by order — an order can hold several
   // products, each raised as its own request, so this must be a list per order key,
@@ -13927,7 +13928,28 @@ export default function Sales() {
                 <Alert type="success" showIcon message="All emergency requests for this order have been approved by Sales." style={{ borderRadius: 8 }} />
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <Text strong>Products awaiting your approval ({pending.length})</Text>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text strong>Products awaiting your approval ({pending.length})</Text>
+                    {pending.length > 1 && (
+                      <Button size="small" danger loading={approvingAllEmergency}
+                        onClick={async () => {
+                          setApprovingAllEmergency(true);
+                          try {
+                            for (const req of pending) {
+                              // eslint-disable-next-line no-await-in-loop
+                              await approveEmergencySalesHead(req.taskId).unwrap();
+                            }
+                            enqueueSnackbar(`Emergency dispatch approved for all ${pending.length} product(s). Ops Head approval is next.`, { variant: 'success' });
+                          } catch (err) {
+                            enqueueSnackbar(err?.data?.message || 'Some approvals failed — please retry the remaining product(s).', { variant: 'error' });
+                          } finally {
+                            setApprovingAllEmergency(false);
+                          }
+                        }}>
+                        Approve All
+                      </Button>
+                    )}
+                  </div>
                   {pending.map((req) => (
                     <div key={req.taskId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, border: '1px solid #ffccc7', background: '#fff2f0', borderRadius: 8, padding: '8px 12px' }}>
                       <div>

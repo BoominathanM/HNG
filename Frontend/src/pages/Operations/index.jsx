@@ -153,6 +153,7 @@ export default function Operations() {
   const [approveEmergencyOpsHead] = useApproveEmergencyOpsHeadMutation();
   const [emergencyOpsApprovalOrder, setEmergencyOpsApprovalOrder] = useState(null);
   const [approvingEmergencyTaskId, setApprovingEmergencyTaskId] = useState(null);
+  const [approvingAllEmergency, setApprovingAllEmergency] = useState(false);
   const { data: emergencyRequestsRaw } = useGetEmergencyRequestsQuery();
   // Group active emergency-dispatch requests by order — one entry per product/Task
   // that raised "Emergency Dispatch" in Task Management (see Sales/index.jsx for the
@@ -2324,7 +2325,28 @@ export default function Operations() {
                 <Alert type="success" showIcon message="All Sales-approved emergency requests for this order have been approved by Operations." style={{ borderRadius: 8 }} />
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <Text strong>Products awaiting your approval ({pending.length})</Text>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text strong>Products awaiting your approval ({pending.length})</Text>
+                    {pending.length > 1 && (
+                      <Button size="small" danger loading={approvingAllEmergency}
+                        onClick={async () => {
+                          setApprovingAllEmergency(true);
+                          try {
+                            for (const req of pending) {
+                              // eslint-disable-next-line no-await-in-loop
+                              await approveEmergencyOpsHead(req.taskId).unwrap();
+                            }
+                            enqueueSnackbar(`Emergency dispatch fully approved for all ${pending.length} product(s). Dispatch team has been notified.`, { variant: 'success' });
+                          } catch (err) {
+                            enqueueSnackbar(err?.data?.message || 'Some approvals failed — please retry the remaining product(s).', { variant: 'error' });
+                          } finally {
+                            setApprovingAllEmergency(false);
+                          }
+                        }}>
+                        Approve All
+                      </Button>
+                    )}
+                  </div>
                   {pending.map((req) => (
                     <div key={req.taskId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, border: '1px solid #ffccc7', background: '#fff2f0', borderRadius: 8, padding: '8px 12px' }}>
                       <div>

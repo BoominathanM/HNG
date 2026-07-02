@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs, Typography, Space,
-  Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, Steps,
+  Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, Steps, Radio,
   DatePicker, InputNumber, Rate, Empty,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
@@ -26,6 +26,7 @@ import {
   useUpdateTaskStatusMutation,
   useDispatchTaskOrderMutation,
   useRequestEmergencyDispatchMutation,
+  useRequestEmergencyDispatchForOrderMutation,
   useDeleteTaskMutation,
   useGetUsersQuery,
   useGetSalesOrdersQuery,
@@ -82,6 +83,7 @@ export default function Tasks() {
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [dispatchTaskOrder, { isLoading: dispatching }] = useDispatchTaskOrderMutation();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
+  const [requestEmergencyDispatchForOrder, { isLoading: requestingOrder }] = useRequestEmergencyDispatchForOrderMutation();
   const [deleteTask] = useDeleteTaskMutation();
 
   // ── Time Management config ───────────────────────────────────────────────
@@ -654,20 +656,23 @@ export default function Tasks() {
           {r.status === 'Completed' && (
             <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>Completed</Tag>
           )}
-          {r.status === 'Completed' && r.orderStatus === 'Dispatched' && (
+          {r.status !== 'Completed' && r.emergencyApproved && (
+            <Tag color="red" icon={<AlertFilled />} style={{ fontSize: 11, margin: 0 }}>Emergency Approved</Tag>
+          )}
+          {(r.status === 'Completed' || r.emergencyApproved) && r.orderStatus === 'Dispatched' && (
             <Button size="small" disabled icon={<CheckCircleOutlined />}
               style={{ color: '#52c41a', borderColor: '#52c41a44', background: '#52c41a11', cursor: 'default' }}>
               Dispatched ✓
             </Button>
           )}
-          {r.status === 'Completed' && r.orderStatus !== 'Dispatched' && (r.isSample || r.paymentStatus === 'Paid') && !r.dispatchStatus && (
+          {(r.status === 'Completed' || r.emergencyApproved) && r.orderStatus !== 'Dispatched' && (r.isSample || r.paymentStatus === 'Paid' || r.emergencyApproved) && !r.dispatchStatus && (
             <Button size="small" type="primary" icon={<ShoppingOutlined />}
               style={{ background: '#52c41a', border: 'none' }}
               onClick={(e) => { e.stopPropagation(); handleDispatchClick(r); }}>
               Dispatch
             </Button>
           )}
-          {r.status === 'Completed' && !r.isSample && r.paymentStatus && r.paymentStatus !== 'Paid' && !r.dispatchStatus && (
+          {r.status === 'Completed' && !r.isSample && !r.emergencyApproved && r.paymentStatus && r.paymentStatus !== 'Paid' && !r.dispatchStatus && (
             <Space direction="vertical" size={2}>
               <Tag color="warning" style={{ fontSize: 10 }}>Awaiting Payment</Tag>
               <Button size="small" danger icon={<ExclamationCircleOutlined />}
@@ -1095,16 +1100,19 @@ export default function Tasks() {
                                   {task.status === 'Completed' && (
                                     <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Completed</Tag>
                                   )}
-                                  {task.status === 'Completed' && task.orderStatus === 'Dispatched' && (
+                                  {task.status !== 'Completed' && task.emergencyApproved && (
+                                    <Tag color="red" icon={<AlertFilled />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Emergency Approved</Tag>
+                                  )}
+                                  {(task.status === 'Completed' || task.emergencyApproved) && task.orderStatus === 'Dispatched' && (
                                     <Button size="small" disabled icon={<CheckCircleOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', background: '#52c41a11', cursor: 'default', width: '100%' }}>
                                       Dispatched ✓
                                     </Button>
                                   )}
-                                  {task.status === 'Completed' && task.orderStatus !== 'Dispatched' && (task.isSample || task.paymentStatus === 'Paid') && !task.dispatchStatus && (
+                                  {(task.status === 'Completed' || task.emergencyApproved) && task.orderStatus !== 'Dispatched' && (task.isSample || task.paymentStatus === 'Paid' || task.emergencyApproved) && !task.dispatchStatus && (
                                     <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}
                                       onClick={(e) => { e.stopPropagation(); handleDispatchClick(task); }}>Dispatch</Button>
                                   )}
-                                  {task.status === 'Completed' && !task.isSample && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
+                                  {task.status === 'Completed' && !task.isSample && !task.emergencyApproved && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
                                     <Button size="small" danger icon={<ExclamationCircleOutlined />} onClick={(e) => { e.stopPropagation(); openEmergency(task); }} style={{ width: '100%' }}>
                                       {task.emergencyRequested ? 'View Emergency' : 'Emergency Dispatch'}
                                     </Button>
@@ -1786,9 +1794,8 @@ export default function Tasks() {
         footer={(() => {
           const t = dispatchVerifyData?.task;
           const ready = dispatchVerifyData
-            && dispatchVerifyData.notDone.length === 0
-            && dispatchVerifyData.unassigned.length === 0
-            && (t?.isSample || t?.paymentStatus === 'Paid')
+            && (t?.emergencyApproved || (dispatchVerifyData.notDone.length === 0 && dispatchVerifyData.unassigned.length === 0))
+            && (t?.isSample || t?.paymentStatus === 'Paid' || t?.emergencyApproved)
             && t?.orderStatus !== 'Dispatched';
           return [
             <Button key="close" onClick={() => setDispatchVerifyOpen(false)}>Close</Button>,
@@ -1812,20 +1819,34 @@ export default function Tasks() {
           const completedCount = orderTasks.filter((t) => t.status === 'Completed').length;
           const allTasksDone = notDone.length === 0;
           const allAssigned = unassigned.length === 0;
-          const readyToDispatch = allTasksDone && allAssigned;
+          const readyToDispatch = (allTasksDone && allAssigned) || task.emergencyApproved;
           const isPaid = task.paymentStatus === 'Paid';
           const isSample = task.isSample;
+          const isEmergencyApproved = task.emergencyApproved;
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
 
+              {isEmergencyApproved && (
+                <Alert
+                  type="info"
+                  showIcon
+                  icon={<AlertFilled />}
+                  message="Emergency Dispatch Approved"
+                  description="Sales Head and Operations Head have both approved an emergency dispatch for this task — the usual all-tasks-done and full-payment requirements are bypassed."
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+
               {/* Overall dispatch readiness */}
-              {readyToDispatch && (isPaid || isSample) ? (
+              {readyToDispatch && (isPaid || isSample || isEmergencyApproved) ? (
                 <Alert
                   type="success"
                   showIcon
                   message="Ready for Dispatch"
-                  description={`All ${orderTasks.length} task(s) on Order ${task.order} are completed and assigned. ${isSample ? 'This is a sample order.' : 'Payment is confirmed.'} You may proceed with dispatch.`}
+                  description={isEmergencyApproved
+                    ? 'This task is covered by an approved Emergency Dispatch. You may proceed with dispatch.'
+                    : `All ${orderTasks.length} task(s) on Order ${task.order} are completed and assigned. ${isSample ? 'This is a sample order.' : 'Payment is confirmed.'} You may proceed with dispatch.`}
                   style={{ borderRadius: 8 }}
                 />
               ) : (
@@ -1953,17 +1974,32 @@ export default function Tasks() {
                 <Text type="secondary" style={{ fontSize: 13 }}>
                   After submitting, <strong>Sales Head</strong> must approve in the Sales page, then <strong>Operations Head</strong> approves in the Operations page.
                 </Text>
-                <Form form={emergencyForm} layout="vertical">
+                <Form form={emergencyForm} layout="vertical" initialValues={{ scope: 'task' }}>
+                  <Form.Item label="Apply Emergency Dispatch To" name="scope">
+                    <Radio.Group>
+                      <Space direction="vertical">
+                        <Radio value="task">This product/kit only — {emergencyTask.product}</Radio>
+                        <Radio value="order">
+                          Full order — all {taskList.filter((t) => t.orderId === emergencyTask.orderId).length || 1} product/kit task(s) on Order {emergencyTask.order}
+                        </Radio>
+                      </Space>
+                    </Radio.Group>
+                  </Form.Item>
                   <Form.Item label="Reason for Emergency Dispatch" name="reason" rules={[{ required: true, message: 'Please provide a reason' }]}>
                     <Input.TextArea rows={3} placeholder="Describe why emergency dispatch is required..." />
                   </Form.Item>
                 </Form>
-                <Button type="primary" danger loading={requesting}
+                <Button type="primary" danger loading={requesting || requestingOrder}
                   onClick={async () => {
                     try {
                       const values = await emergencyForm.validateFields();
-                      await requestEmergencyDispatch({ id: emergencyTask.key, reason: values.reason }).unwrap();
-                      enqueueSnackbar('Emergency dispatch requested — awaiting Sales Head approval', { variant: 'success' });
+                      if (values.scope === 'order' && emergencyTask.orderId) {
+                        const result = await requestEmergencyDispatchForOrder({ orderId: emergencyTask.orderId, reason: values.reason }).unwrap();
+                        enqueueSnackbar(`Emergency dispatch requested for ${result?.data?.length || 'all'} task(s) on this order — awaiting Sales Head approval`, { variant: 'success' });
+                      } else {
+                        await requestEmergencyDispatch({ id: emergencyTask.key, reason: values.reason }).unwrap();
+                        enqueueSnackbar('Emergency dispatch requested — awaiting Sales Head approval', { variant: 'success' });
+                      }
                       setEmergencyDispatchOpen(false);
                       emergencyForm.resetFields();
                     } catch (err) {

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Rate, Row, Space, Statistic, Steps, Table, Tag, Typography,
+  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Radio, Rate, Row, Space, Statistic, Steps, Table, Tag, Typography,
 } from 'antd';
 import {
   AlertFilled, ArrowLeftOutlined, BellOutlined, CheckCircleOutlined, ClockCircleOutlined,
@@ -16,6 +16,7 @@ import {
   useGetTasksQuery,
   useUpdateTaskStatusMutation,
   useRequestEmergencyDispatchMutation,
+  useRequestEmergencyDispatchForOrderMutation,
 } from '../../store/api/apiSlice';
 
 const { Text, Title } = Typography;
@@ -39,9 +40,11 @@ export default function TaskDetail() {
 
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
+  const [requestEmergencyDispatchForOrder, { isLoading: requestingOrder }] = useRequestEmergencyDispatchForOrderMutation();
 
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
   const [emergencyReason, setEmergencyReason] = useState('');
+  const [emergencyScope, setEmergencyScope] = useState('task');
   const [completeModalOpen, setCompleteModalOpen] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
 
@@ -154,7 +157,7 @@ export default function TaskDetail() {
             )}
             {(t.status === 'Pending' || t.status === 'In Progress' || (t.status === 'Done' && t.paymentStatus !== 'Paid')) && !isSample && (
               <Button danger icon={<ExclamationCircleOutlined />}
-                onClick={() => { setEmergencyReason(''); setEmergencyModalOpen(true); }}>
+                onClick={() => { setEmergencyReason(''); setEmergencyScope('task'); setEmergencyModalOpen(true); }}>
                 {t.emergencyRequested ? 'View Emergency Status' : 'Emergency Dispatch'}
               </Button>
             )}
@@ -552,6 +555,15 @@ export default function TaskDetail() {
               <Typography.Text type="secondary" style={{ fontSize: 13 }}>
                 After submitting, this request will be sent to the <strong>Sales Head</strong> (via Sales page) and then to the <strong>Operations Head</strong> (via Operations page) for sequential approval.
               </Typography.Text>
+              <div>
+                <Typography.Text strong style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>Apply Emergency Dispatch To</Typography.Text>
+                <Radio.Group value={emergencyScope} onChange={(e) => setEmergencyScope(e.target.value)}>
+                  <Space direction="vertical">
+                    <Radio value="task">This product/kit only — {t.product || t.taskName}</Radio>
+                    <Radio value="order">Full order — all {siblingTasks.length + 1} product/kit task(s) on Order {t.orderId?.orderCode || '—'}</Radio>
+                  </Space>
+                </Radio.Group>
+              </div>
               <Input.TextArea
                 rows={3}
                 placeholder="Reason for emergency dispatch (required)..."
@@ -561,12 +573,17 @@ export default function TaskDetail() {
               />
               <Button
                 type="primary" danger
-                loading={requesting}
+                loading={requesting || requestingOrder}
                 disabled={!emergencyReason.trim()}
                 onClick={async () => {
                   try {
-                    await requestEmergencyDispatch({ id, reason: emergencyReason }).unwrap();
-                    enqueueSnackbar('Emergency dispatch requested — awaiting Sales Head approval', { variant: 'success' });
+                    if (emergencyScope === 'order' && orderId) {
+                      const result = await requestEmergencyDispatchForOrder({ orderId, reason: emergencyReason }).unwrap();
+                      enqueueSnackbar(`Emergency dispatch requested for ${result?.data?.length || 'all'} task(s) on this order — awaiting Sales Head approval`, { variant: 'success' });
+                    } else {
+                      await requestEmergencyDispatch({ id, reason: emergencyReason }).unwrap();
+                      enqueueSnackbar('Emergency dispatch requested — awaiting Sales Head approval', { variant: 'success' });
+                    }
                     setEmergencyModalOpen(false);
                     setEmergencyReason('');
                   } catch (err) {

@@ -56,6 +56,7 @@ const taskSchema = new mongoose.Schema({
   emergencyOpsApprovedAt: Date,
   emergencyApproved: { type: Boolean, default: false },
   emergencyApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  emergencyApprovedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

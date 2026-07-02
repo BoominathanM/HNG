@@ -492,26 +492,68 @@ exports.requestEmergencyDispatch = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: task });
 });
 
+// Request emergency dispatch for every task under an order at once — the "Full Order"
+// scope option in the Task Management request modal (as opposed to the single-task
+// "This product/kit only" scope handled by requestEmergencyDispatch above). Sales/Ops
+// Head still approve one product/task at a time via the existing per-task endpoints —
+// this only fans the *request* out across every sibling task.
+exports.requestEmergencyDispatchForOrder = asyncHandler(async (req, res, next) => {
+  const { orderId } = req.params;
+  const tasks = await Task.find({ orderId });
+  if (!tasks.length) return next(new AppError('No tasks found for this order', 404));
+
+  const reason = req.body.reason || '';
+  const requestedAt = new Date();
+  await Promise.all(tasks.map((task) => {
+    task.emergencyRequested = true;
+    task.emergencyRequestedAt = requestedAt;
+    task.emergencyReason = reason;
+    task.isEmergency = true;
+    return task.save();
+  }));
+
+  await Order.findByIdAndUpdate(orderId, {
+    $set: { emergencyDispatchRequested: true, emergencyTaskId: tasks[0]._id, isEmergency: true },
+  });
+
+  notifyRoles({
+    modules: ['Sales', 'Operations'],
+    type: 'task',
+    title: 'Emergency Dispatch Requested — Full Order',
+    message: `${tasks.length} task(s) on this order flagged for emergency dispatch. Sales Head + Ops Head approval needed for each.`,
+    link: '/sales',
+  }).catch(() => {});
+
+  res.status(200).json({ success: true, data: tasks });
+});
+
 // Sales Head approval — step 1 of the two-stage emergency approval chain
 exports.approveEmergencySales = asyncHandler(async (req, res, next) => {
   const task = await Task.findById(req.params.id);
   if (!task) return next(new AppError('Task not found', 404));
   if (!task.emergencyRequested) return next(new AppError('Emergency dispatch not requested for this task', 400));
 
+  const approvedAt = new Date();
   task.emergencySalesApproved = true;
   task.emergencySalesApprovedBy = req.user._id;
-  task.emergencySalesApprovedAt = new Date();
+  task.emergencySalesApprovedAt = approvedAt;
 
   const bothApproved = task.emergencyOpsApproved;
   if (bothApproved) {
     task.emergencyApproved = true;
     task.emergencyApprovedBy = req.user._id;
+    task.emergencyApprovedAt = approvedAt;
   }
   await task.save();
 
   if (task.orderId) {
     await Order.findByIdAndUpdate(task.orderId, {
-      $set: { emergencySalesApproved: true, ...(bothApproved ? { emergencyApproved: true } : {}) },
+      $set: {
+        emergencySalesApproved: true,
+        emergencySalesApprovedBy: req.user._id,
+        emergencySalesApprovedAt: approvedAt,
+        ...(bothApproved ? { emergencyApproved: true, emergencyApprovedBy: req.user._id, emergencyApprovedAt: approvedAt } : {}),
+      },
     });
   }
 
@@ -533,16 +575,25 @@ exports.approveEmergencyOps = asyncHandler(async (req, res, next) => {
   if (!task.emergencyRequested) return next(new AppError('Emergency dispatch not requested for this task', 400));
   if (!task.emergencySalesApproved) return next(new AppError('Sales Head must approve before Operations Head', 400));
 
+  const approvedAt = new Date();
   task.emergencyOpsApproved = true;
   task.emergencyOpsApprovedBy = req.user._id;
-  task.emergencyOpsApprovedAt = new Date();
+  task.emergencyOpsApprovedAt = approvedAt;
   task.emergencyApproved = true;
   task.emergencyApprovedBy = req.user._id;
+  task.emergencyApprovedAt = approvedAt;
   await task.save();
 
   if (task.orderId) {
     await Order.findByIdAndUpdate(task.orderId, {
-      $set: { emergencyOpsApproved: true, emergencyApproved: true },
+      $set: {
+        emergencyOpsApproved: true,
+        emergencyOpsApprovedBy: req.user._id,
+        emergencyOpsApprovedAt: approvedAt,
+        emergencyApproved: true,
+        emergencyApprovedBy: req.user._id,
+        emergencyApprovedAt: approvedAt,
+      },
     });
     // Fully-approved emergency dispatch skips the "every task Done" wait — forward the
     // order to the Dispatch queue right away so it shows up in the Dispatch module.

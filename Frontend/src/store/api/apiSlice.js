@@ -694,13 +694,21 @@ export const apiSlice = createApi({
       query: ({ id, reason }) => ({ url: `/tasks/${id}/request-emergency`, method: 'patch', data: { reason } }),
       invalidatesTags: ['Tasks', 'Operations', 'Orders'],
     }),
+    // "Full Order" scope — flags every task/product under the order at once, instead
+    // of just the one task the Emergency Dispatch modal was opened from.
+    requestEmergencyDispatchForOrder: builder.mutation({
+      query: ({ orderId, reason }) => ({ url: `/tasks/order/${orderId}/request-emergency`, method: 'patch', data: { reason } }),
+      invalidatesTags: ['Tasks', 'Operations', 'Orders'],
+    }),
     approveEmergencySalesHead: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}/approve-emergency/sales`, method: 'patch' }),
       invalidatesTags: ['Tasks', 'Operations', 'Orders'],
     }),
     approveEmergencyOpsHead: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}/approve-emergency/ops`, method: 'patch' }),
-      invalidatesTags: ['Tasks', 'Operations', 'Orders'],
+      // Ops approval auto-forwards the order to Dispatch server-side, so the Dispatch
+      // module's list must be invalidated here too, not just Tasks/Operations/Orders.
+      invalidatesTags: ['Tasks', 'Operations', 'Orders', 'Dispatch'],
     }),
     deleteTask: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}`, method: 'delete' }),
@@ -1219,6 +1227,7 @@ export const {
   useApproveEmergencyMutation,
   useDispatchTaskOrderMutation,
   useRequestEmergencyDispatchMutation,
+  useRequestEmergencyDispatchForOrderMutation,
   useApproveEmergencySalesHeadMutation,
   useApproveEmergencyOpsHeadMutation,
   useDeleteTaskMutation,

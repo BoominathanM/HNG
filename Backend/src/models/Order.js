@@ -117,8 +117,14 @@ const orderSchema = new mongoose.Schema({
   // only via strict:false; made explicit so they reliably round-trip on fetch.
   emergencyDispatchRequested: { type: Boolean, default: false },
   emergencySalesApproved: { type: Boolean, default: false },
+  emergencySalesApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  emergencySalesApprovedAt: Date,
   emergencyOpsApproved: { type: Boolean, default: false },
+  emergencyOpsApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  emergencyOpsApprovedAt: Date,
   emergencyApproved: { type: Boolean, default: false },
+  emergencyApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  emergencyApprovedAt: Date,
   emergencyTaskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
   emergencyReason: String,
   // Delivery routing (copied from the originating lead/negotiation at conversion).
