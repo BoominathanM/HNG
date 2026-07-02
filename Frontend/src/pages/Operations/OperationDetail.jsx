@@ -470,6 +470,7 @@ export default function OperationDetail() {
         productIndex: productIndex >= 0 ? productIndex : undefined,
         printingType: vals.printing,
         qty: rowQty,
+        requiredQty: taskRequiredQty,
         assignedTo: u?._id,
         assigneeName: u?.fullName,
         clientName: order?.hotelName || order?.clientName,
@@ -958,6 +959,7 @@ export default function OperationDetail() {
     }
 
     const product = kitCfg?.kitName || (isPersonalized ? (order?.kitDisplayUnit || 'Personalized Kit') : 'Separate Kit');
+    const kitReqQty = kitCfg?.overallQty || 0;
 
     // Each row with a different Task Name + assignee becomes its OWN task in Task
     // Management (not one task with an embedded breakdown).
@@ -973,6 +975,7 @@ export default function OperationDetail() {
         taskType: taskTypeName,
         product,
         qty: rowQty,
+        requiredQty: kitReqQty,
         assignedTo: u?._id,
         assigneeName: u?.fullName,
         clientName: order?.hotelName,

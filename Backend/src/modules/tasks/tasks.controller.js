@@ -8,6 +8,7 @@ const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { computeTaskEstimate, computeRating } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
+const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
 
 // Resolve the time-management fields for a task being created, from its configured
 // per-unit time × qty. plannedStartTime defaults to now (the assignment time);
@@ -206,30 +207,17 @@ exports.getTask = asyncHandler(async (req, res, next) => {
 exports.createTask = asyncHandler(async (req, res, next) => {
   const { orderId, productIndex, product } = req.body;
 
-  // Prevent duplicate when linked to an order + specific product slot + task name.
-  // Task name is part of the key so a product can have several differently-named
-  // tasks (e.g. "Packing" and "Sealing") assigned separately.
+  // Same task name can be assigned more than once for the same product slot (e.g.
+  // split across two staff) as long as the combined qty doesn't exceed the line
+  // item's required quantity — only a genuine quantity overflow is blocked.
   if (orderId) {
-    const dupFilter = { orderId };
-    if (productIndex !== undefined && productIndex !== null && !isNaN(productIndex)) {
-      dupFilter.productIndex = Number(productIndex);
-    } else if (product) {
-      dupFilter.product = product;
-    }
-    if (req.body.taskName) dupFilter.taskName = req.body.taskName;
-    // Also key on assignee: kit-packing splits the same task name (e.g. "Packing")
-    // across multiple assignees/rows in one submission, which must NOT be treated
-    // as a duplicate — only a literal repeat (same product+task name+assignee) is.
-    if (req.body.assignedTo) dupFilter.assignedTo = req.body.assignedTo;
-    if (Object.keys(dupFilter).length > 1) {
-      const existing = await Task.findOne(dupFilter);
-      if (existing) {
-        return next(new AppError(
-          `A "${req.body.taskName || 'task'}" task for "${product || `product #${productIndex}`}" on this order already exists (${existing.taskCode}). Delete the existing task first if you need to reassign.`,
-          409
-        ));
-      }
-    }
+    const overflowMsg = await checkTaskQuantityOverflow({
+      orderId, productIndex, product,
+      taskName: req.body.taskName,
+      qty: req.body.qty,
+      requiredQty: req.body.requiredQty,
+    });
+    if (overflowMsg) return next(new AppError(overflowMsg, 409));
   }
 
   // Prevent duplicate Kit Packing task per order

@@ -7,6 +7,7 @@ const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { computeTaskEstimate } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
+const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
 
 // ─── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
 exports.getOrders = asyncHandler(async (req, res) => {
@@ -88,25 +89,16 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
   const { productIndex, product } = req.body;
   const orderId = req.params.id;
 
-  // Prevent duplicate: same product slot + same task name on the same order already
-  // has a task. Task name is part of the key so a product can have several
-  // differently-named tasks (e.g. "Packing" and "Sealing") assigned separately.
-  const dupFilter = { orderId };
-  if (productIndex !== undefined && productIndex !== null && !isNaN(productIndex)) {
-    dupFilter.productIndex = Number(productIndex);
-  } else if (product) {
-    dupFilter.product = product;
-  }
-  if (req.body.taskName) dupFilter.taskName = req.body.taskName;
-  if (Object.keys(dupFilter).length > 1) {
-    const existing = await Task.findOne(dupFilter);
-    if (existing) {
-      return next(new AppError(
-        `A "${req.body.taskName || 'task'}" task for "${product || `product #${productIndex}`}" on this order already exists (${existing.taskCode}). Delete the existing task first if you need to reassign.`,
-        409
-      ));
-    }
-  }
+  // Same task name can be assigned more than once for the same product slot (e.g.
+  // split across two staff) as long as the combined qty doesn't exceed the line
+  // item's required quantity — only a genuine quantity overflow is blocked.
+  const overflowMsg = await checkTaskQuantityOverflow({
+    orderId, productIndex, product,
+    taskName: req.body.taskName,
+    qty: req.body.qty,
+    requiredQty: req.body.requiredQty,
+  });
+  if (overflowMsg) return next(new AppError(overflowMsg, 409));
 
   // Prevent duplicate Kit Packing task per order
   if (req.body.taskType === 'Kit Packing') {

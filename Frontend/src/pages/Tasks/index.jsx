@@ -695,6 +695,63 @@ export default function Tasks() {
     return matchSearch && matchType && matchPriority && matchStatus;
   });
 
+  // Current Task tab: one row per order, expandable to reveal every task under it
+  // (each of which can itself expand to show its Task Breakdown sub-tasks).
+  const groupedByOrder = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((t) => {
+      const groupKey = t.orderId || `no-order-${t.key}`;
+      if (!map.has(groupKey)) {
+        map.set(groupKey, {
+          key: groupKey,
+          orderId: t.orderId,
+          order: t.order,
+          client: t.client,
+          deliveryDate: t.deliveryDate,
+          orderStatus: t.orderStatus,
+          tasks: [],
+        });
+      }
+      map.get(groupKey).tasks.push(t);
+    });
+    return Array.from(map.values()).map((g) => ({
+      ...g,
+      total: g.tasks.length,
+      done: g.tasks.filter((t) => t.status === 'Completed').length,
+      inProgress: g.tasks.filter((t) => t.status === 'In Progress').length,
+      pending: g.tasks.filter((t) => t.status === 'Pending').length,
+      hasEmergency: g.tasks.some((t) => t.isEmergency || t.priority === 'Urgent'),
+    }));
+  }, [filtered]);
+
+  const orderColumns = [
+    {
+      title: 'Order ID', dataIndex: 'order',
+      render: (v, r) => (
+        <Space size={4}>
+          {r.hasEmergency && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
+          <Text strong style={{ color: '#B11E6A' }}>{v}</Text>
+        </Space>
+      ),
+    },
+    { title: 'Client', dataIndex: 'client', render: (v) => v || '—' },
+    {
+      title: 'Tasks', key: 'taskCount',
+      render: (_, r) => <Tag color="blue">{r.total} task{r.total !== 1 ? 's' : ''}</Tag>,
+    },
+    {
+      title: 'Progress', key: 'progress',
+      render: (_, r) => (
+        <Space size={4} wrap>
+          {r.done > 0 && <Tag color="success">{r.done} done</Tag>}
+          {r.inProgress > 0 && <Tag color="processing">{r.inProgress} in progress</Tag>}
+          {r.pending > 0 && <Tag color="default">{r.pending} pending</Tag>}
+        </Space>
+      ),
+    },
+    { title: 'Delivery Date', dataIndex: 'deliveryDate', responsive: ['lg'], render: (v) => v || '—' },
+  ];
+
   // ── Render ────────────────────────────────────────────────────────────
   return (
     <div className="page-container fade-in">
@@ -915,49 +972,62 @@ export default function Tasks() {
                   <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                     <div className="table-responsive" style={{ padding: '4px' }}>
                       <Table
-                        dataSource={filtered}
-                        columns={columns}
+                        dataSource={groupedByOrder}
+                        columns={orderColumns}
+                        rowKey="key"
                         pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                         size="small"
                         scroll={{ x: 'max-content' }}
                         expandable={{
-                          rowExpandable: (record) => (record.subTasks || []).length > 0,
-                          expandedRowRender: (record) => (
+                          expandedRowRender: (group) => (
                             <Table
-                              dataSource={record.subTasks.map((s, i) => ({ ...s, key: i }))}
+                              dataSource={group.tasks}
+                              columns={columns}
+                              rowKey="key"
                               pagination={false}
                               size="small"
-                              columns={[
-                                { title: 'Task', dataIndex: 'label', render: (v) => <Text strong>{v || '—'}</Text> },
-                                { title: 'Qty', dataIndex: 'qty', render: (v) => v ? Number(v).toLocaleString() : '—' },
-                                {
-                                  title: 'Assigned To', dataIndex: 'assigneeName',
-                                  render: (v) => v
-                                    ? <Space size={4}><Avatar size={16} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>
-                                    : <Text type="secondary">Unassigned</Text>,
+                              scroll={{ x: 'max-content' }}
+                              expandable={{
+                                rowExpandable: (record) => (record.subTasks || []).length > 0,
+                                expandedRowRender: (record) => (
+                                  <Table
+                                    dataSource={record.subTasks.map((s, i) => ({ ...s, key: i }))}
+                                    pagination={false}
+                                    size="small"
+                                    columns={[
+                                      { title: 'Task', dataIndex: 'label', render: (v) => <Text strong>{v || '—'}</Text> },
+                                      { title: 'Qty', dataIndex: 'qty', render: (v) => v ? Number(v).toLocaleString() : '—' },
+                                      {
+                                        title: 'Assigned To', dataIndex: 'assigneeName',
+                                        render: (v) => v
+                                          ? <Space size={4}><Avatar size={16} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>
+                                          : <Text type="secondary">Unassigned</Text>,
+                                      },
+                                      {
+                                        title: 'Status', dataIndex: 'done',
+                                        render: (v) => v
+                                          ? <Tag color="success" icon={<CheckCircleOutlined />}>Done</Tag>
+                                          : <Tag color="processing">In Progress</Tag>,
+                                      },
+                                    ]}
+                                  />
+                                ),
+                              }}
+                              onRow={(record) => ({
+                                onClick: () => navigate(`/tasks/${record.key}`),
+                                style: {
+                                  cursor: 'pointer',
+                                  background: (record.isEmergency || record.priority === 'Urgent')
+                                    ? (isDark ? '#2d1516' : '#fff2f0')
+                                    : '',
+                                  borderLeft: (record.isEmergency || record.priority === 'Urgent')
+                                    ? '3px solid #ff4d4f'
+                                    : '',
                                 },
-                                {
-                                  title: 'Status', dataIndex: 'done',
-                                  render: (v) => v
-                                    ? <Tag color="success" icon={<CheckCircleOutlined />}>Done</Tag>
-                                    : <Tag color="processing">In Progress</Tag>,
-                                },
-                              ]}
+                              })}
                             />
                           ),
                         }}
-                        onRow={(record) => ({
-                          onClick: () => navigate(`/tasks/${record.key}`),
-                          style: {
-                            cursor: 'pointer',
-                            background: (record.isEmergency || record.priority === 'Urgent')
-                              ? (isDark ? '#2d1516' : '#fff2f0')
-                              : '',
-                            borderLeft: (record.isEmergency || record.priority === 'Urgent')
-                              ? '3px solid #ff4d4f'
-                              : '',
-                          },
-                        })}
                       />
                     </div>
                   </Card>
