@@ -107,36 +107,105 @@ exports.getTasks = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, total, page, data: tasks });
 });
 
+// Map a kit's resolved display-unit tab (or legacy logoType) to the StickerRequest
+// stickerType queue it is actually tracked under (mirrors Operations/data.js kit routing).
+const KIT_TAB_TO_STICKER_TYPE = { Box: 'Box', Ziplock: 'Frosted Ziplock', 'Butter Paper': 'Butter Paper', Sticker: 'Sticker' };
+const normYN = (v) => { const s = String(v ?? '').trim().toUpperCase(); return s === 'YES' || s === 'NO' ? s : ''; };
+const DESIGN_READY_STATUSES = ['Approved', 'Done', 'In Process', 'Received'];
+
+// Which design queue (Sticker | Box | Frosted Ziplock | Butter Paper) this order line is
+// actually tracked under, so its readiness is checked against the RIGHT StickerRequest —
+// not just any request for the same product name. '' = no design step required.
+function resolveDesignType(it, order) {
+  const isKitItem = !!(it.isKit || it.kitType || it.kitName);
+  if (isKitItem) {
+    const tab = it.displayUnitTab || order.displayUnitTab || '';
+    if (KIT_TAB_TO_STICKER_TYPE[tab]) return KIT_TAB_TO_STICKER_TYPE[tab];
+    if (['Box', 'Frosted Ziplock', 'Butter Paper', 'Sticker'].includes(it.logoType)) return it.logoType;
+    return '';
+  }
+  if (normYN(it.sticker) === 'YES') return 'Sticker';
+  if (it.logoType && it.logoType !== 'None') return it.logoType;
+  return '';
+}
+
 // Suggested Tasks: orders ready (or partially ready) for production but not yet fully tasked.
 // Readiness is computed from inventory stock + packaging/sticker design status per the doc.
 exports.getSuggestedTasks = asyncHandler(async (req, res) => {
   const InventoryItem = require('../../models/InventoryItem');
   const StickerRequest = require('../../models/StickerRequest');
+  const Kit = require('../../models/Kit');
   const Order = require('../../models/Order');
 
-  const orders = await Order.find({ deletedAt: null, status: { $in: ['In Production', 'Dispatch Ready'] } })
-    .select('orderCode clientName items printingStatus isUrgent').lean();
+  // Only orders still awaiting production — once forwarded to Dispatch Ready the order
+  // has already left this workflow, so it shouldn't keep resurfacing here.
+  const orders = await Order.find({ deletedAt: null, status: 'In Production' })
+    .select('orderCode clientName items printingStatus isUrgent displayUnitTab').lean();
   const existingTasks = await Task.find({ orderId: { $ne: null } }).select('orderId productIndex').lean();
   const taskedSet = new Set(existingTasks.map((t) => `${t.orderId}-${t.productIndex ?? 'x'}`));
 
-  // Build a stock lookup by item name (case-insensitive).
-  const stockItems = await InventoryItem.find({ deletedAt: null }).select('name currentStock').lean();
+  // Build a stock lookup by item name (case-insensitive). NOTE: the field is `itemName`,
+  // not `name` — selecting/reading `name` silently returned undefined for every item,
+  // which meant EVERY product here always showed "Stock 0" regardless of real inventory.
+  const stockItems = await InventoryItem.find({ deletedAt: null }).select('itemName currentStock').lean();
   const stockByName = {};
-  stockItems.forEach((s) => { stockByName[(s.name || '').toLowerCase()] = s.currentStock; });
+  stockItems.forEach((s) => { stockByName[(s.itemName || '').toLowerCase()] = s.currentStock; });
+
+  // Kits aren't InventoryItems — they're a Kit (components list). Build a lookup so kit
+  // line items report real component-stock readiness instead of a false "no match → 0".
+  const kits = await Kit.find({ deletedAt: null }).select('kitName products').lean();
+  const kitByName = {};
+  kits.forEach((k) => { kitByName[(k.kitName || '').toLowerCase()] = k.products || []; });
 
   const suggestions = [];
   for (const o of orders) {
-    const stickerReqs = await StickerRequest.find({ orderId: o._id }).select('product status').lean();
+    const stickerReqs = await StickerRequest.find({ orderId: o._id }).select('product status stickerType category').lean();
     (o.items || []).forEach((it, idx) => {
       if (taskedSet.has(`${o._id}-${idx}`)) return; // already has a task
-      const stock = stockByName[(it.itemName || '').toLowerCase()] ?? 0;
-      const stockReady = stock >= (it.qty || 0);
-      const sticker = stickerReqs.find((s) => (s.product || '').toLowerCase() === (it.itemName || '').toLowerCase());
-      const stickerReady = !it.logoType || it.logoType === 'None' || (sticker && ['Approved', 'Done', 'In Process', 'Received'].includes(sticker.status));
-      const printingReady = !o.printingStatus || o.printingStatus === 'Closed' || o.printingStatus === 'Received';
+      const productKey = it.product || it.itemName || it.kitName || '';
+      const isKitItem = !!(it.isKit || it.kitType || it.kitName);
+      const requiredQty = it.overallQty || it.qty || 0;
+
+      // ── Stock readiness ──
+      let stock;
+      let stockReady;
+      if (isKitItem) {
+        const components = kitByName[(it.kitName || '').toLowerCase()];
+        if (components && components.length) {
+          // How many full kits can be assembled right now, limited by the scarcest component.
+          stock = Math.min(...components.map((c) => {
+            const compStock = stockByName[(c.productName || '').toLowerCase()] ?? 0;
+            return Math.floor(compStock / (c.qty || 1));
+          }));
+          stockReady = stock >= requiredQty;
+        } else {
+          // Kit not found in the Kit catalog (legacy/unregistered) — can't verify components,
+          // so don't falsely block on an unrelated/zero match.
+          stock = null;
+          stockReady = true;
+        }
+      } else {
+        stock = stockByName[(it.itemName || '').toLowerCase()] ?? 0;
+        stockReady = stock >= requiredQty;
+      }
+
+      // ── Design (Sticker / Box / Frosted Ziplock / Butter Paper) readiness ──
+      const designType = resolveDesignType(it, o);
+      let stickerReady = true;
+      if (designType) {
+        const match = stickerReqs.find((s) => (s.product || '').toLowerCase() === productKey.toLowerCase()
+          && s.stickerType === designType
+          && (!it.category || !s.category || s.category === it.category));
+        stickerReady = !!match && DESIGN_READY_STATUSES.includes(match.status);
+      }
+
+      // ── Printing readiness — only gate items that actually need a print step. ──
+      const needsPrintStep = normYN(it.printing) === 'YES';
+      const printingReady = !needsPrintStep || !o.printingStatus || ['Closed', 'Received'].includes(o.printingStatus);
+
       const pending = [];
       if (!stockReady) pending.push('Inventory stock');
-      if (!stickerReady) pending.push('Sticker/printing');
+      if (!stickerReady) pending.push(designType ? `${designType} design` : 'Sticker/printing');
       if (!printingReady) pending.push('Printing approval');
       suggestions.push({
         id: `${o._id}-${idx}`,
@@ -144,6 +213,7 @@ exports.getSuggestedTasks = asyncHandler(async (req, res) => {
         product: it.itemName, qty: it.qty, logoType: it.logoType,
         isUrgent: o.isUrgent,
         inventoryStock: stock,
+        designType,
         stockReady, stickerReady, printingReady,
         fullyReady: stockReady && stickerReady && printingReady,
         pending, // components still pending (task still shown to help planning)

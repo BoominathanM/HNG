@@ -870,8 +870,8 @@ export default function Tasks() {
                                     <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{s.product}</Text>
                                     <Space size={4} wrap style={{ marginBottom: 10 }}>
                                       {s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
-                                      <Tag color={s.stockReady ? 'green' : 'red'}>Stock {s.inventoryStock}</Tag>
-                                      <Tag color={s.stickerReady ? 'green' : 'orange'}>Sticker {s.stickerReady ? '✓' : '⏳'}</Tag>
+                                      <Tag color={s.stockReady ? 'green' : 'red'}>Stock {s.inventoryStock ?? '—'}</Tag>
+                                      <Tag color={s.stickerReady ? 'green' : 'orange'}>{s.designType || 'Design'} {s.stickerReady ? '✓' : '⏳'}</Tag>
                                       <Tag color={s.printingReady ? 'green' : 'orange'}>Print {s.printingReady ? '✓' : '⏳'}</Tag>
                                     </Space>
                                     <Alert
