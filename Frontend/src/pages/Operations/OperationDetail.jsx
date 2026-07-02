@@ -49,6 +49,7 @@ import {
   useGetOperationOrdersQuery,
   useGetStickerRequestsQuery,
   useUpdateOperationOrderStatusMutation,
+  useUpdateItemPrintingStatusMutation,
   useAssignTaskMutation,
   useAssignTasksPerProductMutation,
   useSplitPartialDeliveryMutation,
@@ -208,6 +209,7 @@ export default function OperationDetail() {
   const [createStickerRequest] = useCreateStickerRequestMutation();
   const [uploadStickerDesign] = useUploadStickerDesignMutation();
   const [updateStickerStatus] = useUpdateStickerStatusMutation();
+  const [updateItemPrintingStatus] = useUpdateItemPrintingStatusMutation();
   // Kit display-unit packaging approval design file (optional)
   const [duDesignFile, setDuDesignFile] = useState(null);
 
@@ -1783,7 +1785,11 @@ export default function OperationDetail() {
       title: 'Printing Status',
       key: 'printingStatus',
       render: (_, record) => {
-        const status = printingStatusValues[record.key];
+        // Persisted on the order item itself (survives reload regardless of whether a
+        // design/sticker request exists for this row yet) — 'Yet to Receive' is the
+        // initial value once the row has loaded. Local optimistic override fills the
+        // gap between the change and the refetch.
+        const status = printingStatusValues[record.key] ?? (record.printingStatus || 'Yet to Receive');
         if (status === 'Closed') {
           return (
             <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 6, padding: '2px 10px' }}>
@@ -1796,8 +1802,15 @@ export default function OperationDetail() {
             value={status}
             placeholder="Select status"
             style={{ width: 140 }}
-            onChange={(val) => {
+            onChange={async (val) => {
               setPrintingStatusValues((prev) => ({ ...prev, [record.key]: val }));
+              try {
+                await updateItemPrintingStatus({ orderId: order.key, itemKey: record.key, printingStatus: val }).unwrap();
+              } catch {
+                enqueueSnackbar('Failed to save printing status', { variant: 'error' });
+                setPrintingStatusValues((prev) => ({ ...prev, [record.key]: record.printingStatus || undefined }));
+                return;
+              }
               if (val === 'Closed') {
                 openAssignModal(record, order);
               }

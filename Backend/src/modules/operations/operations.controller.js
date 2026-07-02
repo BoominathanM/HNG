@@ -231,6 +231,25 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
   });
 });
 
+// Persist the per-row Printing Status (Yet to Receive / Received / Closed) shown in the
+// Operations product spec table. Rows key by item._id when present, else by array index
+// (mirrors the frontend's `key: it._id ? String(it._id) : String(idx)`), and printingStatus
+// is not part of the schema — it survives via the item sub-schema's strict:false.
+exports.updateItemPrintingStatus = asyncHandler(async (req, res, next) => {
+  const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
+  if (!order) return next(new AppError('Order not found', 404));
+  const { itemKey } = req.params;
+  const byId = order.items.findIndex((it) => String(it._id) === String(itemKey));
+  const targetIdx = byId !== -1 ? byId : Number(itemKey);
+  if (!Number.isInteger(targetIdx) || !order.items[targetIdx]) {
+    return next(new AppError('Order item not found', 404));
+  }
+  order.items[targetIdx].printingStatus = req.body.printingStatus;
+  order.markModified('items');
+  await order.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, data: order });
+});
+
 // Mark / unmark an order as emergency (top-of-list priority in Operations).
 exports.setOrderEmergency = asyncHandler(async (req, res, next) => {
   const isEmergency = req.body.isEmergency !== false && req.body.isEmergency !== 'false';

@@ -238,7 +238,7 @@ export default function Inventory() {
   const [rejectMovement] = useRejectMovementMutation();
   const [submitStockCheck] = useSubmitStockCheckMutation();
 
-  const suppliers = suppliersData?.data || [];
+  const suppliers = useMemo(() => suppliersData?.data || [], [suppliersData]);
   const { data: customersData } = useGetVendorsQuery({ type: 'customer' });
   const [createVendorMutation] = useCreateVendorMutation();
   const vendorsList = useMemo(() => (customersData?.data || []).map((v) => ({
@@ -268,6 +268,9 @@ export default function Inventory() {
     materialCategory: i.materialCategory,
     brand: i.brand,
     productAttributes: i.productAttributes || {},
+    vendorId: i.vendorId?._id || i.vendorId || undefined,
+    vendorName: i.vendorId?.name || '',
+    sellers: i.vendorId?.name ? [{ name: i.vendorId.name, stock: i.currentStock }] : [],
   })), [invData]);
 
   // Lookup product attributes by item name — used to surface attributes for kit
@@ -532,6 +535,18 @@ export default function Inventory() {
     );
   }, [materialStocksList, materialStockSearch]);
 
+  // Vendor dropdown for the "Add Purchase" (Material Stock) modal — same raw-material
+  // vendor list used on the Inventory Add Item form. Keeps the currently-edited record's
+  // vendor selectable even if it doesn't match an existing vendor name (legacy free-text entries).
+  const materialStockVendorOptions = useMemo(() => {
+    const opts = suppliers.map((v) => ({ label: v.name, value: v.name }));
+    const currentVendor = editingMaterialStock?.vendor;
+    if (currentVendor && !opts.some((o) => o.value === currentVendor)) {
+      opts.push({ label: currentVendor, value: currentVendor });
+    }
+    return opts;
+  }, [suppliers, editingMaterialStock]);
+
   const openMaterialStockModal = (item = null) => {
     if (!requireAccess(item ? 'edit' : 'add')) return;
     setEditingMaterialStock(item);
@@ -763,6 +778,7 @@ export default function Inventory() {
         sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         gstPercent: Number(vals.gstPercent) || 0,
         hsnCode: vals.hsn || '',
+        vendorId: vals.vendorId || null,
         productAttributes: cleanAttrs,
       };
       if (editingItem) {
@@ -1020,7 +1036,7 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
-          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
+          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, vendorId: r.vendorId, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
           {/* Add Stock / Sell Stock — hidden per request
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
@@ -1861,7 +1877,15 @@ export default function Inventory() {
             </Col>
           </Row>
           <Form.Item label="Vendor / Supplier" name="vendor">
-            <Input placeholder="Vendor name" style={{ borderRadius: 8 }} />
+            <Select
+              showSearch
+              allowClear
+              optionFilterProp="label"
+              placeholder="Select vendor / supplier"
+              style={{ borderRadius: 8 }}
+              options={materialStockVendorOptions}
+              notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No vendors yet — add one in Vendors & Suppliers</span>}
+            />
           </Form.Item>
           <Form.Item label="Notes" name="notes">
             <Input.TextArea rows={2} placeholder="Optional notes…" style={{ borderRadius: 8 }} />
@@ -2445,6 +2469,20 @@ export default function Inventory() {
             }
           }}
         >
+          <Row gutter={16}>
+            <Col xs={24}>
+              <Form.Item label="Vendor" name="vendorId" tooltip="Which vendor this item is purchased from. Stock added under this item is tracked against this vendor.">
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Select vendor / supplier"
+                  options={suppliers.map((v) => ({ label: v.name, value: v._id }))}
+                  notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No vendors yet — add one in Vendors & Suppliers</span>}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
           <Row gutter={16}>
             <Col xs={24} sm={12}><Form.Item label="Item Name" name="name" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} sm={12}>

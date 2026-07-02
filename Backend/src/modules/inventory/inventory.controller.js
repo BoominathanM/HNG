@@ -13,14 +13,14 @@ exports.getItems = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [items, total] = await Promise.all([
-    InventoryItem.find(filter).sort('itemName').skip((page - 1) * limit).limit(limit),
+    InventoryItem.find(filter).populate('vendorId', 'name vendorCode phone').sort('itemName').skip((page - 1) * limit).limit(limit),
     InventoryItem.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: items });
 });
 
 exports.getItem = asyncHandler(async (req, res, next) => {
-  const item = await InventoryItem.findOne({ _id: req.params.id, deletedAt: null });
+  const item = await InventoryItem.findOne({ _id: req.params.id, deletedAt: null }).populate('vendorId', 'name vendorCode phone');
   if (!item) return next(new AppError('Item not found', 404));
   res.status(200).json({ success: true, data: item });
 });

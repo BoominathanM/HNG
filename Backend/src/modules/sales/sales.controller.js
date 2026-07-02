@@ -4,6 +4,8 @@ const Negotiation = require('../../models/Negotiation');
 const Order = require('../../models/Order');
 const Complaint = require('../../models/Complaint');
 const Party = require('../../models/Party');
+const InventoryItem = require('../../models/InventoryItem');
+const StockMovement = require('../../models/StockMovement');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -446,6 +448,65 @@ async function upsertPartyByName(clientName, createdBy) {
   return party._id;
 }
 
+// Deduct ordered quantities from Inventory when an Order is created (both lead→order
+// conversion and direct/sample orders), so stock reflects goods committed to the order.
+// Kit items: `item.qty` on a kit row is the component qty PER KIT (see Kit.products), so the
+// actual quantity consumed is item.qty × (number of kits ordered), taken from the matching
+// order.kitOrders[].overallQty (per kitId) or the legacy single-kit order.kitOverallQty.
+async function deductInventoryForOrder(order, userId) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const kitOrders = Array.isArray(order.kitOrders) ? order.kitOrders : [];
+  for (const it of items) {
+    const perUnitQty = Number(it.qty) || 0;
+    if (perUnitQty <= 0) continue;
+    let qty = perUnitQty;
+    if (it.isKit) {
+      // Sample orders (convertLeadToSample / convertOrderToSample on the frontend) force every
+      // product row's qty to 1 ("one sample unit") but still carry over the source order/lead's
+      // original kitOrders/kitOverallQty — so the multiplier must NOT apply here, or a 1-unit
+      // sample would wrongly deduct the full original kit-count worth of components.
+      const kitCount = order.orderCategory === 'SAMPLE'
+        ? 1
+        : (Number(kitOrders.find((o) => o && o.kitId && o.kitId === it.kitId)?.overallQty) || Number(order.kitOverallQty) || 0);
+      if (kitCount <= 0) continue; // unknown kit count — skip rather than guess
+      qty = perUnitQty * kitCount;
+    }
+    try {
+      let item = null;
+      if (it.itemId) item = await InventoryItem.findOne({ _id: it.itemId, deletedAt: null });
+      if (!item) {
+        const name = it.itemName || it.name;
+        if (name) {
+          const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          item = await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null });
+        }
+      }
+      if (!item) continue;
+      const qtyBefore = item.currentStock;
+      item.currentStock = Math.max(0, qtyBefore - qty);
+      await item.save({ validateBeforeSave: false });
+      await StockMovement.create({
+        itemId: item._id,
+        movementType: 'OUT',
+        qty,
+        qtyBefore,
+        qtyAfter: item.currentStock,
+        referenceType: 'Order',
+        referenceId: order._id,
+        approvalStatus: 'Approved',
+        approvedBy: userId,
+        createdBy: userId,
+      });
+      if (item.minStock > 0 && item.currentStock < item.minStock) {
+        const isOut = item.currentStock === 0;
+        notifyRoles({ modules: ['Inventory', 'Purchase'], type: 'low_stock', title: isOut ? 'Out of Stock' : 'Low Stock Alert', message: `${item.itemName} — ${item.currentStock}/${item.minStock} ${item.unit || 'units'} remaining (Order ${order.orderCode})`, link: '/inventory' }).catch(() => {});
+      }
+    } catch (err) {
+      console.error(`Inventory deduction failed for order ${order.orderCode}, item "${it.itemName || it.name}":`, err.message);
+    }
+  }
+}
+
 exports.convertToOrder = asyncHandler(async (req, res, next) => {
   const negotiation = await Negotiation.findById(req.params.id);
   if (!negotiation) return next(new AppError('Negotiation not found', 404));
@@ -550,6 +611,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
       $push: { statusHistory: { status: 'Converted', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created from negotiation' } },
     });
   }
+  await deductInventoryForOrder(order, req.user._id);
   notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} is now In Production`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: order });
 });
@@ -578,6 +640,7 @@ exports.createDirectOrder = asyncHandler(async (req, res) => {
     createdBy: req.user._id,
     statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });
+  await deductInventoryForOrder(order, req.user._id);
   notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} created directly`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: order });
 });

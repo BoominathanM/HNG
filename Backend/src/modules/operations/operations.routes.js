@@ -13,6 +13,7 @@ router.patch('/orders/:id/status', ctrl.updateOrderStatus);
 router.post('/orders/:id/assign-task', ctrl.assignTask);
 router.post('/orders/:id/assign-tasks-per-product', ctrl.assignTasksPerProduct);
 router.patch('/orders/:id/emergency', ctrl.setOrderEmergency);
+router.patch('/orders/:id/items/:itemKey/printing-status', ctrl.updateItemPrintingStatus);
 router.post('/orders/:id/partial-split', ctrl.splitPartialDelivery);
 
 router.get('/stickers', ctrl.getStickerRequests);

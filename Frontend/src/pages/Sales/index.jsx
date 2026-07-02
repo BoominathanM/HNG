@@ -4464,7 +4464,10 @@ export default function Sales() {
       ...p, // preserve all inventory-driven attributes (shape, fragrance, color, bottleType, …)
       itemName: p.name || p.kitType || '',
       name: p.name || p.kitType || '',
-      itemId: p.itemId || undefined,
+      // Product selection stores the inventory _id as `inventoryItemId` (see ProductItem's
+      // handleProductSelect); `itemId` was never populated from it, so Order.items[].itemId
+      // (used for inventory stock deduction on conversion) was always empty.
+      itemId: p.inventoryItemId || p.itemId || undefined,
       unit: p.unit,
       price: Number(p.rate) || 0,
       rate: Number(p.rate) || 0,

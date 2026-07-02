@@ -761,6 +761,14 @@ export const apiSlice = createApi({
       query: ({ id, isEmergency }) => ({ url: `/operations/orders/${id}/emergency`, method: 'patch', data: { isEmergency } }),
       invalidatesTags: ['Operations'],
     }),
+    updateItemPrintingStatus: builder.mutation({
+      query: ({ orderId, itemKey, printingStatus }) => ({
+        url: `/operations/orders/${orderId}/items/${itemKey}/printing-status`,
+        method: 'patch',
+        data: { printingStatus },
+      }),
+      invalidatesTags: ['Operations'],
+    }),
     splitPartialDelivery: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/operations/orders/${id}/partial-split`, method: 'post', data }),
       invalidatesTags: ['Operations'],
@@ -1240,6 +1248,7 @@ export const {
   useGetTodaysOrdersQuery,
   useGetTodaysDispatchQuery,
   useUpdateOperationOrderStatusMutation,
+  useUpdateItemPrintingStatusMutation,
   useAssignTaskMutation,
   useGetStickerRequestsQuery,
   useCreateStickerRequestMutation,

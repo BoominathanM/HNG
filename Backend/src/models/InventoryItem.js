@@ -19,6 +19,8 @@ const inventoryItemSchema = new mongoose.Schema({
   packingMaterial: String,
   materialCategory: String,
   brand: String,
+  // Vendor this item is purchased from — set when the item is added/edited in Inventory.
+  vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
   productAttributes: { type: mongoose.Schema.Types.Mixed, default: {} },
   deletedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
