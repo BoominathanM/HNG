@@ -90,6 +90,10 @@ export const statusPill = {
   'Not Started': 'default', Available: 'success', Busy: 'warning',
 };
 
+// Same Paid/Partial/Pending enum used by Sales, Billing and Task Management, so
+// the order's live payment status reads identically wherever it's shown.
+export const paymentStatusColor = { Paid: 'success', Partial: 'orange', Pending: 'warning' };
+
 export const FLOW_STAGES = [
   'Order Received', 'Sent To Design', 'Client Approved', 'Printing', 'Stock Received', 'Task Assigned',
 ];

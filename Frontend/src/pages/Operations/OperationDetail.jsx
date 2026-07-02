@@ -83,6 +83,7 @@ import {
   ORDER_CATEGORY_META,
   PAYMENT_LABELS,
   packTabFromString,
+  paymentStatusColor,
   statusPill,
 } from './data';
 
@@ -225,6 +226,10 @@ export default function OperationDetail() {
     orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
     specsSummary: o.specsSummary || '', paymentTerms: o.paymentTerms || o.leadId?.paymentTerms || '',
     paymentReminderDate: o.paymentReminderDate,
+    // Live Paid/Partial/Pending resolved backend-side from invoices/order payment
+    // collection — the same source Sales/Billing/Task Management read, so this
+    // always matches those modules.
+    paymentStatus: o.paymentStatus || 'Pending',
     totalAmount: (() => {
       const prods = o.products?.length ? o.products : (o.leadId?.products || []);
       const kitAware = computeRecordGrandTotal({ ...o, products: prods });
@@ -2235,6 +2240,9 @@ export default function OperationDetail() {
                   <Space wrap>
                     <Tag color="blue" style={{ fontSize: 13, padding: '4px 14px', borderRadius: 20 }}>
                       {PAYMENT_LABELS[order.paymentTerms] || order.paymentTerms || '-'}
+                    </Tag>
+                    <Tag color={paymentStatusColor[order.paymentStatus] || 'default'} style={{ fontSize: 13, padding: '4px 14px', borderRadius: 20 }}>
+                      {order.paymentStatus || 'Pending'}
                     </Tag>
                     {order.paymentTerms === '50_ADVANCE_50_AFTER' && order.paymentReminderDate && (
                       <Tag color="orange" style={{ fontSize: 12 }}>

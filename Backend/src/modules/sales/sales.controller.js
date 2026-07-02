@@ -628,8 +628,20 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
   );
   if (!order) return next(new AppError('Order not found', 404));
   // If this update recorded a payment (paidAmount / balance / paymentCollection),
-  // propagate the new paid/partial status to the order's tasks for Dispatch.
+  // keep any linked Billing invoice's advance/balance in sync too. Sales's quick
+  // "Add Payment Entry" writes straight onto the order — without this, the linked
+  // invoice (and everything that trusts it as the source of truth: Billing,
+  // Operations, Task Management via resolveOrderPaymentStatus) went stale and kept
+  // showing Partial/Pending even after Sales showed the order as fully Paid.
   if (req.body.paidAmount !== undefined || req.body.balance !== undefined || req.body.paymentCollection !== undefined) {
+    const paid = Number(order.paidAmount) || 0;
+    const Invoice = require('../../models/Invoice');
+    const invoices = await Invoice.find({ orderId: order._id });
+    await Promise.all(invoices.map((inv) => {
+      inv.advanceAmount = paid;
+      inv.status = paid >= (inv.total || 0) ? 'Paid' : paid > 0 ? 'Partially Paid' : 'Pending';
+      return inv.save({ validateBeforeSave: false }).catch(() => {});
+    }));
     await syncOrderTasksPayment(order._id).catch(() => {});
   }
   res.status(200).json({ success: true, data: order });

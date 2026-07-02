@@ -101,9 +101,25 @@ exports.getTasks = asyncHandler(async (req, res) => {
       .populate('assignedTo', 'fullName role')
       .sort('-createdAt')
       .skip((page - 1) * limit)
-      .limit(limit),
+      .limit(limit)
+      .lean(),
     Task.countDocuments(filter),
   ]);
+
+  // The cached Task.paymentStatus field only gets refreshed by code paths that
+  // remember to call syncOrderTasksPayment — resolve it live per order here so
+  // Task Management always matches what Sales/Billing show for the same order,
+  // instead of occasionally lagging behind a payment recorded elsewhere.
+  const orderIds = [...new Set(tasks.filter((t) => t.orderId?._id).map((t) => String(t.orderId._id)))];
+  const statusByOrder = {};
+  await Promise.all(orderIds.map(async (id) => {
+    statusByOrder[id] = await resolveOrderPaymentStatus(id).catch(() => null);
+  }));
+  tasks.forEach((t) => {
+    const oid = t.orderId?._id && String(t.orderId._id);
+    if (oid && statusByOrder[oid]) t.paymentStatus = statusByOrder[oid];
+  });
+
   res.status(200).json({ success: true, total, page, data: tasks });
 });
 
@@ -238,6 +254,13 @@ exports.getTask = asyncHandler(async (req, res, next) => {
   // Enrich with the product master (Brand, Packing Material, Material Category) for this task's product.
   const InventoryItem = require('../../models/InventoryItem');
   const result = task.toObject();
+
+  // Resolve payment status live (see getTasks) so this view matches Sales/Billing
+  // even if the cached field wasn't refreshed by whichever path last touched payment.
+  if (result.orderId?._id) {
+    const livePaymentStatus = await resolveOrderPaymentStatus(result.orderId._id).catch(() => null);
+    if (livePaymentStatus) result.paymentStatus = livePaymentStatus;
+  }
 
   // Resolve the order line item this task corresponds to (by index first, then by name).
   let lineItem = null;

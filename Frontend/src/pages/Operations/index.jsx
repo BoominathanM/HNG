@@ -90,6 +90,7 @@ import {
   normYNOps,
   PACKAGING_TYPE_LABELS,
   packTabFromString,
+  paymentStatusColor,
   statusPill,
 } from './data';
 
@@ -262,6 +263,10 @@ export default function Operations() {
     orderReceivedStock: o.orderReceivedStock || 0, notifications: o.notifications || [],
     specsSummary: o.specsSummary || '',
     paymentTerms: o.paymentTerms || o.leadId?.paymentTerms || '',
+    // Live Paid/Partial/Pending resolved backend-side from invoices/order payment
+    // collection — the same source Sales/Billing/Task Management read, so this
+    // always matches those modules instead of a locally-recomputed value.
+    paymentStatus: o.paymentStatus || 'Pending',
     totalAmount: o.total || 0, advance: o.advancePaid || 0,
     expectedDelivery: o.expectedDeliveryDate || o.leadId?.orderDeliveryDate || null,
     isUrgent: o.isUrgent || o.leadId?.isUrgent || false,
@@ -673,6 +678,14 @@ export default function Operations() {
       ),
     },
     {
+      title: 'Payment',
+      dataIndex: 'paymentStatus',
+      render: (value, record) => record.orderCategory === 'SAMPLE'
+        ? <Text type="secondary">—</Text>
+        : <Tag color={paymentStatusColor[value] || 'default'}>{value || 'Pending'}</Tag>,
+      responsive: ['md'],
+    },
+    {
       title: 'Order Delivery Date',
       dataIndex: 'expectedDelivery',
       render: (value) => value ? new Date(value).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '—',
@@ -843,6 +856,17 @@ export default function Operations() {
         render: (value) => {
           const meta = ORDER_CATEGORY_META[value] || ORDER_CATEGORY_META.separate_product;
           return <Tag style={{ background: `${meta.color}1a`, color: meta.color, border: `1px solid ${meta.color}55`, borderRadius: 12, fontSize: 11, fontWeight: 600 }}>{meta.label}</Tag>;
+        },
+      },
+      {
+        title: 'Payment',
+        key: 'paymentStatus',
+        width: 90,
+        render: (_, record) => {
+          const ord = apiOrders.find((o) => o.id === record.orderId);
+          if (record.isKitChild || record.orderCategory === 'SAMPLE') return <Text type="secondary">—</Text>;
+          const status = ord?.paymentStatus || 'Pending';
+          return <Tag color={paymentStatusColor[status] || 'default'}>{status}</Tag>;
         },
       },
       {

@@ -22,9 +22,18 @@ exports.getOrders = asyncHandler(async (req, res) => {
       .populate('leadId', 'products packagingIncludes packagingIncludesQty paymentProofs orderDeliveryDate hotelLogoUrl logoNeeded splitDates isEmergency isUrgent kitDisplayUnit kitDisplayUnitType displayUnit displayUnitTab kitSize kitOrders kitOverallQty selectedKits kitSticker kitLogo kitPrinting leadType contactPerson phone email alternativeName alternativeRole alternativePhone gstNumber gstPercent billingName salesPerson location locationCity deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms billType detailedAddress city state pincode destination hotelType rooms occupancy')
       .sort('-createdAt')
       .skip((page - 1) * limit)
-      .limit(limit),
+      .limit(limit)
+      .lean(),
     Order.countDocuments(filter),
   ]);
+
+  // Resolve each order's live payment status from the same source Sales/Billing/
+  // Task Management use (invoices first, then order payment collection) so
+  // Operations always shows Paid/Partial/Pending in sync with those modules.
+  await Promise.all(orders.map(async (o) => {
+    o.paymentStatus = await resolveOrderPaymentStatus(o._id).catch(() => 'Pending');
+  }));
+
   res.status(200).json({ success: true, total, page, data: orders });
 });
 
