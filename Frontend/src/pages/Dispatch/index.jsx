@@ -106,7 +106,7 @@ export default function Dispatch() {
   const [aiParsed, setAiParsed] = useState(null);
   const [aiForm] = Form.useForm();
 
-  // Product verify state: { [orderId]: { dispatchType, verifiedProducts: Set } }
+  // Product verify state: { [orderId]: { verifiedProducts: Set } }
   const [productVerify, setProductVerify] = useState({});
   // Expanded rows for product panel
   const [expandedRows, setExpandedRows] = useState([]);
@@ -410,15 +410,6 @@ export default function Dispatch() {
     }, 1200);
   };
 
-  const setDispatchType = (orderId, type) => {
-    setProductVerify(prev => ({
-      ...prev,
-      [orderId]: { ...(prev[orderId] || {}), dispatchType: type, verifiedProducts: prev[orderId]?.verifiedProducts || new Set() },
-    }));
-    // Auto-expand row when dispatch type is chosen
-    if (!expandedRows.includes(orderId)) setExpandedRows(r => [...r, orderId]);
-  };
-
   const toggleVerifyProduct = async (orderId, productKey, itemId) => {
     const willVerify = !productVerify[orderId]?.verifiedProducts?.has(productKey);
     setProductVerify(prev => {
@@ -455,9 +446,6 @@ export default function Dispatch() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontWeight: 600 }}>
             {record.id}
-          </Tag>
-          <Tag color={state.dispatchType === 'Partial Dispatch' ? 'orange' : 'blue'} style={{ borderRadius: 12 }}>
-            {state.dispatchType || 'Full Dispatch'}
           </Tag>
           <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>— Product Details</Text>
         </div>
@@ -574,22 +562,6 @@ export default function Dispatch() {
       {
         title: 'Status', dataIndex: 'status', width: 140,
         render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, fontSize: 13, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag>,
-      },
-      {
-        title: 'Dispatch Type', key: 'dispatchType', width: 160,
-        render: (_, r) => (
-          <Select
-            size="small"
-            value={productVerify[r.key]?.dispatchType || undefined}
-            placeholder="Select type"
-            style={{ width: 145 }}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(v) => setDispatchType(r.key, v)}
-          >
-            <Option value="Full Dispatch">Full Dispatch</Option>
-            <Option value="Partial Dispatch">Partial Dispatch</Option>
-          </Select>
-        ),
       },
       {
         title: 'Actions', key: 'actions', width: 110,

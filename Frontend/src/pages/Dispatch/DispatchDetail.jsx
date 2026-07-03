@@ -367,17 +367,35 @@ export default function DispatchDetail() {
   const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
   const sectionBg = isDark ? '#161622' : '#fafbff';
 
-  const toggleVerify = async (productKey, itemId) => {
-    const willVerify = !verifiedProducts.has(productKey);
+  // A row reads as verified if this session toggled it OR the backend already has it
+  // stored (row.verified, persisted by a previous verifyItem call) — without this
+  // fallback, verified products flip back to "Pending" on every reload/revisit even
+  // though the DB still has them marked verified.
+  const isRowVerified = (row) => verifiedProducts.has(row.key) || !!row.verified;
+
+  // A personalized kit header has no itemId of its own (it represents the whole kit, not
+  // a single DispatchRecord line item) — it carries `childItemIds` instead, the ids of
+  // every component item (Paste/Brush/Shampoo…) that make up that kit. Verifying the kit
+  // must persist verification for all of them, or the click never reaches the backend and
+  // "Verify Kit" silently resets on the next reload.
+  const toggleVerify = async (row) => {
+    const productKey = row.key;
+    const alreadyVerified = isRowVerified(row);
+    const willVerify = !alreadyVerified;
     setVerifiedProducts(prev => {
       const next = new Set(prev);
-      next.has(productKey) ? next.delete(productKey) : next.add(productKey);
+      if (alreadyVerified) next.delete(productKey); else next.add(productKey);
       return next;
     });
-    // Persist verification to the backend (only when marking verified and we have a real item id)
-    if (willVerify && itemId) {
+    const itemIds = (row.childItemIds && row.childItemIds.length) ? row.childItemIds : (row.itemId ? [row.itemId] : []);
+    if (willVerify && itemIds.length) {
       try {
-        await verifyItem({ id, itemId }).unwrap();
+        // Sequential, not Promise.all: each verifyItem call reads-then-saves the whole
+        // dispatch document, so firing them concurrently lets a later save's stale copy
+        // overwrite an earlier item's verified flag back to false.
+        for (const itemId of itemIds) {
+          await verifyItem({ id, itemId }).unwrap();
+        }
       } catch {
         enqueueSnackbar('Failed to persist verification', { variant: 'error' });
       }
@@ -565,6 +583,18 @@ export default function DispatchDetail() {
         const isPersonalized = (ko.category || 'separate_kit') === 'personalized';
         const headerKey = `_kh_${kitId || ki}`;
 
+        const kitItems = hasKitMeta
+          ? rawItems.filter(it => {
+              if (kitId && it.kitId) return String(it.kitId) === kitId;
+              const refLow = (it.kitType || it.kitName || '').toLowerCase();
+              const koLow = (ko.kitName || ko.kitType || '').toLowerCase();
+              return refLow && koLow && refLow === koLow;
+            })
+          : (kitOrdersList.length === 1 ? rawItems : []);
+        // The ids of every component item that makes up this kit — verifying the kit
+        // header persists verification against each of these (see toggleVerify).
+        const kitItemIds = kitItems.map(it => it._id).filter(Boolean);
+
         const headerRow = {
           key: headerKey,
           type: 'kit_header',
@@ -574,20 +604,13 @@ export default function DispatchDetail() {
           boxes: isPersonalized ? orderBoxes : 0,
           category: ko.category || 'separate_kit',
           isPersonalized,
-          verified: false,
+          // Verified once every component item is verified server-side (survives reload).
+          verified: kitItems.length > 0 && kitItems.every(it => it.verified),
+          childItemIds: kitItemIds,
         };
         rows.push(headerRow);
         // Personalized kit = ONE verifiable unit at kit level (not per-item)
         if (isPersonalized) verifiable.push(headerRow);
-
-        const kitItems = hasKitMeta
-          ? rawItems.filter(it => {
-              if (kitId && it.kitId) return String(it.kitId) === kitId;
-              const refLow = (it.kitType || it.kitName || '').toLowerCase();
-              const koLow = (ko.kitName || ko.kitType || '').toLowerCase();
-              return refLow && koLow && refLow === koLow;
-            })
-          : (kitOrdersList.length === 1 ? rawItems : []);
 
         kitItems.forEach((item, ii) => {
           const totalQty = Number(item.qty) || 0;
@@ -858,7 +881,7 @@ export default function DispatchDetail() {
                       </Space>
                       <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>
                         <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
-                        {verifiedProducts.size} / {products.length} verified
+                        {products.filter(isRowVerified).length} / {products.length} verified
                       </Text>
                     </div>
                     <Table
@@ -902,15 +925,15 @@ export default function DispatchDetail() {
                                         <InboxOutlined style={{ color: cm.color }} />
                                         <Text style={{ color: cm.color, fontSize: 12 }}>{row.boxes} box{row.boxes !== 1 ? 'es' : ''}</Text>
                                       </Space>
-                                      {verifiedProducts.has(row.key) ? (
+                                      {isRowVerified(row) ? (
                                         <Button size="small" icon={<CheckSquareOutlined />}
                                           style={{ borderColor: '#52c41a', color: '#52c41a' }}
-                                          onClick={() => toggleVerify(row.key, null)}
+                                          onClick={() => toggleVerify(row)}
                                         >Unverify</Button>
                                       ) : (
                                         <Button size="small" icon={<CheckSquareOutlined />}
                                           style={{ background: '#B11E6A', border: 'none', color: '#fff' }}
-                                          onClick={() => toggleVerify(row.key, null)}
+                                          onClick={() => toggleVerify(row)}
                                         >Verify Kit</Button>
                                       )}
                                     </div>
@@ -951,7 +974,7 @@ export default function DispatchDetail() {
                             return {};
                           },
                           render: (_, row) => (row.type === 'kit_header' || row.type === 'personalized_item') ? null : (
-                            verifiedProducts.has(row.key)
+                            isRowVerified(row)
                               ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
                               : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>
                           ),
@@ -965,10 +988,10 @@ export default function DispatchDetail() {
                           },
                           render: (_, row) => (row.type === 'kit_header' || row.type === 'personalized_item') ? null : (
                             <Button size="small" icon={<CheckSquareOutlined />}
-                              style={verifiedProducts.has(row.key) ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                              onClick={() => toggleVerify(row.key, row.itemId)}
+                              style={isRowVerified(row) ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
+                              onClick={() => toggleVerify(row)}
                             >
-                              {verifiedProducts.has(row.key) ? 'Unverify' : 'Verify'}
+                              {isRowVerified(row) ? 'Unverify' : 'Verify'}
                             </Button>
                           ),
                         },
@@ -1275,6 +1298,11 @@ export default function DispatchDetail() {
                   <div style={{ marginTop: 6, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>
                     Clicking this will notify <strong>{order.salesPerson}</strong> (Sales) and <strong>{order.client}</strong> (Customer) that the order has been dispatched and is on the way.
                   </div>
+                  {!dispatched && !finishedDispatch && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: '#fa8c16' }}>
+                      Confirm Dispatch above first to enable this step.
+                    </div>
+                  )}
                 </div>
                 {finishedDispatch ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#52c41a', fontWeight: 600 }}>
@@ -1287,7 +1315,8 @@ export default function DispatchDetail() {
                     size="large"
                     block
                     icon={<WhatsAppOutlined />}
-                    style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14 }}
+                    disabled={!dispatched}
+                    style={{ background: dispatched ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14 }}
                     onClick={handleFinishedDispatch}
                   >
                     Finished Dispatch — Notify Sales &amp; Customer

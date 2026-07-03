@@ -418,6 +418,12 @@ exports.dispatchOrder = asyncHandler(async (req, res, next) => {
   if (order.status === 'Dispatched') {
     return next(new AppError('This order has already been dispatched.', 400));
   }
+  // Order was already forwarded (either by this same action or by the "all tasks Done"
+  // automation in updateTaskStatus) — its DispatchRecord already exists, so re-forwarding
+  // here would just be a redundant no-op that re-fires notifications. Block it outright.
+  if (order.status === 'Dispatch Ready') {
+    return next(new AppError('This order has already been sent to Dispatch.', 400));
+  }
 
   // Gate 2 — payment must be settled, unless this is a sample order or an approved Emergency Dispatch.
   const isSample = order.orderCategory === 'SAMPLE' || order.leadId?.leadType === 'SAMPLE';

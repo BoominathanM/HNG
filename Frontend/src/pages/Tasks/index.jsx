@@ -45,6 +45,12 @@ const priorityColor = { Urgent: '#6b1240', High: '#B11E6A', Medium: '#C94F8A', L
 const statusColor = { 'In Progress': '#B11E6A', Pending: '#C94F8A', Completed: '#6b1240' };
 const paymentColor = { Paid: 'success', Pending: 'warning', Partial: 'orange' };
 
+// Once an order has been forwarded to the Dispatch queue (either automatically, when
+// all its tasks finish, or manually via the "Dispatch" button here), it must not be
+// forwarded again — the order sits as 'Dispatch Ready' until the Dispatch module itself
+// confirms it (flips to 'Dispatched'). Both states mean "already sent, don't re-send".
+const isAlreadySentToDispatch = (orderStatus) => orderStatus === 'Dispatch Ready' || orderStatus === 'Dispatched';
+
 const kanbanCols = [
   { key: 'Pending', label: 'Pending', color: '#C94F8A' },
   { key: 'In Progress', label: 'In Progress', color: '#B11E6A' },
@@ -665,7 +671,13 @@ export default function Tasks() {
               Dispatched ✓
             </Button>
           )}
-          {(r.status === 'Completed' || r.emergencyApproved) && r.orderStatus !== 'Dispatched' && (r.isSample || r.paymentStatus === 'Paid' || r.emergencyApproved) && !r.dispatchStatus && (
+          {(r.status === 'Completed' || r.emergencyApproved) && r.orderStatus === 'Dispatch Ready' && (
+            <Button size="small" disabled icon={<CheckCircleOutlined />}
+              style={{ color: '#52c41a', borderColor: '#52c41a44', background: '#52c41a11', cursor: 'default' }}>
+              Sent to Dispatch
+            </Button>
+          )}
+          {(r.status === 'Completed' || r.emergencyApproved) && !isAlreadySentToDispatch(r.orderStatus) && (r.isSample || r.paymentStatus === 'Paid' || r.emergencyApproved) && !r.dispatchStatus && (
             <Button size="small" type="primary" icon={<ShoppingOutlined />}
               style={{ background: '#52c41a', border: 'none' }}
               onClick={(e) => { e.stopPropagation(); handleDispatchClick(r); }}>
@@ -1108,7 +1120,12 @@ export default function Tasks() {
                                       Dispatched ✓
                                     </Button>
                                   )}
-                                  {(task.status === 'Completed' || task.emergencyApproved) && task.orderStatus !== 'Dispatched' && (task.isSample || task.paymentStatus === 'Paid' || task.emergencyApproved) && !task.dispatchStatus && (
+                                  {(task.status === 'Completed' || task.emergencyApproved) && task.orderStatus === 'Dispatch Ready' && (
+                                    <Button size="small" disabled icon={<CheckCircleOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', background: '#52c41a11', cursor: 'default', width: '100%' }}>
+                                      Sent to Dispatch
+                                    </Button>
+                                  )}
+                                  {(task.status === 'Completed' || task.emergencyApproved) && !isAlreadySentToDispatch(task.orderStatus) && (task.isSample || task.paymentStatus === 'Paid' || task.emergencyApproved) && !task.dispatchStatus && (
                                     <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}
                                       onClick={(e) => { e.stopPropagation(); handleDispatchClick(task); }}>Dispatch</Button>
                                   )}
@@ -1796,7 +1813,7 @@ export default function Tasks() {
           const ready = dispatchVerifyData
             && (t?.emergencyApproved || (dispatchVerifyData.notDone.length === 0 && dispatchVerifyData.unassigned.length === 0))
             && (t?.isSample || t?.paymentStatus === 'Paid' || t?.emergencyApproved)
-            && t?.orderStatus !== 'Dispatched';
+            && !isAlreadySentToDispatch(t?.orderStatus);
           return [
             <Button key="close" onClick={() => setDispatchVerifyOpen(false)}>Close</Button>,
             ready && (
@@ -1838,8 +1855,21 @@ export default function Tasks() {
                 />
               )}
 
+              {isAlreadySentToDispatch(task.orderStatus) && (
+                <Alert
+                  type="success"
+                  showIcon
+                  icon={<CheckCircleOutlined />}
+                  message={task.orderStatus === 'Dispatched' ? 'Already Dispatched' : 'Already Sent to Dispatch'}
+                  description={task.orderStatus === 'Dispatched'
+                    ? 'This order has already been dispatched.'
+                    : 'This order has already been forwarded to the Dispatch queue. Complete the remaining steps from the Dispatch module.'}
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+
               {/* Overall dispatch readiness */}
-              {readyToDispatch && (isPaid || isSample || isEmergencyApproved) ? (
+              {!isAlreadySentToDispatch(task.orderStatus) && (readyToDispatch && (isPaid || isSample || isEmergencyApproved) ? (
                 <Alert
                   type="success"
                   showIcon
@@ -1861,7 +1891,7 @@ export default function Tasks() {
                   }
                   style={{ borderRadius: 8 }}
                 />
-              )}
+              ))}
 
               {/* Order & payment summary */}
               <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
