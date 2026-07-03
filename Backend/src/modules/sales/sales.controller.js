@@ -484,19 +484,47 @@ async function deductInventoryForOrder(order, userId) {
       if (!item) continue;
       const qtyBefore = item.currentStock;
       item.currentStock = Math.max(0, qtyBefore - qty);
+
+      // Draw down the oldest purchaseDate batches first (FIFO across vendors), so an older
+      // vendor's stock is always used up before a newer purchase — one StockMovement per
+      // vendor batch touched, so Stock History shows the correct vendor next to each qty.
+      const segments = [];
+      let remaining = qty;
+      const batches = (item.purchaseBatches || [])
+        .filter((b) => b.remainingQty > 0)
+        .sort((a, b) => new Date(a.purchaseDate) - new Date(b.purchaseDate));
+      for (const batch of batches) {
+        if (remaining <= 0) break;
+        const take = Math.min(batch.remainingQty, remaining);
+        batch.remainingQty -= take;
+        remaining -= take;
+        segments.push({ qty: take, vendorId: batch.vendorId, vendorName: batch.vendorName, purchaseDate: batch.purchaseDate });
+      }
+      // No batch history (legacy stock) or batches ran short — attribute the rest to the
+      // item's current vendor with no specific purchase date, same as pre-batch behavior.
+      if (remaining > 0) segments.push({ qty: remaining, vendorId: item.vendorId });
+      item.markModified('purchaseBatches');
       await item.save({ validateBeforeSave: false });
-      await StockMovement.create({
-        itemId: item._id,
-        movementType: 'OUT',
-        qty,
-        qtyBefore,
-        qtyAfter: item.currentStock,
-        referenceType: 'Order',
-        referenceId: order._id,
-        approvalStatus: 'Approved',
-        approvedBy: userId,
-        createdBy: userId,
-      });
+
+      let runningAfter = qtyBefore;
+      for (const seg of segments) {
+        runningAfter -= seg.qty;
+        await StockMovement.create({
+          itemId: item._id,
+          movementType: 'OUT',
+          qty: seg.qty,
+          qtyBefore: runningAfter + seg.qty,
+          qtyAfter: Math.max(0, runningAfter),
+          referenceType: 'Order',
+          referenceId: order._id,
+          vendorId: seg.vendorId || undefined,
+          vendorName: seg.vendorName,
+          purchaseDate: seg.purchaseDate,
+          approvalStatus: 'Approved',
+          approvedBy: userId,
+          createdBy: userId,
+        });
+      }
       if (item.minStock > 0 && item.currentStock < item.minStock) {
         const isOut = item.currentStock === 0;
         notifyRoles({ modules: ['Inventory', 'Purchase'], type: 'low_stock', title: isOut ? 'Out of Stock' : 'Low Stock Alert', message: `${item.itemName} — ${item.currentStock}/${item.minStock} ${item.unit || 'units'} remaining (Order ${order.orderCode})`, link: '/inventory' }).catch(() => {});

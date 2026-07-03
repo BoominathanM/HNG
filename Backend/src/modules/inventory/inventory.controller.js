@@ -1,5 +1,6 @@
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
+const Vendor = require('../../models/Vendor');
 const Kit = require('../../models/Kit');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
@@ -27,20 +28,33 @@ exports.getItem = asyncHandler(async (req, res, next) => {
 
 exports.createItem = asyncHandler(async (req, res) => {
   const itemCode = await generateCode('ITEM');
+  const openingStock = req.body.openingStock || 0;
+  const purchaseDate = req.body.purchaseDate || Date.now();
+  let vendorName;
+  if (req.body.vendorId) {
+    const vendor = await Vendor.findById(req.body.vendorId);
+    vendorName = vendor?.name;
+  }
   const item = await InventoryItem.create({
     ...req.body,
     itemCode,
-    currentStock: req.body.openingStock || 0,
+    currentStock: openingStock,
+    purchaseBatches: openingStock > 0
+      ? [{ vendorId: req.body.vendorId || undefined, vendorName, purchaseDate, qty: openingStock, remainingQty: openingStock }]
+      : [],
     createdBy: req.user._id,
   });
-  if (item.openingStock > 0) {
+  if (openingStock > 0) {
     await StockMovement.create({
       itemId: item._id,
       movementType: 'IN',
-      qty: item.openingStock,
+      qty: openingStock,
       qtyBefore: 0,
-      qtyAfter: item.openingStock,
+      qtyAfter: openingStock,
       referenceType: 'Opening',
+      vendorId: req.body.vendorId || undefined,
+      vendorName,
+      purchaseDate,
       approvalStatus: 'Approved',
       approvedBy: req.user._id,
       approvedAt: Date.now(),
@@ -53,13 +67,44 @@ exports.createItem = asyncHandler(async (req, res) => {
 exports.updateItem = asyncHandler(async (req, res, next) => {
   const item = await InventoryItem.findOne({ _id: req.params.id, deletedAt: null });
   if (!item) return next(new AppError('Item not found', 404));
-  const { productAttributes, ...rest } = req.body;
+  const { productAttributes, addStockQty, purchaseDate, ...rest } = req.body;
   Object.assign(item, rest);
   if (productAttributes !== undefined) {
     item.productAttributes = productAttributes;
     item.markModified('productAttributes');
   }
-  await item.save({ validateBeforeSave: false });
+  // A new purchase of this same product from the (possibly different) vendor selected above —
+  // recorded as its own batch so FIFO deduction can draw down older vendors' stock first.
+  const qtyToAdd = Number(addStockQty) || 0;
+  if (qtyToAdd > 0) {
+    const qtyBefore = item.currentStock;
+    let vendorName;
+    if (item.vendorId) {
+      const vendor = await Vendor.findById(item.vendorId);
+      vendorName = vendor?.name;
+    }
+    const batchDate = purchaseDate || Date.now();
+    item.purchaseBatches.push({ vendorId: item.vendorId || undefined, vendorName, purchaseDate: batchDate, qty: qtyToAdd, remainingQty: qtyToAdd });
+    item.currentStock = qtyBefore + qtyToAdd;
+    await item.save({ validateBeforeSave: false });
+    await StockMovement.create({
+      itemId: item._id,
+      movementType: 'IN',
+      qty: qtyToAdd,
+      qtyBefore,
+      qtyAfter: item.currentStock,
+      referenceType: 'Purchase',
+      vendorId: item.vendorId || undefined,
+      vendorName,
+      purchaseDate: batchDate,
+      approvalStatus: 'Approved',
+      approvedBy: req.user._id,
+      approvedAt: Date.now(),
+      createdBy: req.user._id,
+    });
+  } else {
+    await item.save({ validateBeforeSave: false });
+  }
   res.status(200).json({ success: true, data: item });
 });
 
@@ -167,7 +212,7 @@ exports.getStockHistory = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [movements, total] = await Promise.all([
-    StockMovement.find(filter).populate('itemId', 'itemName unit').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    StockMovement.find(filter).populate('itemId', 'itemName unit').populate('vendorId', 'name').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     StockMovement.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: movements });

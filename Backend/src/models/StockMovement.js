@@ -13,6 +13,11 @@ const stockMovementSchema = new mongoose.Schema({
   supplyPrice: Number,
   sellPrice: Number,
   departureDate: Date,
+  // Which vendor batch this movement drew from/added to — vendorName is a point-in-time snapshot
+  // (kept even if the vendor is later renamed/deleted) so Stock History always shows a vendor.
+  vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
+  vendorName: String,
+  purchaseDate: Date,
   partyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Party' },
   approvalStatus: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

@@ -270,7 +270,22 @@ export default function Inventory() {
     productAttributes: i.productAttributes || {},
     vendorId: i.vendorId?._id || i.vendorId || undefined,
     vendorName: i.vendorId?.name || '',
-    sellers: i.vendorId?.name ? [{ name: i.vendorId.name, stock: i.currentStock }] : [],
+    purchaseBatches: i.purchaseBatches || [],
+    // One row per vendor this product has ever been bought from, with the qty still remaining
+    // from that vendor's batches — so buying the same product from a different vendor shows up
+    // here instead of overwriting the previous vendor's stock.
+    sellers: (() => {
+      const batches = (i.purchaseBatches || []).filter((b) => b.remainingQty > 0);
+      if (batches.length === 0) {
+        return i.vendorId?.name ? [{ name: i.vendorId.name, stock: i.currentStock }] : [];
+      }
+      const byVendor = {};
+      batches.forEach((b) => {
+        const key = b.vendorName || 'Unknown vendor';
+        byVendor[key] = (byVendor[key] || 0) + (b.remainingQty || 0);
+      });
+      return Object.entries(byVendor).map(([name, stock]) => ({ name, stock }));
+    })(),
   })), [invData]);
 
   // Lookup product attributes by item name — used to surface attributes for kit
@@ -449,6 +464,7 @@ export default function Inventory() {
     action: m.movementType === 'IN' ? 'Stock Added' : m.movementType === 'OUT' ? 'Stock Deducted' : 'Adjustment',
     qty: m.qty,
     unit: m.itemId?.unit || '',
+    vendor: m.vendorId?.name || m.vendorName || '—',
     source: m.referenceType || '—',
     person: 'Admin',
     notes: m.reason || '',
@@ -676,7 +692,7 @@ export default function Inventory() {
 
   const filteredHistory = stockHistory.filter(h => {
     const q = historySearch.toLowerCase();
-    const matchSearch = !q || h.item.toLowerCase().includes(q) || (h.code || '').toLowerCase().includes(q) || (h.source || '').toLowerCase().includes(q) || (h.invoiceNo || '').toLowerCase().includes(q);
+    const matchSearch = !q || h.item.toLowerCase().includes(q) || (h.code || '').toLowerCase().includes(q) || (h.source || '').toLowerCase().includes(q) || (h.invoiceNo || '').toLowerCase().includes(q) || (h.vendor || '').toLowerCase().includes(q);
     const matchAction = !historyActionFilter || h.action === historyActionFilter;
     const matchDate = !historyDateRange || !historyDateRange[0] || !historyDateRange[1] || (
       h.date >= historyDateRange[0].format('YYYY-MM-DD') && h.date <= historyDateRange[1].format('YYYY-MM-DD')
@@ -779,11 +795,12 @@ export default function Inventory() {
         gstPercent: Number(vals.gstPercent) || 0,
         hsnCode: vals.hsn || '',
         vendorId: vals.vendorId || null,
+        purchaseDate: vals.purchaseDate ? vals.purchaseDate.toISOString() : new Date().toISOString(),
         productAttributes: cleanAttrs,
       };
       if (editingItem) {
-        await updateItemMutation({ id: editingItem.key, ...payload }).unwrap();
-        enqueueSnackbar('Item updated', { variant: 'success' });
+        await updateItemMutation({ id: editingItem.key, ...payload, addStockQty: Number(vals.addStockQty) || 0 }).unwrap();
+        enqueueSnackbar(Number(vals.addStockQty) > 0 ? `Item updated — ${vals.addStockQty} units added to stock` : 'Item updated', { variant: 'success' });
       } else {
         const opening = Number(vals.current) || 0;
         await createItemMutation({ ...payload, openingStock: opening, currentStock: opening }).unwrap();
@@ -1036,7 +1053,7 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
-          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, vendorId: r.vendorId, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
+          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, vendorId: r.vendorId, purchaseDate: dayjs(), addStockQty: undefined, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
           {/* Add Stock / Sell Stock — hidden per request
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
@@ -1296,6 +1313,7 @@ export default function Inventory() {
                       render: v => <Tag color={v === 'Stock Added' ? 'success' : v === 'Stock Deducted' ? 'error' : 'warning'} style={{ borderRadius: 12 }}>{v}</Tag>
                     },
                     { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.action === 'Stock Added' ? '#52c41a' : '#ff4d4f' }}>{r.action === 'Stock Added' ? '+' : '-'}{r.qty} units</Text> },
+                    { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', render: v => v && v !== '—' ? <Tag color="geekblue" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text> },
                     { title: 'Source / Entity', dataIndex: 'source', key: 'source', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
                     { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', render: v => v ? <Text style={{ color: '#7c3aed' }}>{v}</Text> : <Text type="secondary">—</Text> },
                     { title: 'Person', dataIndex: 'person', key: 'person' },
@@ -2470,8 +2488,8 @@ export default function Inventory() {
           }}
         >
           <Row gutter={16}>
-            <Col xs={24}>
-              <Form.Item label="Vendor" name="vendorId" tooltip="Which vendor this item is purchased from. Stock added under this item is tracked against this vendor.">
+            <Col xs={24} sm={editingItem ? 12 : 24}>
+              <Form.Item label="Vendor" name="vendorId" tooltip="Which vendor this batch of stock was purchased from.">
                 <Select
                   allowClear
                   showSearch
@@ -2480,6 +2498,11 @@ export default function Inventory() {
                   options={suppliers.map((v) => ({ label: v.name, value: v._id }))}
                   notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No vendors yet — add one in Vendors & Suppliers</span>}
                 />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Purchase Date" name="purchaseDate" initialValue={dayjs()} tooltip="Defaults to today — edit if this stock was actually bought on an earlier date. Used to decide which vendor's stock gets used up first.">
+                <DatePicker style={{ width: '100%' }} format="DD MMM YYYY" />
               </Form.Item>
             </Col>
           </Row>
@@ -2495,6 +2518,13 @@ export default function Inventory() {
               </Form.Item>
             </Col>
             {!editingItem && <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>}
+            {editingItem && (
+              <Col xs={24} sm={8}>
+                <Form.Item label="Add Stock (Qty)" name="addStockQty" tooltip="Bought more of this same product? Enter the quantity here — it's added on top of the current stock as a new purchase batch under the Vendor + Purchase Date selected above.">
+                  <InputNumber style={{ width: '100%' }} min={0} placeholder="0" />
+                </Form.Item>
+              </Col>
+            )}
             <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Purchase Price" name="purchase_price">

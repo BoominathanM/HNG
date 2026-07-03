@@ -20,7 +20,18 @@ const inventoryItemSchema = new mongoose.Schema({
   materialCategory: String,
   brand: String,
   // Vendor this item is purchased from — set when the item is added/edited in Inventory.
+  // Reflects the most recent purchase; full per-vendor purchase history lives in purchaseBatches below.
   vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
+  // One entry per purchase (vendor + date + qty). Lets the same product be bought from different
+  // vendors over time; remainingQty is drawn down oldest-purchaseDate-first when orders deduct stock,
+  // so an older vendor's batch is always used up before a newer one.
+  purchaseBatches: [{
+    vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
+    vendorName: String,
+    purchaseDate: { type: Date, default: Date.now },
+    qty: { type: Number, default: 0 },
+    remainingQty: { type: Number, default: 0 },
+  }],
   productAttributes: { type: mongoose.Schema.Types.Mixed, default: {} },
   deletedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
