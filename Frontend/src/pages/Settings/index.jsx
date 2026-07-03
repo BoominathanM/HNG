@@ -104,8 +104,6 @@ const GST_OPTIONS = [
   { value: 'cgst',      label: 'CGST Only',      desc: 'Central GST — intra-state (half rate)' },
   { value: 'sgst',      label: 'SGST Only',      desc: 'State GST — intra-state (half rate)' },
   { value: 'cgst_sgst', label: 'CGST + SGST',    desc: 'Both components for intra-state' },
-  { value: 'igst',      label: 'IGST Only',      desc: 'Integrated GST for inter-state' },
-  { value: 'all',       label: 'All Components', desc: 'CGST + SGST + IGST (show all)' },
 ];
 
 const buildPerms = (mods, overrides = {}) =>
@@ -220,7 +218,6 @@ export default function Settings() {
       if (s.invoiceToggles) {
         const t = s.invoiceToggles instanceof Map ? Object.fromEntries(s.invoiceToggles) : s.invoiceToggles;
         if (t.gstin !== undefined) setInvoiceShowGstin(t.gstin);
-        if (t.hsn !== undefined) setInvoiceShowHsn(t.hsn);
         if (t.taxRate !== undefined) setInvoiceShowTaxRate(t.taxRate);
         if (t.logo !== undefined) setInvoiceShowLogo(t.logo);
         if (t.bank !== undefined) setInvoiceShowBank(t.bank);
@@ -256,7 +253,7 @@ export default function Settings() {
     invoiceTerms,
     invoiceFooter,
     invoiceToggles: {
-      gstin: invoiceShowGstin, hsn: invoiceShowHsn, taxRate: invoiceShowTaxRate,
+      gstin: invoiceShowGstin, taxRate: invoiceShowTaxRate,
       logo: invoiceShowLogo, bank: invoiceShowBank, terms: invoiceShowTerms, sign: invoiceShowSign,
     },
   }, 'Invoice settings saved');
@@ -297,7 +294,6 @@ export default function Settings() {
   const [invoiceFont, setInvoiceFont]               = useState('Inter');
   const [invoiceGstConfig, setInvoiceGstConfig]     = useState('cgst_sgst');
   const [invoiceShowGstin, setInvoiceShowGstin]     = useState(true);
-  const [invoiceShowHsn, setInvoiceShowHsn]         = useState(true);
   const [invoiceShowTaxRate, setInvoiceShowTaxRate] = useState(true);
   const [invoiceShowLogo, setInvoiceShowLogo]       = useState(true);
   const [invoiceShowBank, setInvoiceShowBank]       = useState(true);
@@ -1106,7 +1102,6 @@ export default function Settings() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                     {[
                       { label: 'Show GSTIN on Invoice',        desc: 'Print your GST registration number',        val: invoiceShowGstin,  set: setInvoiceShowGstin },
-                      { label: 'Show HSN / SAC Code per Item', desc: 'Display HSN/SAC code alongside each product', val: invoiceShowHsn,    set: setInvoiceShowHsn },
                       { label: 'Show Tax Rate per Line Item',  desc: 'Print applicable GST % next to each row',    val: invoiceShowTaxRate,set: setInvoiceShowTaxRate },
                     ].map((item, i, arr) => (
                       <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: i < arr.length - 1 ? `1px solid ${borderColor}` : 'none' }}>

@@ -73,7 +73,6 @@ function resolveConfig(settings = {}, data = {}) {
   const show = {
     logo:    t.logo    !== false,
     gstin:   t.gstin   !== false,
-    hsn:     t.hsn     !== false,
     taxRate: t.taxRate !== false,
     bank:    t.bank    !== false,
     terms:   t.terms   !== false,
@@ -486,7 +485,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
     : items.map((item, i) => `
       <tr style="background:${i % 2 === 0 ? '#fff' : LIGHT}">
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">
-          ${item.name}${cfg.show.hsn && (item.hsn || item.hsnCode) ? `<br/><span style="color:#666;font-size:10px;">HSN: ${item.hsn || item.hsnCode}</span>` : ''}
+          ${item.name}
         </td>
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:center;">${item.perKit != null ? item.perKit : '—'}</td>
         <td style="padding:7px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;text-align:center;">—</td>
@@ -956,9 +955,6 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
               <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : LIGHT }}>
                 <td style={td}>
                   {item.name}
-                  {cfg.show.hsn && (item.hsn || item.hsnCode) && (
-                    <div style={{ color: '#666', fontSize: 10 }}>HSN: {item.hsn || item.hsnCode}</div>
-                  )}
                 </td>
                 <td style={{ ...td, textAlign: 'center' }}>{item.perKit != null ? item.perKit : '—'}</td>
                 <td style={{ ...td, textAlign: 'center' }}>—</td>
