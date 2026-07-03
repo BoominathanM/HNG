@@ -5,7 +5,8 @@ const paymentSchema = new mongoose.Schema({
   partyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Party' },
   invoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' },
   amount: { type: Number, required: true },
-  discount: { type: Number, default: 0 },
+  courierCharge: { type: Number, default: 0 },
+  roundOff: { type: Number, default: 0 },
   netAmount: Number,
   paymentMode: {
     type: String,
@@ -25,7 +26,7 @@ const paymentSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 paymentSchema.pre('save', function (next) {
-  this.netAmount = this.amount - (this.discount || 0);
+  this.netAmount = (this.amount || 0) + (this.courierCharge || 0) - (this.roundOff || 0);
   next();
 });
 

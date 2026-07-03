@@ -3,6 +3,7 @@ const PurchaseOrder = require('../../models/PurchaseOrder');
 const Expense = require('../../models/Expense');
 const Order = require('../../models/Order');
 const User = require('../../models/User');
+const Complaint = require('../../models/Complaint');
 const asyncHandler = require('../../utils/asyncHandler');
 
 const buildDateFilter = (req) => {
@@ -75,7 +76,7 @@ exports.getPurchaseReport = asyncHandler(async (req, res) => {
   const dateFilter = buildDateFilter(req);
   const orders = await PurchaseOrder.find(dateFilter)
     .populate('vendorId', 'name taxId')
-    .populate('itemId', 'itemName hsnCode')
+    .populate('itemId', 'itemName hsnCode gstPercent')
     .sort('-createdAt');
 
   const monthlyMap = {};
@@ -85,14 +86,42 @@ exports.getPurchaseReport = asyncHandler(async (req, res) => {
     monthlyMap[key].amount += o.amount || 0;
   });
 
-  const totalValue = orders.reduce((s, o) => s + (o.amount || 0), 0);
-  const withGst = orders.filter((o) => (o.amount || 0) > 0);
+  const data = orders.map((o) => {
+    const amt = Number(o.amount) || 0;
+    const gstRate = o.itemId?.gstPercent ?? 18;
+    const taxable = gstRate > 0 ? amt / (1 + gstRate / 100) : amt;
+    const totalTax = amt - taxable;
+
+    return {
+      key: String(o._id),
+      vendor_gst: o.vendorId?.taxId || '',
+      supplier: o.vendorId?.name || '',
+      product: o.itemId?.itemName || o.itemName || '',
+      hsn: o.itemId?.hsnCode || '',
+      gst_rate: gstRate,
+      qty: o.qty || 0,
+      unit_price: o.qty ? Math.round((taxable / o.qty) * 100) / 100 : 0,
+      state_code: '',
+      state_name: '',
+      inv_no: o.invNo || o.billNo || o.poCode || '',
+      orig_inv_no: '',
+      inv_date: o.createdAt?.toISOString().slice(0, 10) || '',
+      taxable: Math.round(taxable),
+      cgst: Math.round(totalTax / 2),
+      sgst: Math.round(totalTax / 2),
+      igst: 0,
+      total_tax: Math.round(totalTax),
+      inv_value: amt,
+    };
+  });
+
+  const totalValue = data.reduce((s, r) => s + r.inv_value, 0);
 
   res.status(200).json({
     success: true,
-    data: orders,
-    withGst,
-    withoutGst: orders.filter((o) => !o.amount),
+    data,
+    withGst: data.filter((r) => r.total_tax > 0),
+    withoutGst: data.filter((r) => r.total_tax === 0),
     summary: { totalValue, count: orders.length },
     chartData: Object.values(monthlyMap),
   });
@@ -215,15 +244,19 @@ exports.getBillPL = asyncHandler(async (req, res) => {
   const billPL = invoices.map((inv) => {
     const cogs = inv.subtotal * 0.62; // Estimated COGS at 62% of revenue (configurable)
     const grossProfit = inv.subtotal - cogs;
+    const inputGst = cogs - cogs / 1.18;
     return {
-      invNo: inv.invoiceNumber,
-      date: inv.invoiceDate,
+      key: String(inv._id),
+      inv_no: inv.invoiceNumber,
+      date: inv.invoiceDate?.toISOString().slice(0, 10) || '',
       client: inv.partyId?.name || 'Unknown',
-      sellTaxable: inv.subtotal,
-      gstCollected: inv.gstAmount,
-      sellTotal: inv.total,
+      product: inv.items?.[0]?.itemName || 'General',
+      sell_taxable: inv.subtotal,
+      gst_collected: inv.gstAmount,
+      sell_total: inv.total,
       cogs: Math.round(cogs),
-      grossProfit: Math.round(grossProfit),
+      input_gst: Math.round(inputGst),
+      gross_profit: Math.round(grossProfit),
       status: inv.status,
     };
   });
@@ -232,25 +265,65 @@ exports.getBillPL = asyncHandler(async (req, res) => {
 });
 
 // ─── MONTHLY GST REPORT ────────────────────────────────────────────────────────
+const MONTH_ORDER = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 exports.getMonthlyGst = asyncHandler(async (req, res) => {
   const invoices = await Invoice.find({ invoiceType: 'GST' });
-  const purchaseOrders = await PurchaseOrder.find();
+  const purchaseOrders = await PurchaseOrder.find().populate('itemId', 'gstPercent');
 
   const monthlyMap = {};
+  const ensureRow = (date) => {
+    const month = date?.toLocaleString('default', { month: 'short' }) || '';
+    const year = date?.getFullYear() || '';
+    const key = `${month}-${year}`;
+    if (!monthlyMap[key]) {
+      monthlyMap[key] = {
+        key, month, year,
+        sales_taxable: 0, sales_cgst: 0, sales_sgst: 0, sales_igst: 0, sales_total_gst: 0,
+        pur_taxable: 0, pur_cgst: 0, pur_sgst: 0, pur_igst: 0, pur_total_gst: 0,
+      };
+    }
+    return monthlyMap[key];
+  };
+
   invoices.forEach((inv) => {
-    const key = `${inv.invoiceDate?.toLocaleString('default', { month: 'short' })}-${inv.invoiceDate?.getFullYear()}`;
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, salesTaxable: 0, salesGst: 0, purTaxable: 0, purGst: 0 };
-    monthlyMap[key].salesTaxable += inv.subtotal;
-    monthlyMap[key].salesGst += inv.gstAmount;
-  });
-  purchaseOrders.forEach((po) => {
-    const key = `${po.createdAt?.toLocaleString('default', { month: 'short' })}-${po.createdAt?.getFullYear()}`;
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, salesTaxable: 0, salesGst: 0, purTaxable: 0, purGst: 0 };
-    monthlyMap[key].purTaxable += po.amount || 0;
-    monthlyMap[key].purGst += (po.amount || 0) * 0.18;
+    const row = ensureRow(inv.invoiceDate);
+    const gstAmt = inv.gstAmount || 0;
+    row.sales_taxable += inv.subtotal || 0;
+    row.sales_cgst += gstAmt / 2;
+    row.sales_sgst += gstAmt / 2;
+    row.sales_total_gst += gstAmt;
   });
 
-  res.status(200).json({ success: true, data: Object.values(monthlyMap) });
+  purchaseOrders.forEach((po) => {
+    const row = ensureRow(po.createdAt);
+    const amt = po.amount || 0;
+    const gstRate = po.itemId?.gstPercent ?? 18;
+    const taxable = gstRate > 0 ? amt / (1 + gstRate / 100) : amt;
+    const gstAmt = amt - taxable;
+    row.pur_taxable += taxable;
+    row.pur_cgst += gstAmt / 2;
+    row.pur_sgst += gstAmt / 2;
+    row.pur_total_gst += gstAmt;
+  });
+
+  const data = Object.values(monthlyMap)
+    .map((r) => ({
+      ...r,
+      sales_taxable: Math.round(r.sales_taxable),
+      sales_cgst: Math.round(r.sales_cgst),
+      sales_sgst: Math.round(r.sales_sgst),
+      sales_igst: Math.round(r.sales_igst),
+      sales_total_gst: Math.round(r.sales_total_gst),
+      pur_taxable: Math.round(r.pur_taxable),
+      pur_cgst: Math.round(r.pur_cgst),
+      pur_sgst: Math.round(r.pur_sgst),
+      pur_igst: Math.round(r.pur_igst),
+      pur_total_gst: Math.round(r.pur_total_gst),
+    }))
+    .sort((a, b) => (a.year - b.year) || (MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month)));
+
+  res.status(200).json({ success: true, data });
 });
 
 // ─── AUDITOR TAX REPORT ────────────────────────────────────────────────────────
@@ -333,13 +406,34 @@ exports.getMyPerformance = asyncHandler(async (req, res) => {
 });
 
 // ─── PERFORMANCE REPORT ───────────────────────────────────────────────────────
+const PERFORMANCE_PALETTE = ['#B11E6A', '#1890ff', '#52c41a', '#fa8c16', '#7c3aed', '#eb2f96', '#13c2c2', '#faad14'];
+
 exports.getPerformance = asyncHandler(async (req, res) => {
   const salesUsers = await User.find({ role: { $in: ['Sales Manager', 'Sales Executive'] }, deletedAt: null });
-  const leaderboard = await Promise.all(salesUsers.map(async (u) => {
+
+  const complaints = await Complaint.find().populate('orderId', 'createdBy');
+  const complaintCountByUser = {};
+  complaints.forEach((c) => {
+    const uid = c.orderId?.createdBy ? String(c.orderId.createdBy) : null;
+    if (uid) complaintCountByUser[uid] = (complaintCountByUser[uid] || 0) + 1;
+  });
+
+  const monthlyByUser = {};
+
+  const leaderboard = await Promise.all(salesUsers.map(async (u, idx) => {
     const invoices = await Invoice.find({ createdBy: u._id });
     const revenue = invoices.reduce((s, i) => s + i.total, 0);
     const orders = await Order.countDocuments({ createdBy: u._id });
+
+    invoices.forEach((inv) => {
+      const month = inv.invoiceDate?.toLocaleString('default', { month: 'short' });
+      if (!month) return;
+      if (!monthlyByUser[month]) monthlyByUser[month] = { month };
+      monthlyByUser[month][u.fullName] = (monthlyByUser[month][u.fullName] || 0) + (inv.total || 0);
+    });
+
     return {
+      key: String(u._id),
       id: u._id,
       name: u.fullName,
       role: u.role,
@@ -347,10 +441,16 @@ exports.getPerformance = asyncHandler(async (req, res) => {
       revenue,
       target: u.targetNewHotel + u.targetOldHotel,
       conversion: orders > 0 ? Math.round((invoices.length / orders) * 100) : 0,
+      complaints: complaintCountByUser[String(u._id)] || 0,
+      color: PERFORMANCE_PALETTE[idx % PERFORMANCE_PALETTE.length],
     };
   }));
   leaderboard.sort((a, b) => b.revenue - a.revenue);
-  res.status(200).json({ success: true, data: { leaderboard } });
+
+  const monthlyData = Object.values(monthlyByUser)
+    .sort((a, b) => MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month));
+
+  res.status(200).json({ success: true, data: { leaderboard, monthlyData } });
 });
 
 // ─── EXPORT HELPERS ───────────────────────────────────────────────────────────

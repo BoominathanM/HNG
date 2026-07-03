@@ -8,7 +8,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
-const { syncOrderTasksPayment } = require('../../utils/syncOrderPayment');
+const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
 
 // ─── PARTIES ─────────────────────────────────────────────────────────────────
 exports.getParties = asyncHandler(async (req, res) => {
@@ -233,7 +233,8 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
   if (!invoice) return next(new AppError('Invoice not found', 404));
 
   const payRef = await generateCode('REC');
-  const netAmount = (req.body.amount || 0) - (req.body.discount || 0);
+  // Courier charge adds to what's owed and gets collected here too; round off shaves the odd paise off the total.
+  const netAmount = (req.body.amount || 0) + (req.body.courierCharge || 0) - (req.body.roundOff || 0);
 
   const payment = await Payment.create({
     ...req.body,
@@ -268,12 +269,28 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
     await Party.findByIdAndUpdate(pId, { runningBalance: newBalance });
   }
 
-  // Propagate the payment to the linked order's tasks so Task Management +
-  // Dispatch reflect the new paid/partial status (dispatch is gated on this).
+  // Propagate the payment to the linked order — both its own paymentCollection (so
+  // Sales, which computes paid/total straight off the order, shows this payment
+  // immediately without relying on the frontend to find and patch the right order)
+  // and its tasks' paymentStatus (Task Management + Dispatch gate on that).
   let orderId = invoice.orderId;
   if (!orderId && invoice.quotationId) {
     const linkedOrder = await Order.findOne({ quotationId: invoice.quotationId, deletedAt: null }).sort('-createdAt');
     orderId = linkedOrder?._id;
+  }
+  if (orderId) {
+    await syncOrderPaymentCollection(orderId, {
+      paymentMethod: req.body.paymentMode || 'Cash',
+      paymentMode: req.body.paymentMode || 'Cash',
+      paidAmount: netAmount,
+      note: req.body.note || '',
+      notes: req.body.note || '',
+      paymentDate: new Date().toISOString(),
+      recordedAt: new Date().toISOString(),
+      recordedBy: req.user._id,
+      recordedByName: req.user.fullName || req.user.name || req.user.email,
+      source: 'Billing Invoice',
+    }).catch(() => {});
   }
   let taskPaymentStatus = null;
   if (orderId) taskPaymentStatus = await syncOrderTasksPayment(orderId).catch(() => null);
@@ -283,6 +300,17 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
     notifyRoles({ modules: ['Task Management', 'Dispatch Team', 'Operations'], type: 'task', title: 'Payment Cleared — Dispatch Unblocked', message: `Invoice ${invoice.invoiceNumber} fully paid — linked tasks marked Paid and cleared for dispatch`, link: '/tasks' }).catch(() => {});
   }
   res.status(201).json({ success: true, data: { payment, invoice } });
+});
+
+// Audit trail of every payment recorded against an invoice (who, when, and the
+// courier charge / round off breakdown for each entry).
+exports.getInvoicePayments = asyncHandler(async (req, res, next) => {
+  const invoice = await Invoice.findById(req.params.id);
+  if (!invoice) return next(new AppError('Invoice not found', 404));
+  const payments = await Payment.find({ invoiceId: req.params.id })
+    .populate('createdBy', 'fullName name email')
+    .sort('-createdAt');
+  res.status(200).json({ success: true, data: payments });
 });
 
 // ─── QUOTATIONS in process (for Billing tab) ───────────────────────────────

@@ -2635,7 +2635,11 @@ export default function Sales() {
         setLeadsData(prev => prev.map(l => (l.key === record.key || l._id === record._id) ? { ...l, ...patch } : l));
         if (selectedRecord?._id === record._id || selectedRecord?.key === record.key) setSelectedRecord(updated);
       } else if (type === 'quotation') {
-        await updateSalesQuotationMutation({ id: record._id || record.key, ...patch }).unwrap();
+        // newPaymentEntry: explicit signal so the backend can push this exact entry onto
+        // the linked Order too — otherwise a quotation payment recorded here never reaches
+        // Order.paymentCollection (syncChainPayment below only propagates the paidAmount
+        // scalar), so Sales' own Order tab silently under-counts what's actually been paid.
+        await updateSalesQuotationMutation({ id: record._id || record.key, ...patch, newPaymentEntry: newEntry }).unwrap();
         setQuotationsData(prev => prev.map(q => (q.key === record.key || q._id === record._id) ? { ...q, ...patch } : q));
         if (selectedRecord?._id === record._id || selectedRecord?.key === record.key) setSelectedRecord(updated);
       } else if (type === 'negotiation') {

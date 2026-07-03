@@ -493,7 +493,9 @@ export const apiSlice = createApi({
     }),
     updateSalesQuotation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/quotations/${id}`, method: 'put', data }),
-      invalidatesTags: ['Quotations'],
+      // Backend also writes payment updates onto the linked Order (see sales.controller
+      // updateQuotation) — invalidate Orders/Operations so Sales/Operations refetch too.
+      invalidatesTags: ['Quotations', 'Orders', 'Operations'],
     }),
     convertToNegotiation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/quotations/${id}/convert-negotiation`, method: 'post', data }),
@@ -616,7 +618,13 @@ export const apiSlice = createApi({
     }),
     recordPayment: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/billing/invoices/${id}/payment`, method: 'post', data }),
-      invalidatesTags: ['Invoices', 'BillingParties'],
+      // Backend also writes this payment onto the linked Order (see billing.controller
+      // recordPayment) — invalidate Orders/Operations so Sales/Operations refetch too.
+      invalidatesTags: ['Invoices', 'BillingParties', 'Orders', 'Operations'],
+    }),
+    getInvoicePayments: builder.query({
+      query: (id) => ({ url: `/billing/invoices/${id}/payments` }),
+      providesTags: (result, error, id) => [{ type: 'Invoices', id: `${id}-payments` }],
     }),
     convertQuotationToInvoice: builder.mutation({
       query: (data) => ({ url: '/billing/invoices/convert-quotation', method: 'post', data }),
@@ -1224,6 +1232,7 @@ export const {
   useCreateInvoiceMutation,
   useUpdateInvoiceGstMutation,
   useRecordPaymentMutation,
+  useGetInvoicePaymentsQuery,
   useConvertQuotationToInvoiceMutation,
   useGetQuotationsInProcessQuery,
   // Expenses

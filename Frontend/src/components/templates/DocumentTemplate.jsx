@@ -471,7 +471,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
       html += `
         <tr style="background:${cs.sub};">
           <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">${p.name}</td>
-          <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.perKit != null ? p.perKit : ''}</td>
+          <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;font-weight:700;">${p.qty != null ? p.qty : ''}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.rate.toLocaleString()}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${r2d((p.qty || 0) * p.rate).toLocaleString()}</td>
@@ -873,7 +873,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
             {sections.sepProdRows.map((p, i) => (
               <tr key={`sprod-${i}`} style={{ background: cs.sub }}>
                 <td style={{ ...td, paddingLeft: 24 }}>{p.name}</td>
-                <td style={{ ...td, textAlign: 'center' }}>{p.perKit != null ? p.perKit : ''}</td>
+                <td style={{ ...td, textAlign: 'center' }}></td>
                 <td style={{ ...td, textAlign: 'center', fontWeight: 700 }}>{p.qty != null ? p.qty : ''}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{p.rate.toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{r2d((p.qty || 0) * p.rate).toLocaleString()}</td>

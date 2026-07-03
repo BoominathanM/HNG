@@ -1241,6 +1241,8 @@ export default function Reports() {
                 ? activeSalesPersonData.reduce((s, p) => s + Math.round(((p.revenue || 0) / (p.target || 1)) * 100), 0) / activeSalesPersonData.length
                 : 0;
               const totalComplaints = activeSalesPersonData.reduce((s, p) => s + (p.complaints || 0), 0);
+              const latestMonthRow = activeSalesPersonMonthly[activeSalesPersonMonthly.length - 1] || null;
+              const prevMonthRow = activeSalesPersonMonthly[activeSalesPersonMonthly.length - 2] || null;
               if (!topPerformer) return <Empty description="No performance data available" style={{ padding: 40 }} />;
               return (
                 <div>
@@ -1369,6 +1371,9 @@ export default function Reports() {
 
                   {/* ── Monthly Trend ── */}
                   {perfTab === 'monthly' && (
+                    activeSalesPersonMonthly.length === 0 ? (
+                      <Empty description="No monthly trend data available" style={{ padding: 40 }} />
+                    ) : (
                     <Row gutter={[14, 14]}>
                       <Col xs={24} lg={16}>
                         <Card title={<Text strong style={{ color: textColor }}>Month-wise Revenue per Sales Person</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
@@ -1387,21 +1392,21 @@ export default function Reports() {
                         </Card>
                       </Col>
                       <Col xs={24} lg={8}>
-                        <Card title={<Text strong style={{ color: textColor }}>Latest Month (Feb)</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }} styles={{ body: { padding: 0 } }}>
+                        <Card title={<Text strong style={{ color: textColor }}>Latest Month ({latestMonthRow?.month || '—'})</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }} styles={{ body: { padding: 0 } }}>
                           <Table
                             size="small"
-                            dataSource={activeSalesPersonData.map(p => ({ ...p, febRevenue: activeSalesPersonMonthly[activeSalesPersonMonthly.length - 1][p.name] || 0 }))}
+                            dataSource={activeSalesPersonData.map(p => ({ ...p, febRevenue: latestMonthRow?.[p.name] || 0 }))}
                             pagination={false}
                             rowKey="key"
                             columns={[
                               { title: 'Name', dataIndex: 'name', key: 'name', render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: r.color }}>{v.split(' ')[0]}</Text> },
-                              { title: 'Feb Rev.', dataIndex: 'febRevenue', key: 'febRevenue', width: 85, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>₹{(v/1000).toFixed(0)}K</Text> },
+                              { title: 'Latest Rev.', dataIndex: 'febRevenue', key: 'febRevenue', width: 85, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>₹{(v/1000).toFixed(0)}K</Text> },
                               {
-                                title: 'vs Jan', key: 'mom', width: 70, align: 'center',
+                                title: 'vs Prev', key: 'mom', width: 70, align: 'center',
                                 render: (_, r) => {
-                                  const jan = activeSalesPersonMonthly[activeSalesPersonMonthly.length - 2][r.name] || 0;
-                                  const feb = activeSalesPersonMonthly[activeSalesPersonMonthly.length - 1][r.name] || 0;
-                                  const diff = jan > 0 ? (((feb - jan) / jan) * 100).toFixed(0) : 0;
+                                  const prev = prevMonthRow?.[r.name] || 0;
+                                  const latest = latestMonthRow?.[r.name] || 0;
+                                  const diff = prev > 0 ? (((latest - prev) / prev) * 100).toFixed(0) : 0;
                                   return <Tag style={{ background: diff >= 0 ? '#52c41a15' : '#ff4d4f15', color: diff >= 0 ? '#52c41a' : '#ff4d4f', border: `1px solid ${diff >= 0 ? '#52c41a33' : '#ff4d4f33'}`, borderRadius: 20, fontSize: 10, fontWeight: 700 }}>{diff >= 0 ? '+' : ''}{diff}%</Tag>;
                                 },
                               },
@@ -1410,6 +1415,7 @@ export default function Reports() {
                         </Card>
                       </Col>
                     </Row>
+                    )
                   )}
                 </div>
               );

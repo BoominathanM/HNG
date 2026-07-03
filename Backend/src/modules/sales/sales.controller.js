@@ -11,7 +11,7 @@ const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { cloudinary } = require('../../config/cloudinary');
 const { notifyRoles } = require('../../utils/notify');
-const { syncOrderTasksPayment } = require('../../utils/syncOrderPayment');
+const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
 
 // ─── LEADS ───────────────────────────────────────────────────────────────────
 exports.getLeads = asyncHandler(async (req, res) => {
@@ -236,12 +236,35 @@ exports.createQuotation = asyncHandler(async (req, res) => {
 });
 
 exports.updateQuotation = asyncHandler(async (req, res, next) => {
+  // newPaymentEntry is an out-of-band signal (not a Quotation schema field) the client
+  // sends alongside a payment save so we know exactly which entry is new — diffing
+  // req.body.paymentCollection against the stored array doesn't work because the client
+  // sometimes rebuilds that array from whichever of order/lead/quotation has the fullest
+  // history (see Billing's `sumPaid`), which isn't reliably the quotation's own array.
+  const { newPaymentEntry, ...body } = req.body;
+
   const quotation = await Quotation.findByIdAndUpdate(
     req.params.id,
-    { $set: req.body },
+    { $set: body },
     { new: true, runValidators: false }
   );
   if (!quotation) return next(new AppError('Quotation not found', 404));
+
+  // If this update recorded a payment (Billing's Quotation-in-Process tab), mirror the
+  // new entry onto the linked Order so Sales — which reads Order.paymentCollection
+  // directly, independent of the quotation — reflects it without depending on the
+  // frontend to find and patch the right order itself.
+  if (newPaymentEntry) {
+    const linkedOrder = await Order.findOne({
+      $or: [{ quotationId: quotation._id }, ...(quotation.leadId ? [{ leadId: quotation.leadId }] : [])],
+      deletedAt: null,
+    }).sort('-createdAt');
+    if (linkedOrder) {
+      await syncOrderPaymentCollection(linkedOrder._id, newPaymentEntry).catch(() => {});
+      await syncOrderTasksPayment(linkedOrder._id).catch(() => {});
+    }
+  }
+
   res.status(200).json({ success: true, data: quotation });
 });
 
