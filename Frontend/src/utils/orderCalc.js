@@ -35,14 +35,21 @@ export function rowCategory(p, kitOrders = []) {
 export const koCategory = (ko) => (ko && ko.category) || ORDER_CATEGORIES.SEPARATE_KIT;
 
 // GST-inclusive value of one kit: kitPrice × overallQty, falling back to component rows.
+// Separate Kit (category B) always counts BOTH the kit's own price AND its included products'
+// price (kitPrice + rows sum) — neither is skipped. Personalized (A) keeps the original
+// behavior: trust a stored kitPrice, falling back to rows sum only when it's empty.
 export function kitOrderValue(ko, kitRows = []) {
   const price = Number(ko?.kitPrice) || 0;
   const qty = Number(ko?.overallQty) || 0;
-  if (price > 0) return r2(price * (qty || 1));
   const rows = kitRows.filter(p => p && p.kitId === ko?.kitId);
   const sub = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
   const gst = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
-  return r2((sub + gst) * (qty || 1));
+  const rowsSum = r2(sub + gst);
+  if (koCategory(ko) === ORDER_CATEGORIES.SEPARATE_KIT) {
+    return r2((price + rowsSum) * (qty || 1));
+  }
+  if (price > 0) return r2(price * (qty || 1));
+  return r2(rowsSum * (qty || 1));
 }
 
 // GST-inclusive subtotal of a set of (non-kit) product rows.
