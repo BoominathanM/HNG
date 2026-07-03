@@ -20,7 +20,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
     DispatchRecord.find(filter)
       .populate({
         path: 'orderId',
-        select: 'orderCode clientName total orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo expectedDeliveryDate',
+        select: 'orderCode clientName total orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo expectedDeliveryDate kitOrders items',
         populate: [
           { path: 'leadId', select: 'leadType' },
           { path: 'assignedTo', select: 'fullName' },
@@ -54,7 +54,7 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo',
+      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo kitOrders items',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -157,7 +157,14 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   // Update order status and mark linked lead as Dispatched
   const orderDoc = dispatch.orderId && (dispatch.orderId._id ? dispatch.orderId : await Order.findById(dispatch.orderId));
   if (orderDoc) {
-    await Order.findByIdAndUpdate(orderDoc._id, { status: 'Dispatched' });
+    const orderUpdate = { status: 'Dispatched' };
+    // A dispatcher-raised forwarding charge lives in the Order (source of truth for
+    // Sales/Billing), not the DispatchRecord — otherwise the edit is UI-only and
+    // reverts to the original amount on reload.
+    if (req.body.forwardingChargeAmount !== undefined) {
+      orderUpdate.forwardingChargeAmount = Number(req.body.forwardingChargeAmount) || 0;
+    }
+    await Order.findByIdAndUpdate(orderDoc._id, orderUpdate);
     if (orderDoc.leadId) {
       await Lead.findByIdAndUpdate(orderDoc.leadId, { status: 'Dispatched' });
     }
@@ -224,10 +231,15 @@ exports.saveAsDraft = asyncHandler(async (req, res, next) => {
   const existing = await DispatchRecord.findById(req.params.id);
   if (!existing) return next(new AppError('Dispatch not found', 404));
   // Never downgrade a Confirmed or Dispatched record back to Draft.
-  const { status: _ignored, ...safeBody } = req.body;
+  // forwardingChargeAmount belongs to the Order (source of truth for Sales/Billing),
+  // not the DispatchRecord — pull it out and save it there separately.
+  const { status: _ignored, forwardingChargeAmount, ...safeBody } = req.body;
   const keepStatus = existing.status === 'Confirmed' || existing.status === 'Dispatched'
     ? existing.status
     : 'Draft';
+  if (forwardingChargeAmount !== undefined && existing.orderId) {
+    await Order.findByIdAndUpdate(existing.orderId, { forwardingChargeAmount: Number(forwardingChargeAmount) || 0 });
+  }
   const dispatch = await DispatchRecord.findByIdAndUpdate(
     req.params.id,
     { ...safeBody, status: keepStatus },
@@ -309,7 +321,8 @@ exports.verifyItem = asyncHandler(async (req, res, next) => {
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
   const item = dispatch.items.id(req.params.itemId);
   if (item) {
-    item.verified = true;
+    // Defaults to true (existing verify behavior); pass verified:false to unverify.
+    item.verified = req.body.verified === undefined ? true : (req.body.verified === true || req.body.verified === 'true');
     if (req.file) item.boxPhotoUrl = req.file.path;
   }
   await dispatch.save({ validateBeforeSave: false });

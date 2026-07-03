@@ -13,12 +13,14 @@ import {
   ExportOutlined, CheckSquareOutlined, WalletOutlined, UserOutlined,
   PhoneOutlined, FileTextOutlined, DollarCircleOutlined,
   AlertFilled, ExperimentOutlined, CalendarOutlined,
+  GiftOutlined, AppstoreOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
+import { buildDispatchGroupedProducts, summarizeDispatchVerification } from '../../utils/dispatchGrouping';
 import {
   useGetDispatchesQuery,
   useGetTodaysDispatchesQuery,
@@ -144,6 +146,11 @@ export default function Dispatch() {
       dispatchedAt: d.dispatchedAt,
       deliveryDate: d.orderId?.expectedDeliveryDate || null,
       items: d.items || [],
+      // Kit header data + the order's own items — used to group the verification
+      // panel into Personalized Kit / Separate Kits / Separate Products (see
+      // buildDispatchGroupedProducts).
+      kitOrders: d.orderId?.kitOrders || [],
+      orderItems: d.orderId?.items || [],
       // Customer / address fields (now populated from the order)
       destination: d.orderId?.destination || '—',
       salesPerson: d.orderId?.assignedTo?.fullName || '—',
@@ -410,7 +417,10 @@ export default function Dispatch() {
     }, 1200);
   };
 
-  const toggleVerifyProduct = async (orderId, productKey, itemId) => {
+  // `itemIds` may be a single id (plain product/kit-item row) or an array (a
+  // personalized kit header, which must persist verification for every component item).
+  const toggleVerifyProduct = async (orderId, productKey, itemIds) => {
+    const ids = Array.isArray(itemIds) ? itemIds.filter(Boolean) : (itemIds ? [itemIds] : []);
     const willVerify = !productVerify[orderId]?.verifiedProducts?.has(productKey);
     setProductVerify(prev => {
       const existing = prev[orderId] || { verifiedProducts: new Set() };
@@ -418,81 +428,155 @@ export default function Dispatch() {
       next.has(productKey) ? next.delete(productKey) : next.add(productKey);
       return { ...prev, [orderId]: { ...existing, verifiedProducts: next } };
     });
-    // Persist to backend when marking verified (only unverify is UI-only — backend has no unverify)
-    if (willVerify && itemId) {
+    // Persist both verify and unverify to the backend.
+    if (ids.length) {
       try {
-        await verifyItem({ id: orderId, itemId }).unwrap();
+        // Sequential, not Promise.all — each verifyItem call reads-then-saves the whole
+        // dispatch document, so firing them concurrently lets a later save's stale copy
+        // overwrite an earlier item's verified flag.
+        for (const itemId of ids) {
+          await verifyItem({ id: orderId, itemId, verified: willVerify }).unwrap();
+        }
       } catch {
-        enqueueSnackbar('Failed to save verification', { variant: 'error' });
+        enqueueSnackbar(`Failed to save ${willVerify ? 'verification' : 'unverify'}`, { variant: 'error' });
       }
     }
   };
 
   // ── Product verify expanded row ────────────────────────────────────────────
+  // Groups items into Personalized Kit / Separate Kits / Separate Products — same
+  // categorization + counts as the Dispatch Detail page's verification table.
   const renderProductPanel = (record) => {
     const state = productVerify[record.key] || {};
-    const products = (record.items || []).map((it, idx) => ({
-      key: idx,
-      itemId: it._id,
-      name: it.itemName || it.name || '—',
-      qty: it.qtyDispatched || it.qtyOrdered || 0,
-      boxes: it.boxes || 0,
-      dbVerified: it.verified || false,
-    }));
     const verified = state.verifiedProducts || new Set();
+    const isRowVerified = (row) => verified.has(row.key) || !!row.verified;
+
+    const { products, groupedProducts } = buildDispatchGroupedProducts({
+      items: record.items,
+      kitOrders: record.kitOrders,
+      orderItems: record.orderItems,
+      boxes: record.boxes,
+    });
+    const summary = summarizeDispatchVerification(products, isRowVerified);
+
+    const catMeta = {
+      personalized: { icon: <GiftOutlined />, bg: '#ede9fe', color: '#5b21b6', label: 'Personalized Kit' },
+      separate_kit: { icon: <GiftOutlined />, bg: '#e0f2fe', color: '#0369a1', label: 'Separate Kit' },
+      separate_product: { icon: <AppstoreOutlined />, bg: '#fce7f3', color: '#9d174d', label: 'Products' },
+    };
 
     return (
       <div style={{ padding: '12px 24px', background: isDark ? '#161622' : '#fafafa', borderRadius: 8, margin: '4px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
           <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontWeight: 600 }}>
             {record.id}
           </Tag>
           <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>— Product Details</Text>
+          <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888', marginLeft: 'auto' }}>
+            <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+            {summary.overall.verified} / {summary.overall.total} verified
+          </Text>
         </div>
+        <Space size={6} wrap style={{ marginBottom: 10 }}>
+          {[summary.personalizedKit, summary.separateKit, summary.separateProduct]
+            .filter((b) => b.total > 0)
+            .map((b) => (
+              <Tag key={b.label} style={{ borderRadius: 12, fontSize: 11, background: 'transparent', border: '1px solid #B11E6A33' }}>
+                {b.label}: {b.verified}/{b.total}
+              </Tag>
+            ))}
+        </Space>
 
         <Table
           size="small"
           pagination={false}
-          dataSource={products}
+          dataSource={groupedProducts}
+          rowKey="key"
           style={{ borderRadius: 8, overflow: 'hidden' }}
           columns={[
-            { title: 'Product', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
-            { title: 'Qty', dataIndex: 'qty', render: (v) => v.toLocaleString() },
-            { title: 'Boxes', dataIndex: 'boxes', render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space> },
+            {
+              title: 'Product / Kit',
+              dataIndex: 'name',
+              // Only non-personalized dividers (Separate Kit/Products headers) and read-only
+              // personalized sub-items span all 3 columns — a personalized kit header itself
+              // keeps real Status/Action cells (below) so it aligns and shows "Verified" the
+              // same as every other row.
+              onCell: (row) => {
+                if (row.type === 'personalized_item') return { colSpan: 3 };
+                if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 3 };
+                return {};
+              },
+              render: (v, row) => {
+                if (row.type === 'kit_header') {
+                  const cm = catMeta[row.category] || catMeta.separate_kit;
+                  return (
+                    <div style={{ background: cm.bg, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, margin: '-1px -1px' }}>
+                      <span style={{ color: cm.color }}>{cm.icon}</span>
+                      <Text strong style={{ color: cm.color, fontSize: 12 }}>{row.kitName}</Text>
+                      {row.qty != null && (
+                        <Tag style={{ borderRadius: 12, background: `${cm.color}15`, color: cm.color, border: `1px solid ${cm.color}44`, fontSize: 11 }}>
+                          {row.qty} kit{row.qty !== 1 ? 's' : ''}
+                        </Tag>
+                      )}
+                      <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: cm.color, border: `1px solid ${cm.color}33` }}>
+                        {cm.label}
+                      </Tag>
+                    </div>
+                  );
+                }
+                return (
+                  <Space size={4}>
+                    {(row.type === 'kit_item' || row.type === 'personalized_item') && (
+                      <span style={{ color: '#ccc', fontSize: 13, marginLeft: 8 }}>└</span>
+                    )}
+                    <Text style={{ fontSize: 12, color: row.type === 'personalized_item' ? '#888' : 'inherit' }}>{v}</Text>
+                    {row.perKitQty != null && <Text style={{ fontSize: 10, color: '#bbb' }}>({row.perKitQty}/kit)</Text>}
+                  </Space>
+                );
+              },
+            },
             {
               title: 'Status', key: 'status',
+              onCell: (row) => {
+                if (row.type === 'personalized_item') return { colSpan: 0 };
+                if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 0 };
+                return {};
+              },
               render: (_, row) => {
-                const isVerified = verified.has(row.key) || row.dbVerified;
-                return isVerified
+                if (row.type === 'personalized_item') return null;
+                if (row.type === 'kit_header' && !row.isPersonalized) return null;
+                return isRowVerified(row)
                   ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
                   : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>;
               },
             },
             {
               title: 'Action', key: 'action',
+              onCell: (row) => {
+                if (row.type === 'personalized_item') return { colSpan: 0 };
+                if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 0 };
+                return {};
+              },
               render: (_, row) => {
-                const isVerified = verified.has(row.key) || row.dbVerified;
+                if (row.type === 'personalized_item') return null;
+                if (row.type === 'kit_header' && !row.isPersonalized) return null;
+                const verified = isRowVerified(row);
+                const label = row.type === 'kit_header' ? (verified ? 'Unverify' : 'Verify Kit') : (verified ? 'Unverify' : 'Verify');
+                const ids = row.type === 'kit_header' ? row.childItemIds : row.itemId;
                 return (
                   <Button
                     size="small"
                     icon={<CheckSquareOutlined />}
-                    style={isVerified ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                    onClick={() => toggleVerifyProduct(record.key, row.key, row.itemId)}
+                    style={verified ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
+                    onClick={() => toggleVerifyProduct(record.key, row.key, ids)}
                   >
-                    {isVerified ? 'Unverify' : 'Verify'}
+                    {label}
                   </Button>
                 );
               },
             },
           ]}
         />
-
-        {products.length > 0 && (
-          <div style={{ marginTop: 8, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>
-            <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
-            {products.filter(p => verified.has(p.key) || p.dbVerified).length} / {products.length} products verified
-          </div>
-        )}
       </div>
     );
   };
@@ -614,11 +698,13 @@ export default function Dispatch() {
     onExpand: (expanded, record) => {
       if (expanded && !productVerify[record.key]) {
         // Seed verified set from DB items so status persists after refresh
-        const dbVerifiedKeys = new Set(
-          (record.items || [])
-            .map((it, idx) => (it.verified ? idx : null))
-            .filter((v) => v !== null)
-        );
+        const { products: seedProducts } = buildDispatchGroupedProducts({
+          items: record.items,
+          kitOrders: record.kitOrders,
+          orderItems: record.orderItems,
+          boxes: record.boxes,
+        });
+        const dbVerifiedKeys = new Set(seedProducts.filter((p) => p.verified).map((p) => p.key));
         setProductVerify(prev => ({
           ...prev,
           [record.key]: { ...(prev[record.key] || {}), verifiedProducts: dbVerifiedKeys },

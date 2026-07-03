@@ -63,6 +63,12 @@ async function forwardOrderToDispatch(orderId, userId) {
         itemName: it.itemName,
         qtyOrdered: it.qty,
         qtyDispatched: it.qty,
+        boxes: it.boxes,
+        isKit: it.isKit,
+        kitId: it.kitId,
+        kitName: it.kitName,
+        kitType: it.kitType,
+        category: it.category,
       })),
       createdBy: userId,
     });

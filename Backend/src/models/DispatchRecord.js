@@ -34,6 +34,15 @@ const dispatchRecordSchema = new mongoose.Schema({
     qtyDispatched: Number,
     verified: { type: Boolean, default: false },
     boxPhotoUrl: String,
+    boxes: Number,
+    // Kit identity — copied from the order item at dispatch creation so the
+    // verification table can group Personalized Kit / Separate Kit / Separate
+    // Product the same way Sales/Operations does (see order.items.kitId etc).
+    isKit: { type: Boolean, default: false },
+    kitId: String,
+    kitName: String,
+    kitType: String,
+    category: String,
   }],
   // Pickup reimbursement
   pickupEmpId: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff' },

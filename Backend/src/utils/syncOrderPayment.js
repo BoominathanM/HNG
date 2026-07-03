@@ -61,9 +61,14 @@ async function syncOrderPaymentCollection(orderId, entry) {
   if (!orderId || !entry) return null;
   const order = await Order.findById(orderId).select('paymentCollection paidAmount total amount');
   if (!order) return null;
-  const priorTotal = (order.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
-  const newTotal = priorTotal + Number(entry.paidAmount || 0);
-  const paidAmount = Math.max(Number(order.paidAmount) || 0, newTotal);
+  const priorCollectionSum = (order.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+  // order.paidAmount may already carry an advance that was never pushed as its own
+  // paymentCollection entry (e.g. a Lead-stage advance carried onto the order at
+  // conversion). Math.max(paidAmount, newTotal) would silently drop that advance the
+  // moment cumulative collection entries exceed it — add it once as a baseline instead,
+  // then let the new entry add on top, mirroring the frontend's own extraAdvance logic.
+  const extraAdvance = Math.max(0, (Number(order.paidAmount) || 0) - priorCollectionSum);
+  const paidAmount = priorCollectionSum + extraAdvance + Number(entry.paidAmount || 0);
   const total = Number(order.total || order.amount || 0);
   const balance = Math.max(0, total - paidAmount);
   return Order.findByIdAndUpdate(

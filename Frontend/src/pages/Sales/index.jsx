@@ -3384,10 +3384,29 @@ export default function Sales() {
       const collectionTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       // paidAmount from backend is the authoritative total collected; use it when collection entries aren't in list response
       const backendPaid = Number(o.paidAmount) || Number(o.totalPaid) || Number(o.amountCollected) || 0;
+      // An advance collected at the Lead stage (e.g. bank transfer before conversion) lives only
+      // in the Lead's own paymentCollection and is never propagated onto the order — merge it in
+      // here too (deduped by recordedAt+paidAmount), the same way the order-detail view does,
+      // so this list's Collected/Balance/Payment-status match the detail total instead of
+      // under-counting whenever the lead-stage advance wasn't synced onto the order.
+      // Prefer the order's own populated leadId (always present, carries paymentCollection) over
+      // leadsData — leadsData is fetched via getLeads, which excludes Dispatched/Delivered leads
+      // by default for the Leads pipeline view, so a lead disappears from it the moment its order
+      // ships, silently dropping its advance from this merge from then on.
+      const linkedLeadForPaid = (o.leadId && typeof o.leadId === 'object' && o.leadId.paymentCollection)
+        ? o.leadId
+        : leadsData.find(l => String(l._id || l.key) === String(o.leadId?._id || o.leadId));
+      const leadOnlyEntries = (linkedLeadForPaid?.paymentCollection || []).filter(le =>
+        !(o.paymentCollection || []).some(oe => oe.recordedAt === le.recordedAt && Number(oe.paidAmount) === Number(le.paidAmount))
+      );
+      const mergedCollectionTotal = collectionTotal + leadOnlyEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       // backendPaid (o.paidAmount) is the authoritative total written by saveOrderEdit —
       // it includes both advance and any subsequent collection entries.  Only fall back to
-      // collectionTotal or advance when paidAmount was never explicitly stored.
-      const paidTotal = backendPaid > 0 ? backendPaid : (collectionTotal > 0 ? collectionTotal : advance);
+      // mergedCollectionTotal or advance when paidAmount was never explicitly stored, and always
+      // take the larger of the two so a lead-stage advance not yet synced onto the order still counts.
+      const paidTotal = Math.max(backendPaid, mergedCollectionTotal) > 0
+        ? Math.max(backendPaid, mergedCollectionTotal)
+        : advance;
       // Compute subtotal from products (qty*rate, always reliable).
       // For GST: prefer per-product % if set; fall back to stored gstAmount (handles converted/legacy orders).
       const subtotal = r2(calcTotal(normalizedProducts));
@@ -3486,7 +3505,7 @@ export default function Sales() {
         orderCategory: (o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (o.orderCategory || 'ORDER'),
       };
     }));
-  }, [ordersRaw, emergencyRequestsByOrder]);
+  }, [ordersRaw, emergencyRequestsByOrder, leadsData]);
 
   // When a single order is fetched (order-detail view), sync its accurate payment data back
   // into the list state so the table shows the correct status without a full page reload.
@@ -3506,10 +3525,17 @@ export default function Sales() {
     const prods = full.products?.length ? full.products
       : (full.items?.length ? itemsToProducts(full.items) : null)
       ?? leadProds ?? [];
-    const collTotal = (full.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
+    // Merge in any Lead-stage advance not yet propagated onto the order's own
+    // paymentCollection — same reasoning as the list-view mapping above (mirrors it here
+    // since the single-order detail response doesn't otherwise account for it).
+    const leadOnlyEntriesFull = (full.leadId?.paymentCollection || []).filter(le =>
+      !(full.paymentCollection || []).some(oe => oe.recordedAt === le.recordedAt && Number(oe.paidAmount) === Number(le.paidAmount))
+    );
+    const collTotal = (full.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0)
+      + leadOnlyEntriesFull.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const adv = Number(full.advancePaidAmount ?? full.advancePaid ?? 0);
     const paidFull = Number(full.paidAmount) || 0;
-    const paidTotal = paidFull > 0 ? paidFull : (collTotal > 0 ? collTotal : adv);
+    const paidTotal = Math.max(paidFull, collTotal) > 0 ? Math.max(paidFull, collTotal) : adv;
     const subtotalFull = r2(calcTotal(prods));
     const gstFromProdsFull = r2(calcGstAmount(prods));
     const storedGstFull = Number(full.gstAmount) || 0;
@@ -6989,13 +7015,27 @@ export default function Sales() {
       const combinedPaymentCollection = (() => {
         const orderColl = o.paymentCollection || [];
         const extra = [
+          // `lead` (full.leadId, populated directly on the order response) is always present,
+          // unlike oLeadForTotal which comes from leadsData — that list excludes Dispatched/
+          // Delivered leads, so it goes stale (and silently drops this lead's advance) the
+          // moment the order ships. Include both so nothing is lost either way.
+          ...(lead?.paymentCollection || []),
           ...(oLeadForTotal?.paymentCollection || []),
           ...(linkedQuotForDetail?.paymentCollection || []),
           ...(linkedNegForDetail?.paymentCollection || []),
         ].filter(le => !orderColl.some(oe =>
           oe.recordedAt === le.recordedAt && Number(oe.paidAmount) === Number(le.paidAmount)
         ));
-        return [...orderColl, ...extra.map(e => ({ ...e, _fromLinked: true }))];
+        // extra itself can contain duplicates when the same entry is carried on more than
+        // one linked source (lead + oLeadForTotal often refer to the same lead) — dedup.
+        const seen = new Set();
+        const dedupedExtra = extra.filter(le => {
+          const k = `${le.recordedAt}|${le.paidAmount}`;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        return [...orderColl, ...dedupedExtra.map(e => ({ ...e, _fromLinked: true }))];
       })();
       // Use the fully merged collection so Collected / To Collect stat cards include
       // payments recorded at the lead, quotation, or negotiation stage.

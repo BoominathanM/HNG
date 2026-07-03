@@ -30,6 +30,7 @@ import {
 } from '../../store/api/apiSlice';
 import { buildDocComposition } from '../../utils/docComposition';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
+import { buildDispatchGroupedProducts, summarizeDispatchVerification } from '../../utils/dispatchGrouping';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -55,7 +56,7 @@ export default function DispatchDetail() {
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
 
-  const { data: dispatchData, isLoading: dispatchLoading, isFetching: dispatchFetching } = useGetDispatchQuery(id, { skip: !id });
+  const { data: dispatchData, isLoading: dispatchLoading } = useGetDispatchQuery(id, { skip: !id });
   const [confirmDispatch] = useConfirmDispatchMutation();
   const [uploadLR] = useUploadDispatchLRMutation();
   const [verifyItem] = useVerifyItemMutation();
@@ -215,6 +216,10 @@ export default function DispatchDetail() {
       total: o.total || 0,
       // dispatch line items (these carry _id for per-product verification)
       items: (d.items && d.items.length ? d.items : (o.items || [])),
+      // Order's own items — kept separately (even when dispatch items exist) so the
+      // grouping util can recover kit metadata for dispatch records created before
+      // kit fields were copied onto DispatchRecord.items.
+      orderRawItems: o.items || [],
       kitOrders: o.kitOrders || [],
       // Stored verification photos
       openBoxPhotos: d.openBoxPhotos || [],
@@ -388,16 +393,16 @@ export default function DispatchDetail() {
       return next;
     });
     const itemIds = (row.childItemIds && row.childItemIds.length) ? row.childItemIds : (row.itemId ? [row.itemId] : []);
-    if (willVerify && itemIds.length) {
+    if (itemIds.length) {
       try {
         // Sequential, not Promise.all: each verifyItem call reads-then-saves the whole
         // dispatch document, so firing them concurrently lets a later save's stale copy
-        // overwrite an earlier item's verified flag back to false.
+        // overwrite an earlier item's verified flag.
         for (const itemId of itemIds) {
-          await verifyItem({ id, itemId }).unwrap();
+          await verifyItem({ id, itemId, verified: willVerify }).unwrap();
         }
       } catch {
-        enqueueSnackbar('Failed to persist verification', { variant: 'error' });
+        enqueueSnackbar(`Failed to persist ${willVerify ? 'verification' : 'unverify'}`, { variant: 'error' });
       }
     }
   };
@@ -439,6 +444,9 @@ export default function DispatchDetail() {
       formData.append('weight', vals.weight ?? order.storedWeight ?? order.weight ?? '');
       formData.append('dispatchType', vals.dispatchType || dispatchType || 'Full Dispatch');
       formData.append('invoiceNumber', vals.invoiceNumber || '');
+      // Persist a forwarding-charge override raised here — otherwise the edit only
+      // lives in local state and reverts to the original amount on reload.
+      if (order.forwardingCharge) formData.append('forwardingChargeAmount', effectiveFwdAmount);
       if (vals.invoiceDate) formData.append('invoiceDate', vals.invoiceDate.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate);
       // Backend reads autoNotify / sendWhatsapp (FormData sends them as strings).
       formData.append('autoNotify', notifyAuto);
@@ -469,6 +477,9 @@ export default function DispatchDetail() {
         transportName: lrVals.transportName || vals.transport || undefined,
         weight: lrVals.weight || vals.weight || undefined,
         boxes: vals.boxes ?? undefined,
+        // Persist a forwarding-charge override raised here — otherwise the edit only
+        // lives in local state and reverts to the original amount on reload.
+        forwardingChargeAmount: order.forwardingCharge ? effectiveFwdAmount : undefined,
         autoNotify: notifyAuto,
         sendWhatsapp: notifyWhatsApp,
         // Lorry Receipt + Tracking section — persist so it survives a reload even
@@ -531,7 +542,11 @@ export default function DispatchDetail() {
     }
   };
 
-  if (dispatchLoading || dispatchFetching) {
+  // Only the genuine first load (no cached data yet) shows the full-page spinner.
+  // isFetching also goes true on every background refetch after a verify/unverify/
+  // upload (tag invalidation) — gating on that too would flash the whole page blank
+  // on every action even though the already-loaded data is still valid to show.
+  if (dispatchLoading && !dispatchData) {
     return (
       <div className="page-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
         <Spin indicator={<LoadingOutlined style={{ fontSize: 36, color: '#B11E6A' }} spin />} tip="Loading dispatch details..." />
@@ -548,126 +563,17 @@ export default function DispatchDetail() {
     );
   }
 
-  // Build kit-grouped product rows for the verification table.
+  // Kit-grouped product rows for the verification table (Personalized Kit / Separate
+  // Kits / Separate Products), shared with the Dispatch list's expand-row panel.
   // `products` = verifiable units (personalized kit headers count as ONE unit; separate items are individual).
   // `groupedProducts` = all display rows including kit header + child item rows.
-  const buildGroupedProducts = () => {
-    const rawItems = (order?.items || []).filter(it => !it.isKit);
-    const kitOrdersList = order?.kitOrders || [];
-    const hasKitMeta = rawItems.some(it => it.kitId || it.kitType);
-    const orderBoxes = order?.boxes || 0;
-
-    const toRow = (item, i, type = 'product', extra = {}) => ({
-      key: item._id || `${type}_${i}`,
-      itemId: item._id,
-      name: item.product || item.name || item.itemName,
-      boxes: item.boxes || 0,
-      verified: item.verified,
-      type,
-      ...extra,
-    });
-
-    if (!kitOrdersList.length && !hasKitMeta) {
-      const flat = rawItems.map((item, i) => toRow(item, i, 'product', { boxes: orderBoxes }));
-      return { products: flat, groupedProducts: flat };
-    }
-
-    const rows = [];
-    const verifiable = [];
-
-    if (kitOrdersList.length > 0) {
-      kitOrdersList.forEach((ko, ki) => {
-        const kitId = String(ko.kitId || '');
-        const kitName = ko.kitName || ko.kitType || `Kit ${ki + 1}`;
-        const overallQty = Number(ko.overallQty) || 0;
-        const isPersonalized = (ko.category || 'separate_kit') === 'personalized';
-        const headerKey = `_kh_${kitId || ki}`;
-
-        const kitItems = hasKitMeta
-          ? rawItems.filter(it => {
-              if (kitId && it.kitId) return String(it.kitId) === kitId;
-              const refLow = (it.kitType || it.kitName || '').toLowerCase();
-              const koLow = (ko.kitName || ko.kitType || '').toLowerCase();
-              return refLow && koLow && refLow === koLow;
-            })
-          : (kitOrdersList.length === 1 ? rawItems : []);
-        // The ids of every component item that makes up this kit — verifying the kit
-        // header persists verification against each of these (see toggleVerify).
-        const kitItemIds = kitItems.map(it => it._id).filter(Boolean);
-
-        const headerRow = {
-          key: headerKey,
-          type: 'kit_header',
-          kitName,
-          qty: overallQty,
-          // Personalized kits use the order-level box count; others use 0 as placeholder
-          boxes: isPersonalized ? orderBoxes : 0,
-          category: ko.category || 'separate_kit',
-          isPersonalized,
-          // Verified once every component item is verified server-side (survives reload).
-          verified: kitItems.length > 0 && kitItems.every(it => it.verified),
-          childItemIds: kitItemIds,
-        };
-        rows.push(headerRow);
-        // Personalized kit = ONE verifiable unit at kit level (not per-item)
-        if (isPersonalized) verifiable.push(headerRow);
-
-        kitItems.forEach((item, ii) => {
-          const totalQty = Number(item.qty) || 0;
-          const perKitQty = overallQty > 0 ? Math.round(totalQty / overallQty) : null;
-          // Personalized items are display-only — verification handled at kit header level
-          const itemType = isPersonalized ? 'personalized_item' : 'kit_item';
-          const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0 });
-          rows.push(row);
-          if (!isPersonalized) verifiable.push(row);
-        });
-      });
-
-      const usedKitIds = new Set(kitOrdersList.map(ko => String(ko.kitId)).filter(Boolean));
-      const sepItems = rawItems.filter(it => {
-        if (it.kitId && usedKitIds.has(String(it.kitId))) return false;
-        if (hasKitMeta && (it.kitType || it.kitName)) return false;
-        if (!hasKitMeta && kitOrdersList.length === 1) return false;
-        return true;
-      });
-      if (sepItems.length > 0) {
-        rows.push({ key: '_sep_hdr', type: 'kit_header', kitName: 'Separate Products', qty: null, boxes: 0, category: 'separate_product' });
-        sepItems.forEach((item, i) => {
-          const row = toRow(item, i, 'product', { boxes: item.boxes || orderBoxes });
-          rows.push(row);
-          verifiable.push(row);
-        });
-      }
-    } else {
-      const kitGroups = {};
-      const kitGroupOrder = [];
-      rawItems.forEach(it => {
-        const gKey = String(it.kitId || it.kitType || '');
-        if (gKey) {
-          if (!kitGroups[gKey]) { kitGroups[gKey] = { items: [], name: it.kitType || it.kitName || gKey }; kitGroupOrder.push(gKey); }
-          kitGroups[gKey].items.push(it);
-        }
-      });
-      kitGroupOrder.forEach(gKey => {
-        const grp = kitGroups[gKey];
-        rows.push({ key: `_kh_${gKey}`, type: 'kit_header', kitName: grp.name, qty: null, boxes: 0, category: 'separate_kit' });
-        grp.items.forEach((item, ii) => { const row = toRow(item, ii, 'kit_item'); rows.push(row); verifiable.push(row); });
-      });
-      rawItems.filter(it => !it.kitId && !it.kitType).forEach((item, i) => {
-        const row = toRow(item, i, 'product', { boxes: item.boxes || orderBoxes });
-        rows.push(row);
-        verifiable.push(row);
-      });
-    }
-
-    if (verifiable.length === 0) {
-      const flat = rawItems.map((item, i) => toRow(item, i, 'product', { boxes: orderBoxes }));
-      return { products: flat, groupedProducts: flat };
-    }
-
-    return { products: verifiable, groupedProducts: rows };
-  };
-  const { products, groupedProducts } = buildGroupedProducts();
+  const { products, groupedProducts } = buildDispatchGroupedProducts({
+    items: order?.items,
+    kitOrders: order?.kitOrders,
+    orderItems: order?.orderRawItems,
+    boxes: order?.boxes,
+  });
+  const verifySummary = summarizeDispatchVerification(products, isRowVerified);
 
   // Doc: every product must be verified before dispatch can be confirmed.
   const allProductsVerified = products.length > 0 && products.every((p) => verifiedProducts.has(p.key) || p.verified);
@@ -853,6 +759,9 @@ export default function DispatchDetail() {
                           min={0}
                           value={effectiveFwdAmount}
                           onChange={(v) => setLocalFwdAmount(v ?? 0)}
+                          // Locked in once the dispatch is confirmed — shouldn't change after
+                          // it's been finalized.
+                          disabled={dispatched}
                           style={{ width: '100%' }}
                           prefix="₹"
                           addonAfter={
@@ -871,18 +780,29 @@ export default function DispatchDetail() {
                 {/* Product Details table — shows when dispatch type selected */}
                 {dispatchType && (
                   <div style={{ marginBottom: 16, border: `1px solid #B11E6A33`, borderRadius: 10, overflow: 'hidden' }}>
-                    <div style={{ background: 'linear-gradient(135deg,#B11E6A18,#B11E6A08)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Space size={8}>
-                        <InboxOutlined style={{ color: '#B11E6A' }} />
-                        <Text strong style={{ color: textColor }}>Product Details — {order.id}</Text>
-                        <Tag color={dispatchType === 'Partial Dispatch' ? 'orange' : 'blue'} style={{ borderRadius: 12, fontSize: 11 }}>
-                          {dispatchType}
-                        </Tag>
+                    <div style={{ background: 'linear-gradient(135deg,#B11E6A18,#B11E6A08)', padding: '10px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                        <Space size={8}>
+                          <InboxOutlined style={{ color: '#B11E6A' }} />
+                          <Text strong style={{ color: textColor }}>Product Details — {order.id}</Text>
+                          <Tag color={dispatchType === 'Partial Dispatch' ? 'orange' : 'blue'} style={{ borderRadius: 12, fontSize: 11 }}>
+                            {dispatchType}
+                          </Tag>
+                        </Space>
+                        <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>
+                          <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+                          {verifySummary.overall.verified} / {verifySummary.overall.total} verified
+                        </Text>
+                      </div>
+                      <Space size={6} wrap style={{ marginTop: 8 }}>
+                        {[verifySummary.personalizedKit, verifySummary.separateKit, verifySummary.separateProduct]
+                          .filter((b) => b.total > 0)
+                          .map((b) => (
+                            <Tag key={b.label} style={{ borderRadius: 12, fontSize: 11, background: 'transparent', border: '1px solid #B11E6A33', color: textColor }}>
+                              {b.label}: {b.verified}/{b.total}
+                            </Tag>
+                          ))}
                       </Space>
-                      <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>
-                        <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
-                        {products.filter(isRowVerified).length} / {products.length} verified
-                      </Text>
                     </div>
                     <Table
                       size="small"
@@ -893,9 +813,13 @@ export default function DispatchDetail() {
                         {
                           title: 'Product / Kit',
                           dataIndex: 'name',
-                          // kit_header and personalized_item both span all 4 columns
+                          // Only non-personalized dividers (Separate Kit/Products headers) and
+                          // read-only personalized sub-items span all 3 columns — a personalized
+                          // kit header itself keeps real Status/Action cells (below) so it aligns
+                          // and shows "Verified" the same as every other row.
                           onCell: (row) => {
-                            if (row.type === 'kit_header' || row.type === 'personalized_item') return { colSpan: 4 };
+                            if (row.type === 'personalized_item') return { colSpan: 3 };
+                            if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 3 };
                             return {};
                           },
                           render: (v, row) => {
@@ -918,26 +842,6 @@ export default function DispatchDetail() {
                                   <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: cm.color, border: `1px solid ${cm.color}33` }}>
                                     {cm.label}
                                   </Tag>
-                                  {/* Personalized kit: show boxes + single verify inline in the header */}
-                                  {row.isPersonalized && (
-                                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                                      <Space size={4}>
-                                        <InboxOutlined style={{ color: cm.color }} />
-                                        <Text style={{ color: cm.color, fontSize: 12 }}>{row.boxes} box{row.boxes !== 1 ? 'es' : ''}</Text>
-                                      </Space>
-                                      {isRowVerified(row) ? (
-                                        <Button size="small" icon={<CheckSquareOutlined />}
-                                          style={{ borderColor: '#52c41a', color: '#52c41a' }}
-                                          onClick={() => toggleVerify(row)}
-                                        >Unverify</Button>
-                                      ) : (
-                                        <Button size="small" icon={<CheckSquareOutlined />}
-                                          style={{ background: '#B11E6A', border: 'none', color: '#fff' }}
-                                          onClick={() => toggleVerify(row)}
-                                        >Verify Kit</Button>
-                                      )}
-                                    </div>
-                                  )}
                                 </div>
                               );
                             }
@@ -956,44 +860,41 @@ export default function DispatchDetail() {
                           },
                         },
                         {
-                          title: 'Boxes', dataIndex: 'boxes',
-                          onCell: (row) => {
-                            if (row.type === 'kit_header') return { colSpan: 0 };
-                            if (row.type === 'personalized_item') return { colSpan: 0 };
-                            return {};
-                          },
-                          render: (v, row) => row.type === 'kit_header' || row.type === 'personalized_item' ? null : (
-                            <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text>{v}</Text></Space>
-                          ),
-                        },
-                        {
                           title: 'Status', key: 'status',
                           onCell: (row) => {
-                            if (row.type === 'kit_header') return { colSpan: 0 };
                             if (row.type === 'personalized_item') return { colSpan: 0 };
+                            if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 0 };
                             return {};
                           },
-                          render: (_, row) => (row.type === 'kit_header' || row.type === 'personalized_item') ? null : (
-                            isRowVerified(row)
+                          render: (_, row) => {
+                            if (row.type === 'personalized_item') return null;
+                            if (row.type === 'kit_header' && !row.isPersonalized) return null;
+                            return isRowVerified(row)
                               ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
-                              : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>
-                          ),
+                              : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>;
+                          },
                         },
                         {
                           title: 'Action', key: 'action',
                           onCell: (row) => {
-                            if (row.type === 'kit_header') return { colSpan: 0 };
                             if (row.type === 'personalized_item') return { colSpan: 0 };
+                            if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 0 };
                             return {};
                           },
-                          render: (_, row) => (row.type === 'kit_header' || row.type === 'personalized_item') ? null : (
-                            <Button size="small" icon={<CheckSquareOutlined />}
-                              style={isRowVerified(row) ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                              onClick={() => toggleVerify(row)}
-                            >
-                              {isRowVerified(row) ? 'Unverify' : 'Verify'}
-                            </Button>
-                          ),
+                          render: (_, row) => {
+                            if (row.type === 'personalized_item') return null;
+                            if (row.type === 'kit_header' && !row.isPersonalized) return null;
+                            const verified = isRowVerified(row);
+                            const label = row.type === 'kit_header' ? (verified ? 'Unverify' : 'Verify Kit') : (verified ? 'Unverify' : 'Verify');
+                            return (
+                              <Button size="small" icon={<CheckSquareOutlined />}
+                                style={verified ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
+                                onClick={() => toggleVerify(row)}
+                              >
+                                {label}
+                              </Button>
+                            );
+                          },
                         },
                       ]}
                     />

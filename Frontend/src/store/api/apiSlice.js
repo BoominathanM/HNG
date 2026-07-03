@@ -240,34 +240,41 @@ export const apiSlice = createApi({
     }),
     saveAsDraft: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/dispatch/${id}/draft`, method: 'patch', data }),
-      invalidatesTags: ['Dispatch'],
+      // Invalidate both the list queries (generic tag) and this specific getDispatch(id)
+      // cache entry (id-tagged) — without the id tag, a change made on one page (list's
+      // expand panel vs. the Detail page) never refreshes the other.
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     uploadInvoice: builder.mutation({
       query: ({ id, formData }) => ({ url: `/dispatch/${id}/upload-invoice`, method: 'post', data: formData }),
-      invalidatesTags: ['Dispatch'],
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     confirmDispatch: builder.mutation({
       query: ({ id, formData }) => ({ url: `/dispatch/${id}/confirm`, method: 'post', data: formData }),
-      invalidatesTags: ['Dispatch', 'Leads', 'Orders', 'Tasks'],
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }, 'Leads', 'Orders', 'Tasks'],
     }),
     uploadDispatchLR: builder.mutation({
       query: ({ id, formData, ...data }) => ({ url: `/dispatch/${id}/lr`, method: 'patch', data: formData || data }),
-      invalidatesTags: ['Dispatch'],
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     verifyItem: builder.mutation({
-      query: ({ id, itemId, formData }) => ({ url: `/dispatch/${id}/items/${itemId}/verify`, method: 'patch', data: formData }),
-      invalidatesTags: ['Dispatch'],
+      query: ({ id, itemId, formData, verified }) => ({
+        url: `/dispatch/${id}/items/${itemId}/verify`,
+        method: 'patch',
+        data: formData || (verified !== undefined ? { verified } : undefined),
+      }),
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     verifyInvoice: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/dispatch/${id}/verify-invoice`, method: 'post', data }),
     }),
     uploadBoxPhotos: builder.mutation({
       query: ({ id, formData }) => ({ url: `/dispatch/${id}/box-photos`, method: 'post', data: formData }),
-      invalidatesTags: ['Dispatch'],
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     addBoxPhotoUrl: builder.mutation({
       query: ({ id, type, url }) => ({ url: `/dispatch/${id}/box-photo-url`, method: 'patch', data: { type, url } }),
-      invalidatesTags: ['Dispatch'],
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     getTodaysDispatches: builder.query({
       query: () => ({ url: '/dispatch/today' }),
@@ -610,7 +617,9 @@ export const apiSlice = createApi({
     }),
     createInvoice: builder.mutation({
       query: (data) => ({ url: '/billing/invoices', method: 'post', data }),
-      invalidatesTags: ['Invoices', 'BillingParties'],
+      // Can carry an orderId that this recalculates payment status for (see billing.controller
+      // createInvoice) — invalidate Orders/Operations so Sales/Operations refetch too.
+      invalidatesTags: ['Invoices', 'BillingParties', 'Orders', 'Operations'],
     }),
     updateInvoiceGst: builder.mutation({
       query: ({ id, gstAmount }) => ({ url: `/billing/invoices/${id}/gst`, method: 'patch', data: { gstAmount } }),
@@ -628,7 +637,11 @@ export const apiSlice = createApi({
     }),
     convertQuotationToInvoice: builder.mutation({
       query: (data) => ({ url: '/billing/invoices/convert-quotation', method: 'post', data }),
-      invalidatesTags: ['Invoices', 'BillingParties', 'Quotations'],
+      // Backend also syncs the linked order's tasks with the freshly-resolved payment
+      // status (see billing.controller convertQuotationToInvoice → syncOrderTasksPayment) —
+      // invalidate Orders/Operations so Sales/Operations refetch instead of showing the
+      // payment status cached from before this invoice existed.
+      invalidatesTags: ['Invoices', 'BillingParties', 'Quotations', 'Orders', 'Operations'],
     }),
     getQuotationsInProcess: builder.query({
       query: () => ({ url: '/billing/quotations-in-process' }),
