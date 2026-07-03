@@ -27,6 +27,8 @@ import {
   useGetCompanySettingsQuery,
   useUpdateCompanySettingsMutation,
   useUploadLogoMutation,
+  useUploadSignatureMutation,
+  useUploadQrCodeMutation,
   useRestoreRecordMutation,
 } from '../../store/api/apiSlice';
 
@@ -200,10 +202,12 @@ export default function Settings() {
   const { data: companyData } = useGetCompanySettingsQuery();
   const [updateCompanyMutation] = useUpdateCompanySettingsMutation();
   const [uploadLogoMutation] = useUploadLogoMutation();
+  const [uploadSignatureMutation] = useUploadSignatureMutation();
+  const [uploadQrCodeMutation] = useUploadQrCodeMutation();
 
   // Form instance for the General tab (so its Save button can persist)
   const [generalForm] = Form.useForm();
-  const [notifPrefs, setNotifPrefs] = useState({ pay: true, stock: true, dispatch: true, task: true, wa: false, email: false });
+  const [notifPrefs, setNotifPrefs] = useState({ pay: true, stock: true, dispatch: true, task: true });
 
   useEffect(() => {
     const s = companyData?.data;
@@ -214,6 +218,15 @@ export default function Settings() {
       if (s.invoiceTerms) setInvoiceTerms(s.invoiceTerms);
       if (s.invoiceFooter) setInvoiceFooter(s.invoiceFooter);
       if (s.gstComponent) setInvoiceGstConfig(s.gstComponent);
+      if (s.bankDetails) setBankDetails((p) => ({ ...p, ...s.bankDetails }));
+      if (s.signatureUrl) setSignatureUrl(s.signatureUrl);
+      setInvoiceCompanyDetails((p) => ({
+        address: s.address ?? p.address,
+        gstNumber: s.gstNumber ?? p.gstNumber,
+        pan: s.panNumber ?? p.pan,
+        mobile: s.mobile ?? p.mobile,
+        email: s.email ?? p.email,
+      }));
       if (s.notifPrefs) setNotifPrefs((p) => ({ ...p, ...s.notifPrefs }));
       if (s.invoiceToggles) {
         const t = s.invoiceToggles instanceof Map ? Object.fromEntries(s.invoiceToggles) : s.invoiceToggles;
@@ -252,6 +265,12 @@ export default function Settings() {
     gstComponent: invoiceGstConfig,
     invoiceTerms,
     invoiceFooter,
+    bankDetails,
+    address: invoiceCompanyDetails.address,
+    gstNumber: invoiceCompanyDetails.gstNumber,
+    panNumber: invoiceCompanyDetails.pan,
+    mobile: invoiceCompanyDetails.mobile,
+    email: invoiceCompanyDetails.email,
     invoiceToggles: {
       gstin: invoiceShowGstin, taxRate: invoiceShowTaxRate,
       logo: invoiceShowLogo, bank: invoiceShowBank, terms: invoiceShowTerms, sign: invoiceShowSign,
@@ -271,6 +290,38 @@ export default function Settings() {
       enqueueSnackbar('Logo uploaded', { variant: 'success' });
     } catch (e) {
       enqueueSnackbar(e?.data || 'Logo upload failed', { variant: 'error' });
+    }
+    return false;
+  };
+
+  const handleSignatureUpload = async (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => setSignatureUrl(e.target.result);
+    reader.readAsDataURL(file);
+    try {
+      const fd = new FormData();
+      fd.append('signature', file);
+      const res = await uploadSignatureMutation(fd).unwrap();
+      if (res?.signatureUrl) setSignatureUrl(res.signatureUrl);
+      enqueueSnackbar('Signature uploaded', { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data || 'Signature upload failed', { variant: 'error' });
+    }
+    return false;
+  };
+
+  const handleQrCodeUpload = async (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => setBankDetails(p => ({ ...p, qrCodeUrl: e.target.result }));
+    reader.readAsDataURL(file);
+    try {
+      const fd = new FormData();
+      fd.append('qrcode', file);
+      const res = await uploadQrCodeMutation(fd).unwrap();
+      if (res?.qrCodeUrl) setBankDetails(p => ({ ...p, qrCodeUrl: res.qrCodeUrl }));
+      enqueueSnackbar('QR code uploaded', { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data || 'QR code upload failed', { variant: 'error' });
     }
     return false;
   };
@@ -303,6 +354,9 @@ export default function Settings() {
   const [invoiceTerms, setInvoiceTerms]             = useState(
     '1. Goods once sold will not be taken back or exchanged.\n2. All disputes are subject to local jurisdiction only.\n3. Payment should be made within the due date mentioned on the invoice.\n4. Interest @ 18% p.a. will be charged on overdue payments.\n5. E. & O.E.'
   );
+  const [bankDetails, setBankDetails] = useState({ name: '', ifsc: '', account: '', bank: '', upiId: '', qrCodeUrl: '' });
+  const [signatureUrl, setSignatureUrl] = useState(null);
+  const [invoiceCompanyDetails, setInvoiceCompanyDetails] = useState({ address: '', gstNumber: '', pan: '', mobile: '', email: '' });
 
   const deletedRecords = deletedRecordsFromApi;
   const [deletedSearch, setDeletedSearch] = useState('');
@@ -874,10 +928,8 @@ export default function Settings() {
                     { label: 'Low Stock Alerts',     desc: 'Notify when inventory falls below minimum',   key: 'stock',    default: true  },
                     { label: 'Dispatch Reminders',   desc: 'Remind team when orders are ready to ship',   key: 'dispatch', default: true  },
                     { label: 'Task Notifications',   desc: 'Updates when tasks are assigned or completed', key: 'task',    default: true  },
-                    { label: 'WhatsApp Notifications', desc: 'Send alerts via WhatsApp Business',         key: 'wa',      default: false },
-                    { label: 'Email Notifications',  desc: 'Send daily summary emails to managers',       key: 'email',   default: false },
                   ].map((n, i) => (
-                    <div key={n.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: i < 5 ? `1px solid ${borderColor}` : 'none' }}>
+                    <div key={n.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: i < 3 ? `1px solid ${borderColor}` : 'none' }}>
                       <div>
                         <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>{n.label}</Text>
                         <Text style={{ fontSize: 12, color: '#aaa' }}>{n.desc}</Text>
@@ -898,6 +950,69 @@ export default function Settings() {
             label: <Space><FileTextOutlined />Invoice Settings</Space>,
             children: (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+                {/* ── Company Details (shown on Invoice) ── */}
+                <Card
+                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  title={<Text strong style={{ color: textColor }}>Company Details (shown on Invoice)</Text>}
+                >
+                  <Text style={{ fontSize: 13, color: '#aaa', display: 'block', marginBottom: 16 }}>
+                    These details are printed in the invoice header — fill them in and save to update every quotation and invoice
+                  </Text>
+                  <Row gutter={16}>
+                    <Col xs={24}>
+                      <Form.Item label="Address">
+                        <Input.TextArea
+                          value={invoiceCompanyDetails.address}
+                          onChange={e => setInvoiceCompanyDetails(p => ({ ...p, address: e.target.value }))}
+                          rows={2}
+                          placeholder="Business address"
+                          style={{ borderRadius: 8 }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="GST Number">
+                        <Input
+                          value={invoiceCompanyDetails.gstNumber}
+                          onChange={e => setInvoiceCompanyDetails(p => ({ ...p, gstNumber: e.target.value }))}
+                          placeholder="e.g. 33AAHCH2128J1ZR"
+                          style={{ borderRadius: 8 }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="PAN Number">
+                        <Input
+                          value={invoiceCompanyDetails.pan}
+                          onChange={e => setInvoiceCompanyDetails(p => ({ ...p, pan: e.target.value }))}
+                          placeholder="e.g. AAHCH2128J"
+                          style={{ borderRadius: 8 }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Phone Number">
+                        <Input
+                          value={invoiceCompanyDetails.mobile}
+                          onChange={e => setInvoiceCompanyDetails(p => ({ ...p, mobile: e.target.value }))}
+                          placeholder="e.g. 8248093571"
+                          style={{ borderRadius: 8 }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Email" style={{ marginBottom: 0 }}>
+                        <Input
+                          value={invoiceCompanyDetails.email}
+                          onChange={e => setInvoiceCompanyDetails(p => ({ ...p, email: e.target.value }))}
+                          placeholder="e.g. admin@healnglow.co.in"
+                          style={{ borderRadius: 8 }}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </Card>
 
                 {/* ── Theme ── */}
                 <Card
@@ -1130,12 +1245,95 @@ export default function Settings() {
                   </div>
 
                   {/* Show Bank Details */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: `1px solid ${borderColor}` }}>
-                    <div>
-                      <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Bank Details</Text>
-                      <Text style={{ fontSize: 12, color: '#aaa' }}>Include bank account info for payment</Text>
+                  <div style={{ borderBottom: `1px solid ${borderColor}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
+                      <div>
+                        <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Bank Details</Text>
+                        <Text style={{ fontSize: 12, color: '#aaa' }}>Include bank account info for payment</Text>
+                      </div>
+                      <Switch checked={invoiceShowBank} onChange={setInvoiceShowBank} style={{ background: invoiceShowBank ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
                     </div>
-                    <Switch checked={invoiceShowBank} onChange={setInvoiceShowBank} style={{ background: invoiceShowBank ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                    {invoiceShowBank && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        style={{ overflow: 'hidden', paddingBottom: 16 }}
+                      >
+                        <div style={{ background: subBg, borderRadius: 10, padding: 14, border: `1px solid ${borderColor}` }}>
+                          <Text strong style={{ fontSize: 12, color: '#B11E6A', display: 'block', marginBottom: 10 }}>Bank Account Details</Text>
+                          <Row gutter={12}>
+                            <Col xs={24} sm={12}>
+                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Account Holder Name</Text>
+                              <Input
+                                value={bankDetails.name}
+                                onChange={e => setBankDetails(p => ({ ...p, name: e.target.value }))}
+                                placeholder="e.g. Heal n Glow"
+                                style={{ borderRadius: 8, marginBottom: 10 }}
+                              />
+                            </Col>
+                            <Col xs={24} sm={12}>
+                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Bank Name &amp; Branch</Text>
+                              <Input
+                                value={bankDetails.bank}
+                                onChange={e => setBankDetails(p => ({ ...p, bank: e.target.value }))}
+                                placeholder="e.g. Kotak Mahindra Bank, MADURAI"
+                                style={{ borderRadius: 8, marginBottom: 10 }}
+                              />
+                            </Col>
+                            <Col xs={24} sm={12}>
+                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Account Number</Text>
+                              <Input
+                                value={bankDetails.account}
+                                onChange={e => setBankDetails(p => ({ ...p, account: e.target.value }))}
+                                placeholder="e.g. 8056766743"
+                                style={{ borderRadius: 8 }}
+                              />
+                            </Col>
+                            <Col xs={24} sm={12}>
+                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>IFSC Code</Text>
+                              <Input
+                                value={bankDetails.ifsc}
+                                onChange={e => setBankDetails(p => ({ ...p, ifsc: e.target.value }))}
+                                placeholder="e.g. KKBK0008716"
+                                style={{ borderRadius: 8, marginBottom: 10 }}
+                              />
+                            </Col>
+                            <Col xs={24} sm={12}>
+                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>UPI ID</Text>
+                              <Input
+                                value={bankDetails.upiId}
+                                onChange={e => setBankDetails(p => ({ ...p, upiId: e.target.value }))}
+                                placeholder="e.g. healnglow@okhdfcbank"
+                                style={{ borderRadius: 8 }}
+                              />
+                            </Col>
+                          </Row>
+                          <Divider style={{ margin: '10px 0' }} />
+                          <Text strong style={{ fontSize: 12, color: '#B11E6A', display: 'block', marginBottom: 10 }}>UPI QR Code</Text>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+                            <div style={{ width: 90, height: 90, borderRadius: 10, border: `2px dashed ${isDark ? '#444' : '#ddd'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: cardBg }}>
+                              {bankDetails.qrCodeUrl
+                                ? <img src={bankDetails.qrCodeUrl} alt="UPI QR" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                                : <Text style={{ fontSize: 11, color: '#bbb' }}>No QR</Text>}
+                            </div>
+                            <div>
+                              <Upload
+                                accept="image/*"
+                                showUploadList={false}
+                                beforeUpload={handleQrCodeUpload}
+                              >
+                                <Button icon={<UploadOutlined />} style={{ marginBottom: 8, display: 'block', color: '#B11E6A', borderColor: '#B11E6A55' }}>
+                                  {bankDetails.qrCodeUrl ? 'Change QR Code' : 'Upload QR Code'}
+                                </Button>
+                              </Upload>
+                              <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>PNG, JPG up to 2MB</Text>
+                              <Text style={{ fontSize: 12, color: '#aaa' }}>Shown next to Bank Details on the invoice</Text>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
 
                   {/* Terms & Conditions — toggle + editable textarea */}
@@ -1182,12 +1380,46 @@ export default function Settings() {
                   </div>
 
                   {/* Show Signature Field */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
-                    <div>
-                      <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Signature Field</Text>
-                      <Text style={{ fontSize: 12, color: '#aaa' }}>Add authorised signatory line at footer</Text>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
+                      <div>
+                        <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Signature Field</Text>
+                        <Text style={{ fontSize: 12, color: '#aaa' }}>Add authorised signatory line at footer</Text>
+                      </div>
+                      <Switch checked={invoiceShowSign} onChange={setInvoiceShowSign} style={{ background: invoiceShowSign ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
                     </div>
-                    <Switch checked={invoiceShowSign} onChange={setInvoiceShowSign} style={{ background: invoiceShowSign ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
+                    {invoiceShowSign && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        style={{ overflow: 'hidden', paddingBottom: 16 }}
+                      >
+                        <div style={{ background: subBg, borderRadius: 10, padding: 14, border: `1px solid ${borderColor}` }}>
+                          <Text strong style={{ fontSize: 12, color: '#B11E6A', display: 'block', marginBottom: 10 }}>Signature Image</Text>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+                            <div style={{ width: 140, height: 70, borderRadius: 10, border: `2px dashed ${isDark ? '#444' : '#ddd'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: cardBg }}>
+                              {signatureUrl
+                                ? <img src={signatureUrl} alt="signature" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                                : <Text style={{ fontSize: 11, color: '#bbb' }}>No signature</Text>}
+                            </div>
+                            <div>
+                              <Upload
+                                accept="image/*"
+                                showUploadList={false}
+                                beforeUpload={handleSignatureUpload}
+                              >
+                                <Button icon={<UploadOutlined />} style={{ marginBottom: 8, display: 'block', color: '#B11E6A', borderColor: '#B11E6A55' }}>
+                                  {signatureUrl ? 'Change Signature' : 'Upload Signature'}
+                                </Button>
+                              </Upload>
+                              <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>PNG, JPG up to 2MB</Text>
+                              <Text style={{ fontSize: 12, color: '#aaa' }}>Transparent background recommended</Text>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
 
                   <Divider style={{ margin: '4px 0 16px' }} />

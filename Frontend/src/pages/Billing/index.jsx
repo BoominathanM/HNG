@@ -412,6 +412,10 @@ export default function Billing() {
       orderCategory: (lead?.leadType === 'SAMPLE') ? 'SAMPLE' : 'ORDER',
       isEmergency: false,
       date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
+      expectedDeliveryDate: (() => {
+        const d = q.orderDeliveryDate || lead?.orderDeliveryDate || linkedOrder?.expectedDeliveryDate;
+        return d && dayjs(d).isValid() ? dayjs(d).format('DD/MM/YYYY') : '';
+      })(),
       amount: kitMoney.taxable || q.amount,
       gst: kitMoney.gst || q.gstAmount,
       total,
@@ -1058,6 +1062,20 @@ export default function Billing() {
     win.document.close();
   };
 
+  // Directly downloads the document as a file (no print-preview window in between).
+  const handleDownloadDocument = (docType, data) => {
+    const html = generatePrintHTML(docType, data, invoiceSettings);
+    const blob = new Blob([html], { type: 'text/html' });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${docType === 'quotation' ? 'quotation' : 'invoice'}-${data?.quot || data?.inv || 'document'}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+  };
+
   // Style helpers
   const sectionCard = {
     borderRadius: 14,
@@ -1146,7 +1164,7 @@ export default function Billing() {
           <Tooltip title="Edit GST"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openGstEdit(r)} /></Tooltip>
           <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar('Invoice shared on WhatsApp', { variant: 'success' })} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
-          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
+          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownloadDocument('invoice', r)} /></Tooltip>
           {r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
             <>
               <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
@@ -1205,7 +1223,7 @@ export default function Billing() {
             <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType(docType); setViewModal(true); }} /></Tooltip>
             <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar(isOrder ? 'Invoice shared on WhatsApp' : 'Quotation shared on WhatsApp', { variant: 'success' })} /></Tooltip>
             <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
-            <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
+            <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownloadDocument(docType, r)} /></Tooltip>
             {/* Quotation-specific actions */}
             {tabType === 'in-process' && !isOrder && (
               <Button
@@ -1369,7 +1387,7 @@ export default function Billing() {
               icon={<DownloadOutlined />}
               type="primary"
               style={{ background: 'linear-gradient(135deg,#2d5016,#4a7c24)', border: 'none' }}
-              onClick={() => handlePrintDocument(viewDocType, selectedInv || {})}
+              onClick={() => handleDownloadDocument(viewDocType, selectedInv || {})}
             >
               PDF
             </Button>

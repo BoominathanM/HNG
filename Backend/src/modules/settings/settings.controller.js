@@ -133,6 +133,28 @@ exports.uploadLogo = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, logoUrl, data: settings });
 });
 
+exports.uploadSignature = asyncHandler(async (req, res, next) => {
+  if (!req.file) return next(new AppError('Please upload a file', 400));
+  const signatureUrl = req.file.path;
+  const settings = await CompanySettings.findOneAndUpdate(
+    {},
+    { signatureUrl },
+    { new: true, upsert: true }
+  );
+  res.status(200).json({ success: true, signatureUrl, data: settings });
+});
+
+exports.uploadQrCode = asyncHandler(async (req, res, next) => {
+  if (!req.file) return next(new AppError('Please upload a file', 400));
+  const qrCodeUrl = req.file.path;
+  const settings = await CompanySettings.findOneAndUpdate(
+    {},
+    { 'bankDetails.qrCodeUrl': qrCodeUrl },
+    { new: true, upsert: true }
+  );
+  res.status(200).json({ success: true, qrCodeUrl, data: settings });
+});
+
 // ─── User Management ────────────────────────────────────────────────────────
 exports.getUsers = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };

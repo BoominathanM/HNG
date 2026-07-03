@@ -13,6 +13,8 @@ router.get('/country-codes', ctrl.getCountryCodes);
 router.get('/company', ctrl.getCompanySettings);
 router.put('/company', ctrl.updateCompanySettings);
 router.post('/company/logo', upload.single('logo'), ctrl.uploadLogo);
+router.post('/company/signature', upload.single('signature'), ctrl.uploadSignature);
+router.post('/company/qrcode', upload.single('qrcode'), ctrl.uploadQrCode);
 
 router.get('/users', ctrl.getUsers);
 router.post('/users', ctrl.createUser);

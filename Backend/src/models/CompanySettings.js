@@ -8,6 +8,8 @@ const companySettingsSchema = new mongoose.Schema({
   address: String,
   gstNumber: String,
   panNumber: String,
+  mobile: String,
+  email: String,
   invoicePrefix: { type: String, default: 'INV-' },
   defaultGst: { type: mongoose.Schema.Types.Mixed, default: 18 },
   cgst: String,
@@ -22,6 +24,15 @@ const companySettingsSchema = new mongoose.Schema({
   invoiceToggles: { type: Map, of: Boolean },
   invoiceTerms: String,
   invoiceFooter: String,
+  bankDetails: {
+    name: String,
+    ifsc: String,
+    account: String,
+    bank: String,
+    upiId: String,
+    qrCodeUrl: String,
+  },
+  signatureUrl: String,
   // Notification preferences (enable/disable per event type)
   notifPrefs: {
     pay: { type: Boolean, default: true },

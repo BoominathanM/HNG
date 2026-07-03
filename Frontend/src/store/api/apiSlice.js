@@ -877,6 +877,14 @@ export const apiSlice = createApi({
       query: (formData) => ({ url: '/settings/company/logo', method: 'post', data: formData }),
       invalidatesTags: ['Settings'],
     }),
+    uploadSignature: builder.mutation({
+      query: (formData) => ({ url: '/settings/company/signature', method: 'post', data: formData }),
+      invalidatesTags: ['Settings'],
+    }),
+    uploadQrCode: builder.mutation({
+      query: (formData) => ({ url: '/settings/company/qrcode', method: 'post', data: formData }),
+      invalidatesTags: ['Settings'],
+    }),
     getUsers: builder.query({
       query: () => ({ url: '/settings/users' }),
       providesTags: ['Users'],
@@ -1270,6 +1278,8 @@ export const {
   useGetPublicBrandingQuery,
   useUpdateCompanySettingsMutation,
   useUploadLogoMutation,
+  useUploadSignatureMutation,
+  useUploadQrCodeMutation,
   useGetUsersQuery,
   useCreateUserMutation,
   useUpdateUserMutation,
