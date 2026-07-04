@@ -399,6 +399,7 @@ const DEFAULT_EVENTS = [
   { key: 'dispatch-update',   label: 'Dispatch Update',   description: 'Triggered on dispatch confirmation or LR upload', availableFields: ['orderCode', 'customerName', 'lrNumber', 'trackingUrl', 'companyName'] },
   { key: 'generate-report',   label: 'Generate Report',   description: 'Triggered when a scheduled report is generated',  availableFields: ['reportDate', 'totalOrders', 'totalRevenue', 'companyName'] },
   { key: 'follow-up-reminder', label: 'Follow-up Reminder', description: 'Sent to the assigned salesperson on the scheduled follow-up date', availableFields: ['salesPersonName', 'customerName', 'followupDate', 'followupTime', 'leadStatus', 'companyName'] },
+  { key: 'order-delivery-reminder', label: 'Order Delivery Reminder', description: 'Sent to the lead creator on the tentative order delivery date', availableFields: ['salesPersonName', 'customerName', 'deliveryDate', 'leadStatus', 'companyName'] },
   { key: 'billing-invoice', label: 'Billing Invoice', description: 'Sent from Billing when a quotation/invoice document is shared with the customer over WhatsApp', availableFields: ['customerName', 'invoiceNumber', 'amount', 'balance', 'dueDate', 'orderCode', 'companyName'] },
   { key: 'dispatch-notify', label: 'Dispatch Notify', description: 'Sent to the sales person and the customer when a dispatch is confirmed, with the invoice attached', availableFields: ['orderCode', 'customerName', 'salesPersonName', 'invoiceNumber', 'companyName'] },
 ];

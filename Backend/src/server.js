@@ -4,6 +4,7 @@ const connectDB = require('./config/db');
 const { seedAdminIfEmpty } = require('./utils/autoSeed');
 const { startFollowUpReminderScheduler } = require('./utils/followupReminderScheduler');
 const { startPaymentDueScheduler } = require('./utils/paymentDueScheduler');
+const { startOrderDeliveryReminderScheduler } = require('./utils/orderDeliveryReminderScheduler');
 
 const PORT = parseInt(process.env.PORT || '7007', 10);
 
@@ -25,6 +26,7 @@ connectDB()
     await seedAdminIfEmpty();
     startFollowUpReminderScheduler();
     startPaymentDueScheduler();
+    startOrderDeliveryReminderScheduler();
 
     const server = app.listen(PORT, () => {
       console.log(`✅  HNG CRM API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);

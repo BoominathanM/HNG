@@ -191,7 +191,7 @@ exports.getTemplates = async (req, res, next) => {
 // Only these events are exposed in the mapping UI for now — the rest of the
 // default catalog (order-placed, dispatch-update, etc.) has no live trigger wired
 // up yet, so surfacing them would let users create mappings that silently never fire.
-const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify'];
+const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify', 'order-delivery-reminder'];
 
 // GET /api/whatsapp/events
 exports.getEvents = async (req, res, next) => {

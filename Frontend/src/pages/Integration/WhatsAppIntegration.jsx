@@ -45,7 +45,7 @@ const getTemplateType = (t) => {
 
 // These events are date-driven reminders sent as plain scheduled messages, so only
 // text templates make sense for them — other events can use any template type.
-const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due'];
+const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'order-delivery-reminder'];
 
 // Billing Invoice attaches the invoice/quotation PDF as a WhatsApp document header,
 // so only templates built with a DOCUMENT header are valid choices for it.
@@ -196,7 +196,7 @@ export default function WhatsAppIntegration() {
     try {
       const vals = await mappingForm.validateFields();
       const selectedEvt = events.find((e) => String(e._id) === String(vals.eventId));
-      const isDateDriven = ['follow-up-reminder', 'payment-due'].includes(selectedEvt?.key);
+      const isDateDriven = TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvt?.key);
       const payload = {
         ...(editMapping?._id ? { id: editMapping._id } : {}),
         eventId:    vals.eventId,
@@ -300,7 +300,7 @@ export default function WhatsAppIntegration() {
     {
       title: 'Send Time', key: 'sendTime', width: 120,
       render: (_, r) => {
-        if (!['follow-up-reminder', 'payment-due'].includes(r.eventId?.key)) return <Text style={{ color: subText }}>—</Text>;
+        if (!TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(r.eventId?.key)) return <Text style={{ color: subText }}>—</Text>;
         const t = r.sendTime || '08:00';
         const [hh, mm] = t.split(':');
         const h = parseInt(hh, 10);
