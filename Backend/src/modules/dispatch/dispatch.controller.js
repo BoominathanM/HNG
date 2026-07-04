@@ -1,6 +1,9 @@
 const DispatchRecord = require('../../models/DispatchRecord');
 const Order = require('../../models/Order');
 const Lead = require('../../models/Lead');
+const User = require('../../models/User');
+const WhatsAppEvent = require('../../models/WhatsAppEvent');
+const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const Transport = require('../../models/Transport');
@@ -9,7 +12,64 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyMany } = require('../../utils/notify');
+const { sendMessage } = require('../../services/whatsAppService');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
+
+// Sends the "Dispatch Notify" WhatsApp template (configured in Integrations → WhatsApp →
+// Event Mapping) to both the order's sales person and the customer, with the confirmed
+// dispatch's invoice file attached as a document. Silently no-ops if the event has no
+// enabled template mapping yet, so an unconfigured integration never blocks dispatch confirm.
+async function sendDispatchNotifyWhatsApp(orderDoc, dispatch) {
+  try {
+    const event = await WhatsAppEvent.findOne({ key: 'dispatch-notify' }).lean();
+    if (!event) return;
+    const mapping = await WhatsAppEventMapping.findOne({ eventId: event._id, isEnabled: true })
+      .populate('templateId', 'name language')
+      .lean();
+    if (!mapping?.templateId) return;
+
+    const { name: templateName, language = 'en' } = mapping.templateId;
+    const fieldValues = {
+      orderCode: orderDoc?.orderCode || dispatch.dispatchCode || '',
+      customerName: orderDoc?.clientName || '',
+      salesPersonName: orderDoc?.salesPerson || '',
+      invoiceNumber: dispatch.invoiceNumber || '',
+      companyName: process.env.COMPANY_NAME || 'HNG',
+    };
+    const parameters = {};
+    (mapping.variables || []).forEach((v) => {
+      if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
+    });
+
+    // The configured template requires a document header — without a real link the
+    // WhatsApp API rejects the send with "Link to the media file is absent", so skip
+    // sending entirely rather than firing a message that's guaranteed to fail.
+    const documentUrl = dispatch.invoiceFileUrl || '';
+    if (!documentUrl) {
+      console.warn('[dispatch-notify] Skipped — no invoice document URL available to attach.');
+      return;
+    }
+    const documentFilename = dispatch.invoiceDocumentFilename || `invoice-${dispatch.invoiceNumber || dispatch.dispatchCode}.pdf`;
+
+    const recipients = [];
+    if (orderDoc?.clientPhone) recipients.push({ label: orderDoc.clientName || 'Customer', phone: orderDoc.clientPhone });
+    if (orderDoc?.salesPerson) {
+      const salesUser = await User.findOne({ fullName: orderDoc.salesPerson }).select('mobile').lean();
+      if (salesUser?.mobile) recipients.push({ label: orderDoc.salesPerson, phone: salesUser.mobile });
+    }
+
+    for (const r of recipients) {
+      const result = await sendMessage({ to: r.phone, templateName, language, parameters, documentUrl, documentFilename });
+      if (result.success) {
+        console.log(`[dispatch-notify] Sent to ${r.label} (${r.phone})`);
+      } else {
+        console.warn(`[dispatch-notify] Failed for ${r.label} (${r.phone}): ${result.error}`);
+      }
+    }
+  } catch (err) {
+    console.error('[dispatch-notify] error:', err.message);
+  }
+}
 
 exports.getDispatches = asyncHandler(async (req, res) => {
   const filter = {};
@@ -119,13 +179,21 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   dispatch.invoiceNumber = req.body.invoiceNumber;
   dispatch.invoiceDate = req.body.invoiceDate;
   dispatch.dispatchType = req.body.dispatchType;
+  // Single checkbox on the frontend now governs the WhatsApp dispatch notification.
   // FormData sends booleans as strings; treat 'false' (string or boolean) as disabled.
-  dispatch.autoNotify = req.body.autoNotify !== false && req.body.autoNotify !== 'false';
-  dispatch.sendWhatsapp = req.body.sendWhatsapp !== false && req.body.sendWhatsapp !== 'false';
+  const sendWhatsapp = req.body.sendWhatsapp !== false && req.body.sendWhatsapp !== 'false';
+  dispatch.autoNotify = sendWhatsapp;
+  dispatch.sendWhatsapp = sendWhatsapp;
   if (req.body.transport) dispatch.transportName = req.body.transport;
   if (req.body.weight !== undefined && req.body.weight !== '') dispatch.weight = req.body.weight;
   if (req.body.boxes !== undefined) dispatch.boxes = Number(req.body.boxes) || 0;
+  // A manually-attached invoice file (upload.single('invoice')) wins if present; otherwise
+  // fall back to the invoice PDF the frontend generated from Billing's invoice and uploaded
+  // ahead of this request — either way this is what gets attached to the WhatsApp message.
   if (req.file) dispatch.invoiceFileUrl = req.file.path;
+  else if (req.body.invoiceDocumentUrl) dispatch.invoiceFileUrl = req.body.invoiceDocumentUrl;
+  // Not a schema field — only needed transiently below to name the WhatsApp attachment.
+  if (req.body.invoiceDocumentFilename) dispatch.invoiceDocumentFilename = req.body.invoiceDocumentFilename;
   dispatch.dispatchedAt = Date.now();
   await dispatch.save({ validateBeforeSave: false });
 
@@ -170,13 +238,15 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
     }
   }
 
-  // Notify sales person + customer (in-app + WhatsApp when enabled).
-  if (dispatch.autoNotify || dispatch.sendWhatsapp) {
-    const msg = `Order ${orderDoc?.orderCode || dispatch.dispatchCode} for ${orderDoc?.clientName || ''} has been dispatched.`;
-    await notifyMany([
-      { userId: orderDoc?.assignedTo, type: 'dispatch', title: 'Order Dispatched', message: msg, whatsapp: dispatch.sendWhatsapp, phone: orderDoc?.clientPhone },
-      { type: 'dispatch', title: 'Order Dispatched', message: msg, whatsapp: dispatch.sendWhatsapp, phone: orderDoc?.clientPhone },
-    ]);
+  // In-app notification always fires; the WhatsApp "Dispatch Notify" message (to sales
+  // person + customer, with the invoice attached) only fires when the checkbox was checked.
+  const msg = `Order ${orderDoc?.orderCode || dispatch.dispatchCode} for ${orderDoc?.clientName || ''} has been dispatched.`;
+  await notifyMany([
+    { userId: orderDoc?.assignedTo, type: 'dispatch', title: 'Order Dispatched', message: msg },
+    { type: 'dispatch', title: 'Order Dispatched', message: msg },
+  ]);
+  if (sendWhatsapp) {
+    await sendDispatchNotifyWhatsApp(orderDoc, dispatch);
   }
 
   res.status(200).json({ success: true, data: dispatch });

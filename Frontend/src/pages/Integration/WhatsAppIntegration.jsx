@@ -36,6 +36,21 @@ const PRIMARY = '#B11E6A';
 const PRIMARY_GRAD = 'linear-gradient(90deg,#8e1450,#B11E6A)';
 const PRIMARY_ALPHA = (a) => `rgba(177,30,106,${a})`;
 
+// WhatsApp templates have no explicit "type" field — derive it from the HEADER
+// component's format. No HEADER (or a TEXT header) means it's a plain text template.
+const getTemplateType = (t) => {
+  const header = Array.isArray(t?.components) ? t.components.find((c) => c?.type === 'HEADER') : null;
+  return (header?.format || 'TEXT').toLowerCase();
+};
+
+// These events are date-driven reminders sent as plain scheduled messages, so only
+// text templates make sense for them — other events can use any template type.
+const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due'];
+
+// Billing Invoice attaches the invoice/quotation PDF as a WhatsApp document header,
+// so only templates built with a DOCUMENT header are valid choices for it.
+const DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS = ['billing-invoice'];
+
 export default function WhatsAppIntegration() {
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
@@ -214,6 +229,17 @@ export default function WhatsAppIntegration() {
       render: (v) => <Text style={{ color: PRIMARY, fontWeight: 500 }}>{v}</Text>,
     },
     {
+      title: 'Type', key: 'type', width: 100,
+      render: (_, r) => {
+        const type = getTemplateType(r);
+        return (
+          <Tag color={type === 'text' ? 'blue' : 'purple'}>
+            {type.charAt(0).toUpperCase() + type.slice(1)}
+          </Tag>
+        );
+      },
+    },
+    {
       title: 'Components', key: 'components',
       render: (_, r) => {
         const types = Array.isArray(r.components) ? r.components.map((c) => c?.type).filter(Boolean) : [];
@@ -321,8 +347,15 @@ export default function WhatsAppIntegration() {
   // ── Selected event's available fields for variable mapping ────────────────
   const selectedEventId  = Form.useWatch('eventId', mappingForm);
   const selectedEvent    = events.find((e) => String(e._id) === String(selectedEventId));
-  const DATE_DRIVEN_EVENT_KEYS = ['follow-up-reminder', 'payment-due'];
-  const isDateDrivenEvent = DATE_DRIVEN_EVENT_KEYS.includes(selectedEvent?.key);
+  // Follow Up Reminder / Payment Reminder are date-driven daily reminders — they
+  // also only ever get plain text templates; other events can use any template type.
+  const isDateDrivenEvent = TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvent?.key);
+  const isDocumentOnlyEvent = DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvent?.key);
+  const templatesForEvent = isDateDrivenEvent
+    ? templates.filter((t) => getTemplateType(t) === 'text')
+    : isDocumentOnlyEvent
+      ? templates.filter((t) => getTemplateType(t) === 'document')
+      : templates;
 
   const tabItems = [
     // ── Configuration Tab ──────────────────────────────────────────────────
@@ -649,7 +682,10 @@ export default function WhatsAppIntegration() {
           <Form.Item name="eventId" label="CRM Event" rules={[{ required: true, message: 'Select an event' }]}>
             <Select
               placeholder="Select the CRM event that triggers this message"
-              onChange={() => setVariableRows([])}
+              onChange={() => {
+                setVariableRows([]);
+                mappingForm.setFieldsValue({ templateId: undefined });
+              }}
             >
               {events.map((e) => <Option key={e._id} value={e._id}>{e.label}</Option>)}
             </Select>
@@ -662,7 +698,7 @@ export default function WhatsAppIntegration() {
               showSearch
               optionFilterProp="children"
             >
-              {templates.map((t) => (
+              {templatesForEvent.map((t) => (
                 <Option key={t._id} value={t._id}>
                   {t.name} <Tag style={{ marginLeft: 6 }} color={t.status === 'APPROVED' ? 'success' : 'warning'}>{t.status}</Tag>
                 </Option>

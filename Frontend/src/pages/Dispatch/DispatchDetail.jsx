@@ -7,6 +7,7 @@ import {
   Select, Table, Divider, Spin,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
+import html2pdf from 'html2pdf.js';
 import {
   CameraOutlined, UploadOutlined, EnvironmentOutlined,
   ArrowLeftOutlined, PrinterOutlined, SaveOutlined, ThunderboltOutlined,
@@ -27,6 +28,7 @@ import {
   useGetInvoicesQuery,
   useGetCompanySettingsQuery,
   useGetKitsQuery,
+  useUploadFilesMutation,
 } from '../../store/api/apiSlice';
 import { buildDocComposition } from '../../utils/docComposition';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
@@ -62,6 +64,7 @@ export default function DispatchDetail() {
   const [verifyItem] = useVerifyItemMutation();
   const [saveAsDraft] = useSaveAsDraftMutation();
   const [uploadBoxPhotos] = useUploadBoxPhotosMutation();
+  const [uploadFilesMutation] = useUploadFilesMutation();
 
   // Derive orderId from raw dispatch data (before `order` useMemo is computed)
   const dispatchRaw = dispatchData?.data;
@@ -100,13 +103,9 @@ export default function DispatchDetail() {
     }
   };
 
-  const handlePrintInvoice = () => {
-    const rawInvoices = orderInvoicesData?.data || [];
-    if (rawInvoices.length === 0) {
-      enqueueSnackbar('No invoice found for this order. Please create one from the Billing page.', { variant: 'warning' });
-      return;
-    }
-    const inv = rawInvoices[0];
+  // Shared by Print Invoice and the WhatsApp "Dispatch Notify" send — builds the same
+  // invoice data shape DocumentTemplate expects from the Billing invoice linked to this order.
+  const buildInvoiceData = (inv) => {
     const halfGst = Math.round((inv.gstAmount || 0) / 2 * 100) / 100;
 
     // Extract linked order (populated by API) for kit composition data
@@ -129,7 +128,7 @@ export default function DispatchDetail() {
     }, kits);
     const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-    const invoiceData = {
+    return {
       inv: inv.invoiceNumber,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       type: inv.invoiceType || 'GST',
@@ -165,11 +164,44 @@ export default function DispatchDetail() {
       products: srcProds,
       kitOrders: srcKitOrders,
     };
+  };
+
+  const handlePrintInvoice = () => {
+    const rawInvoices = orderInvoicesData?.data || [];
+    if (rawInvoices.length === 0) {
+      enqueueSnackbar('No invoice found for this order. Please create one from the Billing page.', { variant: 'warning' });
+      return;
+    }
+    const invoiceData = buildInvoiceData(rawInvoices[0]);
     const html = generatePrintHTML('invoice', invoiceData, invoiceSettings);
     const win = window.open('', '_blank', 'width=900,height=700');
     win.document.write(html);
     win.document.close();
     win.print();
+  };
+
+  // Rasterizes the same invoice markup used for print into a real PDF Blob (html2pdf =
+  // html2canvas + jsPDF) so it can be uploaded and attached to the "Dispatch Notify"
+  // WhatsApp message — mirrors Billing's handleSendInvoiceWhatsApp.
+  const generateInvoicePdfBlob = async (invoiceData) => {
+    const html = generatePrintHTML('invoice', invoiceData, invoiceSettings);
+    const docEl = new DOMParser().parseFromString(html, 'text/html').querySelector('.doc');
+    const container = document.createElement('div');
+    container.appendChild(docEl);
+    document.body.appendChild(container);
+    try {
+      return await html2pdf()
+        .from(container)
+        .set({
+          margin: 5,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .outputPdf('blob');
+    } finally {
+      document.body.removeChild(container);
+    }
   };
 
   const order = useMemo(() => {
@@ -352,8 +384,9 @@ export default function DispatchDetail() {
   // Dispatch verification state
   const [dispatchType, setDispatchType] = useState(null);
   const [verifiedProducts, setVerifiedProducts] = useState(new Set());
+  // Single checkbox: when checked, a "Dispatch Notify" WhatsApp message (with the invoice
+  // attached) is sent to both the order's sales person and the customer on confirm.
   const [notifyWhatsApp, setNotifyWhatsApp] = useState(true);
-  const [notifyAuto, setNotifyAuto] = useState(true);
   const [dispatched, setDispatched] = useState(false);
 
   // Box photo upload tracking (uploaded immediately via handleBoxPhotoUpload)
@@ -437,6 +470,30 @@ export default function DispatchDetail() {
   const handleConfirmDispatch = async () => {
     enqueueSnackbar('Confirming dispatch...', { variant: 'info' });
     try {
+      // WhatsApp checkbox is on: the "Dispatch Notify" template requires a document
+      // header, so generate the Billing invoice as a PDF and upload it first — the
+      // resulting URL rides along on the confirm request as invoiceDocumentUrl.
+      let invoiceDocumentUrl = '';
+      let invoiceDocumentFilename = '';
+      if (notifyWhatsApp) {
+        const rawInvoices = orderInvoicesData?.data || [];
+        if (rawInvoices.length === 0) {
+          enqueueSnackbar('No invoice found for this order — create one in Billing first, or uncheck the WhatsApp notify option.', { variant: 'warning' });
+        } else {
+          try {
+            const invoiceData = buildInvoiceData(rawInvoices[0]);
+            const pdfBlob = await generateInvoicePdfBlob(invoiceData);
+            invoiceDocumentFilename = `invoice-${rawInvoices[0].invoiceNumber || order.id}.pdf`;
+            const fd = new FormData();
+            fd.append('files', new File([pdfBlob], invoiceDocumentFilename, { type: 'application/pdf' }));
+            const uploadRes = await uploadFilesMutation({ formData: fd, folder: 'invoices' }).unwrap();
+            invoiceDocumentUrl = uploadRes?.data?.[0]?.url || '';
+          } catch {
+            enqueueSnackbar('Could not prepare the invoice PDF — WhatsApp notification will be skipped.', { variant: 'warning' });
+          }
+        }
+      }
+
       const formData = new FormData();
       const vals = form.getFieldsValue();
       formData.append('transport', vals.transport || order.storedTransportName || order.transport || '');
@@ -448,16 +505,25 @@ export default function DispatchDetail() {
       // lives in local state and reverts to the original amount on reload.
       if (order.forwardingCharge) formData.append('forwardingChargeAmount', effectiveFwdAmount);
       if (vals.invoiceDate) formData.append('invoiceDate', vals.invoiceDate.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate);
-      // Backend reads autoNotify / sendWhatsapp (FormData sends them as strings).
-      formData.append('autoNotify', notifyAuto);
-      formData.append('sendWhatsapp', notifyWhatsApp);
+      // Backend reads sendWhatsapp (FormData sends it as a string) — single checkbox now
+      // governs whether the "Dispatch Notify" WhatsApp message goes out. It only actually
+      // sends when an invoice document URL was successfully prepared above.
+      formData.append('sendWhatsapp', notifyWhatsApp && !!invoiceDocumentUrl);
+      if (invoiceDocumentUrl) {
+        formData.append('invoiceDocumentUrl', invoiceDocumentUrl);
+        formData.append('invoiceDocumentFilename', invoiceDocumentFilename);
+      }
       // Attach the invoice file if one was selected (confirm route accepts upload.single('invoice')).
       const invoiceFile = vals.invoiceFile?.[0]?.originFileObj || vals.invoiceFile?.file?.originFileObj;
       if (invoiceFile) formData.append('invoice', invoiceFile);
       await confirmDispatch({ id, formData }).unwrap();
       setDispatched(true);
-      const notifyParts = [notifyAuto && 'Sales & Customer', notifyWhatsApp && 'WhatsApp'].filter(Boolean).join(', ');
-      enqueueSnackbar(`Dispatch confirmed! Notifications sent via: ${notifyParts || 'none'}.`, { variant: 'success' });
+      enqueueSnackbar(
+        notifyWhatsApp && invoiceDocumentUrl
+          ? 'Dispatch confirmed! WhatsApp notification sent to Sales & Customer.'
+          : 'Dispatch confirmed! WhatsApp notification skipped.',
+        { variant: 'success' }
+      );
     } catch {
       enqueueSnackbar('Failed to confirm dispatch.', { variant: 'error' });
     }
@@ -480,7 +546,6 @@ export default function DispatchDetail() {
         // Persist a forwarding-charge override raised here — otherwise the edit only
         // lives in local state and reverts to the original amount on reload.
         forwardingChargeAmount: order.forwardingCharge ? effectiveFwdAmount : undefined,
-        autoNotify: notifyAuto,
         sendWhatsapp: notifyWhatsApp,
         // Lorry Receipt + Tracking section — persist so it survives a reload even
         // before "Finished Dispatch" is clicked.
@@ -980,14 +1045,10 @@ export default function DispatchDetail() {
                   <Text strong style={{ color: textColor, fontSize: 13, display: 'block', marginBottom: 10 }}>
                     <BellOutlined style={{ color: '#B11E6A', marginRight: 6 }} />Notify on Dispatch
                   </Text>
-                  <Space direction="vertical" size={8}>
-                    <Checkbox checked={notifyAuto} onChange={(e) => setNotifyAuto(e.target.checked)} style={{ color: textColor }}>
-                      Auto-notify Sales person &amp; Customer
-                    </Checkbox>
-                    <Checkbox checked={notifyWhatsApp} onChange={(e) => setNotifyWhatsApp(e.target.checked)} style={{ color: textColor }}>
-                      <WhatsAppOutlined style={{ color: '#25D366', marginRight: 4 }} />Send WhatsApp notification
-                    </Checkbox>
-                  </Space>
+                  <Checkbox checked={notifyWhatsApp} onChange={(e) => setNotifyWhatsApp(e.target.checked)} style={{ color: textColor }}>
+                    <WhatsAppOutlined style={{ color: '#25D366', marginRight: 4 }} />
+                    Send WhatsApp notification to Sales person &amp; Customer (with invoice attached)
+                  </Checkbox>
                 </div>
               </Form>
 

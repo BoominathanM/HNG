@@ -315,7 +315,7 @@ async function syncTemplatesByStoredConfig() {
   return syncTemplatesFromConfig(config);
 }
 
-async function sendMessage({ to, templateName, language = 'en', parameters = {}, components = null }) {
+async function sendMessage({ to, templateName, language = 'en', parameters = {}, components = null, documentUrl = '', documentFilename = '' }) {
   const config = await WhatsAppConfig.findOne().select('+apiToken');
   if (!config?.backendUrl || !config?.apiToken) {
     return { success: false, error: 'WhatsApp not configured' };
@@ -329,12 +329,25 @@ async function sendMessage({ to, templateName, language = 'en', parameters = {},
   let msgComponents = components;
   if (!msgComponents) {
     const vals = Object.values(parameters);
+    // WhatsApp rejects a body parameter with an empty text value ("Parameter of type
+    // text is missing text value"), so blank fields (e.g. no due date on a paid invoice)
+    // need a non-empty placeholder rather than "".
     msgComponents = vals.length
-      ? [{ type: 'body', parameters: vals.map((v) => ({ type: 'text', text: String(v) })) }]
+      ? [{ type: 'body', parameters: vals.map((v) => ({ type: 'text', text: String(v ?? '').trim() || '-' })) }]
       : [];
+    // Template has a DOCUMENT header (e.g. Billing Invoice) — attach the file as the
+    // header parameter. documentUrl must be a public HTTPS link the WhatsApp API can fetch.
+    if (documentUrl) {
+      msgComponents = [
+        { type: 'header', parameters: [{ type: 'document', document: { link: documentUrl, filename: documentFilename || 'document.pdf' } }] },
+        ...msgComponents,
+      ];
+    }
   }
 
   const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
     to,
     type: 'template',
     template: {
@@ -357,9 +370,10 @@ async function sendMessage({ to, templateName, language = 'en', parameters = {},
     if (!res.ok) {
       return {
         success:    false,
-        error:      responseData?.message || responseData?.error || `HTTP ${res.status}`,
+        error:      responseData?.error?.message || responseData?.message || responseData?.error || `HTTP ${res.status}`,
         statusCode: res.status,
-        payload:    responseData,
+        sentPayload: payload,
+        rawResponse: responseData,
       };
     }
 
@@ -385,6 +399,8 @@ const DEFAULT_EVENTS = [
   { key: 'dispatch-update',   label: 'Dispatch Update',   description: 'Triggered on dispatch confirmation or LR upload', availableFields: ['orderCode', 'customerName', 'lrNumber', 'trackingUrl', 'companyName'] },
   { key: 'generate-report',   label: 'Generate Report',   description: 'Triggered when a scheduled report is generated',  availableFields: ['reportDate', 'totalOrders', 'totalRevenue', 'companyName'] },
   { key: 'follow-up-reminder', label: 'Follow-up Reminder', description: 'Sent to the assigned salesperson on the scheduled follow-up date', availableFields: ['salesPersonName', 'customerName', 'followupDate', 'followupTime', 'leadStatus', 'companyName'] },
+  { key: 'billing-invoice', label: 'Billing Invoice', description: 'Sent from Billing when a quotation/invoice document is shared with the customer over WhatsApp', availableFields: ['customerName', 'invoiceNumber', 'amount', 'balance', 'dueDate', 'orderCode', 'companyName'] },
+  { key: 'dispatch-notify', label: 'Dispatch Notify', description: 'Sent to the sales person and the customer when a dispatch is confirmed, with the invoice attached', availableFields: ['orderCode', 'customerName', 'salesPersonName', 'invoiceNumber', 'companyName'] },
 ];
 
 const ACCOUNT_VERIFICATION_EVENT = {

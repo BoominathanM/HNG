@@ -15,6 +15,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import dayjs from 'dayjs';
+import html2pdf from 'html2pdf.js';
 import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
 import useTabAccess from '../../hooks/useTabAccess';
@@ -38,6 +39,9 @@ import {
   useGetLeadsQuery,
   useUpdateNegotiationMutation,
   useGetNegotiationsQuery,
+  useGetWhatsAppEventMappingsQuery,
+  useSendWhatsAppMessageMutation,
+  useUploadFilesMutation,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -194,8 +198,12 @@ export default function Billing() {
   const { data: kitsRaw } = useGetKitsQuery();
   const { data: leadsRaw } = useGetLeadsQuery({ limit: 1000 });
   const { data: negotiationsRaw } = useGetNegotiationsQuery({ limit: 1000 });
+  const { data: whatsAppMappingsData } = useGetWhatsAppEventMappingsQuery();
   const kits = kitsRaw?.data || [];
   const invoiceSettings = companySettingsData?.data || {};
+  const [sendWhatsAppMessageMutation] = useSendWhatsAppMessageMutation();
+  const [uploadFilesMutation] = useUploadFilesMutation();
+  const [whatsAppSendingKey, setWhatsAppSendingKey] = useState(null);
   const [createInvoiceMutation] = useCreateInvoiceMutation();
   const [recordPaymentMutation] = useRecordPaymentMutation();
   const [convertQuotationMutation] = useConvertQuotationToInvoiceMutation();
@@ -932,6 +940,94 @@ export default function Billing() {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
   };
 
+  // Renders the same invoice/quotation markup used for print/download and rasterizes it to a
+  // real PDF Blob (html2pdf = html2canvas + jsPDF under the hood). html2pdf deep-clones whatever
+  // element is passed to `.from()` into its own hidden rendering container — cloning carries
+  // inline styles with it, so `position:fixed` here would make the clone escape to that fixed
+  // viewport position too and render as a blank page. Let html2pdf's own overlay do the hiding;
+  // this node is only briefly present in the live DOM.
+  const generateDocumentPdfBlob = async (docType, data) => {
+    const html = generatePrintHTML(docType, data, invoiceSettings);
+    const docEl = new DOMParser().parseFromString(html, 'text/html').querySelector('.doc');
+    const container = document.createElement('div');
+    container.appendChild(docEl);
+    document.body.appendChild(container);
+    try {
+      return await html2pdf()
+        .from(container)
+        .set({
+          margin: 5,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .outputPdf('blob');
+    } finally {
+      document.body.removeChild(container);
+    }
+  };
+
+  // Sends the invoice/quotation document to the customer's WhatsApp number using the
+  // "Billing Invoice" event mapping configured in Integrations → WhatsApp → Event Mapping.
+  const handleSendInvoiceWhatsApp = async (docType, record) => {
+    const phone = record?.customer?.mobile || record?.partyPhone || '';
+    if (!phone) {
+      enqueueSnackbar('No phone number on file for this customer', { variant: 'warning' });
+      return;
+    }
+
+    const mapping = (whatsAppMappingsData?.data || []).find(
+      (m) => m.eventId?.key === 'billing-invoice' && m.isEnabled !== false && m.templateId?.name
+    );
+    if (!mapping) {
+      enqueueSnackbar('Set up the "Billing Invoice" WhatsApp template first (Integrations → WhatsApp → Event Mapping)', { variant: 'warning' });
+      return;
+    }
+
+    const rowKey = record?.key || record?.inv || record?.quot;
+    setWhatsAppSendingKey(rowKey);
+    try {
+      const docNumber = record?.inv || record?.quot || '';
+      const pdfBlob = await generateDocumentPdfBlob(docType, record);
+      const filename = `${docType}-${docNumber || 'document'}.pdf`;
+
+      const formData = new FormData();
+      formData.append('files', new File([pdfBlob], filename, { type: 'application/pdf' }));
+      const uploadRes = await uploadFilesMutation({ formData, folder: 'invoices' }).unwrap();
+      const documentUrl = uploadRes?.data?.[0]?.url;
+      if (!documentUrl) throw new Error('File upload did not return a URL');
+
+      const fieldValues = {
+        customerName: record?.client || record?.customer?.name || '',
+        invoiceNumber: docNumber,
+        amount: `Rs. ${(record?.total || 0).toLocaleString()}`,
+        balance: `Rs. ${(record?.balance || 0).toLocaleString()}`,
+        dueDate: record?.dueDate && record.dueDate !== '—' ? record.dueDate : '',
+        orderCode: record?.order || '',
+        companyName: invoiceSettings?.companyName || 'HNG',
+      };
+      const parameters = {};
+      (mapping.variables || []).forEach((v) => {
+        if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
+      });
+
+      const res = await sendWhatsAppMessageMutation({
+        to: phone,
+        templateName: mapping.templateId.name,
+        language: mapping.templateId.language || 'en',
+        parameters,
+        documentUrl,
+        documentFilename: filename,
+      }).unwrap();
+
+      enqueueSnackbar(res?.message || `${docType === 'quotation' ? 'Quotation' : 'Invoice'} shared on WhatsApp`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || err?.message || 'Failed to send WhatsApp message', { variant: 'error' });
+    } finally {
+      setWhatsAppSendingKey(null);
+    }
+  };
+
   const colText = (v) => <Text style={{ fontSize: 13 }}>{v}</Text>;
   const colMoney = (v, color) => <Text style={{ fontSize: 13, fontWeight: 600, color: color || 'inherit' }}>₹{v.toLocaleString()}</Text>;
 
@@ -978,7 +1074,7 @@ export default function Billing() {
         <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); }} /></Tooltip>
           <Tooltip title="Edit GST"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openGstEdit(r)} /></Tooltip>
-          <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar('Invoice shared on WhatsApp', { variant: 'success' })} /></Tooltip>
+          <Tooltip title="Send invoice on WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp('invoice', r)} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownloadDocument('invoice', r)} /></Tooltip>
           {r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
@@ -1023,7 +1119,7 @@ export default function Billing() {
         return (
           <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
             <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType(docType); setViewModal(true); }} /></Tooltip>
-            <Tooltip title="WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} onClick={() => enqueueSnackbar(isOrder ? 'Invoice shared on WhatsApp' : 'Quotation shared on WhatsApp', { variant: 'success' })} /></Tooltip>
+            <Tooltip title={isOrder ? 'Send invoice on WhatsApp' : 'Send quotation on WhatsApp'}><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp(docType, r)} /></Tooltip>
             <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
             <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownloadDocument(docType, r)} /></Tooltip>
             {/* Quotation-specific actions */}

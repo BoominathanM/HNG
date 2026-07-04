@@ -188,10 +188,10 @@ exports.getTemplates = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// Only these two events are exposed in the mapping UI for now — the rest of the
+// Only these events are exposed in the mapping UI for now — the rest of the
 // default catalog (order-placed, dispatch-update, etc.) has no live trigger wired
 // up yet, so surfacing them would let users create mappings that silently never fire.
-const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due'];
+const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify'];
 
 // GET /api/whatsapp/events
 exports.getEvents = async (req, res, next) => {
@@ -291,7 +291,7 @@ exports.deleteEventMapping = async (req, res, next) => {
 // POST /api/whatsapp/send
 exports.sendMessage = async (req, res, next) => {
   try {
-    const { to, templateName, language, parameters, components } = req.body;
+    const { to, templateName, language, parameters, components, documentUrl, documentFilename } = req.body;
     if (!to || !templateName) {
       return res.status(400).json({ success: false, message: 'Recipient phone (to) and templateName are required', data: null });
     }
@@ -300,10 +300,16 @@ exports.sendMessage = async (req, res, next) => {
       language: language || 'en',
       parameters: parameters || {},
       components: components || null,
+      documentUrl: documentUrl || '',
+      documentFilename: documentFilename || '',
     });
     if (!result.success) {
       const status = result.statusCode === 401 || result.statusCode === 403 ? result.statusCode : 400;
-      return res.status(status).json({ success: false, message: result.error || 'Failed to send message', data: null });
+      return res.status(status).json({
+        success: false,
+        message: result.error || 'Failed to send message',
+        data: { sentPayload: result.sentPayload || null, rawResponse: result.rawResponse || null },
+      });
     }
     res.status(200).json({ success: true, message: 'WhatsApp message sent successfully', data: { messageId: result.messageId ?? null } });
   } catch (err) { next(err); }
