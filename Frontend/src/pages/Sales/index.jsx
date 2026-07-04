@@ -1739,6 +1739,7 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
   };
   const is5050 = paymentTerms === '50_ADVANCE_50_AFTER';
   const isCredit = paymentTerms === 'CREDIT_10_30';
+  const isOnDispatch = paymentTerms === 'ON_DISPATCH';
 
   if (leadType === 'SAMPLE') return null;
 
@@ -1788,7 +1789,28 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
         )}
       </Col>
 
-      {/* Date picker for 50 Advance 50% After Dispatch */}
+      {/* Payment Reminder Date — required for every payment term except 100% Payment.
+          All three (On Dispatch / 50-50 / Credit) store into the same `paymentReminderDate`
+          field so the Payment Due WhatsApp scheduler has a single, reliable date to poll. */}
+      {isOnDispatch && !disabled && (
+        <Col xs={24} sm={12}>
+          <Form.Item
+            label="Payment Reminder Date"
+            name="paymentReminderDate"
+            rules={[{ required: true, message: 'Select a payment reminder date' }]}
+          >
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+      )}
+      {isOnDispatch && disabled && (
+        <Col xs={24} sm={12}>
+          <Form.Item label="Payment Reminder Date" name="paymentReminderDate">
+            <DatePicker style={{ width: '100%' }} disabled />
+          </Form.Item>
+        </Col>
+      )}
+
       {is5050 && !disabled && (
         <Col xs={24} sm={12}>
           <Form.Item
@@ -1808,12 +1830,11 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
         </Col>
       )}
 
-      {/* Date picker for Credit (10days to 1 month) */}
       {isCredit && !disabled && (
         <Col xs={24} sm={12}>
           <Form.Item
             label="Credit Due Date"
-            name="creditDueDate"
+            name="paymentReminderDate"
             rules={[{ required: true, message: 'Select credit due date' }]}
           >
             <DatePicker style={{ width: '100%' }} />
@@ -1822,7 +1843,7 @@ function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
       )}
       {isCredit && disabled && (
         <Col xs={24} sm={12}>
-          <Form.Item label="Credit Due Date" name="creditDueDate">
+          <Form.Item label="Credit Due Date" name="paymentReminderDate">
             <DatePicker style={{ width: '100%' }} disabled />
           </Form.Item>
         </Col>

@@ -151,29 +151,49 @@ exports.getReminders = asyncHandler(async (req, res) => {
   const now = new Date();
   // Same visibility scope as getLeads: non-admins only see follow-ups for leads
   // they created or that are assigned to them.
-  const leadFilter = { deletedAt: null, followupDate: { $ne: null } };
+  const leadFilter = {
+    deletedAt: null,
+    $or: [
+      { followupDate: { $ne: null } },
+      // Payment Due only surfaces for leads where the user opted in via
+      // "Set reminder for payment terms" on that lead.
+      { paymentReminderDate: { $ne: null }, paymentTermsReminder: true },
+    ],
+  };
   if (req.user && req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
     const visibility = [{ createdBy: req.user._id }, { assignedTo: req.user._id }];
     const myName = req.user.fullName || req.user.name;
     if (myName) visibility.push({ salesPerson: myName });
-    leadFilter.$or = visibility;
+    leadFilter.$and = [{ $or: leadFilter.$or }, { $or: visibility }];
+    delete leadFilter.$or;
   }
   const [leads, orders] = await Promise.all([
     Lead.find(leadFilter)
-      .select('hotelName followupDate followupTime status assignedTo leadCode')
+      .select('hotelName followupDate followupTime status assignedTo leadCode paymentReminderDate paymentTermsReminder paymentTerms')
       .populate('assignedTo', 'fullName').sort('followupDate').limit(100).lean(),
     Order.find({ deletedAt: null }).select('orderCode clientName status balance total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection paymentReminderDate expectedDeliveryDate items products').sort('-createdAt').limit(200).lean(),
   ]);
 
   const reminders = [];
   leads.forEach((l) => {
-    reminders.push({
-      id: `lead-${l._id}`, kind: 'Lead Follow-up', refCode: l.leadCode,
-      title: `Follow up: ${l.hotelName}`, status: l.status,
-      dueDate: l.followupDate, time: l.followupTime,
-      owner: l.assignedTo?.fullName || '—',
-      overdue: l.followupDate && new Date(l.followupDate) < now,
-    });
+    if (l.followupDate) {
+      reminders.push({
+        id: `lead-${l._id}`, kind: 'Lead Follow-up', refCode: l.leadCode,
+        title: `Follow up: ${l.hotelName}`, status: l.status,
+        dueDate: l.followupDate, time: l.followupTime,
+        owner: l.assignedTo?.fullName || '—',
+        overdue: l.followupDate && new Date(l.followupDate) < now,
+      });
+    }
+    if (l.paymentReminderDate && l.paymentTermsReminder) {
+      reminders.push({
+        id: `lead-pay-${l._id}`, kind: 'Payment Due', refCode: l.leadCode,
+        title: `Payment reminder: ${l.hotelName}`, status: l.status,
+        dueDate: l.paymentReminderDate,
+        owner: l.assignedTo?.fullName || '—',
+        overdue: new Date(l.paymentReminderDate) < now,
+      });
+    }
   });
   orders.forEach((o) => {
     // Compute total from items so a stale/double-counted stored total is ignored

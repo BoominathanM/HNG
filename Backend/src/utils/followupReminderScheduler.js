@@ -1,22 +1,14 @@
+const cron = require('node-cron');
 const Lead = require('../models/Lead');
 const WhatsAppEvent = require('../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../models/WhatsAppEventMapping');
 const { sendMessage } = require('../services/whatsAppService');
+const { todayKey, formatDate, createDailyGuard } = require('./reminderSchedulerCommon');
 
 // Tracks "leadId:YYYY-MM-DD" pairs already sent today — prevents double-sends per lead.
-const sentToday = new Set();
+const guard = createDailyGuard();
 
-function todayKey() {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-}
-
-function formatDate(d) {
-  if (!d) return '';
-  const date = new Date(d);
-  return `${String(date.getDate()).padStart(2, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${date.getFullYear()}`;
-}
-
-async function sendRemindersForMapping(mapping) {
+async function sendRemindersForMapping(mapping, { currentHH, currentMM, mappingTimeMatches }) {
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
 
@@ -31,7 +23,7 @@ async function sendRemindersForMapping(mapping) {
   }).populate('createdBy', 'name mobile').lean();
 
   if (!leads.length) {
-    console.log('[followup-reminder] No leads with follow-up today.');
+    if (mappingTimeMatches) console.log('[followup-reminder] No leads with follow-up today.');
     return;
   }
 
@@ -43,14 +35,20 @@ async function sendRemindersForMapping(mapping) {
     const salesperson = lead.createdBy;
 
     if (!salesperson?.mobile) {
-      console.warn(`[followup-reminder] Skipping lead ${lead.hotelName} — creator has no mobile on file`);
       continue;
     }
 
-    // Per-lead daily guard
+    // Two independent triggers can fire a send: the lead's own follow-up time
+    // (set while adding the lead) or the event mapping's global daily send time.
+    const leadTime = lead.followupTime || lead.followUpTime || '';
+    const [leadHH, leadMM] = leadTime.split(':');
+    const leadTimeMatches = Boolean(leadTime) && leadHH === currentHH && leadMM === currentMM;
+    if (!mappingTimeMatches && !leadTimeMatches) continue;
+
+    // Per-lead daily guard — whichever trigger fires first wins, no double-send
     const guardKey = `${lead._id}:${today}`;
-    if (sentToday.has(guardKey)) continue;
-    sentToday.add(guardKey);
+    if (guard.has(guardKey)) continue;
+    guard.mark(guardKey);
 
     const fieldValues = {
       salesPersonName: salesperson.name       || '',
@@ -84,10 +82,7 @@ async function checkAndSend() {
     const currentMM = String(now.getMinutes()).padStart(2, '0');
     const today = todayKey();
 
-    // Purge guard keys from previous days
-    for (const key of sentToday) {
-      if (!key.endsWith(`:${today}`)) sentToday.delete(key);
-    }
+    guard.purgeStale(today);
 
     const event = await WhatsAppEvent.findOne({ key: 'follow-up-reminder' }).lean();
     if (!event) return;
@@ -100,11 +95,13 @@ async function checkAndSend() {
 
     for (const mapping of mappings) {
       const [hh, mm] = (mapping.sendTime || '08:00').split(':');
+      const mappingTimeMatches = hh === currentHH && mm === currentMM;
 
-      if (hh !== currentHH || mm !== currentMM) continue;
+      if (mappingTimeMatches) console.log(`[followup-reminder] ⏰ sendTime ${hh}:${mm} matched — running reminders`);
 
-      console.log(`[followup-reminder] ⏰ sendTime ${hh}:${mm} matched — running reminders`);
-      await sendRemindersForMapping(mapping);
+      // Always run — a lead's own follow-up time can fire independently of the
+      // mapping's global sendTime; sendRemindersForMapping checks both per-lead.
+      await sendRemindersForMapping(mapping, { currentHH, currentMM, mappingTimeMatches });
     }
   } catch (err) {
     console.error('[followup-reminder] check error:', err.message);
@@ -114,7 +111,7 @@ async function checkAndSend() {
 function startFollowUpReminderScheduler() {
   console.log('[followup-reminder] Scheduler started — every minute checks DB sendTime from event mapping');
   checkAndSend();
-  setInterval(checkAndSend, 60 * 1000);
+  cron.schedule('* * * * *', checkAndSend);
 }
 
 module.exports = { startFollowUpReminderScheduler, checkAndSend };

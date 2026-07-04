@@ -181,14 +181,14 @@ export default function WhatsAppIntegration() {
     try {
       const vals = await mappingForm.validateFields();
       const selectedEvt = events.find((e) => String(e._id) === String(vals.eventId));
-      const isFollowUp  = selectedEvt?.key === 'follow-up-reminder';
+      const isDateDriven = ['follow-up-reminder', 'payment-due'].includes(selectedEvt?.key);
       const payload = {
         ...(editMapping?._id ? { id: editMapping._id } : {}),
         eventId:    vals.eventId,
         templateId: vals.templateId,
         isEnabled:  vals.isEnabled !== false,
         variables:  variableRows.filter((r) => r.templateVariable && r.eventField),
-        ...(isFollowUp ? { sendTime: sendTime?.format('HH:mm') || '08:00' } : {}),
+        ...(isDateDriven ? { sendTime: sendTime?.format('HH:mm') || '08:00' } : {}),
       };
       const res = await saveMapping(payload).unwrap();
       enqueueSnackbar(res.message || 'Mapping saved', { variant: 'success' });
@@ -274,7 +274,7 @@ export default function WhatsAppIntegration() {
     {
       title: 'Send Time', key: 'sendTime', width: 120,
       render: (_, r) => {
-        if (r.eventId?.key !== 'follow-up-reminder') return <Text style={{ color: subText }}>—</Text>;
+        if (!['follow-up-reminder', 'payment-due'].includes(r.eventId?.key)) return <Text style={{ color: subText }}>—</Text>;
         const t = r.sendTime || '08:00';
         const [hh, mm] = t.split(':');
         const h = parseInt(hh, 10);
@@ -321,7 +321,8 @@ export default function WhatsAppIntegration() {
   // ── Selected event's available fields for variable mapping ────────────────
   const selectedEventId  = Form.useWatch('eventId', mappingForm);
   const selectedEvent    = events.find((e) => String(e._id) === String(selectedEventId));
-  const isFollowUpEvent  = selectedEvent?.key === 'follow-up-reminder';
+  const DATE_DRIVEN_EVENT_KEYS = ['follow-up-reminder', 'payment-due'];
+  const isDateDrivenEvent = DATE_DRIVEN_EVENT_KEYS.includes(selectedEvent?.key);
 
   const tabItems = [
     // ── Configuration Tab ──────────────────────────────────────────────────
@@ -676,12 +677,12 @@ export default function WhatsAppIntegration() {
             </Select>
           </Form.Item>
 
-          {isFollowUpEvent && (
+          {isDateDrivenEvent && (
             <Form.Item
               label={
                 <Space size={4}>
                   <Text style={{ color: textColor, fontWeight: 500 }}>Daily Send Time</Text>
-                  <Text style={{ color: subText, fontSize: 12 }}>(reminder fires at this time every day)</Text>
+                  <Text style={{ color: subText, fontSize: 12 }}>(checked every day against the lead's date for this event)</Text>
                 </Space>
               }
             >

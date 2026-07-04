@@ -3,6 +3,7 @@ const app = require('./app');
 const connectDB = require('./config/db');
 const { seedAdminIfEmpty } = require('./utils/autoSeed');
 const { startFollowUpReminderScheduler } = require('./utils/followupReminderScheduler');
+const { startPaymentDueScheduler } = require('./utils/paymentDueScheduler');
 
 const PORT = parseInt(process.env.PORT || '7007', 10);
 
@@ -23,6 +24,7 @@ connectDB()
     // Auto-create admin when the database has no users (fresh DB or wiped DB).
     await seedAdminIfEmpty();
     startFollowUpReminderScheduler();
+    startPaymentDueScheduler();
 
     const server = app.listen(PORT, () => {
       console.log(`✅  HNG CRM API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
