@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Row, Col, Card, Form, Input, Button, Typography, Tabs, Tag, Table,
   Select, Modal, Space, Tooltip, Spin, Empty, Popconfirm, TimePicker,
+  Checkbox, InputNumber,
 } from 'antd';
 import dayjs from 'dayjs';
 import { enqueueSnackbar } from 'notistack';
@@ -27,6 +28,7 @@ import {
   useGetWhatsAppEventMappingsQuery,
   useSaveWhatsAppEventMappingMutation,
   useDeleteWhatsAppEventMappingMutation,
+  useGetUsersQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -45,11 +47,18 @@ const getTemplateType = (t) => {
 
 // These events are date-driven reminders sent as plain scheduled messages, so only
 // text templates make sense for them — other events can use any template type.
-const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'order-delivery-reminder'];
+const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'order-delivery-reminder', 'local-purchase-credit-due'];
 
 // Billing Invoice attaches the invoice/quotation PDF as a WhatsApp document header,
 // so only templates built with a DOCUMENT header are valid choices for it.
 const DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS = ['billing-invoice'];
+
+// These events escalate to a fixed list of internal recipients, repeating every
+// `delayMinutes` inside a start/end time window on the configured days — instead
+// of the simple once-a-day `sendTime` used by the other date-driven reminders.
+const ESCALATION_EVENT_KEYS = ['local-purchase-credit-due'];
+
+const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export default function WhatsAppIntegration() {
   const navigate = useNavigate();
@@ -72,6 +81,11 @@ export default function WhatsAppIntegration() {
   const [editMapping, setEditMapping]     = useState(null);
   const [variableRows, setVariableRows]   = useState([]);
   const [sendTime, setSendTime]           = useState(dayjs('08:00', 'HH:mm'));
+  const [escRecipients, setEscRecipients] = useState([]);
+  const [escStartTime, setEscStartTime]   = useState(dayjs('10:00', 'HH:mm'));
+  const [escEndTime, setEscEndTime]       = useState(dayjs('20:00', 'HH:mm'));
+  const [escDelayMinutes, setEscDelayMinutes] = useState(30);
+  const [escDays, setEscDays]             = useState(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
   const [mappingForm] = Form.useForm();
 
   // ── RTK Queries ───────────────────────────────────────────────────────────
@@ -80,6 +94,10 @@ export default function WhatsAppIntegration() {
   const { data: templatesData, isLoading: templatesLoading } = useGetWhatsAppTemplatesQuery({ limit: 5000 });
   const { data: eventsData }  = useGetWhatsAppEventsQuery();
   const { data: mappingsData, isLoading: mappingsLoading } = useGetWhatsAppEventMappingsQuery();
+  const { data: usersData }   = useGetUsersQuery({ limit: 1000 });
+
+  // Recipients pool for escalation events — active users in the Finance department
+  const financeUsers = (usersData?.data || []).filter((u) => u.department === 'Finance' && u.status === 'Active');
 
   // ── RTK Mutations ─────────────────────────────────────────────────────────
   const [saveConfig,           { isLoading: saving }]    = useSaveWhatsAppConfigMutation();
@@ -176,9 +194,19 @@ export default function WhatsAppIntegration() {
       mappingForm.setFieldsValue({ eventId, templateId, isEnabled: record.isEnabled !== false });
       setVariableRows(Array.isArray(record.variables) ? record.variables : []);
       setSendTime(record.sendTime ? dayjs(record.sendTime, 'HH:mm') : dayjs('08:00', 'HH:mm'));
+      setEscRecipients((record.recipientUserIds || []).map((u) => u?._id || u));
+      setEscStartTime(record.startTime ? dayjs(record.startTime, 'HH:mm') : dayjs('10:00', 'HH:mm'));
+      setEscEndTime(record.endTime ? dayjs(record.endTime, 'HH:mm') : dayjs('20:00', 'HH:mm'));
+      setEscDelayMinutes(record.delayMinutes || 30);
+      setEscDays(record.days?.length ? record.days : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
     } else {
       setVariableRows([]);
       setSendTime(dayjs('08:00', 'HH:mm'));
+      setEscRecipients([]);
+      setEscStartTime(dayjs('10:00', 'HH:mm'));
+      setEscEndTime(dayjs('20:00', 'HH:mm'));
+      setEscDelayMinutes(30);
+      setEscDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
     }
     setMappingModalOpen(true);
   };
@@ -197,13 +225,24 @@ export default function WhatsAppIntegration() {
       const vals = await mappingForm.validateFields();
       const selectedEvt = events.find((e) => String(e._id) === String(vals.eventId));
       const isDateDriven = TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvt?.key);
+      const isEscalation = ESCALATION_EVENT_KEYS.includes(selectedEvt?.key);
+      if (isEscalation && !escRecipients.length) {
+        enqueueSnackbar('Select at least one recipient', { variant: 'warning' });
+        return;
+      }
       const payload = {
         ...(editMapping?._id ? { id: editMapping._id } : {}),
         eventId:    vals.eventId,
         templateId: vals.templateId,
         isEnabled:  vals.isEnabled !== false,
         variables:  variableRows.filter((r) => r.templateVariable && r.eventField),
-        ...(isDateDriven ? { sendTime: sendTime?.format('HH:mm') || '08:00' } : {}),
+        ...(isEscalation ? {
+          recipientUserIds: escRecipients,
+          startTime:        escStartTime?.format('HH:mm') || '10:00',
+          endTime:          escEndTime?.format('HH:mm') || '20:00',
+          delayMinutes:     escDelayMinutes || 30,
+          days:             escDays,
+        } : isDateDriven ? { sendTime: sendTime?.format('HH:mm') || '08:00' } : {}),
       };
       const res = await saveMapping(payload).unwrap();
       enqueueSnackbar(res.message || 'Mapping saved', { variant: 'success' });
@@ -298,8 +337,19 @@ export default function WhatsAppIntegration() {
       },
     },
     {
-      title: 'Send Time', key: 'sendTime', width: 120,
+      title: 'Send Time', key: 'sendTime', width: 190,
       render: (_, r) => {
+        if (ESCALATION_EVENT_KEYS.includes(r.eventId?.key)) {
+          if (!r.startTime || !r.endTime) return <Text style={{ color: subText }}>Not configured</Text>;
+          return (
+            <Space direction="vertical" size={2}>
+              <Tag color="orange">{r.startTime}–{r.endTime} every {r.delayMinutes || 30}m</Tag>
+              <Text style={{ color: subText, fontSize: 11 }}>
+                {(r.recipientUserIds || []).length} recipient{(r.recipientUserIds || []).length !== 1 ? 's' : ''} · {(r.days || []).join(', ') || 'All days'}
+              </Text>
+            </Space>
+          );
+        }
         if (!TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(r.eventId?.key)) return <Text style={{ color: subText }}>—</Text>;
         const t = r.sendTime || '08:00';
         const [hh, mm] = t.split(':');
@@ -351,6 +401,7 @@ export default function WhatsAppIntegration() {
   // also only ever get plain text templates; other events can use any template type.
   const isDateDrivenEvent = TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvent?.key);
   const isDocumentOnlyEvent = DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvent?.key);
+  const isEscalationEvent = ESCALATION_EVENT_KEYS.includes(selectedEvent?.key);
   const templatesForEvent = isDateDrivenEvent
     ? templates.filter((t) => getTemplateType(t) === 'text')
     : isDocumentOnlyEvent
@@ -713,7 +764,7 @@ export default function WhatsAppIntegration() {
             </Select>
           </Form.Item>
 
-          {isDateDrivenEvent && (
+          {isDateDrivenEvent && !isEscalationEvent && (
             <Form.Item
               label={
                 <Space size={4}>
@@ -732,6 +783,107 @@ export default function WhatsAppIntegration() {
                 allowClear={false}
               />
             </Form.Item>
+          )}
+
+          {isEscalationEvent && (
+            <>
+              <Form.Item
+                label={<Text style={{ color: textColor, fontWeight: 500 }}>Recipients</Text>}
+                required
+              >
+                <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: 10, maxHeight: 220, overflowY: 'auto' }}>
+                  <Checkbox.Group
+                    style={{ width: '100%' }}
+                    value={escRecipients}
+                    onChange={(vals) => setEscRecipients(vals)}
+                  >
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      {financeUsers.map((u) => (
+                        <div
+                          key={u._id}
+                          style={{
+                            padding: '8px 10px', borderRadius: 8,
+                            background: escRecipients.includes(u._id) ? PRIMARY_ALPHA(0.08) : 'transparent',
+                            border: `1px solid ${escRecipients.includes(u._id) ? PRIMARY_ALPHA(0.3) : borderColor}`,
+                          }}
+                        >
+                          <Checkbox value={u._id}>
+                            <Text style={{ color: textColor, fontWeight: 600 }}>{u.fullName}</Text>
+                            <Text style={{ color: subText }}> — {u.role || 'Finance'}</Text>
+                            <br />
+                            <Text style={{ color: subText, fontSize: 12 }}>{u.email}{u.mobile ? ` — ${u.mobile}` : ''}</Text>
+                          </Checkbox>
+                        </div>
+                      ))}
+                    </Space>
+                  </Checkbox.Group>
+                  {financeUsers.length === 0 && (
+                    <Text style={{ color: subText, fontSize: 12 }}>No active Finance department users found. Add one in Settings → Staff Management first.</Text>
+                  )}
+                </div>
+                <Text style={{ color: subText, fontSize: 12, display: 'block', marginTop: 6 }}>
+                  Multiple selection enabled. Showing active `Finance` department users from the Users collection.
+                </Text>
+              </Form.Item>
+
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Form.Item label={<Text style={{ color: textColor, fontWeight: 500 }}>Start Time</Text>}>
+                    <TimePicker
+                      format="HH:mm" minuteStep={5} allowClear={false}
+                      value={escStartTime} onChange={(val) => setEscStartTime(val)}
+                      style={{ width: '100%', borderRadius: 8, height: 40 }}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label={<Text style={{ color: textColor, fontWeight: 500 }}>End Time</Text>}>
+                    <TimePicker
+                      format="HH:mm" minuteStep={5} allowClear={false}
+                      value={escEndTime} onChange={(val) => setEscEndTime(val)}
+                      style={{ width: '100%', borderRadius: 8, height: 40 }}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Form.Item label={<Text style={{ color: textColor, fontWeight: 500 }}>Delay Minutes</Text>} tooltip="Repeat the reminder this often, between Start Time and End Time, until it's paid">
+                <InputNumber
+                  min={5} max={720} value={escDelayMinutes}
+                  onChange={(val) => setEscDelayMinutes(val)}
+                  style={{ width: '100%', borderRadius: 8 }}
+                />
+              </Form.Item>
+
+              <Form.Item label={<Text style={{ color: textColor, fontWeight: 500 }}>Days</Text>}>
+                <Space wrap style={{ marginBottom: 8 }}>
+                  <Button size="small" onClick={() => setEscDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'])} style={{ borderRadius: 6 }}>Mon–Sat</Button>
+                  <Button size="small" onClick={() => setEscDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri'])} style={{ borderRadius: 6 }}>Mon–Fri</Button>
+                </Space>
+                <div>
+                  <Text style={{ color: subText, fontSize: 12 }}>Selected: {escDays.length ? escDays.join(', ') : 'None'}</Text>
+                </div>
+                <Space wrap style={{ marginTop: 8 }}>
+                  {ALL_DAYS.map((d) => {
+                    const active = escDays.includes(d);
+                    return (
+                      <Tag
+                        key={d}
+                        onClick={() => setEscDays((prev) => active ? prev.filter((x) => x !== d) : [...prev, d])}
+                        style={{
+                          cursor: 'pointer', borderRadius: 14, padding: '3px 12px', fontWeight: 600,
+                          color: active ? '#fff' : textColor,
+                          background: active ? PRIMARY : 'transparent',
+                          borderColor: active ? PRIMARY : borderColor,
+                        }}
+                      >
+                        {d}
+                      </Tag>
+                    );
+                  })}
+                </Space>
+              </Form.Item>
+            </>
           )}
 
           {variableRows.length > 0 && (

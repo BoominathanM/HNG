@@ -402,6 +402,7 @@ const DEFAULT_EVENTS = [
   { key: 'order-delivery-reminder', label: 'Order Delivery Reminder', description: 'Sent to the lead creator on the tentative order delivery date', availableFields: ['salesPersonName', 'customerName', 'deliveryDate', 'leadStatus', 'companyName'] },
   { key: 'billing-invoice', label: 'Billing Invoice', description: 'Sent from Billing when a quotation/invoice document is shared with the customer over WhatsApp', availableFields: ['customerName', 'invoiceNumber', 'amount', 'balance', 'dueDate', 'orderCode', 'companyName'] },
   { key: 'dispatch-notify', label: 'Dispatch Notify', description: 'Sent to the sales person and the customer when a dispatch is confirmed, with the invoice attached', availableFields: ['orderCode', 'customerName', 'salesPersonName', 'invoiceNumber', 'companyName'] },
+  { key: 'local-purchase-credit-due', label: 'Local Purchase Credit Due', description: 'Sent to the vendor when a Local Purchase "Credit (Pay Later)" due date arrives', availableFields: ['vendorName', 'amount', 'dueDate', 'invoiceNumber', 'companyName'] },
 ];
 
 const ACCOUNT_VERIFICATION_EVENT = {

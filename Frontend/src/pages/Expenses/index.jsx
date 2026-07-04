@@ -86,10 +86,6 @@ export default function Expenses() {
     paidDate: e.paidDate?.slice(0, 10),
   })), [expData]);
 
-  // Purchase expenses filtered from all expenses
-  const [purchaseExpenses] = useState([]);
-
-
   const { filterTabs } = useTabAccess('Expenses');
   const { requireAccess } = usePageAccess('Expenses');
 
@@ -127,10 +123,7 @@ export default function Expenses() {
   const [expStatus, setExpStatus] = useState(null);
 
   // Combined expense list for "All Expenses" tab
-  const allExpenses = [
-    ...expenses.map(e => ({ ...e, source: 'other' })),
-    ...purchaseExpenses.map(e => ({ ...e, source: 'purchase' })),
-  ].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const allExpenses = [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const applyExpFilter = (list) => list.filter((e) => {
     const q = expSearch.toLowerCase();
@@ -241,7 +234,6 @@ export default function Expenses() {
     },
   ];
 
-  const columns = makeExpenseColumns(false);
 
   const totalExpense = expenses.reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -339,32 +331,6 @@ export default function Expenses() {
                     <Table
                       dataSource={applyExpFilter(allExpenses)}
                       columns={makeExpenseColumns(true)}
-                      size="small"
-                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
-                      style={{ padding: 4 }}
-                    />
-                  ),
-                },
-                {
-                  key: 'other',
-                  label: `Other Expenses (${applyExpFilter(expenses).length})`,
-                  children: (
-                    <Table
-                      dataSource={applyExpFilter(expenses)}
-                      columns={columns}
-                      size="small"
-                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
-                      style={{ padding: 4 }}
-                    />
-                  ),
-                },
-                {
-                  key: 'purchase',
-                  label: `Purchase Expenses (${applyExpFilter(purchaseExpenses).length})`,
-                  children: (
-                    <Table
-                      dataSource={applyExpFilter(purchaseExpenses)}
-                      columns={makeExpenseColumns(false)}
                       size="small"
                       pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
                       style={{ padding: 4 }}

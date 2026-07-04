@@ -214,7 +214,7 @@ export const apiSlice = createApi({
     }),
     createLocalPurchase: builder.mutation({
       query: (formData) => ({ url: '/purchase/local', method: 'post', data: formData }),
-      invalidatesTags: ['LocalPurchases'],
+      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses'],
     }),
     getLocalPurchase: builder.query({
       query: (id) => ({ url: `/purchase/local/${id}` }),
@@ -458,7 +458,7 @@ export const apiSlice = createApi({
     }),
     payLocalPurchaseExpense: builder.mutation({
       query: ({ id, formData }) => ({ url: `/financial/reimbursements/local-purchase/${id}/pay`, method: 'post', data: formData }),
-      invalidatesTags: ['LocalPurchaseExpenses', 'Expenses'],
+      invalidatesTags: ['LocalPurchaseExpenses', 'Expenses', 'LocalPurchases'],
     }),
 
     // ── Sales ────────────────────────────────────────────────────────────────
@@ -907,7 +907,7 @@ export const apiSlice = createApi({
       invalidatesTags: ['Settings'],
     }),
     getUsers: builder.query({
-      query: () => ({ url: '/settings/users' }),
+      query: (params) => ({ url: '/settings/users', params }),
       providesTags: ['Users'],
     }),
     createUser: builder.mutation({

@@ -74,8 +74,6 @@ export const MODULE_TAB_DEFS = {
   ],
   Expenses: [
     { key: 'all', label: 'All Expenses' },
-    { key: 'other', label: 'Other Expenses' },
-    { key: 'purchase', label: 'Purchase Expenses' },
   ],
   Reports: [
     { key: 'sales_report', label: 'Sales Report' },

@@ -252,7 +252,11 @@ exports.payPickupExpense = asyncHandler(async (req, res, next) => {
 
 // ─── REIMBURSEMENT — LOCAL PURCHASE ──────────────────────────────────────────
 exports.getLocalPurchaseExpenses = asyncHandler(async (req, res) => {
-  const filter = { paymentType: 'credit' };
+  // Show ALL local purchases (Credit, and Instant paid by either Finance Team or
+  // Purchase Person) — Instant/Finance Team entries are already Paid and just
+  // logged here for tracking; Credit and Instant/Purchase Person entries are
+  // Pending and need Finance to settle via the Pay Now action.
+  const filter = {};
   if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
@@ -266,26 +270,38 @@ exports.getLocalPurchaseExpenses = asyncHandler(async (req, res) => {
 exports.payLocalPurchase = asyncHandler(async (req, res, next) => {
   const lp = await LocalPurchase.findById(req.params.id);
   if (!lp) return next(new AppError('Local purchase not found', 404));
-  lp.paymentProofUrl = req.file?.path || req.body.proofUrl || lp.paymentProofUrl;
-  lp.paymentStatus = 'Paid';
+
+  const proofUrl = req.file?.path || req.body.proofUrl || lp.paymentProofUrl;
+  const paidBy = req.body.paidBy || req.body.paid_by || req.user.fullName;
+  const remaining = Math.max(0, (lp.totalAmount || 0) - (lp.paidAmount || 0));
+  const rawAmount = req.body.amount ?? req.body.paidAmount;
+  const payAmount = rawAmount !== undefined ? Math.min(Math.max(0, Number(rawAmount) || 0), remaining) : remaining;
+
+  lp.paidAmount = (lp.paidAmount || 0) + payAmount;
+  lp.paymentProofUrl = proofUrl;
   lp.paidDate = new Date();
-  lp.paidBy = req.body.paidBy || req.body.paid_by || req.user.fullName;
+  lp.paidBy = paidBy;
+  lp.paymentStatus = lp.paidAmount >= lp.totalAmount ? 'Paid' : (lp.paidAmount > 0 ? 'Partially Paid' : 'Pending');
+  lp.paymentHistory = lp.paymentHistory || [];
+  lp.paymentHistory.push({ amount: payAmount, paidBy, paidDate: new Date(), proofUrl });
   await lp.save({ validateBeforeSave: false });
 
   // Create expense record so the Expenses module reflects this payment
   const expCode = await generateCode('EXP');
   const itemNames = (lp.items || []).map(i => i.itemName || i.name).filter(Boolean).join(', ');
+  const balanceAfter = Math.max(0, lp.totalAmount - lp.paidAmount);
   await Expense.create({
     expenseCode: expCode,
     expenseDate: new Date(),
     category: 'Raw Material',
-    description: `Local purchase paid — Invoice: ${lp.invoiceNo || 'N/A'}${itemNames ? ` (${itemNames})` : ''}`,
-    amount: lp.totalAmount || 0,
+    description: `Local purchase ${lp.paymentStatus === 'Paid' ? 'paid in full' : 'part-paid'} — Invoice: ${lp.invoiceNo || 'N/A'}${itemNames ? ` (${itemNames})` : ''}${balanceAfter > 0 ? ` — Balance: Rs.${balanceAfter.toFixed(2)}` : ''}`,
+    amount: payAmount,
+    paidAmount: payAmount,
     vendorPayee: lp.vendorName,
-    proofUrl: lp.paymentProofUrl,
+    proofUrl,
     paymentStatus: 'Paid',
     paidDate: new Date(),
-    paidBy: lp.paidBy,
+    paidBy,
     expenseSource: 'reimbursement',
     createdBy: req.user._id,
   });

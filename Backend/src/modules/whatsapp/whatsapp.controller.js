@@ -191,7 +191,13 @@ exports.getTemplates = async (req, res, next) => {
 // Only these events are exposed in the mapping UI for now — the rest of the
 // default catalog (order-placed, dispatch-update, etc.) has no live trigger wired
 // up yet, so surfacing them would let users create mappings that silently never fire.
-const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify', 'order-delivery-reminder'];
+const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify', 'order-delivery-reminder', 'local-purchase-credit-due'];
+
+// These events escalate on a start/end time window + delay (see
+// localPurchaseCreditDueScheduler.js) instead of the once-a-day `sendTime` used by
+// the other date-driven reminders, so `sendTime` is meaningless for them and is
+// stripped out rather than defaulted.
+const ESCALATION_EVENT_KEYS = ['local-purchase-credit-due'];
 
 // GET /api/whatsapp/events
 exports.getEvents = async (req, res, next) => {
@@ -213,6 +219,7 @@ exports.getEventMappings = async (req, res, next) => {
     const mappings = await WhatsAppEventMapping.find()
       .populate('eventId', 'label key availableFields')
       .populate('templateId', 'name language status variables category components rawPayload')
+      .populate('recipientUserIds', 'fullName mobile department role status')
       .sort({ createdAt: -1 })
       .lean();
     res.status(200).json({ success: true, data: mappings });
@@ -222,7 +229,7 @@ exports.getEventMappings = async (req, res, next) => {
 // POST /api/whatsapp/event-mappings  (create or update)
 exports.saveEventMapping = async (req, res, next) => {
   try {
-    const { id, eventId, templateId, isEnabled, variables, sendTime } = req.body;
+    const { id, eventId, templateId, isEnabled, variables, sendTime, recipientUserIds, startTime, endTime, delayMinutes, days } = req.body;
     if (!eventId || !templateId) {
       return res.status(400).json({ success: false, message: 'Event and template are required', data: null });
     }
@@ -242,26 +249,41 @@ exports.saveEventMapping = async (req, res, next) => {
         }))
       : [];
 
-    const cleanSendTime = /^\d{2}:\d{2}$/.test(sendTime || '') ? sendTime : '08:00';
+    const isEscalation = ESCALATION_EVENT_KEYS.includes(event.key);
+    const timePattern = /^\d{2}:\d{2}$/;
+    const escalationFields = {
+      recipientUserIds: Array.isArray(recipientUserIds) ? recipientUserIds : [],
+      startTime: timePattern.test(startTime || '') ? startTime : undefined,
+      endTime: timePattern.test(endTime || '') ? endTime : undefined,
+      delayMinutes: Number(delayMinutes) > 0 ? Number(delayMinutes) : undefined,
+      days: Array.isArray(days) ? days : [],
+    };
 
     let mapping;
     if (id) {
+      const setFields = { eventId, templateId, isEnabled: isEnabled !== false, variables: cleanVars, ...escalationFields, updatedBy: req.user?._id || null };
+      const update = isEscalation
+        ? { $set: setFields, $unset: { sendTime: '' } }
+        : { $set: { ...setFields, sendTime: /^\d{2}:\d{2}$/.test(sendTime || '') ? sendTime : '08:00' } };
       mapping = await WhatsAppEventMapping.findByIdAndUpdate(
         id,
-        { eventId, templateId, isEnabled: isEnabled !== false, variables: cleanVars, sendTime: cleanSendTime, updatedBy: req.user?._id || null },
+        update,
         { new: true, runValidators: true }
       )
         .populate('eventId', 'label key availableFields')
         .populate('templateId', 'name language status variables category components rawPayload')
+        .populate('recipientUserIds', 'fullName mobile department role status')
         .lean();
     } else {
+      const cleanSendTime = /^\d{2}:\d{2}$/.test(sendTime || '') ? sendTime : '08:00';
       const created = await WhatsAppEventMapping.create({
-        eventId, templateId, isEnabled: isEnabled !== false, variables: cleanVars, sendTime: cleanSendTime,
+        eventId, templateId, isEnabled: isEnabled !== false, variables: cleanVars, ...(isEscalation ? {} : { sendTime: cleanSendTime }), ...escalationFields,
         createdBy: req.user?._id || null, updatedBy: req.user?._id || null,
       });
       mapping = await WhatsAppEventMapping.findById(created._id)
         .populate('eventId', 'label key availableFields')
         .populate('templateId', 'name language status variables category components rawPayload')
+        .populate('recipientUserIds', 'fullName mobile department role status')
         .lean();
     }
 

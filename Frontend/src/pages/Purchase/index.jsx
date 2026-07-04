@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
+import { useCloudinaryUpload, getFileUrl } from '../../hooks/useCloudinaryUpload';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import {
-  Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, 
-  DatePicker, Upload, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch, 
+  Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space,
+  DatePicker, Upload, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch,
   Tooltip, Badge, Popover, Dropdown, Checkbox, 
   Alert,
 } from 'antd';
@@ -155,6 +155,10 @@ export default function Purchase() {
       paymentType: lp.paymentType, paymentStatus: lp.paymentStatus,
       paymentProof: lp.paymentProofUrl, gPayNumber: lp.gPayNumber,
       paidBy: lp.paidBy, paidDate: lp.paidDate?.slice(0, 10),
+      paidAmount: lp.paidAmount || 0,
+      balance: Math.max(0, (lp.totalAmount || 0) - (lp.paidAmount || 0)),
+      dueDate: lp.dueDate?.slice(0, 10),
+      paymentHistory: lp.paymentHistory || [],
     }));
     if (mapped.length > 0) setLocalPurchases(mapped);
   }, [localPurchasesData]);
@@ -783,6 +787,7 @@ export default function Purchase() {
         vendorName: scanned.vendorName,
         vendorPhone: scanned.vendorPhone,
         totalAmount: scanned.totalAmount,
+        items: scanned.items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount })),
       });
       setLocalPurchaseScanLoading(false);
       enqueueSnackbar(!knownVendor
@@ -799,14 +804,15 @@ export default function Purchase() {
       invoiceFile: localPurchaseInvoiceFile?.name || null,
       vendorName: values.vendorName || localPurchaseScannedDetails?.vendorName || '',
       vendorPhone: values.vendorPhone || localPurchaseScannedDetails?.vendorPhone || '',
-      items: localPurchaseScannedDetails?.items || [{ name: values.itemName || 'Item', qty: values.qty || 1, unit: values.unit || 'Pcs', amount: values.totalAmount || 0 }],
+      items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0 })),
       totalAmount: values.totalAmount || localPurchaseScannedDetails?.totalAmount || 0,
       paymentType: values.paymentType || 'credit',
-      paymentStatus: values.paymentType === 'instant' ? 'Paid' : 'Pending',
-      paymentProof: values.paymentType === 'instant' ? (values.proof?.fileList?.[0]?.name || null) : null,
+      // Instant + Finance Team = already settled → Paid immediately, just logged for tracking.
+      // Instant + Purchase Person = needs reimbursement → Pending, same follow-up flow as Credit.
+      paymentStatus: values.paymentType === 'instant' && values.paidBy === 'finance_team' ? 'Paid' : 'Pending',
       gPayNumber: values.paymentType === 'instant' ? (values.gPayNumber || null) : null,
-      paidBy: values.paymentType === 'instant' ? (values.paidBy || '') : null,
-      paymentProofFile: values.paymentType === 'instant' ? (values.paymentProofFile?.fileList?.[0]?.name || null) : null,
+      paidBy: values.paymentType === 'instant' ? (values.paidBy === 'finance_team' ? 'Finance Team' : 'Purchase Person') : null,
+      paymentProofUrl: values.paymentType === 'instant' ? (getFileUrl(values.paymentProofFile?.fileList?.[0]) || null) : null,
     };
 
     if (localPurchaseNewVendorDetected && values.addToVendors) {
@@ -828,8 +834,10 @@ export default function Purchase() {
       enqueueSnackbar('New vendor added to vendors list!', { variant: 'success' });
     }
 
-    if (newLP.paymentType === 'credit') {
-      // Notify financial team every 30 minutes
+    if (newLP.paymentStatus === 'Pending') {
+      // Applies to Credit purchases AND Instant purchases paid by the Purchase Person
+      // (awaiting reimbursement) — both need Finance to settle from the
+      // Reimbursement Expense → Local Purchase Expense tab.
       const intervalId = setInterval(() => {
         enqueueSnackbar(
           `Local Purchase Pending Payment — Local purchase ${newLP.invoiceNo} from ${newLP.vendorName} of ₹${newLP.totalAmount.toLocaleString()} is pending. Please process payment.`,
@@ -840,7 +848,12 @@ export default function Purchase() {
       // Save to localStorage for Financial page
       const pending = JSON.parse(localStorage.getItem('hng_local_purchase_pending') || '[]');
       localStorage.setItem('hng_local_purchase_pending', JSON.stringify([...pending, newLP]));
-      enqueueSnackbar('Credit purchase created — financial team will be notified every 30 minutes.', { variant: 'info', autoHideDuration: 5000 });
+      enqueueSnackbar(
+        newLP.paymentType === 'instant'
+          ? 'Purchase Person payment recorded — sent to Finance for reimbursement approval.'
+          : 'Credit purchase created — financial team will be notified every 30 minutes.',
+        { variant: 'info', autoHideDuration: 5000 },
+      );
     }
 
     try {
@@ -857,8 +870,11 @@ export default function Purchase() {
         totalAmount: Number(newLP.totalAmount) || 0,
         paymentType: newLP.paymentType,
         paymentStatus: newLP.paymentStatus,
+        ...(newLP.paymentStatus === 'Paid' ? { paidAmount: Number(newLP.totalAmount) || 0, paidDate: new Date().toISOString() } : {}),
         ...(newLP.gPayNumber ? { gPayNumber: newLP.gPayNumber } : {}),
         ...(newLP.paidBy ? { paidBy: newLP.paidBy } : {}),
+        ...(newLP.paymentProofUrl ? { paymentProofUrl: newLP.paymentProofUrl } : {}),
+        ...(values.paymentType === 'credit' && values.dueDate ? { dueDate: values.dueDate.toDate() } : {}),
       }).unwrap();
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record local purchase', { variant: 'error' });
@@ -1965,7 +1981,7 @@ export default function Purchase() {
                               <Button icon={<LeftOutlined />} onClick={() => setLocalPurchaseDetailView(null)}>Back to List</Button>
                               <Text strong style={{ color: '#B11E6A', fontSize: 15 }}>Local Purchase — {localPurchaseDetailView.invoiceNo}</Text>
                             </Space>
-                            <Tag color={localPurchaseDetailView.paymentStatus === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, fontWeight: 700, fontSize: 13 }}>
+                            <Tag color={localPurchaseDetailView.paymentStatus === 'Paid' ? 'success' : localPurchaseDetailView.paymentStatus === 'Partially Paid' ? 'warning' : 'error'} style={{ borderRadius: 10, fontWeight: 700, fontSize: 13 }}>
                               {localPurchaseDetailView.paymentStatus}
                             </Tag>
                           </div>
@@ -1985,27 +2001,40 @@ export default function Purchase() {
                                 <Text strong style={{ display: 'block', marginBottom: 10, color: '#B11E6A' }}>Payment Details</Text>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Type: </Text><Tag color={localPurchaseDetailView.paymentType === 'instant' ? 'green' : 'orange'}>{localPurchaseDetailView.paymentType === 'instant' ? 'Instant' : 'Credit'}</Tag></div>
-                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Status: </Text><Tag color={localPurchaseDetailView.paymentStatus === 'Paid' ? 'success' : 'error'}>{localPurchaseDetailView.paymentStatus}</Tag></div>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Status: </Text><Tag color={localPurchaseDetailView.paymentStatus === 'Paid' ? 'success' : localPurchaseDetailView.paymentStatus === 'Partially Paid' ? 'warning' : 'error'}>{localPurchaseDetailView.paymentStatus}</Tag></div>
+                                  {localPurchaseDetailView.paymentType === 'credit' && localPurchaseDetailView.dueDate && <div><Text type="secondary" style={{ fontSize: 12 }}>Due Date: </Text><Text strong>{localPurchaseDetailView.dueDate}</Text></div>}
                                   {localPurchaseDetailView.gPayNumber && <div><Text type="secondary" style={{ fontSize: 12 }}>GPay: </Text><Text>{localPurchaseDetailView.gPayNumber}</Text></div>}
                                   {localPurchaseDetailView.paidBy && <div><Text type="secondary" style={{ fontSize: 12 }}>Paid By: </Text><Text strong>{localPurchaseDetailView.paidBy}</Text></div>}
                                   {localPurchaseDetailView.paidDate && <div><Text type="secondary" style={{ fontSize: 12 }}>Paid Date: </Text><Text>{localPurchaseDetailView.paidDate}</Text></div>}
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Total: </Text><Text strong style={{ color: '#B11E6A' }}>₹{localPurchaseDetailView.totalAmount?.toLocaleString()}</Text></div>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>Paid Amount: </Text><Text strong style={{ color: '#52c41a' }}>₹{(localPurchaseDetailView.paidAmount || 0).toLocaleString()}</Text></div>
+                                  {localPurchaseDetailView.balance > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>Balance: </Text><Text strong style={{ color: '#fa8c16' }}>₹{localPurchaseDetailView.balance.toLocaleString()}</Text></div>}
                                 </div>
                               </Card>
                             </Col>
                             <Col xs={24}>
                               <Card size="small" style={{ borderRadius: 10, background: isDark ? '#16192a' : '#fafbff', border: `1px solid ${isDark ? '#2a2d40' : '#e8eeff'}` }}>
-                                <Text strong style={{ display: 'block', marginBottom: 10, color: '#B11E6A' }}>Items</Text>
+                                <Text strong style={{ display: 'block', marginBottom: 10, color: '#B11E6A' }}>Items Purchased</Text>
                                 <Table
                                   size="small"
-                                  dataSource={localPurchaseDetailView.items || []}
                                   pagination={false}
+                                  dataSource={localPurchaseDetailView.items || []}
+                                  rowKey={(r, i) => i}
                                   columns={[
-                                    { title: 'Item', dataIndex: 'itemName', render: v => <Text strong>{v}</Text> },
-                                    { title: 'Qty', dataIndex: 'qty' },
-                                    { title: 'Unit', dataIndex: 'unit' },
-                                    { title: 'Amount', dataIndex: 'amount', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>₹{v?.toLocaleString()}</Text> },
+                                    { title: 'Item Name', dataIndex: 'itemName', render: (v, r) => v || r.name || '—' },
+                                    { title: 'Qty', dataIndex: 'qty', width: 80, render: v => v ?? '—' },
+                                    { title: 'Unit', dataIndex: 'unit', width: 90, render: v => v || '—' },
+                                    { title: 'Amount', dataIndex: 'amount', width: 120, render: v => <Text strong>₹{(v || 0).toLocaleString()}</Text> },
                                   ]}
+                                  summary={rows => {
+                                    const sum = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+                                    return (
+                                      <Table.Summary.Row>
+                                        <Table.Summary.Cell index={0} colSpan={3}><Text strong>Total</Text></Table.Summary.Cell>
+                                        <Table.Summary.Cell index={1}><Text strong style={{ color: '#B11E6A' }}>₹{sum.toLocaleString()}</Text></Table.Summary.Cell>
+                                      </Table.Summary.Row>
+                                    );
+                                  }}
                                 />
                               </Card>
                             </Col>
@@ -2022,19 +2051,38 @@ export default function Purchase() {
                                 </Card>
                               </Col>
                             )}
-                            {localPurchaseDetailView.paymentProof && (
-                              <Col xs={24}>
-                                <Card size="small" style={{ borderRadius: 10 }}>
+                            <Col xs={24}>
+                              <Card size="small" style={{ borderRadius: 10, background: isDark ? '#16192a' : '#fafbff', border: `1px solid ${isDark ? '#2a2d40' : '#e8eeff'}` }}>
+                                <Text strong style={{ display: 'block', marginBottom: 10, color: '#B11E6A' }}>Payment History</Text>
+                                {(localPurchaseDetailView.paymentHistory || []).length > 0 ? (
+                                  <Table
+                                    size="small"
+                                    pagination={false}
+                                    dataSource={(localPurchaseDetailView.paymentHistory || []).slice().reverse()}
+                                    rowKey={(r, i) => i}
+                                    columns={[
+                                      { title: 'Date & Time', dataIndex: 'paidDate', render: v => <Text>{v ? dayjs(v).format('DD-MM-YYYY hh:mm A') : '—'}</Text> },
+                                      { title: 'Amount', dataIndex: 'amount', render: v => <Text strong style={{ color: '#52c41a' }}>₹{(v || 0).toLocaleString()}</Text> },
+                                      { title: 'Paid By', dataIndex: 'paidBy', render: v => v || '—' },
+                                      {
+                                        title: 'Proof', dataIndex: 'proofUrl',
+                                        render: v => v ? <Button size="small" type="link" icon={<CheckCircleOutlined />} style={{ color: '#52c41a', padding: 0 }} onClick={() => window.open(v, '_blank')}>View Proof</Button> : <Text type="secondary">—</Text>
+                                      },
+                                    ]}
+                                  />
+                                ) : localPurchaseDetailView.paymentProof ? (
                                   <Space>
                                     <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
-                                    <Text strong>Payment Proof: </Text>
+                                    <Text strong>{localPurchaseDetailView.paidDate}: </Text>
                                     <Button type="link" style={{ color: '#52c41a', padding: 0 }}
-                                      onClick={() => enqueueSnackbar('Opening payment proof: ' + localPurchaseDetailView.paymentProof, { variant: 'info' })}
-                                    >{localPurchaseDetailView.paymentProof}</Button>
+                                      onClick={() => window.open(localPurchaseDetailView.paymentProof, '_blank')}
+                                    >View Proof</Button>
                                   </Space>
-                                </Card>
-                              </Col>
-                            )}
+                                ) : (
+                                  <Text type="secondary">No payments recorded yet.</Text>
+                                )}
+                              </Card>
+                            </Col>
                           </Row>
                         </div>
                       ) : (
@@ -2066,6 +2114,7 @@ export default function Purchase() {
                             <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search vendor, invoice..." allowClear value={localSearch} onChange={(e) => setLocalSearch(e.target.value)} style={{ width: 230, borderRadius: 8 }} />
                             <Select allowClear placeholder="Payment Status" value={localPayFilter} onChange={setLocalPayFilter} style={{ width: 160, borderRadius: 8 }}>
                               <Option value="Paid">Paid</Option>
+                              <Option value="Partially Paid">Partially Paid</Option>
                               <Option value="Pending">Pending</Option>
                             </Select>
                           </div>
@@ -2094,27 +2143,32 @@ export default function Purchase() {
                                     size="small"
                                     icon={<FileTextOutlined />}
                                     style={{ color: '#1890ff', borderColor: '#1890ff', fontSize: 11 }}
-                                    onClick={e => { e.stopPropagation(); window.open('#', '_blank'); }}
+                                    onClick={e => { e.stopPropagation(); window.open(v, '_blank'); }}
                                   >View</Button>
                                 ) : <Tag color="default" style={{ borderRadius: 8, fontSize: 10 }}>No File</Tag>
                               },
                               { title: 'Vendor', dataIndex: 'vendorName', key: 'vendorName', width: 150, render: v => <Text style={{ fontWeight: 600 }}>{v}</Text> },
                               {
-                                title: 'Items', key: 'items', width: 200,
-                                render: (_, r) => (
-                                  <div>
-                                    {(r.items || []).map((item, idx) => (
-                                      <div key={idx} style={{ fontSize: 11 }}>
-                                        <Text strong>{item.itemName || item.name}</Text>
-                                        <Text type="secondary"> — {item.qty} {item.unit}</Text>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )
+                                title: 'Items', dataIndex: 'items', key: 'items', width: 180,
+                                render: (items) => {
+                                  const list = items || [];
+                                  const names = list.map(i => i.itemName || i.name).filter(Boolean);
+                                  if (!names.length) return <Text type="secondary">—</Text>;
+                                  const label = names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2} more` : names.join(', ');
+                                  return <Tooltip title={names.join(', ')}><Text style={{ fontSize: 12 }}>{label}</Text></Tooltip>;
+                                }
                               },
                               {
                                 title: 'Total', dataIndex: 'totalAmount', key: 'totalAmount', width: 100, align: 'right',
                                 render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v?.toLocaleString()}</Text>
+                              },
+                              {
+                                title: 'Balance', dataIndex: 'balance', key: 'balance', width: 100, align: 'right',
+                                render: v => v > 0 ? <Text strong style={{ color: '#fa8c16' }}>₹{v?.toLocaleString()}</Text> : <Text type="secondary">—</Text>
+                              },
+                              {
+                                title: 'Due Date', dataIndex: 'dueDate', key: 'dueDate', width: 100,
+                                render: (v, r) => r.paymentType === 'credit' && v ? <Text>{v}</Text> : <Text type="secondary">—</Text>
                               },
                               {
                                 title: 'Payment Type', dataIndex: 'paymentType', key: 'paymentType', width: 110, align: 'center',
@@ -2122,7 +2176,7 @@ export default function Purchase() {
                               },
                               {
                                 title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 120, align: 'center',
-                                render: v => <Tag color={v === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10 }}>{v}</Tag>
+                                render: v => <Tag color={v === 'Paid' ? 'success' : v === 'Partially Paid' ? 'warning' : 'error'} style={{ borderRadius: 10 }}>{v}</Tag>
                               },
                               {
                                 title: 'Payment Proof', dataIndex: 'paymentProof', key: 'paymentProof', width: 120,
@@ -2586,7 +2640,46 @@ export default function Purchase() {
             </div>
           )}
 
-          {/* Manual fields if not scanned */}
+          {/* Items Purchased — editable list, auto-filled from AI scan */}
+          <Text strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>Items / Products Purchased</Text>
+          <Form.List name="items" initialValue={[{ itemName: '', qty: 1, unit: 'Pcs', amount: 0 }]}>
+            {(fields, { add, remove }) => (
+              <div style={{ marginBottom: 16 }}>
+                {fields.map(({ key, name, ...restField }) => (
+                  <Row gutter={6} key={key} wrap={false} align="middle" style={{ marginBottom: 4 }}>
+                    <Col flex="auto" style={{ minWidth: 0 }}>
+                      <Form.Item {...restField} name={[name, 'itemName']} style={{ marginBottom: 8 }} rules={[{ required: true, message: 'Item name required' }]}>
+                        <Input placeholder="e.g. Packing Boxes" />
+                      </Form.Item>
+                    </Col>
+                    <Col flex="0 0 60px">
+                      <Form.Item {...restField} name={[name, 'qty']} style={{ marginBottom: 8 }}>
+                        <InputNumber min={0} placeholder="Qty" style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col flex="0 0 64px">
+                      <Form.Item {...restField} name={[name, 'unit']} style={{ marginBottom: 8 }}>
+                        <Input placeholder="Unit" />
+                      </Form.Item>
+                    </Col>
+                    <Col flex="0 0 84px">
+                      <Form.Item {...restField} name={[name, 'amount']} style={{ marginBottom: 8 }}>
+                        <InputNumber min={0} prefix="₹" placeholder="Amt" style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col flex="0 0 28px">
+                      {fields.length > 1 && (
+                        <Button danger type="text" size="small" icon={<CloseOutlined />} onClick={() => remove(name)} style={{ marginBottom: 8, padding: 0 }} />
+                      )}
+                    </Col>
+                  </Row>
+                ))}
+                <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ itemName: '', qty: 1, unit: 'Pcs', amount: 0 })} style={{ width: '100%', color: '#B11E6A', borderColor: '#B11E6A66' }}>
+                  Add Item
+                </Button>
+              </div>
+            )}
+          </Form.List>
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item label="Invoice Number" name="invoiceNo" rules={[{ required: true, message: 'Required' }]}>
@@ -2644,13 +2737,22 @@ export default function Purchase() {
           </Form.Item>
 
           {localPurchasePaymentType === 'credit' && (
-            <Alert
-              message="Credit Payment — Pending"
-              description="Payment will be set as Pending. Financial team will be notified every 30 minutes until payment is processed."
-              type="warning"
-              showIcon
-              style={{ marginBottom: 16, borderRadius: 8 }}
-            />
+            <>
+              <Alert
+                message="Credit Payment — Pending"
+                description="Payment will be set as Pending. Financial team will be notified every 30 minutes until payment is processed."
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16, borderRadius: 8 }}
+              />
+              <Form.Item
+                label="Pay-Later Due Date"
+                name="dueDate"
+                tooltip="Finance team will get an automatic WhatsApp reminder from this date, on the schedule configured in WhatsApp Integration → Event Mapping"
+              >
+                <DatePicker style={{ width: '100%', borderRadius: 8 }} />
+              </Form.Item>
+            </>
           )}
 
           {localPurchasePaymentType === 'instant' && (

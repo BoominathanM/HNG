@@ -208,6 +208,8 @@ export default function Financial() {
     gPayNumber: lp.gPayNumber,
     paidDate: lp.paidDate,
     paidBy: lp.paidBy,
+    paidAmount: lp.paidAmount || 0,
+    balance: Math.max(0, (lp.totalAmount || 0) - (lp.paidAmount || 0)),
   })), [localPurchaseExpData]);
 
   const [showLocalPaymentModal, setShowLocalPaymentModal] = useState(false);
@@ -218,6 +220,7 @@ export default function Financial() {
     try {
       const fd = new FormData();
       fd.append('paid_by', vals.paid_by || 'Finance Team');
+      fd.append('amount', vals.amount ?? localPayTarget.balance ?? localPayTarget.totalAmount);
       const localProofFile = Array.isArray(vals.payment_proof) ? vals.payment_proof[0] : vals.payment_proof?.fileList?.[0];
       if (localProofFile?.url) {
         fd.append('proofUrl', localProofFile.url);
@@ -875,6 +878,7 @@ export default function Financial() {
                                 style={{ width: 160, borderRadius: 8 }}
                               >
                                 <Option value="Paid">Paid</Option>
+                                <Option value="Partially Paid">Partially Paid</Option>
                                 <Option value="Pending">Pending</Option>
                               </Select>
                             </div>
@@ -906,7 +910,7 @@ export default function Financial() {
                                   { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', width: 145, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
                                   {
                                     title: 'Invoice File', dataIndex: 'invoiceFile', key: 'invoiceFile', width: 115,
-                                    render: v => v ? <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => window.open('#', '_blank')}>Open</Button> : <Tag color="default" style={{ fontSize: 12 }}>None</Tag>
+                                    render: v => v ? <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A' }} onClick={() => window.open(v, '_blank')}>Open</Button> : <Tag color="default" style={{ fontSize: 12 }}>None</Tag>
                                   },
                                   { title: 'Vendor', dataIndex: 'vendorName', key: 'vendorName', width: 155, render: v => <Text style={{ fontWeight: 600, fontSize: 13 }}>{v}</Text> },
                                   { title: 'Vendor Phone', dataIndex: 'vendorPhone', key: 'vendorPhone', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
@@ -917,6 +921,7 @@ export default function Financial() {
                                     ))
                                   },
                                   { title: 'Total', dataIndex: 'totalAmount', key: 'totalAmount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{v?.toLocaleString()}</Text> },
+                                  { title: 'Balance', dataIndex: 'balance', key: 'balance', width: 105, align: 'right', render: v => v > 0 ? <Text strong style={{ color: '#fa8c16', fontSize: 13 }}>₹{v?.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
                                   { title: 'Payment Type', dataIndex: 'paymentType', key: 'paymentType', width: 115, align: 'center', render: v => <Tag color={v === 'instant' ? 'green' : 'orange'} style={{ borderRadius: 8, fontSize: 13 }}>{v === 'instant' ? 'Instant' : 'Credit'}</Tag> },
                                   {
                                     title: 'GPay Number', dataIndex: 'gPayNumber', key: 'gPayNumber', width: 135,
@@ -926,7 +931,7 @@ export default function Financial() {
                                     title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 125, align: 'center',
                                     render: (v, r) => (
                                       <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
-                                        <Tag color={v === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, margin: 0, fontSize: 13 }}>{v || 'Pending'}</Tag>
+                                        <Tag color={v === 'Paid' ? 'success' : v === 'Partially Paid' ? 'warning' : 'error'} style={{ borderRadius: 10, margin: 0, fontSize: 13 }}>{v || 'Pending'}</Tag>
                                         {r.paidDate && <Text type="secondary" style={{ fontSize: 11 }}>{r.paidDate}</Text>}
                                       </Space>
                                     )
@@ -941,7 +946,7 @@ export default function Financial() {
                                       <Tag color="success" style={{ borderRadius: 8, fontSize: 13 }}>Paid</Tag>
                                     ) : (
                                       <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { if (!requireAccess('edit')) return; setLocalPayTarget(r); setShowLocalPaymentModal(true); }}>
-                                        Pay Now
+                                        {r.paymentStatus === 'Partially Paid' ? 'Pay Balance' : 'Pay Now'}
                                       </Button>
                                     )
                                   },
@@ -1354,6 +1359,9 @@ export default function Financial() {
               <Text style={{ color: '#B11E6A' }}>{localPayTarget.vendorName}</Text>
               <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Date: {localPayTarget.date} · Payment Type: {localPayTarget.paymentType === 'credit' ? 'Credit' : 'Instant'}</Text>
               <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Total Amount: ₹{localPayTarget.totalAmount?.toLocaleString()}</Text>
+              {localPayTarget.paidAmount > 0 && (
+                <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Already Paid: ₹{localPayTarget.paidAmount.toLocaleString()} · Balance: ₹{localPayTarget.balance.toLocaleString()}</Text>
+              )}
               {(localPayTarget.items || []).map((item, i) => (
                 <Text key={i} style={{ display: 'block', fontSize: 11, color: '#888' }}>• {item.name} — {item.qty} {item.unit}</Text>
               ))}
@@ -1363,6 +1371,15 @@ export default function Financial() {
                 </Text>
               )}
             </div>
+            <Form.Item
+              label="Amount to Pay"
+              name="amount"
+              initialValue={localPayTarget.balance ?? localPayTarget.totalAmount}
+              tooltip="Pay the full balance, or a lesser amount to record a partial payment"
+              rules={[{ required: true, message: 'Enter the amount being paid' }]}
+            >
+              <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} max={localPayTarget.balance ?? localPayTarget.totalAmount} />
+            </Form.Item>
             <Form.Item label="Paid By" name="paid_by" initialValue="Finance Team">
               <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
             </Form.Item>
@@ -1379,7 +1396,7 @@ export default function Financial() {
             </Form.Item>
             <div style={{ padding: '10px 12px', background: isDark ? '#1e2235' : '#f6fff8', borderRadius: 8, border: `1px solid #52c41a33`, marginBottom: 14, fontSize: 12 }}>
               <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 6 }} />
-              After submission, payment status and proof will be updated in the <Text strong>Local Purchase</Text> tab in Purchase page.
+              A partial payment sets status to <Text strong>Partially Paid</Text>; paying the full balance sets it to <Text strong>Paid</Text>. Status and proof update in the <Text strong>Local Purchase</Text> tab in Purchase page.
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button block onClick={() => { setShowLocalPaymentModal(false); localPayForm.resetFields(); }}>Cancel</Button>
