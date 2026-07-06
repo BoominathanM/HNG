@@ -12,15 +12,14 @@ async function sendRemindersForMapping(mapping) {
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
 
-  // firstReminderDate is set from the Bulk Purchase Request modal (Step 3) for payment terms
-  // other than "100% Payment". This scheduler now only covers Bulk requests — individual
-  // ("Raise Request") requests get their own separate-purchase-payment-reminder scheduler
-  // (see separatePurchasePaymentReminderScheduler.js) so the two flows can be configured
-  // with independent recipients/schedules.
+  // secondReminderDate is set from the individual ("Raise Request" / Separate) modal for
+  // payment terms other than "100% Payment". This is the Separate-flow counterpart to
+  // purchasePaymentReminderScheduler.js's Bulk-only reminder — kept as its own WhatsApp
+  // event so recipients/schedule can be configured independently per flow.
   const requests = await PurchaseRequest.find({
-    firstReminderDate: { $gte: todayStart, $lte: todayEnd },
+    secondReminderDate: { $gte: todayStart, $lte: todayEnd },
     status: { $ne: 'Rejected' },
-    requestType: 'bulk',
+    requestType: 'individual',
   }).populate('vendorId', 'name').lean();
 
   if (!requests.length) return;
@@ -38,7 +37,7 @@ async function sendRemindersForMapping(mapping) {
       itemName:    pr.itemName || '',
       qty:         `${pr.qty} ${pr.unit || ''}`.trim(),
       vendorName:  pr.vendorId?.name || '',
-      dueDate:     formatDate(pr.firstReminderDate || pr.secondReminderDate),
+      dueDate:     formatDate(pr.secondReminderDate),
       companyName: process.env.COMPANY_NAME || 'HNG',
     };
     const parameters = {};
@@ -55,9 +54,9 @@ async function sendRemindersForMapping(mapping) {
 
       const result = await sendMessage({ to: user.mobile, templateName, language, parameters });
       if (result.success) {
-        console.log(`[purchase-payment-reminder] ✅ Sent to ${user.fullName} (${user.mobile}) re: ${pr.requestCode}`);
+        console.log(`[separate-purchase-payment-reminder] ✅ Sent to ${user.fullName} (${user.mobile}) re: ${pr.requestCode}`);
       } else {
-        console.warn(`[purchase-payment-reminder] ⚠️  Failed for ${user.fullName} (${user.mobile}): ${result.error}`);
+        console.warn(`[separate-purchase-payment-reminder] ⚠️  Failed for ${user.fullName} (${user.mobile}): ${result.error}`);
       }
     }
   }
@@ -70,7 +69,7 @@ async function checkAndSend() {
     const currentMM = String(now.getMinutes()).padStart(2, '0');
     guard.purgeStale(todayKey());
 
-    const event = await WhatsAppEvent.findOne({ key: 'purchase-payment-reminder' }).lean();
+    const event = await WhatsAppEvent.findOne({ key: 'separate-purchase-payment-reminder' }).lean();
     if (!event) return;
 
     const mappings = await WhatsAppEventMapping
@@ -85,14 +84,14 @@ async function checkAndSend() {
       await sendRemindersForMapping(mapping);
     }
   } catch (err) {
-    console.error('[purchase-payment-reminder] check error:', err.message);
+    console.error('[separate-purchase-payment-reminder] check error:', err.message);
   }
 }
 
-function startPurchasePaymentReminderScheduler() {
-  console.log('[purchase-payment-reminder] Scheduler started — every minute checks DB sendTime from event mapping');
+function startSeparatePurchasePaymentReminderScheduler() {
+  console.log('[separate-purchase-payment-reminder] Scheduler started — every minute checks DB sendTime from event mapping');
   checkAndSend();
   cron.schedule('* * * * *', checkAndSend);
 }
 
-module.exports = { startPurchasePaymentReminderScheduler, checkAndSend };
+module.exports = { startSeparatePurchasePaymentReminderScheduler, checkAndSend };

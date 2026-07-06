@@ -47,7 +47,7 @@ const getTemplateType = (t) => {
 
 // These events are date-driven reminders sent as plain scheduled messages, so only
 // text templates make sense for them — other events can use any template type.
-const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'order-delivery-reminder', 'local-purchase-credit-due', 'purchase-payment-reminder'];
+const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'order-delivery-reminder', 'local-purchase-credit-due', 'purchase-payment-reminder', 'separate-purchase-payment-reminder'];
 
 // Billing Invoice attaches the invoice/quotation PDF as a WhatsApp document header,
 // so only templates built with a DOCUMENT header are valid choices for it. Bulk Purchase
@@ -67,7 +67,7 @@ const RECIPIENT_ONLY_EVENT_KEYS = ['stock-checking'];
 // This event needs BOTH a once-a-day send time AND a fixed internal recipient list
 // (Finance department) — unlike the other date-driven reminders, which send to a
 // per-record customer/salesperson rather than a mapping-configured recipient list.
-const RECIPIENT_AND_TIME_EVENT_KEYS = ['purchase-payment-reminder'];
+const RECIPIENT_AND_TIME_EVENT_KEYS = ['purchase-payment-reminder', 'separate-purchase-payment-reminder'];
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 

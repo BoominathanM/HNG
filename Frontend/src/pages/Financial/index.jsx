@@ -89,6 +89,7 @@ export default function Financial() {
     notes: r.notes || [],
     quotation_file_url: r.quotationFileUrl || null,
     quotation_file: r.quotationFileUrl ? r.quotationFileUrl.split('/').pop() : null,
+    quotationFiles: r.quotationFiles || [],
     finance_note: r.financeNote || '',
     batchId: r.batchId || null,
     requestType: r.requestType || 'individual',
@@ -127,6 +128,9 @@ export default function Financial() {
   /* ── Notes: Quotation Requests table (uses Redux raisedRequests.notes) ── */
   const [openReqNotes, setOpenReqNotes] = useState(null);
   const [reqNoteInput, setReqNoteInput] = useState('');
+
+  /* ── Bulk-batch grouping: rows sharing a batchId collapse into one expandable parent row ── */
+  const [openBulkBatches, setOpenBulkBatches] = useState([]);
 
   /* ── Notes: Purchase Payments table (Redux purchaseOrders.notes) ── */
   const [openOrderNotes, setOpenOrderNotes] = useState(null);
@@ -316,6 +320,89 @@ export default function Financial() {
     return 'error';
   };
 
+  // Collapse quotation requests that share a batchId (raised via Bulk Purchase) into one expandable parent row
+  const groupRequestsByBatch = (items) => {
+    const batchMap = {};
+    const singles = [];
+    items.forEach((it) => {
+      if (it.batchId) {
+        if (!batchMap[it.batchId]) batchMap[it.batchId] = [];
+        batchMap[it.batchId].push(it);
+      } else {
+        singles.push(it);
+      }
+    });
+    const rows = [];
+    Object.values(batchMap).forEach((batchItems) => {
+      if (batchItems.length > 1) {
+        const first = batchItems[0];
+        const statuses = batchItems.map(b => b.status);
+        const status = statuses.every(s => s === 'Approved') ? 'Approved'
+          : statuses.some(s => s === 'Rejected') ? 'Rejected'
+          : statuses.some(s => s === 'Modification') ? 'Modification'
+          : 'Pending';
+        rows.push({
+          key: `batch-${first.batchId}`,
+          isBatchGroup: true,
+          item: `${batchItems.length} Products`,
+          supplier: first.supplier,
+          payment_terms: first.payment_terms,
+          date: first.date,
+          status,
+          notes: [],
+          batchId: first.batchId,
+          batchItems,
+        });
+      } else {
+        rows.push(batchItems[0]);
+      }
+    });
+    rows.push(...singles);
+    return rows;
+  };
+
+  // A batch's PurchaseOrder is consolidated into ONE document (batchId) — resolve it
+  // that way first so a batch-group row (and every sibling in it) all show the same
+  // order instead of only the first-approved sibling's requestKey matching.
+  const findOrderForRequest = (r) => purchaseOrders.find(o =>
+    (r.batchId && o.batchId === r.batchId) || o.requestKey === r.key
+  );
+
+  // Shows every quotation file uploaded (including re-uploads) and every partial/full
+  // payment recorded against the linked order — satisfies "if I have multiple paid and
+  // uploads I need to display all if I click row".
+  const renderPaymentAndFilesPanel = (order, quotationFiles) => (
+    <Row gutter={16} style={{ marginTop: 12 }}>
+      <Col xs={24} md={12}>
+        <Text style={{ fontSize: 12, fontWeight: 600, color: '#722ed1', display: 'block', marginBottom: 8 }}>
+          <FileTextOutlined style={{ marginRight: 4 }} />Quotation Files
+        </Text>
+        {(!quotationFiles || quotationFiles.length === 0) && <Text type="secondary" style={{ fontSize: 11 }}>No files uploaded yet.</Text>}
+        {(quotationFiles || []).slice().reverse().map((f, i) => (
+          <div key={i} style={{ marginBottom: 4 }}>
+            <Button size="small" type="link" icon={<FileTextOutlined />} onClick={() => window.open(f.url, '_blank')} style={{ padding: 0, fontSize: 12, height: 'auto' }}>
+              {f.itemName ? `${f.itemName} — ` : ''}{f.uploadedAt ? new Date(f.uploadedAt).toLocaleString() : `File ${i + 1}`}
+            </Button>
+          </div>
+        ))}
+      </Col>
+      <Col xs={24} md={12}>
+        <Text style={{ fontSize: 12, fontWeight: 600, color: '#52c41a', display: 'block', marginBottom: 8 }}>
+          <DollarCircleOutlined style={{ marginRight: 4 }} />Payment History
+        </Text>
+        {(!order?.paymentHistory || order.paymentHistory.length === 0) && <Text type="secondary" style={{ fontSize: 11 }}>No payments recorded yet.</Text>}
+        {(order?.paymentHistory || []).slice().reverse().map((p, i) => (
+          <div key={i} style={{ padding: '5px 10px', marginBottom: 5, borderRadius: 6, background: isDark ? '#0d2010' : '#f6ffed', border: `1px solid ${isDark ? '#1a3a20' : '#b7eb8f'}` }}>
+            <Text strong style={{ fontSize: 12, color: '#52c41a' }}>₹{(p.amount || 0).toLocaleString()}</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}> — {p.paidBy || 'Finance Team'}</Text>
+            <br />
+            <Text type="secondary" style={{ fontSize: 10 }}>{p.paidDate ? new Date(p.paidDate).toLocaleString() : ''}</Text>
+          </div>
+        ))}
+      </Col>
+    </Row>
+  );
+
   const pendingRequests = raisedRequests.filter(r => r.status === 'Pending').length;
   const stats = [
     { label: 'Pending Approvals', value: pendingRequests, color: '#B11E6A', icon: <ClockCircleOutlined /> },
@@ -356,6 +443,185 @@ export default function Financial() {
       ) : (
         <Button size="small" type="primary" icon={<DollarCircleOutlined />} onClick={() => { if (!requireAccess('edit')) return; setSelectedForPayment(r); setShowPaymentModal(true); }} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }}>Pay Now</Button>
       )
+    }
+  ];
+
+  const reqColumns = [
+    {
+      title: 'Date', dataIndex: 'date', key: 'date', width: 95,
+      render: v => <Text type="secondary">{v}</Text>
+    },
+    {
+      title: 'Item & Supplier', key: 'item_sup', width: 190,
+      render: (_, r) => (
+        <Space direction="vertical" size={1}>
+          <Space size={4} align="center">
+            <Text strong>{r.item}</Text>
+            {r.isBatchGroup && (
+              <Tag color="blue" style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
+                Bulk ×{r.batchItems.length}
+              </Tag>
+            )}
+          </Space>
+          <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{r.supplier}</Text>
+        </Space>
+      )
+    },
+    {
+      title: 'Qty', key: 'qty', width: 80, align: 'center',
+      render: (_, r) => r.isBatchGroup ? (
+        <Text type="secondary" style={{ fontSize: 12 }}>{r.batchItems.length} items</Text>
+      ) : (
+        <Space direction="vertical" size={0}>
+          <Text strong>{r.qty}</Text>
+          <Text type="secondary">{r.unit}</Text>
+        </Space>
+      )
+    },
+    {
+      title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', width: 160,
+      render: v => <Text>{v}</Text>
+    },
+    {
+      title: 'Bill / Inv No', key: 'bill_inv', width: 130,
+      render: (_, r) => {
+        const order = findOrderForRequest(r);
+        if (!order) return <Text type="secondary">—</Text>;
+        return (
+          <Space direction="vertical" size={1}>
+            <Text strong>{order.bill_no}</Text>
+            <Text style={{ color: '#B11E6A' }}>{order.inv_no}</Text>
+          </Space>
+        );
+      }
+    },
+    {
+      title: 'Amount', key: 'order_amount', width: 100, align: 'right',
+      render: (_, r) => {
+        const order = findOrderForRequest(r);
+        if (!order) return <Text type="secondary">—</Text>;
+        return <Text strong style={{ color: '#B11E6A' }}>₹{order.amount?.toLocaleString()}</Text>;
+      }
+    },
+    {
+      title: 'Pay Status', key: 'payment_status', width: 110, align: 'center',
+      render: (_, r) => {
+        const order = findOrderForRequest(r);
+        if (!order) return <Text type="secondary">—</Text>;
+        return <Tag color={getStatusColor(order.status)} style={{ borderRadius: 10, margin: 0 }}>{order.status}</Tag>;
+      }
+    },
+    {
+      title: 'Quotation Status', dataIndex: 'status', key: 'status', width: 120, align: 'center',
+      render: v => {
+        const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing', Modification: 'warning' };
+        return <Tag color={colorMap[v]} style={{ borderRadius: 12, margin: 0 }}>{v}</Tag>;
+      }
+    },
+    {
+      title: 'Actions', key: 'actions', width: 220, fixed: 'right',
+      render: (_, r) => {
+        if (r.isBatchGroup) {
+          const groupOrder = findOrderForRequest(r);
+          return (
+            <Space wrap size={[4, 4]}>
+              <Text type="secondary" style={{ fontSize: 11 }}>Expand to view {r.batchItems.length} items</Text>
+              {groupOrder && (
+                <>
+                  <Button size="small" icon={<EyeOutlined />} onClick={() => setViewRequest(groupOrder)} style={{ fontSize: 11 }}>Details</Button>
+                  {groupOrder.status !== 'Paid' && (
+                    <Button size="small" type="primary" icon={<DollarCircleOutlined />}
+                      onClick={() => { if (!requireAccess('edit')) return; setSelectedForPayment(groupOrder); setShowPaymentModal(true); }}
+                      style={{ background: '#B11E6A', border: 'none', fontSize: 11 }}>Pay Now</Button>
+                  )}
+                </>
+              )}
+            </Space>
+          );
+        }
+        const noteCount = (r.notes || []).length;
+        const noteBtn = (
+          <Badge count={noteCount} size="small" offset={[-2, 2]}>
+            <Button size="small" icon={<MessageOutlined />}
+              onClick={() => { setOpenReqNotes(openReqNotes === r.key ? null : r.key); setReqNoteInput(''); }}
+              style={{ color: openReqNotes === r.key ? '#fff' : '#B11E6A', background: openReqNotes === r.key ? '#B11E6A' : 'transparent', borderColor: '#B11E6A55' }}
+            >Re-Request Quotation</Button>
+          </Badge>
+        );
+        const supPhone = (suppliersData[r.supplier]?.phone || '').replace(/\D/g, '');
+        const latestNote = (r.notes || []).at(-1);
+        const waMsg = `*Quotation Request*\n\n*Item:* ${r.item}\n*Quantity:* ${r.qty} ${r.unit}\n*Payment Terms:* ${r.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nPlease provide a quotation at the earliest.`;
+        const order = findOrderForRequest(r);
+        return (
+          <Space wrap size={[4, 4]}>
+            {r.quotation_file && (
+              <Button size="small" icon={<FileTextOutlined />} onClick={() => setViewQuotationFile(r)}
+                style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>File</Button>
+            )}
+            {r.status === 'Pending' && (() => {
+              const batchPendingCount = r.batchId
+                ? raisedRequests.filter(req => req.batchId === r.batchId && req.status === 'Pending').length
+                : 0;
+              return (
+                <>
+                  <Button size="small" type="primary" icon={<CheckCircleOutlined />}
+                    onClick={async () => {
+                      try { await approveReq(r.key).unwrap(); enqueueSnackbar('Approved', { variant: 'success' }); }
+                      catch { enqueueSnackbar('Approval failed', { variant: 'error' }); }
+                    }}
+                    style={{ background: '#52c41a', border: 'none' }}>Approve</Button>
+                  {batchPendingCount > 1 && (
+                    <Button size="small" type="primary" icon={<CheckCircleOutlined />}
+                      onClick={async () => {
+                        try {
+                          await batchApproveReqs(r.batchId).unwrap();
+                          enqueueSnackbar(`All ${batchPendingCount} items in this batch approved`, { variant: 'success' });
+                        } catch { enqueueSnackbar('Batch approval failed', { variant: 'error' }); }
+                      }}
+                      style={{ background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 600 }}>
+                      Approve All ({batchPendingCount})
+                    </Button>
+                  )}
+                  <Button size="small" danger icon={<CloseCircleOutlined />}
+                    onClick={async () => {
+                      try { await rejectReq({ id: r.key }).unwrap(); enqueueSnackbar('Rejected', { variant: 'warning' }); }
+                      catch { enqueueSnackbar('Rejection failed', { variant: 'error' }); }
+                    }}>Reject</Button>
+                </>
+              );
+            })()}
+            {noteCount > 0 && (
+              <Button size="small" icon={<WhatsAppOutlined />}
+                style={{ borderColor: '#25D366', color: '#25D366' }}
+                onClick={() => window.open(`https://wa.me/${supPhone}?text=${encodeURIComponent(waMsg)}`, '_blank')}>
+                Ask
+              </Button>
+            )}
+            {order && (
+              <>
+                <Button size="small" icon={<EyeOutlined />} onClick={() => setViewRequest(order)}
+                  style={{ fontSize: 11 }}>Details</Button>
+                {order.status !== 'Paid' && (
+                  <Button size="small" type="primary" icon={<DollarCircleOutlined />}
+                    onClick={() => { if (!requireAccess('edit')) return; setSelectedForPayment(order); setShowPaymentModal(true); }}
+                    style={{ background: '#B11E6A', border: 'none', fontSize: 11 }}>Pay Now</Button>
+                )}
+              </>
+            )}
+            {(r.status === 'Pending' || r.status === 'Modification') && (
+              <Button size="small" icon={<EditOutlined />}
+                onClick={() => {
+                  setEditReqTarget(r);
+                  editReqForm.setFieldsValue({ qty: r.qty, payment_terms: r.payment_terms, amount: r.amount ?? null });
+                  setShowEditReqModal(true);
+                }}
+                style={{ borderColor: '#722ed1', color: '#722ed1' }}
+              >Edit</Button>
+            )}
+            {noteBtn}
+          </Space>
+        );
+      }
     }
   ];
 
@@ -422,10 +688,10 @@ export default function Financial() {
                   </div>
                   <Table
                     size="small"
-                    dataSource={raisedRequests.filter((r) => {
+                    dataSource={groupRequestsByBatch(raisedRequests.filter((r) => {
                       const q = purchaseReqSearch.toLowerCase();
                       return !q || (r.item || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q);
-                    })}
+                    }))}
                     pagination={{
                       current: reqPage,
                       pageSize: reqPageSize,
@@ -439,12 +705,45 @@ export default function Financial() {
                     scroll={{ x: 'max-content' }}
                     locale={{ emptyText: 'No quotation requests yet.' }}
                     expandable={{
-                      expandedRowKeys: openReqNotes ? [openReqNotes] : [],
-                      onExpand: () => {},
-                      showExpandColumn: false,
+                      expandedRowKeys: [...(openReqNotes ? [openReqNotes] : []), ...openBulkBatches],
+                      onExpand: (expanded, record) => {
+                        if (!record.isBatchGroup) return;
+                        setOpenBulkBatches(prev => expanded ? [...prev, record.key] : prev.filter(k => k !== record.key));
+                      },
+                      // Every row must stay expandable (individual rows are expanded programmatically
+                      // via the "Re-Request Quotation" notes button setting openReqNotes, not by clicking
+                      // an arrow) — only the arrow itself is hidden for non-batch rows.
+                      rowExpandable: () => true,
+                      expandIcon: ({ expanded, onExpand, record }) => record.isBatchGroup ? (
+                        <span onClick={(e) => onExpand(record, e)} style={{ cursor: 'pointer' }}>
+                          {expanded ? '−' : '+'}
+                        </span>
+                      ) : null,
                       expandedRowRender: (r) => {
+                        if (r.isBatchGroup) {
+                          const groupOrder = findOrderForRequest(r);
+                          // Every item in the batch may have its own uploaded quotation file(s) —
+                          // aggregate across all of them (not just the first) so none go missing.
+                          const groupFiles = (r.batchItems || []).flatMap((it) =>
+                            (it.quotationFiles || []).map((f) => ({ ...f, itemName: it.item }))
+                          );
+                          return (
+                            <div style={{ padding: '8px 16px', background: isDark ? '#16192a' : '#fafcff', borderRadius: 8, margin: '4px 0' }}>
+                              {renderPaymentAndFilesPanel(groupOrder, groupFiles)}
+                              <Divider style={{ margin: '12px 0' }} />
+                              <Table
+                                size="small"
+                                dataSource={r.batchItems}
+                                rowKey="key"
+                                pagination={false}
+                                columns={reqColumns}
+                                scroll={{ x: 'max-content' }}
+                              />
+                            </div>
+                          );
+                        }
                         const notes = r.notes || [];
-                        const linkedOrder = purchaseOrders.find(o => o.requestKey === r.key);
+                        const linkedOrder = findOrderForRequest(r);
                         const orderNotes = linkedOrder?.notes || [];
                         return (
                           <div style={{ padding: '12px 16px', background: isDark ? '#16192a' : '#fafcff', borderRadius: 8, margin: '4px 0' }}>
@@ -501,161 +800,17 @@ export default function Financial() {
                                 </Col>
                               )}
                             </Row>
+                            {(linkedOrder || (r.quotationFiles || []).length > 0) && (
+                              <>
+                                <Divider style={{ margin: '12px 0' }} />
+                                {renderPaymentAndFilesPanel(linkedOrder, r.quotationFiles)}
+                              </>
+                            )}
                           </div>
                         );
                       },
                     }}
-                    columns={[
-                      {
-                        title: 'Date', dataIndex: 'date', key: 'date', width: 95,
-                        render: v => <Text type="secondary">{v}</Text>
-                      },
-                      {
-                        title: 'Item & Supplier', key: 'item_sup', width: 190,
-                        render: (_, r) => {
-                          const batchSize = r.batchId ? raisedRequests.filter(req => req.batchId === r.batchId).length : 0;
-                          return (
-                            <Space direction="vertical" size={1}>
-                              <Space size={4} align="center">
-                                <Text strong>{r.item}</Text>
-                                {batchSize > 1 && (
-                                  <Tag color="blue" style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
-                                    Bulk Ã—{batchSize}
-                                  </Tag>
-                                )}
-                              </Space>
-                              <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{r.supplier}</Text>
-                            </Space>
-                          );
-                        }
-                      },
-                      {
-                        title: 'Qty', key: 'qty', width: 80, align: 'center',
-                        render: (_, r) => (
-                          <Space direction="vertical" size={0}>
-                            <Text strong>{r.qty}</Text>
-                            <Text type="secondary">{r.unit}</Text>
-                          </Space>
-                        )
-                      },
-                      {
-                        title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', width: 160,
-                        render: v => <Text>{v}</Text>
-                      },
-                      {
-                        title: 'Bill / Inv No', key: 'bill_inv', width: 130,
-                        render: (_, r) => {
-                          const order = purchaseOrders.find(o => o.requestKey === r.key);
-                          if (!order) return <Text type="secondary">—</Text>;
-                          return (
-                            <Space direction="vertical" size={1}>
-                              <Text strong>{order.bill_no}</Text>
-                              <Text style={{ color: '#B11E6A' }}>{order.inv_no}</Text>
-                            </Space>
-                          );
-                        }
-                      },
-                      {
-                        title: 'Amount', key: 'order_amount', width: 100, align: 'right',
-                        render: (_, r) => {
-                          const order = purchaseOrders.find(o => o.requestKey === r.key);
-                          if (!order) return <Text type="secondary">—</Text>;
-                          return <Text strong style={{ color: '#B11E6A' }}>₹{order.amount?.toLocaleString()}</Text>;
-                        }
-                      },
-                      {
-                        title: 'Pay Status', key: 'payment_status', width: 110, align: 'center',
-                        render: (_, r) => {
-                          const order = purchaseOrders.find(o => o.requestKey === r.key);
-                          if (!order) return <Text type="secondary">—</Text>;
-                          return <Tag color={getStatusColor(order.status)} style={{ borderRadius: 10, margin: 0 }}>{order.status}</Tag>;
-                        }
-                      },
-                      {
-                        title: 'Quotation Status', dataIndex: 'status', key: 'status', width: 120, align: 'center',
-                        render: v => {
-                          const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing', Modification: 'warning' };
-                          return <Tag color={colorMap[v]} style={{ borderRadius: 12, margin: 0 }}>{v}</Tag>;
-                        }
-                      },
-                      {
-                        title: 'Actions', key: 'actions', width: 220, fixed: 'right',
-                        render: (_, r) => {
-                          const noteCount = (r.notes || []).length;
-                          const noteBtn = (
-                            <Badge count={noteCount} size="small" offset={[-2, 2]}>
-                              <Button size="small" icon={<MessageOutlined />}
-                                onClick={() => { setOpenReqNotes(openReqNotes === r.key ? null : r.key); setReqNoteInput(''); }}
-                                style={{ color: openReqNotes === r.key ? '#fff' : '#B11E6A', background: openReqNotes === r.key ? '#B11E6A' : 'transparent', borderColor: '#B11E6A55' }}
-                              >Re-Request Quotation</Button>
-                            </Badge>
-                          );
-                          const supPhone = (suppliersData[r.supplier]?.phone || '').replace(/\D/g, '');
-                          const latestNote = (r.notes || []).at(-1);
-                          const waMsg = `*Quotation Request*\n\n*Item:* ${r.item}\n*Quantity:* ${r.qty} ${r.unit}\n*Payment Terms:* ${r.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nPlease provide a quotation at the earliest.`;
-                          const order = purchaseOrders.find(o => o.requestKey === r.key);
-                          return (
-                            <Space wrap size={[4, 4]}>
-                              {r.quotation_file && (
-                                <Button size="small" icon={<FileTextOutlined />} onClick={() => setViewQuotationFile(r)}
-                                  style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>File</Button>
-                              )}
-                              {r.status === 'Pending' && (() => {
-                                const batchPendingCount = r.batchId
-                                  ? raisedRequests.filter(req => req.batchId === r.batchId && req.status === 'Pending').length
-                                  : 0;
-                                return (
-                                  <>
-                                    <Button size="small" type="primary" icon={<CheckCircleOutlined />}
-                                      onClick={async () => {
-                                        try { await approveReq(r.key).unwrap(); enqueueSnackbar('Approved', { variant: 'success' }); }
-                                        catch { enqueueSnackbar('Approval failed', { variant: 'error' }); }
-                                      }}
-                                      style={{ background: '#52c41a', border: 'none' }}>Approve</Button>
-                                    {batchPendingCount > 1 && (
-                                      <Button size="small" type="primary" icon={<CheckCircleOutlined />}
-                                        onClick={async () => {
-                                          try {
-                                            await batchApproveReqs(r.batchId).unwrap();
-                                            enqueueSnackbar(`All ${batchPendingCount} items in this batch approved`, { variant: 'success' });
-                                          } catch { enqueueSnackbar('Batch approval failed', { variant: 'error' }); }
-                                        }}
-                                        style={{ background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 600 }}>
-                                        Approve All ({batchPendingCount})
-                                      </Button>
-                                    )}
-                                    <Button size="small" danger icon={<CloseCircleOutlined />}
-                                      onClick={async () => {
-                                        try { await rejectReq({ id: r.key }).unwrap(); enqueueSnackbar('Rejected', { variant: 'warning' }); }
-                                        catch { enqueueSnackbar('Rejection failed', { variant: 'error' }); }
-                                      }}>Reject</Button>
-                                  </>
-                                );
-                              })()}
-                              {noteCount > 0 && (
-                                <Button size="small" icon={<WhatsAppOutlined />}
-                                  style={{ borderColor: '#25D366', color: '#25D366' }}
-                                  onClick={() => window.open(`https://wa.me/${supPhone}?text=${encodeURIComponent(waMsg)}`, '_blank')}>
-                                  Ask
-                                </Button>
-                              )}
-                              {order && (
-                                <>
-                                  <Button size="small" icon={<EyeOutlined />} onClick={() => setViewRequest(order)}
-                                    style={{ fontSize: 11 }}>Details</Button>
-                                  {order.status !== 'Paid' && (
-                                    <Button size="small" type="primary" icon={<DollarCircleOutlined />}
-                                      onClick={() => { if (!requireAccess('edit')) return; setSelectedForPayment(order); setShowPaymentModal(true); }}
-                                      style={{ background: '#B11E6A', border: 'none', fontSize: 11 }}>Pay Now</Button>
-                                  )}
-                                </>
-                              )}
-                              {noteBtn}
-                            </Space>
-                          );
-                        }
-                      }
-                    ]}
+                    columns={reqColumns}
                   />
                 </div>
               )
@@ -1005,6 +1160,11 @@ export default function Financial() {
                   </Select>
                 </Form.Item>
               </Col>
+              <Col span={24}>
+                <Form.Item label="Quoted Amount (₹)" name="amount">
+                  <InputNumber min={0} style={{ width: '100%' }} placeholder="Correct the quoted amount if needed" />
+                </Form.Item>
+              </Col>
             </Row>
             {(editReqTarget.notes || []).length > 0 && (
               <div style={{ marginBottom: 14, padding: '8px 12px', background: isDark ? '#1e2235' : '#f0f4ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
@@ -1018,7 +1178,7 @@ export default function Financial() {
                 onClick={() => {
                   editReqForm.validateFields().then(async (vals) => {
                     try {
-                      await updateQuotation({ id: editReqTarget.key, qty: vals.qty, paymentTerms: vals.payment_terms }).unwrap();
+                      await updateQuotation({ id: editReqTarget.key, qty: vals.qty, paymentTerms: vals.payment_terms, amount: vals.amount }).unwrap();
                       enqueueSnackbar('Quotation details updated.', { variant: 'success' });
                     } catch { enqueueSnackbar('Update failed', { variant: 'error' }); }
                     setShowEditReqModal(false); editReqForm.resetFields();
@@ -1029,7 +1189,7 @@ export default function Financial() {
                 onClick={() => {
                   editReqForm.validateFields().then(async (vals) => {
                     try {
-                      await updateQuotation({ id: editReqTarget.key, qty: vals.qty, paymentTerms: vals.payment_terms }).unwrap();
+                      await updateQuotation({ id: editReqTarget.key, qty: vals.qty, paymentTerms: vals.payment_terms, amount: vals.amount }).unwrap();
                     } catch { /* silent */ }
                     const phone = (suppliersData[editReqTarget.supplier]?.phone || '').replace(/\D/g, '');
                     const latestNote = (editReqTarget.notes || []).at(-1);

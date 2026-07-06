@@ -9,6 +9,57 @@ const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 
 // ─── QUOTATION REQUESTS ────────────────────────────────────────────────────────
+
+// A batch's PurchaseOrder is consolidated into ONE document keyed by batchId.
+// Legacy/lone requests (no batchId) get a synthesized, globally-unique
+// `SOLO-<requestId>` key backfilled onto the request — never match on a bare
+// null/absent batchId, since that would match every legacy order at once and
+// silently fold unrelated approvals together.
+async function resolveBatchKey(request) {
+  if (request.batchId) return request.batchId;
+  const soloKey = `SOLO-${request._id}`;
+  request.batchId = soloKey;
+  await request.save({ validateBeforeSave: false });
+  return soloKey;
+}
+
+async function upsertOrderForApprovedRequest(request, userId) {
+  const batchKey = await resolveBatchKey(request);
+  let order = await PurchaseOrder.findOne({ batchId: batchKey });
+
+  const itemEntry = {
+    requestId: request._id,
+    itemId: request.itemId,
+    itemName: request.itemName,
+    qty: request.qty,
+    unit: request.unit,
+  };
+
+  if (!order) {
+    const poCode = await generateCode('PO');
+    order = await PurchaseOrder.create({
+      poCode,
+      requestId: request._id,
+      vendorId: request.vendorId,
+      itemId: request.itemId,
+      itemName: request.itemName,
+      qty: request.qty,
+      unit: request.unit,
+      paymentTerms: request.paymentTerms,
+      batchId: batchKey,
+      amount: request.amount,
+      items: [itemEntry],
+      createdBy: userId,
+    });
+  } else {
+    const alreadyIn = (order.items || []).some((it) => String(it.requestId) === String(request._id));
+    if (!alreadyIn) order.items.push(itemEntry);
+    if (order.amount == null && request.amount != null) order.amount = request.amount;
+    await order.save({ validateBeforeSave: false });
+  }
+  return order;
+}
+
 exports.getPendingRequests = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
@@ -29,7 +80,9 @@ exports.getPendingRequests = asyncHandler(async (req, res) => {
   ]);
 
   const withOrders = await Promise.all(requests.map(async (r) => {
-    const order = await PurchaseOrder.findOne({ requestId: r._id });
+    const key = r.batchId || `SOLO-${r._id}`;
+    const order = (await PurchaseOrder.findOne({ batchId: key }))
+      || (await PurchaseOrder.findOne({ requestId: r._id })); // safety net: orders created before this migration have no batchId at all
     return { ...r.toObject(), linkedOrder: order || null };
   }));
 
@@ -46,19 +99,7 @@ exports.approveRequest = asyncHandler(async (req, res, next) => {
   request.approvedAt = Date.now();
   await request.save({ validateBeforeSave: false });
 
-  // Create Purchase Order
-  const poCode = await generateCode('PO');
-  const order = await PurchaseOrder.create({
-    poCode,
-    requestId: request._id,
-    vendorId: request.vendorId,
-    itemId: request.itemId,
-    itemName: request.itemName,
-    qty: request.qty,
-    unit: request.unit,
-    paymentTerms: request.paymentTerms,
-    createdBy: req.user._id,
-  });
+  const order = await upsertOrderForApprovedRequest(request, req.user._id);
 
   notifyRoles({ modules: ['Purchase'], userIds: [request.createdBy], type: 'purchase', title: 'Purchase Request Approved', message: `PR ${request.requestCode} (${request.itemName}) approved — PO ${order.poCode} created`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: { request, order }, message: 'Request approved and PO created' });
@@ -100,45 +141,53 @@ exports.batchApproveRequests = asyncHandler(async (req, res, next) => {
     request.approvedBy = req.user._id;
     request.approvedAt = Date.now();
     await request.save({ validateBeforeSave: false });
-    const poCode = await generateCode('PO');
-    const order = await PurchaseOrder.create({
-      poCode,
-      requestId: request._id,
-      vendorId: request.vendorId,
-      itemId: request.itemId,
-      itemName: request.itemName,
-      qty: request.qty,
-      unit: request.unit,
-      paymentTerms: request.paymentTerms,
-      createdBy: req.user._id,
-    });
+    const order = await upsertOrderForApprovedRequest(request, req.user._id);
     results.push({ request, order });
   }
   res.status(200).json({ success: true, data: results, message: `${results.length} request(s) approved` });
 });
 
 exports.updateQuotationDetails = asyncHandler(async (req, res, next) => {
-  const request = await PurchaseRequest.findByIdAndUpdate(
-    req.params.id,
-    { qty: req.body.qty, paymentTerms: req.body.paymentTerms },
-    { new: true }
-  );
+  const update = { qty: req.body.qty, paymentTerms: req.body.paymentTerms };
+  if (req.body.amount !== undefined && req.body.amount !== '') {
+    const amt = Number(req.body.amount);
+    if (!Number.isNaN(amt) && amt >= 0) update.amount = amt;
+  }
+  const request = await PurchaseRequest.findByIdAndUpdate(req.params.id, update, { new: true });
   if (!request) return next(new AppError('Request not found', 404));
   res.status(200).json({ success: true, data: request });
 });
 
 // ─── PURCHASE ORDER PAYMENTS ──────────────────────────────────────────────────
+exports.updateOrderAmount = asyncHandler(async (req, res, next) => {
+  const order = await PurchaseOrder.findById(req.params.id);
+  if (!order) return next(new AppError('Purchase order not found', 404));
+  const amt = Number(req.body.amount);
+  if (Number.isNaN(amt) || amt < 0) return next(new AppError('Invalid amount', 400));
+  order.amount = amt;
+  const remaining = amt - (order.paidAmount || 0);
+  order.paymentStatus = remaining <= 0 ? 'Paid' : (order.paidAmount > 0 ? 'Partial Paid' : 'Unpaid');
+  await order.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, data: order });
+});
+
 exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
   const order = await PurchaseOrder.findById(req.params.id);
   if (!order) return next(new AppError('Purchase order not found', 404));
 
-  const amountPaid = req.body.amountPaid || order.amount;
-  order.paidAmount = (order.paidAmount || 0) + amountPaid;
-  order.paymentProofUrl = req.file?.path || req.body.proofUrl || order.paymentProofUrl;
+  const proofUrl = req.file?.path || req.body.proofUrl || order.paymentProofUrl;
+  const paidBy = req.body.paidBy || req.user.fullName;
+  const remaining = Math.max(0, (order.amount || 0) - (order.paidAmount || 0));
+  const rawAmount = req.body.amountPaid ?? req.body.amount;
+  const payAmount = rawAmount !== undefined ? Math.min(Math.max(0, Number(rawAmount) || 0), remaining) : remaining;
 
-  const remaining = (order.amount || 0) - order.paidAmount;
-  if (remaining <= 0) order.paymentStatus = 'Paid';
-  else if (order.paidAmount > 0) order.paymentStatus = 'Partial Paid';
+  order.paidAmount = (order.paidAmount || 0) + payAmount;
+  order.paymentProofUrl = proofUrl;
+  order.paymentHistory = order.paymentHistory || [];
+  order.paymentHistory.push({ amount: payAmount, paidBy, paidDate: new Date(), proofUrl, note: req.body.note || '' });
+
+  const remainingAfter = (order.amount || 0) - order.paidAmount;
+  order.paymentStatus = remainingAfter <= 0 ? 'Paid' : (order.paidAmount > 0 ? 'Partial Paid' : 'Unpaid');
 
   await order.save({ validateBeforeSave: false });
 
@@ -149,7 +198,7 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
     expenseDate: new Date(),
     category: 'Purchase',
     description: `Payment for PO: ${order.poCode} — ${order.itemName}`,
-    amount: amountPaid,
+    amount: payAmount,
     proofUrl: order.paymentProofUrl,
     paymentStatus: 'Paid',
     paidDate: new Date(),
@@ -158,7 +207,7 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
   });
 
-  notifyRoles({ modules: ['Purchase', 'Inventory'], type: 'purchase', title: 'Purchase Order Payment', message: `Payment of ₹${amountPaid?.toLocaleString()} recorded for PO ${order.poCode} (${order.itemName})`, link: '/purchase' }).catch(() => {});
+  notifyRoles({ modules: ['Purchase', 'Inventory'], type: 'purchase', title: 'Purchase Order Payment', message: `Payment of ₹${payAmount?.toLocaleString()} recorded for PO ${order.poCode} (${order.itemName})`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: order });
 });
 

@@ -15,6 +15,7 @@ router.patch('/requests/:id/request-modification', ctrl.requestModification);
 router.put('/requests/:id/quotation', ctrl.updateQuotationDetails);
 
 // Purchase Order Payments
+router.patch('/orders/:id/amount', ctrl.updateOrderAmount);
 router.post('/pay/:id', upload.single('proof'), ctrl.payPurchaseOrder);
 
 // Expense Payments

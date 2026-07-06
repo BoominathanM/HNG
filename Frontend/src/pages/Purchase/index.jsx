@@ -11,12 +11,13 @@ import {
 import {
   PlusOutlined, DownloadOutlined, ShoppingOutlined, SearchOutlined,
   UploadOutlined, EyeOutlined, EditOutlined, FileTextOutlined, WarningOutlined, InfoCircleOutlined, WhatsAppOutlined,
-  TeamOutlined, ContactsOutlined, DollarOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined,
+  TeamOutlined, ContactsOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined,
   ThunderboltOutlined, RobotOutlined, MessageOutlined, BellOutlined, CloseOutlined, ClockCircleOutlined, ReloadOutlined, SaveOutlined, TruckOutlined, CheckCircleOutlined,
-  MoreOutlined, MinusOutlined, QrcodeOutlined, ExclamationCircleOutlined, PhoneOutlined, CarOutlined, SyncOutlined, SendOutlined
+  MoreOutlined, MinusOutlined, QrcodeOutlined, ExclamationCircleOutlined, PhoneOutlined, CarOutlined, SyncOutlined, SendOutlined,
+  DollarCircleOutlined
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
-import { addRaisedRequest, raiseOrder, addBulkRequests, dismissNewProductRequest, updateFinanceStatus, updateRequestQty, addRequestNote, updateQuotationDetails, setRaisedRequests, setPurchaseOrders } from '../../store/slices/purchaseSlice';
+import { addRaisedRequest, addBulkRequests, dismissNewProductRequest, updateFinanceStatus, updateRequestQty, addRequestNote, updateQuotationDetails, setRaisedRequests, setPurchaseOrders } from '../../store/slices/purchaseSlice';
 import {
   useGetVendorsQuery,
   useCreateVendorMutation,
@@ -77,6 +78,11 @@ export default function Purchase() {
   const raisedRequests = useSelector((s) => s.purchase.raisedRequests);
   const purchaseOrders = useSelector((s) => s.purchase.purchaseOrders);
   const newProductRequests = useSelector((s) => s.purchase.newProductRequests);
+  // A batch's PurchaseOrder is consolidated into ONE document (batchId), so siblings 2..N
+  // in a batch don't have their own requestKey match — resolve via batchId first.
+  const findLinkedOrder = (req) => purchaseOrders.find(o =>
+    (req?.batchId && o.batchId === req.batchId) || o.requestKey === req?.key
+  );
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
@@ -135,7 +141,7 @@ export default function Purchase() {
       payment_terms: r.paymentTerms, date: r.createdAt?.slice(0, 10),
       status: r.status, notes: r.notes || [], financeNote: r.financeNote || '',
       requestType: r.requestType || 'individual', category: r.category || r.itemId?.category || 'Other',
-      batchId: r.batchId || null,
+      batchId: r.batchId || null, quotationFiles: r.quotationFiles || [],
     }));
     if (mapped.length > 0) dispatch(setRaisedRequests(mapped));
   }, [requestsData]);
@@ -143,12 +149,14 @@ export default function Purchase() {
   useEffect(() => {
     const mapped = (purchaseOrdersData?.data || []).map((o) => ({
       key: o._id, requestKey: o.requestId?._id?.toString() || o.requestId?.toString() || null,
+      batchId: o.batchId || null,
       item: o.itemId?.itemName || o.itemName,
       supplier: o.vendorId?.name || '-',
       qty: o.qty, unit: o.unit, amount: o.amount,
       payment_terms: o.paymentTerms, date: o.createdAt?.slice(0, 10),
       bill_no: o.billNo || '', inv_no: o.invNo || '',
       status: o.paymentStatus, paid_amount: o.paidAmount || 0,
+      payment_proof: o.paymentProofUrl || null, paymentHistory: o.paymentHistory || [],
     }));
     if (mapped.length > 0) dispatch(setPurchaseOrders(mapped));
   }, [purchaseOrdersData]);
@@ -186,13 +194,8 @@ export default function Purchase() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [purchaseForm] = Form.useForm();
 
-  const [showRequestOrderModal, setShowRequestOrderModal] = useState(false);
-  const [selectedApprovedRequest, setSelectedApprovedRequest] = useState(null);
   const [viewApprovalDoc, setViewApprovalDoc] = useState(null);
   const [selectedSupplier, setSelectedSupplier] = useState(null);
-  const [requestOrderForm] = Form.useForm();
-  const [requestOrderScanLoading, setRequestOrderScanLoading] = useState(false);
-  const [requestOrderScannedFile, setRequestOrderScannedFile] = useState(null);
 
   /* ── History material search ── */
   const [supplierHistorySearch, setSupplierHistorySearch] = useState('');
@@ -210,6 +213,9 @@ export default function Purchase() {
   const [raiseRequestFile, setRaiseRequestFile] = useState(null);
   const [raiseRequestScanLoading, setRaiseRequestScanLoading] = useState(false);
   const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
+  const [raiseRequestAmount, setRaiseRequestAmount] = useState(null);
+  const [raiseReqQuotationAsked, setRaiseReqQuotationAsked] = useState(false);
+  const [raiseReqAskingQuotation, setRaiseReqAskingQuotation] = useState(false);
   const [raiseRequestForm] = Form.useForm();
 
   /* ── WhatsApp sent tracking for stock status flow ── */
@@ -220,12 +226,6 @@ export default function Purchase() {
   const [selectedPlaceOrderItem, setSelectedPlaceOrderItem] = useState(null);
   const [selectedPlaceOrderReq, setSelectedPlaceOrderReq] = useState(null);
 
-  /* ── Request Order payment terms watch ── */
-  const [requestOrderPaymentTerms, setRequestOrderPaymentTerms] = useState('');
-
-  /* ── Payment type (Immediate / Credit) in Request Order ── */
-  const [orderPaymentType, setOrderPaymentType] = useState('Immediate');
-
   /* ── Bulk Purchase modal ── */
   const [showBulkPurchaseModal, setShowBulkPurchaseModal] = useState(false);
   const [bulkSupplierName, setBulkSupplierName] = useState('');
@@ -234,6 +234,7 @@ export default function Purchase() {
   const [bulkReminderDate, setBulkReminderDate] = useState(null);
   const [bulkQuotationAsked, setBulkQuotationAsked] = useState(false);
   const [bulkRaiseFile, setBulkRaiseFile] = useState(null);
+  const [bulkRaiseAmount, setBulkRaiseAmount] = useState(null);
   const [bulkRaiseScanLoading, setBulkRaiseScanLoading] = useState(false);
   const [bulkAskingQuotation, setBulkAskingQuotation] = useState(false);
   const bulkSelectedItems = useMemo(() => bulkItems.filter(i => i.selected), [bulkItems]);
@@ -280,7 +281,6 @@ export default function Purchase() {
   /* ── Multi-select extra products for Raise Request modal ── */
   const [raiseRequestExtraProducts, setRaiseRequestExtraProducts] = useState([]);
   const [raiseRequestExtraQtys, setRaiseRequestExtraQtys] = useState({});
-  const [orderCreditDate, setOrderCreditDate] = useState(null);
   const [placeOrderFiftyDate, setPlaceOrderFiftyDate] = useState(null);
 
   /* ── LR Tracking modal ── */
@@ -313,6 +313,7 @@ export default function Purchase() {
       qty: o.qty, unit: o.unit, amount: o.amount,
       lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
       lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
+      paymentProof: o.paymentProofUrl || null,
       deliveryStatus: o.dispatchStatus === 'Received' ? 'Delivered' : 'In Transit',
       receivedStatus: o.dispatchStatus === 'Received' ? 'received' : null,
     })));
@@ -563,73 +564,6 @@ export default function Purchase() {
     setShowAddPurchaseModal(true);
   };
 
-  const handleRaiseRequest = (values) => {
-    const newRequest = {
-      key: Date.now(),
-      item: values.product,
-      supplier: values.supplier,
-      qty: values.qty,
-      unit: values.unit || (selectedProduct?.unit || ''),
-      payment_terms: values.payment_terms,
-      date: dayjs().format('YYYY-MM-DD'),
-    };
-    dispatch(addRaisedRequest(newRequest));
-    // Also persist to backend via raiseRequest mutation (keep redux dispatch for current UI).
-    (async () => {
-      try {
-        const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
-        const supplierInfo = suppliers.find((s) => s.name === values.supplier);
-        await raiseRequestMutation({
-          itemName: values.product,
-          qty: Number(values.qty) || 0,
-          unit: values.unit || (selectedProduct?.unit || ''),
-          paymentTerms: values.payment_terms || 'From Quotation',
-          ...(isObjectId(supplierInfo?.id) ? { vendorId: supplierInfo.id } : {}),
-          ...(isObjectId(selectedProduct?.key) ? { itemId: selectedProduct.key } : {}),
-        }).unwrap();
-        enqueueSnackbar(`Purchase request for ${values.product} raised — pending financial approval`, { variant: 'success' });
-      } catch (err) {
-        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise purchase request', { variant: 'error' });
-      }
-    })();
-    setShowAddPurchaseModal(false);
-    purchaseForm.resetFields();
-    setSelectedProduct(null);
-  };
-
-  const handleRequestOrder = (values) => {
-    dispatch(raiseOrder({
-      requestKey: selectedApprovedRequest.key,
-      bill_no: values.bill_no,
-      inv_no: values.inv_no || '',
-      price: values.unit_price,
-      amount: values.total_amount,
-      orderDate: values.order_date ? values.order_date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
-    }));
-    enqueueSnackbar(`Order for ${selectedApprovedRequest.item} submitted to Financial for payment`, { variant: 'success' });
-    setShowRequestOrderModal(false);
-    requestOrderForm.resetFields();
-    setSelectedApprovedRequest(null);
-    setRequestOrderScannedFile(null);
-  };
-
-  const handleRequestOrderAIScan = () => {
-    if (!requestOrderScannedFile) { enqueueSnackbar('Please upload an invoice first', { variant: 'warning' }); return; }
-    setRequestOrderScanLoading(true);
-    setTimeout(() => {
-      const suggestedPrice = selectedApprovedRequest ? Math.floor(Math.random() * 100 + 50) : 85;
-      requestOrderForm.setFieldsValue({
-        bill_no: 'PUR-' + Math.floor(Math.random() * 9000 + 1000),
-        inv_no: 'INV-' + Math.floor(Math.random() * 9000 + 1000),
-        unit_price: suggestedPrice,
-        total_amount: selectedApprovedRequest ? suggestedPrice * selectedApprovedRequest.qty : 9500,
-        order_date: dayjs(),
-      });
-      setRequestOrderScanLoading(false);
-      enqueueSnackbar('AI extracted invoice details successfully!', { variant: 'success' });
-    }, 2200);
-  };
-
   const handleSupplierAIScan = () => {
     if (!supplierScannedFile) { enqueueSnackbar('Please upload a document first', { variant: 'warning' }); return; }
     setSupplierScanLoading(true);
@@ -689,6 +623,8 @@ export default function Purchase() {
     setRaiseRequestProduct(product);
     setRaiseRequestSupplier(null);
     setRaiseRequestFile(null);
+    setRaiseRequestAmount(null);
+    setRaiseReqQuotationAsked(false);
     setRaiseRequestPaymentTerms('');
     setRaiseRequestExtraProducts([]);
     setRaiseRequestExtraQtys({});
@@ -696,6 +632,87 @@ export default function Purchase() {
     raiseRequestForm.resetFields();
     raiseRequestForm.setFieldsValue({ product: product.name, product_code: product.code || '', qty: suggestQty, unit: product.unit });
     setShowRaiseRequestModal(true);
+  };
+
+  // Separate-flow counterpart to handleBulkAskQuotation — reuses the same
+  // "bulk-purchase-request" WhatsApp event/template (no second "ask" event), just
+  // for the single main product + any "also raise for" extras.
+  const handleRaiseRequestAskQuotation = async () => {
+    if (!raiseRequestProduct) { enqueueSnackbar('Select a product first', { variant: 'warning' }); return; }
+    if (!raiseRequestSupplier) { enqueueSnackbar('Select a supplier first', { variant: 'warning' }); return; }
+    const values = raiseRequestForm.getFieldsValue();
+    if (!values.payment_terms) { enqueueSnackbar('Select payment terms', { variant: 'warning' }); return; }
+    const mainQty = Number(values.qty) || 0;
+    if (mainQty <= 0) { enqueueSnackbar('Enter a valid quantity', { variant: 'warning' }); return; }
+
+    const items = [{
+      name: raiseRequestProduct.name,
+      category: raiseRequestProduct.category || 'Other',
+      qty: mainQty,
+      unit: values.unit || raiseRequestProduct.unit || '',
+    }];
+    raiseRequestExtraProducts.forEach((productKey) => {
+      const inv = inventoryItems.find((i) => i.key === productKey);
+      items.push({
+        name: inv?.name || productKey,
+        category: inv?.category || 'Other',
+        qty: raiseRequestExtraQtys[productKey] || inv?.min || 1,
+        unit: inv?.unit || 'Pcs',
+      });
+    });
+
+    setRaiseReqAskingQuotation(true);
+    try {
+      const pdfBlob = await generateBulkRequestPdfBlob(raiseRequestSupplier.name, values.payment_terms, items);
+      const filename = `purchase-request-${raiseRequestSupplier.name}.pdf`;
+
+      let sent = false;
+      const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
+      const mapping = (whatsAppMappingsData?.data || []).find(
+        (m) => m.eventId?.key === 'bulk-purchase-request' && m.isEnabled !== false && m.templateId?.name
+      );
+      if (raiseRequestSupplier?.phone && isObjectId(raiseRequestSupplier?.id) && mapping) {
+        const formData = new FormData();
+        formData.append('files', new File([pdfBlob], filename, { type: 'application/pdf' }));
+        const uploadRes = await uploadFilesMutation({ formData, folder: 'purchase' }).unwrap();
+        const documentUrl = uploadRes?.data?.[0]?.url;
+        if (documentUrl) {
+          const totalQty = items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0);
+          const fieldValues = {
+            vendorName: raiseRequestSupplier.name,
+            itemCount: String(items.length),
+            totalQty: String(totalQty),
+            paymentTerms: values.payment_terms,
+            companyName: 'HNG',
+          };
+          const parameters = {};
+          (mapping.variables || []).forEach((v) => {
+            if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
+          });
+          const phone = raiseRequestSupplier.phone.replace(/\D/g, '');
+          await sendWhatsAppMessageMutation({
+            to: phone,
+            templateName: mapping.templateId.name,
+            language: mapping.templateId.language || 'en',
+            parameters,
+            documentUrl,
+            documentFilename: filename,
+          }).unwrap();
+          sent = true;
+        }
+      }
+      setRaiseReqQuotationAsked(true);
+      enqueueSnackbar(
+        sent
+          ? 'Quotation request document sent to supplier via WhatsApp!'
+          : 'Quotation request document generated. Map a document template to the "Bulk Purchase Request" event in Integrations → WhatsApp to auto-send it to the supplier.',
+        { variant: sent ? 'success' : 'info' }
+      );
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || err?.message || 'Failed to prepare quotation request', { variant: 'error' });
+    } finally {
+      setRaiseReqAskingQuotation(false);
+    }
   };
 
   const handleRaiseRequestAIScan = () => {
@@ -714,7 +731,9 @@ export default function Purchase() {
 
   const handleRaiseRequestSubmit = () => {
     raiseRequestForm.validateFields().then(async (values) => {
-      if (!raiseRequestFile) { enqueueSnackbar('Please upload a quotation file to raise a request', { variant: 'warning' }); return; }
+      if (!raiseReqQuotationAsked) { enqueueSnackbar('Ask the supplier for a quotation first', { variant: 'warning' }); return; }
+      if (!raiseRequestFile) { enqueueSnackbar('Please upload the received quotation file to raise a request', { variant: 'warning' }); return; }
+      if (raiseRequestAmount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
       const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
       const vendorId = raiseRequestSupplier?.id;
       const paymentTerms = values.payment_terms || 'From Quotation';
@@ -724,8 +743,11 @@ export default function Purchase() {
         return;
       }
 
-      // Build the list of requests: main product + any extra products
-      const requests = [{
+      // Build the list of items: main product + any extra products — submitted as
+      // ONE batched call so the backend assigns a shared batchId (a lone item is
+      // just a "batch of one"), giving this Separate flow the same consolidated
+      // order/amount/payment-history behavior as Bulk Purchase Request.
+      const items = [{
         itemName: values.product,
         itemId: raiseRequestProduct?.key,
         qty: Number(values.qty) || 0,
@@ -733,7 +755,7 @@ export default function Purchase() {
       }];
       raiseRequestExtraProducts.forEach((productKey) => {
         const invItem = inventoryItems.find((i) => i.key === productKey);
-        requests.push({
+        items.push({
           itemName: invItem?.name || productKey,
           itemId: invItem?.key,
           qty: raiseRequestExtraQtys[productKey] || invItem?.min || 1,
@@ -742,35 +764,40 @@ export default function Purchase() {
       });
 
       try {
-        for (const r of requests) {
-          const payload = {
+        const payload = {
+          items: items.map((r) => ({
             itemName: r.itemName,
             qty: r.qty,
             unit: r.unit,
-            paymentTerms,
-            ...(isObjectId(vendorId) ? { vendorId } : {}),
             ...(isObjectId(r.itemId) ? { itemId: r.itemId } : {}),
-            // Drives the "Purchase Payment Reminder" WhatsApp event (purchasePaymentReminderScheduler.js).
-            ...(reminderRequired && values.payment_reminder_date ? { secondReminderDate: values.payment_reminder_date.toISOString() } : {}),
-          };
-          const res = await raiseRequestMutation(payload).unwrap();
-          const newId = res?.data?._id || res?._id;
-          // Attach the quotation file to the created request
-          if (newId && raiseRequestFile) {
+          })),
+          paymentTerms,
+          ...(isObjectId(vendorId) ? { vendorId } : {}),
+          // Drives the "Separate Purchase Payment Reminder" WhatsApp event (separatePurchasePaymentReminderScheduler.js).
+          ...(reminderRequired && values.payment_reminder_date ? { secondReminderDate: values.payment_reminder_date.toISOString() } : {}),
+        };
+        const res = await raiseRequestMutation(payload).unwrap();
+        const created = res?.data || [];
+        for (const reqDoc of created) {
+          const id = reqDoc?._id;
+          if (id && raiseRequestFile) {
             try {
               const fd = new FormData();
               fd.append('quotation', raiseRequestFile);
-              await uploadQuotationFile({ id: newId, formData: fd }).unwrap();
+              fd.append('amount', raiseRequestAmount);
+              await uploadQuotationFile({ id, formData: fd }).unwrap();
             } catch { /* file upload is best-effort */ }
           }
         }
-        enqueueSnackbar(`${requests.length} request(s) sent to Financial Quotation!`, { variant: 'success' });
+        enqueueSnackbar(`${created.length || items.length} request(s) sent to Financial Quotation!`, { variant: 'success' });
         setShowRaiseRequestModal(false);
         raiseRequestForm.resetFields();
         setRaiseRequestProduct(null);
         setRaiseRequestSupplier(null);
         setRaiseRequestFile(null);
         setRaiseRequestPaymentTerms('');
+        setRaiseRequestAmount(null);
+        setRaiseReqQuotationAsked(false);
         setRaiseRequestExtraProducts([]);
         setRaiseRequestExtraQtys({});
       } catch (err) {
@@ -941,6 +968,7 @@ export default function Purchase() {
     setBulkSupplierName(supplierName);
     setBulkQuotationAsked(false);
     setBulkRaiseFile(null);
+    setBulkRaiseAmount(null);
     setBulkReminderDate(null);
     const supplierItems = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.sellerName === supplierName);
     const otherLowStock = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.sellerName !== supplierName);
@@ -1070,6 +1098,7 @@ export default function Purchase() {
 
   const handleBulkRaiseRequest = async () => {
     if (!bulkRaiseFile) { enqueueSnackbar('Please upload the quotation file received from the supplier', { variant: 'warning' }); return; }
+    if (bulkRaiseAmount == null) { enqueueSnackbar('Enter the quoted amount for this batch', { variant: 'warning' }); return; }
     const selected = bulkSelectedItems;
     if (selected.length === 0) { enqueueSnackbar('Select at least one product', { variant: 'warning' }); return; }
     if (!bulkSupplierName) { enqueueSnackbar('Select a supplier first', { variant: 'warning' }); return; }
@@ -1098,6 +1127,7 @@ export default function Purchase() {
           try {
             const fd = new FormData();
             fd.append('quotation', bulkRaiseFile);
+            fd.append('amount', bulkRaiseAmount);
             await uploadQuotationFile({ id, formData: fd }).unwrap();
           } catch { /* best-effort file attach */ }
         }
@@ -1110,6 +1140,7 @@ export default function Purchase() {
       setBulkReminderDate(null);
       setBulkQuotationAsked(false);
       setBulkRaiseFile(null);
+      setBulkRaiseAmount(null);
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise bulk requests', { variant: 'error' });
     }
@@ -1387,14 +1418,16 @@ export default function Purchase() {
                             title: 'Payment Doc', key: 'payment_doc',
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
-                              const linkedOrder = req ? purchaseOrders.find(o => o.requestKey === req.key) : null;
-                              const paymentDoc = linkedOrder?.payment_proof;
-                              if (!paymentDoc) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              const linkedOrder = req ? findLinkedOrder(req) : null;
+                              const paymentHistory = linkedOrder?.paymentHistory || [];
+                              const quotationFiles = req?.quotationFiles || [];
+                              const hasAny = paymentHistory.length > 0 || quotationFiles.length > 0 || linkedOrder?.payment_proof;
+                              if (!hasAny) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
                               return (
                                 <Button size="small" icon={<FileTextOutlined />}
-                                  onClick={() => setViewApprovalDoc({ ...req, payment_doc: paymentDoc })}
+                                  onClick={() => setViewApprovalDoc({ ...req, paymentHistory, quotationFiles, payment_doc: linkedOrder?.payment_proof || null })}
                                   style={{ color: '#52c41a', borderColor: '#52c41a', fontWeight: 600, fontSize: 11, background: 'transparent' }}>
-                                  View File
+                                  View File{(paymentHistory.length + quotationFiles.length) > 1 ? `s (${paymentHistory.length + quotationFiles.length})` : ''}
                                 </Button>
                               );
                             }
@@ -1429,7 +1462,7 @@ export default function Purchase() {
                             key: 'lr_copies',
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
-                              const linkedOrder = req ? purchaseOrders.find(o => o.requestKey === req.key) : null;
+                              const linkedOrder = req ? findLinkedOrder(req) : null;
                               if (!linkedOrder) return <Text type="secondary">—</Text>;
                               const lr = lrData[linkedOrder.key];
                               if (lr) {
@@ -1460,7 +1493,7 @@ export default function Purchase() {
                             key: 'action',
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
-                              const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === req?.key);
+                              const orderAlreadyRaised = !!findLinkedOrder(req);
                               const hasReminder = activeReminders.has(r.key);
                               const reminderCount = reminderCounts[r.key] || 0;
                               const noteCount = req ? (req.notes || []).length : (invItemNotes[r.key] || []).length;
@@ -1504,15 +1537,6 @@ export default function Purchase() {
                                   >
                                     Place Order
                                   </Button>
-                                  <Button
-                                    size="small"
-                                    type="primary"
-                                    icon={<DollarOutlined />}
-                                    onClick={() => { setSelectedApprovedRequest(req); setShowRequestOrderModal(true); }}
-                                    style={{ background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 600 }}
-                                  >
-                                    Payment Request
-                                  </Button>
                                   {noteCount > 0 ? buildReqWABtn() : null}
                                   {noteBtn}
                                 </Space>
@@ -1553,7 +1577,7 @@ export default function Purchase() {
                                   {hasReminder && (
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 8, background: '#fff7e6', border: '1px solid #ffd591' }}>
                                       <BellOutlined style={{ color: '#fa8c16', fontSize: 11 }} />
-                                      <Text style={{ fontSize: 10, color: '#d46b08' }}>Reminder{reminderCount > 0 ? ` Ã—${reminderCount}` : ' active'}</Text>
+                                      <Text style={{ fontSize: 10, color: '#d46b08' }}>Reminder{reminderCount > 0 ? ` ×${reminderCount}` : ' active'}</Text>
                                       <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 9 }} />}
                                         style={{ padding: '0 2px', height: 14, minWidth: 14, color: '#888' }}
                                         onClick={() => stopQuotationReminder(r.key)} />
@@ -1597,23 +1621,60 @@ export default function Purchase() {
                           categoryMap[cat].push(req);
                         });
 
+                        // Collapse items that share a batchId into one expandable parent row
+                        const groupItemsByBatch = (items) => {
+                          const batchMap = {};
+                          const singles = [];
+                          items.forEach((it) => {
+                            if (it.batchId) {
+                              if (!batchMap[it.batchId]) batchMap[it.batchId] = [];
+                              batchMap[it.batchId].push(it);
+                            } else {
+                              singles.push(it);
+                            }
+                          });
+                          const rows = [];
+                          Object.values(batchMap).forEach((batchItems) => {
+                            if (batchItems.length > 1) {
+                              const first = batchItems[0];
+                              const statuses = batchItems.map(b => b.status);
+                              const status = statuses.every(s => s === 'Approved') ? 'Approved'
+                                : statuses.some(s => s === 'Rejected') ? 'Rejected'
+                                : statuses.some(s => s === 'Modification') ? 'Modification'
+                                : 'Pending';
+                              rows.push({
+                                key: `batch-${first.batchId}`,
+                                isBatchGroup: true,
+                                item: `${batchItems.length} Products`,
+                                supplier: first.supplier,
+                                payment_terms: first.payment_terms,
+                                date: first.date,
+                                status,
+                                children: batchItems,
+                              });
+                            } else {
+                              rows.push(batchItems[0]);
+                            }
+                          });
+                          rows.push(...singles);
+                          return rows;
+                        };
+
                         const bulkTableColumns = [
                           {
                             title: 'Item', dataIndex: 'item', key: 'item', width: 180,
                             render: (v, r) => {
-                              const batchSize = r.batchId ? bulkReqs.filter(req => req.batchId === r.batchId).length : 0;
-                              const batchPending = r.batchId ? bulkReqs.filter(req => req.batchId === r.batchId && req.status === 'Pending').length : 0;
-                              return (
-                                <Space direction="vertical" size={1}>
-                                  <Text strong>{v}</Text>
-                                  {batchSize > 1 && (
-                                    <Tag color={batchPending === 0 ? 'success' : batchPending < batchSize ? 'warning' : 'processing'}
-                                      style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
-                                      Batch: {batchSize - batchPending}/{batchSize} approved
+                              if (r.isBatchGroup) {
+                                return (
+                                  <Space direction="vertical" size={1}>
+                                    <Text strong>{v}</Text>
+                                    <Tag color="blue" style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
+                                      Bulk ×{r.children.length}
                                     </Tag>
-                                  )}
-                                </Space>
-                              );
+                                  </Space>
+                                );
+                              }
+                              return <Text strong>{v}</Text>;
                             }
                           },
                           {
@@ -1622,7 +1683,9 @@ export default function Purchase() {
                           },
                           {
                             title: 'Qty', key: 'qty', width: 90,
-                            render: (_, r) => <Text strong>{r.qty} {r.unit}</Text>
+                            render: (_, r) => r.isBatchGroup
+                              ? <Text type="secondary" style={{ fontSize: 12 }}>{r.children.length} items</Text>
+                              : <Text strong>{r.qty} {r.unit}</Text>
                           },
                           {
                             title: 'Payment Terms', dataIndex: 'payment_terms', key: 'payment_terms', width: 200,
@@ -1661,7 +1724,8 @@ export default function Purchase() {
                           {
                             title: 'Action', key: 'action', fixed: 'right', width: 200,
                             render: (_, r) => {
-                              const orderAlreadyRaised = purchaseOrders.some(o => o.requestKey === r.key);
+                              if (r.isBatchGroup) return <Text type="secondary" style={{ fontSize: 11 }}>Expand to view {r.children.length} items</Text>;
+                              const orderAlreadyRaised = !!findLinkedOrder(r);
                               if (orderAlreadyRaised) return <Tag color="success" style={{ borderRadius: 10 }}>Order Placed</Tag>;
 
                               if (r.status === 'Approved') return (
@@ -1678,15 +1742,6 @@ export default function Purchase() {
                                     style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
                                   >
                                     Place Order
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    type="primary"
-                                    icon={<DollarOutlined />}
-                                    onClick={() => { setSelectedApprovedRequest(r); setShowRequestOrderModal(true); }}
-                                    style={{ background: 'linear-gradient(135deg,#52c41a,#389e0d)', border: 'none', fontWeight: 600 }}
-                                  >
-                                    Payment Request
                                   </Button>
                                 </Space>
                               );
@@ -1763,7 +1818,7 @@ export default function Purchase() {
                                 </div>
                                 <Table
                                   size="small"
-                                  dataSource={items}
+                                  dataSource={groupItemsByBatch(items)}
                                   rowKey="key"
                                   pagination={false}
                                   scroll={{ x: 'max-content' }}
@@ -1885,7 +1940,7 @@ export default function Purchase() {
                             render: (_, r) => r.paymentProof ? (
                               <Button size="small" icon={<EyeOutlined />}
                                 style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}
-                                onClick={() => enqueueSnackbar('Viewing payment proof: ' + r.paymentProof, { variant: 'info' })}>
+                                onClick={() => window.open(r.paymentProof, '_blank')}>
                                 View Proof
                               </Button>
                             ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
@@ -3291,7 +3346,7 @@ export default function Purchase() {
           </div>
         }
         open={showRaiseRequestModal}
-        onCancel={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestPaymentTerms(''); }}
+        onCancel={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestAmount(null); setRaiseReqQuotationAsked(false); setRaiseRequestPaymentTerms(''); }}
         footer={null}
         width={560}
         centered
@@ -3382,6 +3437,33 @@ export default function Purchase() {
             )}
           </div>
 
+          {/* Ask Quotation via WhatsApp — same bulk-purchase-request event/template Bulk uses */}
+          <div style={{ marginBottom: 16, padding: '14px 16px', borderRadius: 12, border: `1.5px dashed ${raiseReqQuotationAsked ? '#52c41a66' : '#25D36666'}`, background: isDark ? '#0d1f14' : '#f6fff8' }}>
+            {!raiseReqQuotationAsked ? (
+              <Button
+                icon={<WhatsAppOutlined />}
+                onClick={handleRaiseRequestAskQuotation}
+                loading={raiseReqAskingQuotation}
+                style={{ width: '100%', height: 40, borderColor: '#25D366', color: '#25D366', fontWeight: 600, borderRadius: 8, fontSize: 13 }}
+              >
+                Ask Quotation via WhatsApp
+              </Button>
+            ) : (
+              <Alert
+                type="success"
+                message="Quotation request sent via WhatsApp"
+                description="Upload the received quotation document and enter the quoted amount below."
+                showIcon
+                style={{ borderRadius: 8 }}
+                action={
+                  <Button size="small" icon={<WhatsAppOutlined />} loading={raiseReqAskingQuotation} onClick={handleRaiseRequestAskQuotation} style={{ borderColor: '#25D366', color: '#25D366', fontSize: 11 }}>
+                    Re-ask
+                  </Button>
+                }
+              />
+            )}
+          </div>
+
           {/* Upload Quotation File + AI Scan */}
           <div style={{ marginBottom: 16, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -3419,6 +3501,18 @@ export default function Purchase() {
                 <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{raiseRequestFile.name}</Text>
               </div>
             )}
+            <div style={{ marginTop: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
+                Quoted Amount (₹) <Text type="danger">*</Text>
+              </Text>
+              <InputNumber
+                style={{ width: '100%', borderRadius: 8 }}
+                min={0}
+                placeholder="Total amount quoted by supplier"
+                value={raiseRequestAmount}
+                onChange={setRaiseRequestAmount}
+              />
+            </div>
           </div>
 
           {/* Quantity */}
@@ -3559,13 +3653,14 @@ export default function Purchase() {
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: 8 }}>
             <Button
-              onClick={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestPaymentTerms(''); setRaiseRequestExtraProducts([]); setRaiseRequestExtraQtys({}); }}
+              onClick={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestAmount(null); setRaiseReqQuotationAsked(false); setRaiseRequestPaymentTerms(''); setRaiseRequestExtraProducts([]); setRaiseRequestExtraQtys({}); }}
               style={{ flex: 1, height: 44, borderRadius: 10 }}
             >
               Cancel
             </Button>
             <Button
               type="primary"
+              disabled={!raiseReqQuotationAsked || !raiseRequestFile || raiseRequestAmount == null}
               onClick={handleRaiseRequestSubmit}
               style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
             >
@@ -3573,233 +3668,6 @@ export default function Purchase() {
             </Button>
           </div>
         </Form>
-      </Modal>
-
-      {/* Payment Request Modal — order details filled after financial approval */}
-      <Modal
-        title={
-          <Space>
-            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <ShoppingOutlined style={{ color: '#fff', fontSize: 16 }} />
-            </div>
-            <div>
-              <Text strong style={{ fontSize: 15 }}>Payment Request</Text>
-              <br />
-              <Text type="secondary" style={{ fontSize: 11 }}>Fill in order details to submit to Financial for payment</Text>
-            </div>
-          </Space>
-        }
-        open={showRequestOrderModal}
-        onCancel={() => { setShowRequestOrderModal(false); requestOrderForm.resetFields(); setSelectedApprovedRequest(null); setRequestOrderScannedFile(null); }}
-        footer={null}
-        width={600}
-        centered
-      >
-        {selectedApprovedRequest && (
-          <>
-            {/* Request summary */}
-            <div style={{ padding: '12px 16px', background: isDark ? '#0d2010' : '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, marginTop: 16, marginBottom: 20 }}>
-              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>APPROVED REQUEST SUMMARY</Text>
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>ITEM</Text>
-                  <div><Text strong>{selectedApprovedRequest.item}</Text></div>
-                </Col>
-                <Col span={12}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>SUPPLIER</Text>
-                  <div><Text strong style={{ color: '#B11E6A' }}>{selectedApprovedRequest.supplier}</Text></div>
-                </Col>
-                <Col span={12} style={{ marginTop: 8 }}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>QUANTITY</Text>
-                  <div><Text strong>{selectedApprovedRequest.qty} {selectedApprovedRequest.unit}</Text></div>
-                </Col>
-                <Col span={12} style={{ marginTop: 8 }}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>PAYMENT TERMS</Text>
-                  <div><Text strong style={{ fontSize: 11 }}>{selectedApprovedRequest.payment_terms}</Text></div>
-                </Col>
-              </Row>
-            </div>
-
-            {/* Supplier Contact Details */}
-            {(() => {
-              const sup = suppliers.find(s => s.name === selectedApprovedRequest.supplier);
-              if (!sup) return null;
-              return (
-                <div style={{ padding: '12px 16px', background: isDark ? '#120b0e' : '#fff8fb', border: '1px solid #B11E6A33', borderRadius: 8, marginBottom: 20 }}>
-                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>SUPPLIER CONTACT</Text>
-                  <Row gutter={16}>
-                    <Col span={8}>
-                      <Text type="secondary" style={{ fontSize: 11 }}>PHONE / WHATSAPP</Text>
-                      <div>
-                        <WhatsAppOutlined style={{ color: '#25D366', fontSize: 12, marginRight: 4 }} />
-                        <Text strong style={{ fontSize: 12 }}>{sup.phone}</Text>
-                      </div>
-                    </Col>
-                    <Col span={8}>
-                      <Text type="secondary" style={{ fontSize: 11 }}>EMAIL</Text>
-                      <div><Text style={{ fontSize: 12, color: '#B11E6A' }}>{sup.email}</Text></div>
-                    </Col>
-                    <Col span={8}>
-                      <Text type="secondary" style={{ fontSize: 11 }}>ADDRESS</Text>
-                      <div><Text style={{ fontSize: 12 }}>{sup.address}</Text></div>
-                    </Col>
-                  </Row>
-                </div>
-              );
-            })()}
-
-            {/* AI Scan Invoice */}
-            <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <RobotOutlined style={{ color: '#fff', fontSize: 15 }} />
-                </div>
-                <div>
-                  <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Supplier Invoice with AI</Text>
-                  <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill order details below</Text>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <Upload
-                  maxCount={1}
-                  beforeUpload={(file) => { setRequestOrderScannedFile(file); return false; }}
-                  onRemove={() => setRequestOrderScannedFile(null)}
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  style={{ flex: 1 }}
-                >
-                  <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload</Button>
-                </Upload>
-                <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setRequestOrderScannedFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', whiteSpace: 'nowrap' }}>Scan</Button>
-                <Button
-                  icon={<ThunderboltOutlined />}
-                  loading={requestOrderScanLoading}
-                  onClick={handleRequestOrderAIScan}
-                  style={{ borderRadius: 8, background: requestOrderScannedFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: requestOrderScannedFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
-                >
-                  {requestOrderScanLoading ? 'Scanning...' : 'Scan with AI'}
-                </Button>
-              </div>
-              {requestOrderScannedFile && (
-                <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{requestOrderScannedFile.name}</Text>
-                </div>
-              )}
-            </div>
-
-            <Form
-              form={requestOrderForm}
-              layout="vertical"
-              onFinish={handleRequestOrder}
-              onValuesChange={(changed) => {
-                if (changed.payment_terms !== undefined) setRequestOrderPaymentTerms(changed.payment_terms);
-              }}
-            >
-              {/* Payment Type: Immediate or Credit */}
-              <Form.Item label={<Text strong>Payment Type <span style={{ color: '#ff4d4f' }}>*</span></Text>} style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  {[['Immediate', '#1890ff'], ['Credit', '#fa8c16']].map(([type, color]) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setOrderPaymentType(type)}
-                      style={{
-                        flex: 1,
-                        padding: '10px 0',
-                        borderRadius: 10,
-                        border: `2px solid ${orderPaymentType === type ? color : '#e0e0e0'}`,
-                        background: orderPaymentType === type ? `${color}15` : 'transparent',
-                        color: orderPaymentType === type ? color : '#888',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        fontSize: 13,
-                      }}
-                    >
-                      {type === 'Immediate' ? '⚡ Immediate Payment' : '📅 Credit Payment'}
-                    </button>
-                  ))}
-                </div>
-                {orderPaymentType === 'Immediate' && (
-                  <div style={{ marginTop: 8, padding: '8px 12px', background: '#1890ff10', border: '1px solid #1890ff33', borderRadius: 8 }}>
-                    <Text style={{ fontSize: 12, color: '#096dd9' }}>Payment will be done immediately after order is placed. Upload proof after payment.</Text>
-                  </div>
-                )}
-                {orderPaymentType === 'Credit' && (
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ padding: '8px 12px', background: '#fa8c1610', border: '1px solid #fa8c1633', borderRadius: 8, marginBottom: 8 }}>
-                      <Text style={{ fontSize: 12, color: '#d46b08' }}>Finance team will be notified on the selected due date to process payment.</Text>
-                    </div>
-                    <DatePicker
-                      style={{ width: '100%' }}
-                      placeholder="Select credit payment due date"
-                      value={orderCreditDate}
-                      onChange={setOrderCreditDate}
-                      disabledDate={d => d && d.isBefore(dayjs(), 'day')}
-                    />
-                  </div>
-                )}
-              </Form.Item>
-
-              <Row gutter={12}>
-                <Col span={12}>
-                  <Form.Item label="Bill No" name="bill_no" rules={[{ required: true, message: 'Bill number is required' }]}>
-                    <Input placeholder="PUR-XXXX" style={{ borderRadius: 8 }} />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item label="Invoice No" name="inv_no">
-                    <Input placeholder="INV-XXXX" style={{ borderRadius: 8 }} />
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Select payment terms' }]}>
-                <Select
-                  placeholder="Select payment terms"
-                  onChange={(val) => setRequestOrderPaymentTerms(val)}
-                >
-                  <Option value="100% Payment">100% Payment</Option>
-                  <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
-                  <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
-                </Select>
-              </Form.Item>
-              {(requestOrderPaymentTerms === '50% Advance, 50% on Dispatch' || requestOrderPaymentTerms === '50% Advance, 50% After Delivery (Max 15 days)') && (
-                <Form.Item
-                  label={<span style={{ color: '#B11E6A', fontWeight: 600 }}>Second Payment Reminder Date</span>}
-                  name="reminder_date"
-                  rules={[{ required: true, message: 'Select a reminder date for the second payment' }]}
-                >
-                  <DatePicker
-                    style={{ width: '100%', borderRadius: 8 }}
-                    placeholder="Pick reminder date for 2nd payment"
-                    disabledDate={(d) => d && d.isBefore(dayjs(), 'day')}
-                  />
-                </Form.Item>
-              )}
-              <Row gutter={12}>
-                <Col span={8}>
-                  <Form.Item label="Order Date" name="order_date" rules={[{ required: true, message: 'Select order date' }]} initialValue={dayjs()}>
-                    <DatePicker style={{ width: '100%', borderRadius: 8 }} />
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item label="Unit Price (₹)" name="unit_price" rules={[{ required: true, message: 'Enter unit price' }]}>
-                    <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" min={0} />
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item label="Total Amount (₹)" name="total_amount" rules={[{ required: true, message: 'Enter total amount' }]}>
-                    <InputNumber prefix="₹" style={{ width: '100%' }} placeholder="0.00" min={0} />
-                  </Form.Item>
-                </Col>
-              </Row>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <Button onClick={() => { setShowRequestOrderModal(false); requestOrderForm.resetFields(); setSelectedApprovedRequest(null); setRequestOrderScannedFile(null); setRequestOrderPaymentTerms(''); }} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
-                <Button type="primary" htmlType="submit" style={{ flex: 2, height: 40, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}>
-                  Submit to Financial
-                </Button>
-              </div>
-            </Form>
-          </>
-        )}
       </Modal>
 
       {/* Add Supplier Modal */}
@@ -4155,7 +4023,7 @@ export default function Purchase() {
           </div>
         }
         open={showBulkPurchaseModal}
-        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); setBulkRaiseFile(null); }}
+        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); setBulkRaiseFile(null); setBulkRaiseAmount(null); }}
         footer={null}
         width={640}
         centered
@@ -4393,6 +4261,18 @@ export default function Purchase() {
                       </Button>
                     )}
                   </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
+                      Quoted Amount (₹) for this batch <Text type="danger">*</Text>
+                    </Text>
+                    <InputNumber
+                      style={{ width: '100%', borderRadius: 8 }}
+                      min={0}
+                      placeholder="Total amount quoted by supplier for all items"
+                      value={bulkRaiseAmount}
+                      onChange={setBulkRaiseAmount}
+                    />
+                  </div>
                   <Button
                     size="small"
                     icon={<WhatsAppOutlined />}
@@ -4410,12 +4290,12 @@ export default function Purchase() {
 
           <div style={{ display: 'flex', gap: 8 }}>
             <Button
-              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); setBulkRaiseFile(null); }}
+              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); setBulkRaiseFile(null); setBulkRaiseAmount(null); }}
               style={{ flex: 1, height: 44, borderRadius: 10 }}
             >Cancel</Button>
             <Button
               type="primary"
-              disabled={!bulkQuotationAsked || !bulkRaiseFile || bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms || !bulkQtyValid || !bulkReminderValid}
+              disabled={!bulkQuotationAsked || !bulkRaiseFile || bulkRaiseAmount == null || bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms || !bulkQtyValid || !bulkReminderValid}
               onClick={handleBulkRaiseRequest}
               style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
             >
@@ -4600,7 +4480,7 @@ export default function Purchase() {
               value={financeStatusTarget || undefined}
               onChange={v => setFinanceStatusTarget(v)}
               options={raisedRequests
-                .filter(r => r.status !== 'Rejected' && !purchaseOrders.some(o => o.requestKey === r.key))
+                .filter(r => r.status !== 'Rejected' && !findLinkedOrder(r))
                 .map(r => ({ value: r.key, label: `${r.item} — ${r.supplier} (${r.qty} ${r.unit})` }))}
             />
           </div>
@@ -4670,10 +4550,16 @@ export default function Purchase() {
         footer={[
           <Button key="close" onClick={() => setViewApprovalDoc(null)}>Close</Button>
         ]}
-        width={480}
+        width={520}
         centered
       >
-        {viewApprovalDoc && (
+        {viewApprovalDoc && (() => {
+          const quotationFiles = viewApprovalDoc.quotationFiles || [];
+          const paymentHistory = viewApprovalDoc.paymentHistory || [];
+          // Legacy fallback: orders paid before paymentHistory existed only have a bare proof URL.
+          const legacyProof = paymentHistory.length === 0 && viewApprovalDoc.payment_doc ? [{ amount: null, proofUrl: viewApprovalDoc.payment_doc, paidBy: null, paidDate: null }] : [];
+          const payments = paymentHistory.length > 0 ? paymentHistory : legacyProof;
+          return (
           <div style={{ marginTop: 8 }}>
             <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '12px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
               <Text type="secondary" style={{ fontSize: 11 }}>Request</Text>
@@ -4681,22 +4567,49 @@ export default function Purchase() {
               <Text style={{ fontSize: 12, color: '#B11E6A' }}>Supplier: {viewApprovalDoc.supplier} · Qty: {viewApprovalDoc.qty} {viewApprovalDoc.unit}</Text>
             </div>
 
-            {viewApprovalDoc.payment_doc ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, background: 'linear-gradient(135deg,#52c41a12,#52c41a08)', border: '1.5px solid #52c41a44', marginBottom: 16 }}>
-                <div style={{ width: 44, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#52c41a,#73d13d)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <FileTextOutlined style={{ color: '#fff', fontSize: 20 }} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <Text strong style={{ color: '#52c41a', fontSize: 13, display: 'block', wordBreak: 'break-all' }}>{viewApprovalDoc.payment_doc}</Text>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Uploaded as payment proof</Text>
-                </div>
-                <Button size="small" icon={<DownloadOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }}>Download</Button>
-              </div>
+            <Text style={{ fontSize: 12, fontWeight: 600, color: '#722ed1', display: 'block', marginBottom: 8 }}>
+              <FileTextOutlined style={{ marginRight: 4 }} />Quotation Files {quotationFiles.length > 0 ? `(${quotationFiles.length})` : ''}
+            </Text>
+            {quotationFiles.length === 0 ? (
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 16 }}>No quotation files uploaded.</Text>
             ) : (
-              <div style={{ textAlign: 'center', padding: '16px 0', color: '#aaa', fontSize: 13 }}>No payment document attached</div>
+              <div style={{ marginBottom: 16 }}>
+                {quotationFiles.slice().reverse().map((f, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: isDark ? '#1a1730' : '#f9f0ff', border: `1px solid ${isDark ? '#3a2d5c' : '#efdbff'}`, marginBottom: 6 }}>
+                    <FileTextOutlined style={{ color: '#722ed1' }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 12, color: '#722ed1', display: 'block' }}>{f.uploadedAt ? new Date(f.uploadedAt).toLocaleString() : `File ${i + 1}`}</Text>
+                    </div>
+                    <Button size="small" icon={<EyeOutlined />} onClick={() => window.open(f.url, '_blank')} style={{ color: '#722ed1', borderColor: '#722ed1' }}>View</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Text style={{ fontSize: 12, fontWeight: 600, color: '#52c41a', display: 'block', marginBottom: 8 }}>
+              <DollarCircleOutlined style={{ marginRight: 4 }} />Payment Proofs {payments.length > 0 ? `(${payments.length})` : ''}
+            </Text>
+            {payments.length === 0 ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>No payment document attached.</Text>
+            ) : (
+              payments.slice().reverse().map((p, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, background: 'linear-gradient(135deg,#52c41a12,#52c41a08)', border: '1.5px solid #52c41a44', marginBottom: 8 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg,#52c41a,#73d13d)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <FileTextOutlined style={{ color: '#fff', fontSize: 16 }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {p.amount != null && <Text strong style={{ color: '#52c41a', fontSize: 13, display: 'block' }}>₹{p.amount.toLocaleString()}{p.paidBy ? ` — ${p.paidBy}` : ''}</Text>}
+                    <Text type="secondary" style={{ fontSize: 11 }}>{p.paidDate ? new Date(p.paidDate).toLocaleString() : 'Uploaded as payment proof'}</Text>
+                  </div>
+                  {p.proofUrl && (
+                    <Button size="small" icon={<DownloadOutlined />} onClick={() => window.open(p.proofUrl, '_blank')} style={{ color: '#52c41a', borderColor: '#52c41a' }}>View</Button>
+                  )}
+                </div>
+              ))
             )}
           </div>
-        )}
+          );
+        })()}
       </Modal>
 
       {/* ── LR Copy View Modal ── */}

@@ -7,6 +7,7 @@ const { startPaymentDueScheduler } = require('./utils/paymentDueScheduler');
 const { startOrderDeliveryReminderScheduler } = require('./utils/orderDeliveryReminderScheduler');
 const { startLocalPurchaseCreditDueScheduler } = require('./utils/localPurchaseCreditDueScheduler');
 const { startPurchasePaymentReminderScheduler } = require('./utils/purchasePaymentReminderScheduler');
+const { startSeparatePurchasePaymentReminderScheduler } = require('./utils/separatePurchasePaymentReminderScheduler');
 
 const PORT = parseInt(process.env.PORT || '7007', 10);
 
@@ -31,6 +32,7 @@ connectDB()
     startOrderDeliveryReminderScheduler();
     startLocalPurchaseCreditDueScheduler();
     startPurchasePaymentReminderScheduler();
+    startSeparatePurchasePaymentReminderScheduler();
 
     const server = app.listen(PORT, () => {
       console.log(`✅  HNG CRM API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);

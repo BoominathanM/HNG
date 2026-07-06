@@ -60,6 +60,39 @@ exports.createBulkRequest = asyncHandler(async (req, res) => {
 });
 
 exports.raiseRequest = asyncHandler(async (req, res) => {
+  const { items, vendorId, paymentTerms, firstReminderDate, secondReminderDate } = req.body;
+
+  // New path: main item + any "also raise for" extra products submitted together.
+  // Always assign a shared batchId — even a lone item is treated as a "batch of one" —
+  // so Financial's batch-grouping/consolidated-order logic applies uniformly to both
+  // the Bulk and the Separate ("Raise Request") flows with no special-casing.
+  if (Array.isArray(items) && items.length) {
+    const batchId = 'BATCH-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+    const created = [];
+    for (const it of items) {
+      const code = await generateCode('PR');
+      const doc = await PurchaseRequest.create({
+        requestCode: code,
+        vendorId,
+        itemId: it.itemId,
+        itemName: it.itemName,
+        qty: it.qty,
+        unit: it.unit,
+        category: it.category || 'Other',
+        paymentTerms,
+        ...(firstReminderDate ? { firstReminderDate } : {}),
+        ...(secondReminderDate ? { secondReminderDate } : {}),
+        requestType: 'individual',
+        batchId,
+        createdBy: req.user._id,
+      });
+      created.push(doc);
+    }
+    notifyRoles({ modules: ['Purchase', 'Financial'], type: 'purchase', title: 'Purchase Request Raised', message: `${created.length} item(s) requested — pending Finance approval`, link: '/purchase' }).catch(() => {});
+    return res.status(201).json({ success: true, data: created });
+  }
+
+  // Legacy flat-body path — unchanged, for any other caller.
   const code = await generateCode('PR');
   const request = await PurchaseRequest.create({
     ...req.body,
@@ -75,6 +108,12 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
   const request = await PurchaseRequest.findById(req.params.id);
   if (!request) return next(new AppError('Request not found', 404));
   request.quotationFileUrl = req.file.path;
+  request.quotationFiles = request.quotationFiles || [];
+  request.quotationFiles.push({ url: req.file.path, uploadedAt: new Date() });
+  if (req.body.amount !== undefined && req.body.amount !== '') {
+    const amt = Number(req.body.amount);
+    if (!Number.isNaN(amt) && amt >= 0) request.amount = amt;
+  }
   // Re-uploading after a Finance modification request sends it back for review
   if (request.status === 'Modification') request.status = 'Pending';
   await request.save({ validateBeforeSave: false });

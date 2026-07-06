@@ -70,43 +70,6 @@ const purchaseSlice = createSlice({
         if (action.payload.approval_description !== undefined) req.approval_description = action.payload.approval_description;
       }
     },
-    raiseOrder(state, action) {
-      const req = state.raisedRequests.find((r) => r.key === action.payload.requestKey);
-      const alreadyExists = state.purchaseOrders.some((o) => o.requestKey === action.payload.requestKey);
-      if (req && !alreadyExists) {
-        state.purchaseOrders.push({
-          key: `ORDER-${Date.now()}`,
-          requestKey: action.payload.requestKey,
-          item: req.item,
-          supplier: req.supplier,
-          qty: req.qty,
-          unit: req.unit,
-          amount: action.payload.amount,
-          price: action.payload.price,
-          payment_terms: req.payment_terms,
-          date: action.payload.orderDate || new Date().toISOString().slice(0, 10),
-          bill_no: action.payload.bill_no || '',
-          inv_no: action.payload.inv_no || '',
-          status: 'Unpaid',
-          paid_amount: 0,
-        });
-      }
-    },
-    updateOrderPaymentStatus(state, action) {
-      const order = state.purchaseOrders.find((o) => o.key === action.payload.key);
-      if (order) {
-        order.status = action.payload.status;
-        order.paid_amount = action.payload.paid_amount;
-        if (action.payload.payment_proof) order.payment_proof = action.payload.payment_proof;
-      }
-    },
-    addOrderNote(state, action) {
-      const order = state.purchaseOrders.find((o) => o.key === action.payload.key);
-      if (order) {
-        if (!order.notes) order.notes = [];
-        order.notes.push({ text: action.payload.text, timestamp: action.payload.timestamp });
-      }
-    },
     updateQuotationDetails(state, action) {
       const req = state.raisedRequests.find((r) => r.key === action.payload.key);
       if (req) {
@@ -126,15 +89,12 @@ export const {
   setPurchaseOrders,
   addRaisedRequest,
   updateRequestStatus,
-  raiseOrder,
-  updateOrderPaymentStatus,
   addNewProductRequest,
   addBulkRequests,
   dismissNewProductRequest,
   updateFinanceStatus,
   updateRequestQty,
   addRequestNote,
-  addOrderNote,
   updateQuotationDetails,
 } = purchaseSlice.actions;
 
