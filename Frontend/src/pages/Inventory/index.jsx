@@ -307,7 +307,8 @@ export default function Inventory() {
   const pendingAdjustments = useMemo(() => (approvalsData?.data || []).map((m) => ({
     key: m._id,
     date: m.createdAt?.slice(0, 10),
-    type: m.movementType === 'IN' ? 'Addition' : m.movementType === 'OUT' ? 'Deduction' : 'Adjustment',
+    type: m.movementType === 'IN' ? 'Addition' : m.movementType === 'OUT' ? 'Deduction'
+      : (m.qtyAfter >= m.qtyBefore ? 'Adjustment (Add)' : 'Adjustment (Deduct)'),
     item: m.itemId?.itemName || '—',
     qty: m.qty,
     unit: m.itemId?.unit || '',
@@ -463,7 +464,8 @@ export default function Inventory() {
     date: m.createdAt?.slice(0, 10),
     item: m.itemId?.itemName || '—',
     code: m.itemId?.itemCode || '—',
-    action: m.movementType === 'IN' ? 'Stock Added' : m.movementType === 'OUT' ? 'Stock Deducted' : 'Adjustment',
+    action: m.movementType === 'IN' ? 'Stock Added' : m.movementType === 'OUT' ? 'Stock Deducted'
+      : (m.qtyAfter >= m.qtyBefore ? 'Adjustment (Add)' : 'Adjustment (Deduct)'),
     qty: m.qty,
     unit: m.itemId?.unit || '',
     vendor: m.vendorId?.name || m.vendorName || '—',

@@ -242,12 +242,19 @@ exports.approveMovement = asyncHandler(async (req, res, next) => {
   const item = await InventoryItem.findById(movement.itemId);
   if (movement.movementType === 'IN') {
     item.currentStock += movement.qty;
-  } else {
+  } else if (movement.movementType === 'OUT') {
     item.currentStock = Math.max(0, item.currentStock - movement.qty);
+  } else {
+    // CHECK / ADJUSTMENT: qtyBefore/qtyAfter carry the real signed direction
+    // (physical count vs system stock) — qty alone is an absolute value and
+    // can't tell a surplus (add) from a shortage (deduct) apart.
+    const delta = movement.qtyAfter - movement.qtyBefore;
+    item.currentStock = Math.max(0, item.currentStock + delta);
   }
   await item.save({ validateBeforeSave: false });
 
-  notifyRoles({ modules: ['Inventory'], userIds: [movement.createdBy], type: 'low_stock', title: 'Stock Movement Approved', message: `${movement.movementType === 'IN' ? '+' : '-'}${movement.qty} ${item.unit || 'units'} of ${item.itemName} approved (current: ${item.currentStock})`, link: '/inventory' }).catch(() => {});
+  const isAddition = movement.movementType === 'IN' || (movement.movementType !== 'OUT' && movement.qtyAfter >= movement.qtyBefore);
+  notifyRoles({ modules: ['Inventory'], userIds: [movement.createdBy], type: 'low_stock', title: 'Stock Movement Approved', message: `${isAddition ? '+' : '-'}${movement.qty} ${item.unit || 'units'} of ${item.itemName} approved (current: ${item.currentStock})`, link: '/inventory' }).catch(() => {});
   if (item.minStock > 0 && item.currentStock < item.minStock) {
     const isOut = item.currentStock === 0;
     notifyRoles({ modules: ['Inventory', 'Purchase'], type: 'low_stock', title: isOut ? 'Out of Stock' : 'Low Stock Alert', message: `${item.itemName} — ${item.currentStock}/${item.minStock} ${item.unit || 'units'} remaining`, link: '/inventory' }).catch(() => {});
