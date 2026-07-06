@@ -347,8 +347,8 @@ export const apiSlice = createApi({
       providesTags: ['StockHistory'],
     }),
     submitStockCheck: builder.mutation({
-      query: (items) => ({ url: '/inventory/stock-check', method: 'post', data: { items } }),
-      invalidatesTags: ['Inventory', 'StockApprovals'],
+      query: ({ items, notes }) => ({ url: '/inventory/stock-check', method: 'post', data: { items, notes } }),
+      invalidatesTags: ['Inventory', 'StockApprovals', 'StockHistory'],
     }),
     // Kits
     getKits: builder.query({

@@ -2,10 +2,73 @@ const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const Vendor = require('../../models/Vendor');
 const Kit = require('../../models/Kit');
+const WhatsAppEvent = require('../../models/WhatsAppEvent');
+const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
+const User = require('../../models/User');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
+const { sendMessage, ensureDefaultWhatsAppEvents } = require('../../services/whatsAppService');
+
+// Sends the "Stock Checking" WhatsApp template (configured in Integrations → WhatsApp →
+// Event Mapping) whenever a Live Staff Check records a discrepancy — for both Known and
+// Unknown reasons. Recipients come from the mapping's own `recipientUserIds` (selectable
+// in the Integration UI, scoped to Admin-department users — see RECIPIENT_ONLY_EVENT_KEYS
+// in whatsapp.controller.js/WhatsAppIntegration.jsx) when configured; if none are picked
+// yet, it falls back to every Super Admin/Admin so the feature still works out of the box.
+// Silently no-ops if the event has no enabled template mapping yet, so an unconfigured
+// integration never blocks the check submit.
+async function sendStockCheckingWhatsApp(item, movement, checkedByUser) {
+  try {
+    // Self-heal: the event doc is normally seeded when the Integration → WhatsApp page
+    // loads its event dropdown — ensure it exists here too so a first-ever check right
+    // after deploy (before anyone has opened that page) doesn't silently find nothing.
+    await ensureDefaultWhatsAppEvents();
+    const event = await WhatsAppEvent.findOne({ key: 'stock-checking' }).lean();
+    if (!event) return;
+    const mapping = await WhatsAppEventMapping.findOne({ eventId: event._id, isEnabled: true })
+      .populate('templateId', 'name language')
+      .populate('recipientUserIds', 'mobile fullName')
+      .lean();
+    if (!mapping?.templateId) return;
+
+    const { name: templateName, language = 'en' } = mapping.templateId;
+    const checkedAt = movement.createdAt || new Date();
+    const fieldValues = {
+      itemName: item.itemName || '',
+      reasonType: movement.reasonType || '',
+      reason: movement.reason || '',
+      checkedBy: checkedByUser?.fullName || '',
+      checkedAt: `${checkedAt.toLocaleDateString('en-IN')} ${checkedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
+      companyName: process.env.COMPANY_NAME || 'HNG',
+    };
+    const parameters = {};
+    (mapping.variables || []).forEach((v) => {
+      if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
+    });
+
+    let recipients = (mapping.recipientUserIds || []).filter((u) => u?.mobile);
+    if (!recipients.length) {
+      recipients = await User.find({
+        status: 'Active',
+        deletedAt: null,
+        role: { $in: ['Super Admin', 'Admin'] },
+        mobile: { $exists: true, $ne: '' },
+      }).select('mobile fullName').lean();
+    }
+    for (const r of recipients) {
+      const result = await sendMessage({ to: r.mobile, templateName, language, parameters });
+      if (result.success) {
+        console.log(`[stock-checking] Sent to ${r.fullName} (${r.mobile})`);
+      } else {
+        console.warn(`[stock-checking] Failed for ${r.fullName} (${r.mobile}): ${result.error}`);
+      }
+    }
+  } catch (err) {
+    console.error('[stock-checking] error:', err.message);
+  }
+}
 
 exports.getItems = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
@@ -212,7 +275,7 @@ exports.getStockHistory = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [movements, total] = await Promise.all([
-    StockMovement.find(filter).populate('itemId', 'itemName unit').populate('vendorId', 'name').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    StockMovement.find(filter).populate('itemId', 'itemName unit').populate('vendorId', 'name').populate('createdBy', 'fullName').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     StockMovement.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: movements });
@@ -252,7 +315,7 @@ exports.deleteKit = asyncHandler(async (req, res, next) => {
 
 // Live Staff Stock Check
 exports.submitStockCheck = asyncHandler(async (req, res) => {
-  const { items } = req.body; // [{itemId, actualCount, reasonType, reason}]
+  const { items, notes } = req.body; // [{itemId, actualCount, reasonType, reason}], notes: session-level text
   const results = [];
   for (const check of items) {
     const item = await InventoryItem.findById(check.itemId);
@@ -267,11 +330,24 @@ exports.submitStockCheck = asyncHandler(async (req, res) => {
         qtyAfter: check.actualCount,
         reason: check.reason,
         reasonType: check.reasonType,
+        notes: notes || undefined,
         referenceType: 'Check',
         approvalStatus: 'Pending',
         createdBy: req.user._id,
       });
       results.push(movement);
+
+      if (check.reasonType) {
+        const reasonLabel = check.reasonType === 'Unknown' ? 'Unknown' : 'Known';
+        notifyRoles({
+          modules: ['Inventory'],
+          type: 'low_stock',
+          title: `Stock Check — ${reasonLabel} Reason Reported`,
+          message: `${req.user.fullName || 'A staff member'} reported ${Math.abs(diff)} ${item.unit || 'units'} of "${item.itemName}" missing (${reasonLabel} reason)${check.reason ? `: ${check.reason}` : ''} — pending approval`,
+          link: '/inventory',
+        }).catch(() => {});
+        sendStockCheckingWhatsApp(item, movement, req.user).catch(() => {});
+      }
     }
   }
   res.status(201).json({ success: true, data: results, message: 'Stock check submitted for approval' });

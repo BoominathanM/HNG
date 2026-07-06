@@ -219,6 +219,8 @@ const exportRowsToCSV = (rows, filename) => {
 export default function Inventory() {
   const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
+  const authUser = useSelector((s) => s.auth.user);
+  const isSuperOrAdmin = authUser?.role === 'Super Admin' || authUser?.role === 'Admin';
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
@@ -310,9 +312,9 @@ export default function Inventory() {
     qty: m.qty,
     unit: m.itemId?.unit || '',
     entity: m.referenceType || 'Manual',
-    person: 'Staff',
+    person: m.createdBy?.fullName || 'Staff',
     status: m.approvalStatus,
-    notes: m.reason || '',
+    notes: [m.reason, m.notes].filter(Boolean).join(' — '),
   })), [approvalsData]);
 
   /* ── Manual adjustment modal ── */
@@ -651,6 +653,22 @@ export default function Inventory() {
   const [checkNotes, setCheckNotes] = useState('');
   const [checkSubmitted, setCheckSubmitted] = useState(false);
 
+  // Checked-record log (Known + Unknown reasons) — Super Admin / Admin only.
+  const { data: checkHistoryData } = useGetStockHistoryQuery({ type: 'CHECK', limit: 50 }, { skip: !isSuperOrAdmin });
+  const checkHistoryList = useMemo(() => (checkHistoryData?.data || []).map((m) => ({
+    key: m._id,
+    item: m.itemId?.itemName || '—',
+    unit: m.itemId?.unit || '',
+    qty: m.qty,
+    reasonType: m.reasonType || '—',
+    reason: m.reason || '—',
+    notes: m.notes || '',
+    checkedBy: m.createdBy?.fullName || '—',
+    date: m.createdAt ? dayjs(m.createdAt).format('DD MMM YYYY') : '—',
+    time: m.createdAt ? dayjs(m.createdAt).format('hh:mm A') : '—',
+    approvalStatus: m.approvalStatus,
+  })), [checkHistoryData]);
+
   // Populate checkSession once inventory data loads from RTK Query (useState runs before data arrives).
   // On subsequent loads (e.g. after an approval), refresh systemCount while preserving the user's
   // already-entered physicalCount values so an in-progress session isn't wiped out.
@@ -838,14 +856,15 @@ export default function Inventory() {
     const discrepancies = checkSession.filter(i => i.physicalCount !== i.systemCount);
     const unknownItems = checkSession.filter(i => i.physicalCount < i.systemCount && i.missingType === 'unknown');
     try {
-      await submitStockCheck(
-        discrepancies.map((item) => ({
+      await submitStockCheck({
+        items: discrepancies.map((item) => ({
           itemId: item.key,
           actualCount: item.physicalCount,
           reasonType: item.missingType === 'unknown' ? 'Unknown' : item.missingType === 'known' ? 'Known' : undefined,
           reason: item.missingReason,
-        }))
-      ).unwrap();
+        })),
+        notes: checkNotes,
+      }).unwrap();
       unknownItems.forEach((item) => {
         enqueueSnackbar(
           ['Unknown Stock Shortage Reported', `${Math.abs(item.physicalCount - item.systemCount)} ${item.unit} of "${item.name}" is unaccounted. Super Admin and Manager have been notified.`].filter(Boolean).join(' — '),
@@ -854,6 +873,7 @@ export default function Inventory() {
       });
       setCheckSubmitOpen(false);
       setCheckSubmitted(true);
+      setCheckNotes('');
       enqueueSnackbar(`Stock check submitted. ${discrepancies.length} discrepancies sent for approval.`, { variant: 'success' });
     } catch {
       enqueueSnackbar('Failed to submit stock check', { variant: 'error' });
@@ -1529,6 +1549,58 @@ export default function Inventory() {
                     </Button>
                   </div>
                 </Card>
+
+                {/* Checked records log — Super Admin / Admin only */}
+                {isSuperOrAdmin && (
+                  <Card
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginTop: 16 }}
+                    styles={{ body: { padding: 0 } }}
+                  >
+                    <div style={{ padding: '12px 16px', borderBottom: `1px solid ${borderColor}` }}>
+                      <Space>
+                        <SafetyCertificateOutlined style={{ color: '#B11E6A' }} />
+                        <Text strong style={{ color: textColor }}>Stock Check Log — Known &amp; Unknown Reasons</Text>
+                        <Tag color="purple" style={{ borderRadius: 20 }}>Super Admin / Admin only</Tag>
+                      </Space>
+                    </div>
+                    <Table
+                      dataSource={checkHistoryList}
+                      size="small"
+                      pagination={{ pageSize: 10 }}
+                      scroll={{ x: 'max-content' }}
+                      columns={[
+                        { title: 'Item', dataIndex: 'item', render: v => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+                        { title: 'Qty', dataIndex: 'qty', align: 'center', render: (v, r) => `${v} ${r.unit}` },
+                        {
+                          title: 'Reason Type', dataIndex: 'reasonType', align: 'center',
+                          render: v => v === 'Unknown'
+                            ? <Tag color="error" style={{ borderRadius: 12 }}>Unknown</Tag>
+                            : v === 'Known'
+                              ? <Tag color="success" style={{ borderRadius: 12 }}>Known</Tag>
+                              : <Text type="secondary">—</Text>
+                        },
+                        {
+                          title: 'Reason', dataIndex: 'reason',
+                          render: (v, r) => (
+                            <Space direction="vertical" size={0}>
+                              <Text style={{ fontSize: 13 }}>{v}</Text>
+                              {r.notes && <Text type="secondary" style={{ fontSize: 11 }}>Note: {r.notes}</Text>}
+                            </Space>
+                          )
+                        },
+                        { title: 'Checked By', dataIndex: 'checkedBy', render: v => <Space size={4}><UserOutlined style={{ fontSize: 12 }} />{v}</Space> },
+                        { title: 'Date', dataIndex: 'date' },
+                        { title: 'Time', dataIndex: 'time' },
+                        {
+                          title: 'Approval', dataIndex: 'approvalStatus', align: 'center',
+                          render: v => (
+                            <Tag color={v === 'Approved' ? 'success' : v === 'Rejected' ? 'error' : 'warning'} style={{ borderRadius: 12 }}>{v}</Tag>
+                          )
+                        },
+                      ]}
+                    />
+                  </Card>
+                )}
               </div>
             )
           },

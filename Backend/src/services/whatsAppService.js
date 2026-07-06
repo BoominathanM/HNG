@@ -403,6 +403,7 @@ const DEFAULT_EVENTS = [
   { key: 'billing-invoice', label: 'Billing Invoice', description: 'Sent from Billing when a quotation/invoice document is shared with the customer over WhatsApp', availableFields: ['customerName', 'invoiceNumber', 'amount', 'balance', 'dueDate', 'orderCode', 'companyName'] },
   { key: 'dispatch-notify', label: 'Dispatch Notify', description: 'Sent to the sales person and the customer when a dispatch is confirmed, with the invoice attached', availableFields: ['orderCode', 'customerName', 'salesPersonName', 'invoiceNumber', 'companyName'] },
   { key: 'local-purchase-credit-due', label: 'Local Purchase Credit Due', description: 'Sent to the vendor when a Local Purchase "Credit (Pay Later)" due date arrives', availableFields: ['vendorName', 'amount', 'dueDate', 'invoiceNumber', 'companyName'] },
+  { key: 'stock-checking', label: 'Stock Checking', description: 'Sent to the mapping\'s recipients when a Live Staff Check reports a discrepancy, for both Known and Unknown reasons', availableFields: ['itemName', 'reasonType', 'reason', 'checkedBy', 'checkedAt', 'companyName'] },
 ];
 
 const ACCOUNT_VERIFICATION_EVENT = {

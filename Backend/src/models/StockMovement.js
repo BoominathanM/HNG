@@ -8,6 +8,10 @@ const stockMovementSchema = new mongoose.Schema({
   qtyAfter: Number,
   reason: String,
   reasonType: { type: String, enum: ['Known', 'Unknown'] },
+  // Session-level "Additional Notes" typed once in the Live Staff Check submit modal —
+  // shared across every discrepancy created by that same submission (distinct from
+  // `reason`, which is the per-item Known/Unknown explanation).
+  notes: String,
   referenceType: { type: String, enum: ['Order', 'Purchase', 'Sale', 'Check', 'Opening', 'Manual'] },
   referenceId: mongoose.Schema.Types.ObjectId,
   supplyPrice: Number,

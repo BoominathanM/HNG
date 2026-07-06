@@ -58,6 +58,11 @@ const DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS = ['billing-invoice'];
 // of the simple once-a-day `sendTime` used by the other date-driven reminders.
 const ESCALATION_EVENT_KEYS = ['local-purchase-credit-due'];
 
+// This event sends instantly on submit (no escalation window/repeat), but still lets
+// the admin pick a fixed list of internal recipients — scoped to Admin-department users
+// — instead of the default fallback (every Super Admin/Admin) used when none are picked.
+const RECIPIENT_ONLY_EVENT_KEYS = ['stock-checking'];
+
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export default function WhatsAppIntegration() {
@@ -98,6 +103,11 @@ export default function WhatsAppIntegration() {
 
   // Recipients pool for escalation events — active users in the Finance department
   const financeUsers = (usersData?.data || []).filter((u) => u.department === 'Finance' && u.status === 'Active');
+  // Recipients pool for Stock Checking — active users in the Admin/Management department,
+  // plus every Super Admin regardless of their department.
+  const adminUsers = (usersData?.data || []).filter((u) =>
+    u.status === 'Active' && (u.department === 'Admin' || u.department === 'Management' || u.role === 'Super Admin')
+  );
 
   // ── RTK Mutations ─────────────────────────────────────────────────────────
   const [saveConfig,           { isLoading: saving }]    = useSaveWhatsAppConfigMutation();
@@ -226,6 +236,7 @@ export default function WhatsAppIntegration() {
       const selectedEvt = events.find((e) => String(e._id) === String(vals.eventId));
       const isDateDriven = TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvt?.key);
       const isEscalation = ESCALATION_EVENT_KEYS.includes(selectedEvt?.key);
+      const isRecipientOnly = RECIPIENT_ONLY_EVENT_KEYS.includes(selectedEvt?.key);
       if (isEscalation && !escRecipients.length) {
         enqueueSnackbar('Select at least one recipient', { variant: 'warning' });
         return;
@@ -242,6 +253,10 @@ export default function WhatsAppIntegration() {
           endTime:          escEndTime?.format('HH:mm') || '20:00',
           delayMinutes:     escDelayMinutes || 30,
           days:             escDays,
+        } : isRecipientOnly ? {
+          // No recipients picked — leave unset so the backend falls back to notifying
+          // every Super Admin/Admin, same as before this picker existed.
+          recipientUserIds: escRecipients,
         } : isDateDriven ? { sendTime: sendTime?.format('HH:mm') || '08:00' } : {}),
       };
       const res = await saveMapping(payload).unwrap();
@@ -350,6 +365,14 @@ export default function WhatsAppIntegration() {
             </Space>
           );
         }
+        if (RECIPIENT_ONLY_EVENT_KEYS.includes(r.eventId?.key)) {
+          const count = (r.recipientUserIds || []).length;
+          return (
+            <Text style={{ color: subText, fontSize: 12 }}>
+              {count ? `${count} recipient${count !== 1 ? 's' : ''} selected` : 'Fallback: Super Admin/Admin'}
+            </Text>
+          );
+        }
         if (!TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(r.eventId?.key)) return <Text style={{ color: subText }}>—</Text>;
         const t = r.sendTime || '08:00';
         const [hh, mm] = t.split(':');
@@ -402,6 +425,7 @@ export default function WhatsAppIntegration() {
   const isDateDrivenEvent = TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvent?.key);
   const isDocumentOnlyEvent = DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvent?.key);
   const isEscalationEvent = ESCALATION_EVENT_KEYS.includes(selectedEvent?.key);
+  const isRecipientOnlyEvent = RECIPIENT_ONLY_EVENT_KEYS.includes(selectedEvent?.key);
   const templatesForEvent = isDateDrivenEvent
     ? templates.filter((t) => getTemplateType(t) === 'text')
     : isDocumentOnlyEvent
@@ -785,11 +809,14 @@ export default function WhatsAppIntegration() {
             </Form.Item>
           )}
 
-          {isEscalationEvent && (
-            <>
+          {(isEscalationEvent || isRecipientOnlyEvent) && (() => {
+            const recipientPool = isEscalationEvent ? financeUsers : adminUsers;
+            const deptLabel = isEscalationEvent ? 'Finance' : 'Admin / Management / Super Admin';
+            return (
               <Form.Item
                 label={<Text style={{ color: textColor, fontWeight: 500 }}>Recipients</Text>}
-                required
+                required={isEscalationEvent}
+                tooltip={isRecipientOnlyEvent ? "Optional — if none are selected, every Super Admin/Admin is notified instead" : undefined}
               >
                 <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: 10, maxHeight: 220, overflowY: 'auto' }}>
                   <Checkbox.Group
@@ -798,7 +825,7 @@ export default function WhatsAppIntegration() {
                     onChange={(vals) => setEscRecipients(vals)}
                   >
                     <Space direction="vertical" style={{ width: '100%' }}>
-                      {financeUsers.map((u) => (
+                      {recipientPool.map((u) => (
                         <div
                           key={u._id}
                           style={{
@@ -809,7 +836,7 @@ export default function WhatsAppIntegration() {
                         >
                           <Checkbox value={u._id}>
                             <Text style={{ color: textColor, fontWeight: 600 }}>{u.fullName}</Text>
-                            <Text style={{ color: subText }}> — {u.role || 'Finance'}</Text>
+                            <Text style={{ color: subText }}> — {u.role || deptLabel}</Text>
                             <br />
                             <Text style={{ color: subText, fontSize: 12 }}>{u.email}{u.mobile ? ` — ${u.mobile}` : ''}</Text>
                           </Checkbox>
@@ -817,15 +844,19 @@ export default function WhatsAppIntegration() {
                       ))}
                     </Space>
                   </Checkbox.Group>
-                  {financeUsers.length === 0 && (
-                    <Text style={{ color: subText, fontSize: 12 }}>No active Finance department users found. Add one in Settings → Staff Management first.</Text>
+                  {recipientPool.length === 0 && (
+                    <Text style={{ color: subText, fontSize: 12 }}>No active {deptLabel} users found. Add one in Settings → Staff Management first.</Text>
                   )}
                 </div>
                 <Text style={{ color: subText, fontSize: 12, display: 'block', marginTop: 6 }}>
-                  Multiple selection enabled. Showing active `Finance` department users from the Users collection.
+                  Multiple selection enabled. Showing active `{deptLabel}` users from the Users collection.
                 </Text>
               </Form.Item>
+            );
+          })()}
 
+          {isEscalationEvent && (
+            <>
               <Row gutter={12}>
                 <Col span={12}>
                   <Form.Item label={<Text style={{ color: textColor, fontWeight: 500 }}>Start Time</Text>}>
