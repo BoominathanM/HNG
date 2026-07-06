@@ -47,11 +47,12 @@ const getTemplateType = (t) => {
 
 // These events are date-driven reminders sent as plain scheduled messages, so only
 // text templates make sense for them — other events can use any template type.
-const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'order-delivery-reminder', 'local-purchase-credit-due'];
+const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'order-delivery-reminder', 'local-purchase-credit-due', 'purchase-payment-reminder'];
 
 // Billing Invoice attaches the invoice/quotation PDF as a WhatsApp document header,
-// so only templates built with a DOCUMENT header are valid choices for it.
-const DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS = ['billing-invoice'];
+// so only templates built with a DOCUMENT header are valid choices for it. Bulk Purchase
+// Request attaches a Product/Required-Quantity PDF the same way.
+const DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS = ['billing-invoice', 'bulk-purchase-request'];
 
 // These events escalate to a fixed list of internal recipients, repeating every
 // `delayMinutes` inside a start/end time window on the configured days — instead
@@ -62,6 +63,11 @@ const ESCALATION_EVENT_KEYS = ['local-purchase-credit-due'];
 // the admin pick a fixed list of internal recipients — scoped to Admin-department users
 // — instead of the default fallback (every Super Admin/Admin) used when none are picked.
 const RECIPIENT_ONLY_EVENT_KEYS = ['stock-checking'];
+
+// This event needs BOTH a once-a-day send time AND a fixed internal recipient list
+// (Finance department) — unlike the other date-driven reminders, which send to a
+// per-record customer/salesperson rather than a mapping-configured recipient list.
+const RECIPIENT_AND_TIME_EVENT_KEYS = ['purchase-payment-reminder'];
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -237,7 +243,8 @@ export default function WhatsAppIntegration() {
       const isDateDriven = TEXT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvt?.key);
       const isEscalation = ESCALATION_EVENT_KEYS.includes(selectedEvt?.key);
       const isRecipientOnly = RECIPIENT_ONLY_EVENT_KEYS.includes(selectedEvt?.key);
-      if (isEscalation && !escRecipients.length) {
+      const isRecipientAndTime = RECIPIENT_AND_TIME_EVENT_KEYS.includes(selectedEvt?.key);
+      if ((isEscalation || isRecipientAndTime) && !escRecipients.length) {
         enqueueSnackbar('Select at least one recipient', { variant: 'warning' });
         return;
       }
@@ -256,6 +263,9 @@ export default function WhatsAppIntegration() {
         } : isRecipientOnly ? {
           // No recipients picked — leave unset so the backend falls back to notifying
           // every Super Admin/Admin, same as before this picker existed.
+          recipientUserIds: escRecipients,
+        } : isRecipientAndTime ? {
+          sendTime:         sendTime?.format('HH:mm') || '08:00',
           recipientUserIds: escRecipients,
         } : isDateDriven ? { sendTime: sendTime?.format('HH:mm') || '08:00' } : {}),
       };
@@ -426,6 +436,7 @@ export default function WhatsAppIntegration() {
   const isDocumentOnlyEvent = DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS.includes(selectedEvent?.key);
   const isEscalationEvent = ESCALATION_EVENT_KEYS.includes(selectedEvent?.key);
   const isRecipientOnlyEvent = RECIPIENT_ONLY_EVENT_KEYS.includes(selectedEvent?.key);
+  const isRecipientAndTimeEvent = RECIPIENT_AND_TIME_EVENT_KEYS.includes(selectedEvent?.key);
   const templatesForEvent = isDateDrivenEvent
     ? templates.filter((t) => getTemplateType(t) === 'text')
     : isDocumentOnlyEvent
@@ -788,7 +799,7 @@ export default function WhatsAppIntegration() {
             </Select>
           </Form.Item>
 
-          {isDateDrivenEvent && !isEscalationEvent && (
+          {(isDateDrivenEvent || isRecipientAndTimeEvent) && !isEscalationEvent && (
             <Form.Item
               label={
                 <Space size={4}>
@@ -809,13 +820,13 @@ export default function WhatsAppIntegration() {
             </Form.Item>
           )}
 
-          {(isEscalationEvent || isRecipientOnlyEvent) && (() => {
-            const recipientPool = isEscalationEvent ? financeUsers : adminUsers;
-            const deptLabel = isEscalationEvent ? 'Finance' : 'Admin / Management / Super Admin';
+          {(isEscalationEvent || isRecipientOnlyEvent || isRecipientAndTimeEvent) && (() => {
+            const recipientPool = (isEscalationEvent || isRecipientAndTimeEvent) ? financeUsers : adminUsers;
+            const deptLabel = (isEscalationEvent || isRecipientAndTimeEvent) ? 'Finance' : 'Admin / Management / Super Admin';
             return (
               <Form.Item
                 label={<Text style={{ color: textColor, fontWeight: 500 }}>Recipients</Text>}
-                required={isEscalationEvent}
+                required={isEscalationEvent || isRecipientAndTimeEvent}
                 tooltip={isRecipientOnlyEvent ? "Optional — if none are selected, every Super Admin/Admin is notified instead" : undefined}
               >
                 <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: 10, maxHeight: 220, overflowY: 'auto' }}>

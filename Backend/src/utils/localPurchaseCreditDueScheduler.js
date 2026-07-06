@@ -3,7 +3,7 @@ const LocalPurchase = require('../models/LocalPurchase');
 const WhatsAppEvent = require('../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../models/WhatsAppEventMapping');
 const { sendMessage } = require('../services/whatsAppService');
-const { formatDate } = require('./reminderSchedulerCommon');
+const { formatDate, todayKey } = require('./reminderSchedulerCommon');
 
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -13,10 +13,10 @@ const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const lastSentAt = new Map();
 let guardDay = '';
 
-function purgeIfNewDay(todayKey) {
-  if (guardDay !== todayKey) {
+function purgeIfNewDay(today) {
+  if (guardDay !== today) {
     lastSentAt.clear();
-    guardDay = todayKey;
+    guardDay = today;
   }
 }
 
@@ -31,8 +31,7 @@ function minutesSinceMidnight(hh, mm) {
 
 async function runEscalation(mapping) {
   const now = new Date();
-  const todayKey = now.toISOString().slice(0, 10);
-  purgeIfNewDay(todayKey);
+  purgeIfNewDay(todayKey());
 
   const todayAbbr = DAY_ABBR[now.getDay()];
   if (Array.isArray(mapping.days) && mapping.days.length && !mapping.days.includes(todayAbbr)) {

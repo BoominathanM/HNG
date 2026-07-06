@@ -45,6 +45,8 @@ export default function Notifications() {
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const [activeTab, setActiveTab] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const { data: notifData, isLoading: notifLoading, refetch } = useGetNotificationsQuery({ limit: 200 });
   const { data: stockData } = useGetStockAlertsQuery();
@@ -122,6 +124,11 @@ export default function Notifications() {
   const stockCount = stockAlerts.length;
   const paymentCount = (paymentAlerts.overdue?.length || 0) + (paymentAlerts.dueSoon?.length || 0);
 
+  const pagedData = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return displayData.slice(start, start + pageSize);
+  }, [displayData, page, pageSize]);
+
   return (
     <div className="page-container fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
@@ -144,7 +151,7 @@ export default function Notifications() {
       >
         <Tabs
           activeKey={activeTab}
-          onChange={setActiveTab}
+          onChange={(key) => { setActiveTab(key); setPage(1); }}
           centered
           items={[
             { key: 'all',       label: `All${unread ? ` (${unread} new)` : ''}` },
@@ -163,7 +170,18 @@ export default function Notifications() {
           <Empty description="No notifications" style={{ padding: 40 }} />
         ) : (
           <List
-            dataSource={displayData}
+            dataSource={pagedData}
+            pagination={{
+              current: page,
+              pageSize,
+              total: displayData.length,
+              onChange: (p, ps) => { setPage(p); setPageSize(ps); },
+              onShowSizeChange: (p, ps) => { setPage(p); setPageSize(ps); },
+              showSizeChanger: true,
+              pageSizeOptions: ['10', '20', '50'],
+              showTotal: (total) => `${total} notification${total === 1 ? '' : 's'}`,
+              style: { padding: '16px 20px 4px' },
+            }}
             renderItem={(item, i) => {
               const meta = getMeta(item.type);
               return (

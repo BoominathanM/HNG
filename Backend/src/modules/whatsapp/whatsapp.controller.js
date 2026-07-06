@@ -7,7 +7,6 @@ const {
   DEFAULT_BACKEND_URL,
   ensureAccountVerificationEvent,
   ensureDefaultWhatsAppEvents,
-  ensureGenerateReportMappingFromBackup,
   normalizeUrl,
   sendMessage: sendMessageService,
   syncTemplatesFromConfig,
@@ -188,10 +187,12 @@ exports.getTemplates = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// Only these events are exposed in the mapping UI for now — the rest of the
-// default catalog (order-placed, dispatch-update, etc.) has no live trigger wired
-// up yet, so surfacing them would let users create mappings that silently never fire.
-const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify', 'order-delivery-reminder', 'local-purchase-credit-due', 'stock-checking'];
+// Explicit allow-list of events with a live trigger wired up somewhere in the
+// backend (schedulers or on-demand sends) — kept separate from DEFAULT_EVENTS so a
+// future placeholder event added there without a real trigger can't silently appear
+// in the mapping UI and let users create mappings that never fire. account-verification
+// is intentionally excluded — it has no live trigger yet.
+const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify', 'order-delivery-reminder', 'local-purchase-credit-due', 'stock-checking', 'bulk-purchase-request', 'purchase-payment-reminder'];
 
 // These events escalate on a start/end time window + delay (see
 // localPurchaseCreditDueScheduler.js) instead of the once-a-day `sendTime` used by
@@ -215,7 +216,6 @@ exports.getEvents = async (req, res, next) => {
 // GET /api/whatsapp/event-mappings
 exports.getEventMappings = async (req, res, next) => {
   try {
-    await ensureGenerateReportMappingFromBackup();
     const mappings = await WhatsAppEventMapping.find()
       .populate('eventId', 'label key availableFields')
       .populate('templateId', 'name language status variables category components rawPayload')

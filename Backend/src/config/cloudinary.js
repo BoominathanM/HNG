@@ -13,10 +13,15 @@ const storage = new CloudinaryStorage({
   params: async (req, file) => {
     const folder = req.query.folder || req.body.folder || 'hng-crm';
     const allowedFormats = ['jpg', 'jpeg', 'png', 'pdf', 'svg', 'gif', 'webp'];
+    const isPdf = file.mimetype === 'application/pdf';
     return {
       folder: `HNG-CRM/${folder}`,
       allowed_formats: allowedFormats,
-      resource_type: file.mimetype === 'application/pdf' ? 'raw' : 'image',
+      resource_type: isPdf ? 'raw' : 'image',
+      // Without an explicit format, Cloudinary's "raw" delivery URL has no
+      // extension and is served as application/octet-stream — WhatsApp's
+      // document API (and browsers) then can't recognize/open it as a PDF.
+      ...(isPdf ? { format: 'pdf' } : {}),
       transformation: [{ quality: 'auto', fetch_format: 'auto' }],
     };
   },

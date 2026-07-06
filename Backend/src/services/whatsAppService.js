@@ -389,21 +389,15 @@ async function sendMessage({ to, templateName, language = 'en', parameters = {},
 // ── Default events ────────────────────────────────────────────────────────────
 
 const DEFAULT_EVENTS = [
-  { key: 'order-placed',      label: 'Order Placed',      description: 'Triggered when a new order is placed',            availableFields: ['orderCode', 'customerName', 'totalAmount', 'deliveryDate', 'companyName'] },
-  { key: 'order-shipped',     label: 'Order Shipped',     description: 'Triggered when an order is dispatched',           availableFields: ['orderCode', 'customerName', 'lrNumber', 'trackingUrl', 'companyName'] },
-  { key: 'order-delivered',   label: 'Order Delivered',   description: 'Triggered when an order is delivered',            availableFields: ['orderCode', 'customerName', 'deliveryDate', 'companyName'] },
   { key: 'payment-due',       label: 'Payment Due',       description: 'Triggered when a payment is due',                 availableFields: ['customerName', 'amount', 'dueDate', 'invoiceNumber', 'companyName'] },
-  { key: 'payment-received',  label: 'Payment Received',  description: 'Triggered when payment is received',              availableFields: ['customerName', 'amount', 'paymentDate', 'invoiceNumber', 'companyName'] },
-  { key: 'new-customer',      label: 'New Customer',      description: 'Triggered when a new customer is added',          availableFields: ['customerName', 'email', 'phone', 'companyName'] },
-  { key: 'low-stock-alert',   label: 'Low Stock Alert',   description: 'Triggered when inventory falls below minimum',    availableFields: ['productName', 'currentStock', 'minimumStock', 'companyName'] },
-  { key: 'dispatch-update',   label: 'Dispatch Update',   description: 'Triggered on dispatch confirmation or LR upload', availableFields: ['orderCode', 'customerName', 'lrNumber', 'trackingUrl', 'companyName'] },
-  { key: 'generate-report',   label: 'Generate Report',   description: 'Triggered when a scheduled report is generated',  availableFields: ['reportDate', 'totalOrders', 'totalRevenue', 'companyName'] },
   { key: 'follow-up-reminder', label: 'Follow-up Reminder', description: 'Sent to the assigned salesperson on the scheduled follow-up date', availableFields: ['salesPersonName', 'customerName', 'followupDate', 'followupTime', 'leadStatus', 'companyName'] },
   { key: 'order-delivery-reminder', label: 'Order Delivery Reminder', description: 'Sent to the lead creator on the tentative order delivery date', availableFields: ['salesPersonName', 'customerName', 'deliveryDate', 'leadStatus', 'companyName'] },
   { key: 'billing-invoice', label: 'Billing Invoice', description: 'Sent from Billing when a quotation/invoice document is shared with the customer over WhatsApp', availableFields: ['customerName', 'invoiceNumber', 'amount', 'balance', 'dueDate', 'orderCode', 'companyName'] },
   { key: 'dispatch-notify', label: 'Dispatch Notify', description: 'Sent to the sales person and the customer when a dispatch is confirmed, with the invoice attached', availableFields: ['orderCode', 'customerName', 'salesPersonName', 'invoiceNumber', 'companyName'] },
   { key: 'local-purchase-credit-due', label: 'Local Purchase Credit Due', description: 'Sent to the vendor when a Local Purchase "Credit (Pay Later)" due date arrives', availableFields: ['vendorName', 'amount', 'dueDate', 'invoiceNumber', 'companyName'] },
   { key: 'stock-checking', label: 'Stock Checking', description: 'Sent to the mapping\'s recipients when a Live Staff Check reports a discrepancy, for both Known and Unknown reasons', availableFields: ['itemName', 'reasonType', 'reason', 'checkedBy', 'checkedAt', 'companyName'] },
+  { key: 'bulk-purchase-request', label: 'Bulk Purchase Request', description: 'Sent to the vendor with a Product/Required-Quantity document when "Ask Quotation" is clicked in Purchase → Bulk Purchase Request', availableFields: ['vendorName', 'itemCount', 'totalQty', 'paymentTerms', 'companyName'] },
+  { key: 'purchase-payment-reminder', label: 'Purchase Payment Reminder', description: 'Sent to the configured Financial-department recipients when a bulk purchase request\'s payment reminder date arrives', availableFields: ['requestCode', 'itemName', 'qty', 'vendorName', 'dueDate', 'companyName'] },
 ];
 
 const ACCOUNT_VERIFICATION_EVENT = {
@@ -426,8 +420,6 @@ async function ensureAccountVerificationEvent() {
   );
 }
 
-async function ensureGenerateReportMappingFromBackup() {}
-
 module.exports = {
   DEFAULT_BACKEND_URL,
   normalizeUrl,
@@ -437,5 +429,4 @@ module.exports = {
   sendMessage,
   ensureDefaultWhatsAppEvents,
   ensureAccountVerificationEvent,
-  ensureGenerateReportMappingFromBackup,
 };

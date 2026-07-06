@@ -168,7 +168,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
             gap: collapsed ? 0 : 12,
             padding: collapsed ? '12px 0' : isChild ? '9px 16px 9px 20px' : '10px 16px',
             justifyContent: collapsed ? 'center' : 'flex-start',
-            margin: isChild ? '1px 8px 1px 20px' : '2px 8px',
+            margin: isChild ? '6px 8px' : '2px 8px',
             borderRadius: 10,
             cursor: 'pointer',
             background: isActive
@@ -268,7 +268,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
               onClick={() => { navigate(child.key); onMobileClose?.(); }}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                padding: '10px 0', margin: '1px 8px', borderRadius: 10, cursor: 'pointer',
+                padding: '10px 0', margin: '6px 8px', borderRadius: 10, cursor: 'pointer',
                 background: childActive
                   ? 'linear-gradient(90deg, #8e1450 0%, #B11E6A 45%, #D85C9E 100%)'
                   : 'transparent',

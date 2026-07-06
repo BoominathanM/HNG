@@ -32,7 +32,7 @@ exports.getRequests = asyncHandler(async (req, res) => {
 });
 
 exports.createBulkRequest = asyncHandler(async (req, res) => {
-  const { vendorId, items, paymentTerms } = req.body;
+  const { vendorId, items, paymentTerms, firstReminderDate } = req.body;
   const batchId = 'BATCH-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6).toUpperCase();
   const created = [];
   for (const it of items) {
@@ -46,6 +46,9 @@ exports.createBulkRequest = asyncHandler(async (req, res) => {
       unit: it.unit,
       category: it.category || 'Other',
       paymentTerms,
+      // Set only for payment terms other than "100% Payment" — drives the
+      // "Purchase Payment Reminder" WhatsApp event (purchasePaymentReminderScheduler.js).
+      ...(firstReminderDate ? { firstReminderDate } : {}),
       requestType: 'bulk',
       batchId,
       createdBy: req.user._id,

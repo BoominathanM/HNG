@@ -30,8 +30,12 @@ import {
   useReceiveOrderMutation,
   useUploadPurchaseLRMutation,
   useCreateLocalPurchaseMutation,
+  useGetWhatsAppEventMappingsQuery,
+  useUploadFilesMutation,
+  useSendWhatsAppMessageMutation,
 } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
+import html2pdf from 'html2pdf.js';
 import { enqueueSnackbar } from 'notistack';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import PhoneInput from '../../components/common/PhoneInput';
@@ -87,6 +91,9 @@ export default function Purchase() {
   const [raiseRequestMutation] = useRaiseRequestMutation();
   const [createBulkRequestMutation] = useCreateBulkRequestMutation();
   const [uploadQuotationFile] = useUploadQuotationFileMutation();
+  const { data: whatsAppMappingsData } = useGetWhatsAppEventMappingsQuery();
+  const [uploadFilesMutation] = useUploadFilesMutation();
+  const [sendWhatsAppMessageMutation] = useSendWhatsAppMessageMutation();
   const [receiveOrderMutation] = useReceiveOrderMutation();
   const [uploadPurchaseLR] = useUploadPurchaseLRMutation();
   const [createLocalPurchaseMutation] = useCreateLocalPurchaseMutation();
@@ -111,6 +118,7 @@ export default function Purchase() {
     min: i.minStock, max: i.minStock * 10,
     price: `₹${i.purchasePrice}/${i.unit}`,
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
+    sellerName: i.vendorId?.name || null,
   })), [itemsData]);
 
   const dupeItemNames = useMemo(() => {
@@ -223,9 +231,15 @@ export default function Purchase() {
   const [bulkSupplierName, setBulkSupplierName] = useState('');
   const [bulkItems, setBulkItems] = useState([]);
   const [bulkPayTerms, setBulkPayTerms] = useState('');
+  const [bulkReminderDate, setBulkReminderDate] = useState(null);
   const [bulkQuotationAsked, setBulkQuotationAsked] = useState(false);
   const [bulkRaiseFile, setBulkRaiseFile] = useState(null);
   const [bulkRaiseScanLoading, setBulkRaiseScanLoading] = useState(false);
+  const [bulkAskingQuotation, setBulkAskingQuotation] = useState(false);
+  const bulkSelectedItems = useMemo(() => bulkItems.filter(i => i.selected), [bulkItems]);
+  const bulkQtyValid = bulkSelectedItems.length > 0 && bulkSelectedItems.every(i => Number(i.qty) > 0);
+  const bulkReminderRequired = !!bulkPayTerms && bulkPayTerms !== '100% Payment';
+  const bulkReminderValid = !bulkReminderRequired || !!bulkReminderDate;
 
   /* ── WhatsApp reminder tracking (30-min intervals per inventory item key) ── */
   const reminderIntervalsRef = useRef({});
@@ -704,6 +718,11 @@ export default function Purchase() {
       const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
       const vendorId = raiseRequestSupplier?.id;
       const paymentTerms = values.payment_terms || 'From Quotation';
+      const reminderRequired = paymentTerms === '50% Advance, 50% on Dispatch' || paymentTerms === '50% Advance, 50% After Delivery (Max 15 days)';
+      if (reminderRequired && !values.payment_reminder_date) {
+        enqueueSnackbar('Select a reminder date for the 2nd payment', { variant: 'warning' });
+        return;
+      }
 
       // Build the list of requests: main product + any extra products
       const requests = [{
@@ -731,6 +750,8 @@ export default function Purchase() {
             paymentTerms,
             ...(isObjectId(vendorId) ? { vendorId } : {}),
             ...(isObjectId(r.itemId) ? { itemId: r.itemId } : {}),
+            // Drives the "Purchase Payment Reminder" WhatsApp event (purchasePaymentReminderScheduler.js).
+            ...(reminderRequired && values.payment_reminder_date ? { secondReminderDate: values.payment_reminder_date.toISOString() } : {}),
           };
           const res = await raiseRequestMutation(payload).unwrap();
           const newId = res?.data?._id || res?._id;
@@ -920,8 +941,9 @@ export default function Purchase() {
     setBulkSupplierName(supplierName);
     setBulkQuotationAsked(false);
     setBulkRaiseFile(null);
-    const supplierItems = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller === supplierName);
-    const otherLowStock = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.seller !== supplierName);
+    setBulkReminderDate(null);
+    const supplierItems = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.sellerName === supplierName);
+    const otherLowStock = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.sellerName !== supplierName);
     const allItems = [...supplierItems, ...otherLowStock];
     setBulkItems(allItems.map(i => ({
       invKey: i.key,
@@ -931,40 +953,136 @@ export default function Purchase() {
       currentStock: i.current,
       minStock: i.min,
       status: i.status,
-      fromSupplier: i.seller === supplierName,
-      selected: i.seller === supplierName,
-      qty: i.min > i.current ? Math.max((i.min - i.current) * 2, i.min) : i.min,
+      fromSupplier: i.sellerName === supplierName,
+      selected: i.sellerName === supplierName,
+      qty: undefined,
     })));
   };
 
-  const handleBulkAskQuotation = () => {
-    const selected = bulkItems.filter(i => i.selected && i.qty > 0);
+  // Renders a Product Name / Required Quantity table to a real PDF Blob using html2pdf
+  // (html2canvas + jsPDF), the same recipe Billing uses for invoice/quotation documents.
+  const generateBulkRequestPdfBlob = async (supplierName, paymentTerms, items) => {
+    const rows = items.map(i => `
+      <tr>
+        <td style="padding:8px 10px;border:1px solid #ddd;">${i.name}</td>
+        <td style="padding:8px 10px;border:1px solid #ddd;">${i.category || 'Other'}</td>
+        <td style="padding:8px 10px;border:1px solid #ddd;text-align:right;">${i.qty}</td>
+        <td style="padding:8px 10px;border:1px solid #ddd;">${i.unit || ''}</td>
+      </tr>`).join('');
+    const html = `
+      <div style="font-family:Arial,sans-serif;padding:20px;width:700px;">
+        <h2 style="color:#B11E6A;margin:0 0 4px;">Bulk Purchase Request</h2>
+        <p style="margin:0 0 2px;"><strong>Supplier:</strong> ${supplierName}</p>
+        <p style="margin:0 0 2px;"><strong>Payment Terms:</strong> ${paymentTerms}</p>
+        <p style="margin:0 0 14px;"><strong>Date:</strong> ${dayjs().format('DD MMM YYYY')}</p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#B11E6A;color:#fff;">
+              <th style="padding:8px 10px;text-align:left;">Product Name</th>
+              <th style="padding:8px 10px;text-align:left;">Category</th>
+              <th style="padding:8px 10px;text-align:right;">Required Quantity</th>
+              <th style="padding:8px 10px;text-align:left;">Unit</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    document.body.appendChild(container);
+    try {
+      return await html2pdf()
+        .from(container)
+        .set({
+          margin: 5,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .outputPdf('blob');
+    } finally {
+      document.body.removeChild(container);
+    }
+  };
+
+  const handleBulkAskQuotation = async () => {
+    const selected = bulkSelectedItems;
     if (selected.length === 0) { enqueueSnackbar('Select at least one product', { variant: 'warning' }); return; }
     if (!bulkSupplierName) { enqueueSnackbar('Select a supplier first', { variant: 'warning' }); return; }
     if (!bulkPayTerms) { enqueueSnackbar('Select payment terms', { variant: 'warning' }); return; }
+    if (!bulkQtyValid) { enqueueSnackbar('Enter a required quantity (Pcs) for every selected product', { variant: 'warning' }); return; }
+    if (!bulkReminderValid) { enqueueSnackbar('Select a payment reminder date', { variant: 'warning' }); return; }
+
     const supplierInfo = suppliers.find(s => s.name === bulkSupplierName);
-    if (supplierInfo?.phone) {
-      const itemLines = selected.map(i => `• ${i.name} — Qty: ${i.qty} ${i.unit}`).join('\n');
-      const waMsg = `Hello ${bulkSupplierName},\n\nWe would like to request a quotation for the following items:\n\n${itemLines}\n\nPayment Terms: ${bulkPayTerms}\n\nKindly share your best prices at the earliest convenience.\n\nThank you.`;
-      const phone = supplierInfo.phone.replace(/\D/g, '');
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}`, '_blank');
+    setBulkAskingQuotation(true);
+    try {
+      const pdfBlob = await generateBulkRequestPdfBlob(bulkSupplierName, bulkPayTerms, selected);
+      const filename = `bulk-purchase-request-${bulkSupplierName}.pdf`;
+
+      let sent = false;
+      const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
+      const mapping = (whatsAppMappingsData?.data || []).find(
+        (m) => m.eventId?.key === 'bulk-purchase-request' && m.isEnabled !== false && m.templateId?.name
+      );
+      if (supplierInfo?.phone && isObjectId(supplierInfo?.id) && mapping) {
+        const formData = new FormData();
+        formData.append('files', new File([pdfBlob], filename, { type: 'application/pdf' }));
+        const uploadRes = await uploadFilesMutation({ formData, folder: 'purchase' }).unwrap();
+        const documentUrl = uploadRes?.data?.[0]?.url;
+        if (documentUrl) {
+          const totalQty = selected.reduce((sum, i) => sum + (Number(i.qty) || 0), 0);
+          const fieldValues = {
+            vendorName: bulkSupplierName,
+            itemCount: String(selected.length),
+            totalQty: String(totalQty),
+            paymentTerms: bulkPayTerms,
+            companyName: 'HNG',
+          };
+          const parameters = {};
+          (mapping.variables || []).forEach((v) => {
+            if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
+          });
+          const phone = supplierInfo.phone.replace(/\D/g, '');
+          await sendWhatsAppMessageMutation({
+            to: phone,
+            templateName: mapping.templateId.name,
+            language: mapping.templateId.language || 'en',
+            parameters,
+            documentUrl,
+            documentFilename: filename,
+          }).unwrap();
+          sent = true;
+        }
+      }
+      setBulkQuotationAsked(true);
+      enqueueSnackbar(
+        sent
+          ? 'Quotation request document sent to supplier via WhatsApp!'
+          : 'Quotation request document generated. Map a document template to the "Bulk Purchase Request" event in Integrations → WhatsApp to auto-send it to the supplier.',
+        { variant: sent ? 'success' : 'info' }
+      );
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || err?.message || 'Failed to prepare quotation request', { variant: 'error' });
+    } finally {
+      setBulkAskingQuotation(false);
     }
-    setBulkQuotationAsked(true);
-    enqueueSnackbar('Quotation request sent to supplier via WhatsApp!', { variant: 'success' });
   };
 
   const handleBulkRaiseRequest = async () => {
     if (!bulkRaiseFile) { enqueueSnackbar('Please upload the quotation file received from the supplier', { variant: 'warning' }); return; }
-    const selected = bulkItems.filter(i => i.selected && i.qty > 0);
+    const selected = bulkSelectedItems;
     if (selected.length === 0) { enqueueSnackbar('Select at least one product', { variant: 'warning' }); return; }
     if (!bulkSupplierName) { enqueueSnackbar('Select a supplier first', { variant: 'warning' }); return; }
     if (!bulkPayTerms) { enqueueSnackbar('Select payment terms', { variant: 'warning' }); return; }
+    if (!bulkQtyValid) { enqueueSnackbar('Enter a required quantity (Pcs) for every selected product', { variant: 'warning' }); return; }
+    if (!bulkReminderValid) { enqueueSnackbar('Select a payment reminder date', { variant: 'warning' }); return; }
     const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
     const vendorId = suppliers.find(s => s.name === bulkSupplierName)?.id;
     try {
       const res = await createBulkRequestMutation({
         ...(isObjectId(vendorId) ? { vendorId } : {}),
         paymentTerms: bulkPayTerms,
+        ...(bulkReminderRequired && bulkReminderDate ? { firstReminderDate: bulkReminderDate.toISOString() } : {}),
         items: selected.map(item => ({
           ...(isObjectId(item.invKey) ? { itemId: item.invKey } : {}),
           itemName: item.name,
@@ -989,6 +1107,7 @@ export default function Purchase() {
       setBulkSupplierName('');
       setBulkItems([]);
       setBulkPayTerms('');
+      setBulkReminderDate(null);
       setBulkQuotationAsked(false);
       setBulkRaiseFile(null);
     } catch (err) {
@@ -4036,7 +4155,7 @@ export default function Purchase() {
           </div>
         }
         open={showBulkPurchaseModal}
-        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkQuotationAsked(false); setBulkRaiseFile(null); }}
+        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); setBulkRaiseFile(null); }}
         footer={null}
         width={640}
         centered
@@ -4136,12 +4255,17 @@ export default function Purchase() {
                       <InputNumber
                         size="small"
                         min={1}
+                        placeholder="Enter qty"
                         value={item.qty}
                         disabled={!item.selected}
+                        status={item.selected && !(Number(item.qty) > 0) ? 'error' : undefined}
                         onChange={v => setBulkItems(prev => prev.map((bi, i) => i === idx ? { ...bi, qty: v } : bi))}
                         addonAfter={<Text style={{ fontSize: 11 }}>{item.unit}</Text>}
                         style={{ width: 130 }}
                       />
+                      {item.selected && !(Number(item.qty) > 0) && (
+                        <Text style={{ fontSize: 10, color: '#ff4d4f', display: 'block', textAlign: 'right', marginTop: 2 }}>Required</Text>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -4174,12 +4298,27 @@ export default function Purchase() {
                 placeholder="Select payment terms..."
                 style={{ width: '100%' }}
                 value={bulkPayTerms || undefined}
-                onChange={setBulkPayTerms}
+                onChange={val => { setBulkPayTerms(val); if (val === '100% Payment') setBulkReminderDate(null); }}
               >
                 <Option value="100% Payment">100% Payment</Option>
                 <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
                 <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
               </Select>
+              {bulkReminderRequired && (
+                <div style={{ marginTop: 10 }}>
+                  <Text style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 4 }}>Payment Reminder Date</Text>
+                  <DatePicker
+                    style={{ width: '100%', borderRadius: 8 }}
+                    value={bulkReminderDate}
+                    onChange={setBulkReminderDate}
+                    disabledDate={d => d && d.isBefore(dayjs().startOf('day'))}
+                    placeholder="Select reminder date"
+                  />
+                  <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 4 }}>
+                    Financial team will get an automatic WhatsApp reminder from this date, on the schedule configured in WhatsApp Integration → Event Mapping.
+                  </Text>
+                </div>
+              )}
             </div>
           )}
 
@@ -4212,6 +4351,8 @@ export default function Purchase() {
                   <Button
                     icon={<WhatsAppOutlined />}
                     onClick={handleBulkAskQuotation}
+                    loading={bulkAskingQuotation}
+                    disabled={!bulkQtyValid || !bulkReminderValid}
                     style={{ width: '100%', height: 40, borderColor: '#25D366', color: '#25D366', fontWeight: 600, borderRadius: 8, fontSize: 13 }}
                   >
                     Ask Quotation via WhatsApp
@@ -4256,6 +4397,8 @@ export default function Purchase() {
                     size="small"
                     icon={<WhatsAppOutlined />}
                     onClick={handleBulkAskQuotation}
+                    loading={bulkAskingQuotation}
+                    disabled={!bulkQtyValid || !bulkReminderValid}
                     style={{ borderColor: '#25D366', color: '#25D366', fontSize: 11 }}
                   >
                     Re-ask / Follow-up
@@ -4267,12 +4410,12 @@ export default function Purchase() {
 
           <div style={{ display: 'flex', gap: 8 }}>
             <Button
-              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkQuotationAsked(false); setBulkRaiseFile(null); }}
+              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); setBulkRaiseFile(null); }}
               style={{ flex: 1, height: 44, borderRadius: 10 }}
             >Cancel</Button>
             <Button
               type="primary"
-              disabled={!bulkQuotationAsked || !bulkRaiseFile || bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms}
+              disabled={!bulkQuotationAsked || !bulkRaiseFile || bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms || !bulkQtyValid || !bulkReminderValid}
               onClick={handleBulkRaiseRequest}
               style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
             >
