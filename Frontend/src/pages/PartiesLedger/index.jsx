@@ -24,6 +24,9 @@ import {
   useGetPartyOrdersQuery,
   useDeletePartyMutation,
   useLazyVerifyGstinQuery,
+  useGetVendorsQuery,
+  useGetVendorLedgerQuery,
+  useDeleteVendorMutation,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -193,6 +196,112 @@ function PartyOrdersSection({ orders = [], isDark, cardBg }) {
   );
 }
 
+const BILL_STATUS_COLOR = { Paid: 'green', 'Partial Paid': 'orange', 'Partially Paid': 'orange', Unpaid: 'red', Pending: 'red' };
+
+// Lists every bill raised against this vendor — merging PurchaseOrder and LocalPurchase,
+// the two separate collections vendor spend is split across — with full item detail
+// and each bill's own payment history, mirroring PartyOrdersSection for customers.
+function VendorBillsSection({ bills = [], isDark, cardBg }) {
+  if (!bills.length) return null;
+  return (
+    <Card
+      style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+      title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ fontSize: FONT_SIZE }}>Bills & Purchases ({bills.length})</span></Space>}
+    >
+      <Space direction="vertical" size={14} style={{ width: '100%' }}>
+        {bills.map((b) => (
+          <div key={b._id} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`, borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '10px 14px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.04)' }}>
+              <Space size={8} wrap>
+                <Text strong style={{ fontSize: 14, color: PRIMARY }}>{b.billNo || b.code}</Text>
+                <Tag color={b.source === 'PurchaseOrder' ? 'blue' : 'geekblue'} style={{ borderRadius: 10 }}>{b.source === 'PurchaseOrder' ? 'Purchase Order' : 'Local Purchase'}</Tag>
+                {b.status && <Tag color={BILL_STATUS_COLOR[b.status] || 'default'} style={{ borderRadius: 10 }}>{b.status}</Tag>}
+                {b.date && <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(b.date).format('DD MMM YYYY')}</Text>}
+              </Space>
+              <Text strong style={{ fontSize: 15, color: PRIMARY }}>₹{Number(b.amount || 0).toLocaleString()}</Text>
+            </div>
+            <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {(b.items || []).map((it, idx) => (
+                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fafafa', borderRadius: 10, border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'}` }}>
+                  <Text strong style={{ fontSize: 13 }}>{it.itemName || `Item ${idx + 1}`}</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{Number(it.qty) || 0} {it.unit || ''}</Text>
+                </div>
+              ))}
+              {(!b.items || b.items.length === 0) && <Text type="secondary" style={{ fontSize: 12 }}>No item details recorded on this bill.</Text>}
+              <Space size={16} style={{ marginTop: 2 }}>
+                <Text style={{ fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Paid: </Text><Text strong style={{ color: '#52c41a' }}>₹{Number(b.paidAmount || 0).toLocaleString()}</Text></Text>
+                <Text style={{ fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Balance: </Text><Text strong style={{ color: b.balance > 0 ? '#ff4d4f' : '#52c41a' }}>₹{Number(b.balance || 0).toLocaleString()}</Text></Text>
+              </Space>
+              {b.invoiceFileUrl && <a href={b.invoiceFileUrl} target="_blank" rel="noreferrer"><Tag icon={<FileTextOutlined />} color="blue" style={{ borderRadius: 12, fontSize: 11 }}>View Invoice</Tag></a>}
+              {(b.paymentHistory || []).length > 0 && (
+                <div style={{ marginTop: 4, paddingTop: 8, borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}` }}>
+                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 4 }}>PAYMENTS ON THIS BILL</Text>
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    {b.paymentHistory.map((p, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                        <Text type="secondary">{p.paidDate ? dayjs(p.paidDate).format('DD MMM YYYY') : ''} {p.paidBy ? `· ${p.paidBy}` : ''}</Text>
+                        <Text strong style={{ color: '#52c41a' }}>₹{Number(p.amount || 0).toLocaleString()}</Text>
+                      </div>
+                    ))}
+                  </Space>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </Space>
+    </Card>
+  );
+}
+
+// Every payment recorded against this vendor, across every bill, in one chronological
+// feed — the "all payment records" view distinct from the per-bill breakdown above.
+function VendorPaymentsSection({ payments = [], cardBg }) {
+  if (!payments.length) return null;
+  const columns = [
+    { title: 'Date', dataIndex: 'paidDate', width: 110, render: (v) => <Text style={{ fontSize: FONT_SIZE }}>{v ? dayjs(v).format('DD MMM YYYY') : '—'}</Text> },
+    {
+      title: 'Bill', key: 'bill', width: 160,
+      render: (_, r) => (
+        <Space size={4}>
+          <Text style={{ fontSize: FONT_SIZE, fontWeight: 600, color: PRIMARY }}>{r.billNo || r.billCode}</Text>
+          <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{r.billSource === 'PurchaseOrder' ? 'PO' : 'Local'}</Tag>
+        </Space>
+      )
+    },
+    { title: 'Amount', dataIndex: 'amount', align: 'right', width: 120, render: (v) => <Text strong style={{ color: '#52c41a', fontSize: FONT_SIZE }}>₹{Number(v || 0).toLocaleString()}</Text> },
+    { title: 'Paid By', dataIndex: 'paidBy', render: (v) => <Text style={{ fontSize: FONT_SIZE }}>{v || <Text type="secondary">—</Text>}</Text> },
+    { title: 'Note', dataIndex: 'note', render: (v) => <Text style={{ fontSize: FONT_SIZE }}>{v || <Text type="secondary">—</Text>}</Text> },
+    {
+      title: 'Proof', key: 'proof', width: 90,
+      render: (_, r) => r.proofUrl ? <a href={r.proofUrl} target="_blank" rel="noreferrer">View</a> : <Text type="secondary">—</Text>
+    },
+  ];
+  return (
+    <Card
+      style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+      title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><WalletOutlined style={{ color: '#52c41a' }} /><span style={{ fontSize: FONT_SIZE }}>Payment History — All Records ({payments.length})</span></Space>}
+    >
+      <Table size="small" dataSource={payments} columns={columns} rowKey={(r, i) => `${r.billId}-${i}`} pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }} scroll={{ x: 'max-content' }} />
+    </Card>
+  );
+}
+
+// Backend ledger rows (both /parties/:id/ledger and /vendors/:id/ledger) share the
+// same shape — entryDate/type/docRef/debit/credit/balance — so one mapper covers
+// customer and vendor ledgers alike, translating it into the Tally-style
+// date/particulars/vch_type/vch_no columns the table below renders.
+const mapLedgerEntry = (e) => ({
+  rawDate: e.entryDate,
+  date: e.entryDate ? dayjs(e.entryDate).format('DD/MM/YYYY') : '',
+  particulars: e.type === 'Order' ? `Order ${e.docRef || ''}`.trim() : e.type === 'Bill' ? `Bill ${e.docRef || ''}`.trim() : (e.docRef || e.type),
+  vch_type: e.type,
+  vch_no: e.docRef || '—',
+  debit: e.debit || 0,
+  credit: e.credit || 0,
+  balance: e.balance || 0,
+});
+
 export default function PartiesLedger() {
   const isDark = useSelector((s) => s.theme.isDark);
   const currentUser = useSelector((s) => s.auth.user);
@@ -217,12 +326,15 @@ export default function PartiesLedger() {
   const [gstPartyError, setGstPartyError] = useState(null);
   const [verifyGstinTrigger] = useLazyVerifyGstinQuery();
 
-  // RTK Query — load parties
-  const { data: partiesData, isLoading: partiesLoading } = useGetPartiesQuery({ limit: 500 });
+  // RTK Query — load customer parties + vendors (two separate collections — see mapVendor)
+  const { data: partiesData, isLoading: partiesLoading } = useGetPartiesQuery({ type: 'Customer', limit: 500 });
+  const { data: vendorsData, isLoading: vendorsLoading } = useGetVendorsQuery({ limit: 500 });
   const [deletePartyMutation] = useDeletePartyMutation();
+  const [deleteVendorMutation] = useDeleteVendorMutation();
 
   const mapParty = (p) => ({
     key: p._id,
+    source: 'Party',
     name: p.name,
     type: p.type,
     phone: p.phone,
@@ -244,24 +356,60 @@ export default function PartiesLedger() {
     balance: p.runningBalance || 0,
   });
 
-  const allRaw = partiesData?.data || [];
-  const supplierList = useMemo(() => allRaw.filter((p) => p.type === 'Supplier').map(mapParty), [allRaw]);
-  const customerList = useMemo(() => allRaw.filter((p) => p.type === 'Customer').map(mapParty), [allRaw]);
+  // Vendors live in a separate collection from Party — purchase/payment history is
+  // sourced from PurchaseOrder/LocalPurchase (see getVendorLedger), not LedgerEntry.
+  const mapVendor = (v) => ({
+    key: v._id,
+    source: 'Vendor',
+    name: v.name,
+    type: 'Supplier',
+    phone: v.phone,
+    email: v.email || '',
+    address: v.address || '',
+    taxId: v.taxId,
+    bankDetails: v.bankDetails,
+    status: v.status,
+    vendorType: v.vendorType,
+    supplierType: v.supplierType,
+    vendorCode: v.vendorCode,
+    totalPurchase: v.totalBilled || 0,
+    totalSales: 0,
+    paid: v.totalPaid || 0,
+    received: v.totalPaid || 0,
+    pending: v.pending || 0,
+    balance: v.pending || 0,
+  });
 
-  // RTK Query — load ledger for selected party
+  const customerList = useMemo(() => (partiesData?.data || []).map(mapParty), [partiesData]);
+  const supplierList = useMemo(() => (vendorsData?.data || []).map(mapVendor), [vendorsData]);
+
+  const isVendorView = viewParty?.source === 'Vendor';
+
+  // RTK Query — load ledger for selected customer party (LedgerEntry + unbilled orders)
   const { data: ledgerData, isLoading: partyLedgerLoading } = useGetPartyLedgerQuery(
     viewParty?.key,
-    { skip: !viewParty }
+    { skip: !viewParty || isVendorView }
   );
-  const partyLedgerData = ledgerData?.data || [];
+  // RTK Query — load ledger for selected vendor (PurchaseOrder + LocalPurchase merged)
+  const { data: vendorLedgerData, isLoading: vendorLedgerLoading } = useGetVendorLedgerQuery(
+    viewParty?.key,
+    { skip: !viewParty || !isVendorView }
+  );
+  const partyLedgerData = useMemo(() => {
+    const raw = isVendorView ? (vendorLedgerData?.ledger || []) : (ledgerData?.data || []);
+    return raw.map(mapLedgerEntry);
+  }, [isVendorView, vendorLedgerData, ledgerData]);
+  const vendorBills = vendorLedgerData?.bills || [];
+  const vendorPayments = vendorLedgerData?.payments || [];
 
   // RTK Query — load this party's orders (with full product/kit specs + attachments)
-  const { data: partyOrdersData } = useGetPartyOrdersQuery(viewParty?.key, { skip: !viewParty });
+  const { data: partyOrdersData } = useGetPartyOrdersQuery(viewParty?.key, { skip: !viewParty || isVendorView });
   const partyOrders = partyOrdersData?.data || [];
 
   const deleteParty = async (party) => {
     try {
-      await deletePartyMutation(party.key).unwrap();
+      if (party.source === 'Vendor') await deleteVendorMutation(party.key).unwrap();
+      else await deletePartyMutation(party.key).unwrap();
       enqueueSnackbar(`${party.name} deleted`, { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to delete party', { variant: 'error' });
@@ -314,7 +462,7 @@ export default function PartiesLedger() {
     let entries = partyLedgerData;
     if (dateRange && dateRange[0] && dateRange[1]) {
       entries = entries.filter(e => {
-        const d = dayjs(e.date);
+        const d = dayjs(e.rawDate);
         return d.isAfter(dateRange[0].startOf('day').subtract(1, 'ms')) && d.isBefore(dateRange[1].endOf('day'));
       });
     }
@@ -586,6 +734,35 @@ export default function PartiesLedger() {
             <Descriptions.Item label="Address">
               <Space size={4}><EnvironmentOutlined style={{ color: '#888' }} />{viewParty.address || <Text type="secondary">—</Text>}</Space>
             </Descriptions.Item>
+            {isVendorView && viewParty.vendorCode && (
+              <Descriptions.Item label="Vendor Code">
+                <Text style={{ fontFamily: 'monospace', fontWeight: 700, color: PRIMARY }}>{viewParty.vendorCode}</Text>
+              </Descriptions.Item>
+            )}
+            {isVendorView && viewParty.taxId && (
+              <Descriptions.Item label="Tax ID">
+                <Text style={{ fontFamily: 'monospace', fontWeight: 600 }}>{viewParty.taxId}</Text>
+              </Descriptions.Item>
+            )}
+            {isVendorView && viewParty.vendorType && (
+              <Descriptions.Item label="Vendor Type">
+                <Tag style={{ borderRadius: 10 }}>{viewParty.vendorType === 'raw_material' ? 'Raw Material' : 'Printing'}</Tag>
+              </Descriptions.Item>
+            )}
+            {isVendorView && viewParty.status && (
+              <Descriptions.Item label="Status">
+                <Tag color={viewParty.status === 'Active' ? 'green' : viewParty.status === 'Blacklisted' ? 'red' : 'default'} style={{ borderRadius: 10 }}>{viewParty.status}</Tag>
+              </Descriptions.Item>
+            )}
+            {isVendorView && viewParty.bankDetails && (viewParty.bankDetails.accountNo || viewParty.bankDetails.upiId) && (
+              <Descriptions.Item label={viewParty.bankDetails.method === 'upi' ? 'UPI' : 'Bank Account'}>
+                <Text style={{ fontFamily: 'monospace' }}>
+                  {viewParty.bankDetails.method === 'upi'
+                    ? (viewParty.bankDetails.upiId || viewParty.bankDetails.upiNumber)
+                    : `${viewParty.bankDetails.accountNo || ''}${viewParty.bankDetails.ifsc ? ' · ' + viewParty.bankDetails.ifsc : ''}`}
+                </Text>
+              </Descriptions.Item>
+            )}
             {viewParty.gst && (
               <Descriptions.Item label="GST Number">
                 <Space size={4}><BankOutlined style={{ color: '#722ed1' }} /><Text style={{ fontFamily: 'monospace', color: '#722ed1', fontWeight: 700 }}>{viewParty.gst}</Text></Space>
@@ -694,8 +871,16 @@ export default function PartiesLedger() {
           </Card>
         )}
 
-        {/* Orders & Products placed by this party — full specs, kit personalization & attachments */}
-        <PartyOrdersSection orders={partyOrders} isDark={isDark} cardBg={cardBg} />
+        {/* Orders/Bills placed by or with this party — full specs, kit personalization,
+            attachments (customers) or item/payment breakdown per bill (vendors) */}
+        {isVendorView ? (
+          <>
+            <VendorBillsSection bills={vendorBills} isDark={isDark} cardBg={cardBg} />
+            <VendorPaymentsSection payments={vendorPayments} cardBg={cardBg} />
+          </>
+        ) : (
+          <PartyOrdersSection orders={partyOrders} isDark={isDark} cardBg={cardBg} />
+        )}
 
         {/* Summary Stats */}
         <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
@@ -807,14 +992,11 @@ export default function PartiesLedger() {
       }
     },
     {
-      title: 'Action', key: 'action', fixed: 'right', width: isSuperAdmin ? 210 : 150,
+      title: 'Action', key: 'action', fixed: 'right', width: isSuperAdmin ? 160 : 100,
       render: (_, r) => (
         <Space size={4}>
           <Button size="small" type="link" icon={<EyeOutlined />} onClick={e => { e.stopPropagation(); openParty(r); }} style={{ color: PRIMARY, padding: '0 4px', fontSize: FONT_SIZE }}>
             Ledger
-          </Button>
-          <Button size="small" type="link" icon={<DownloadOutlined />} onClick={e => { e.stopPropagation(); downloadLedger(r); }} style={{ color: PRIMARY, padding: '0 4px', fontSize: FONT_SIZE }}>
-            Download
           </Button>
           {isSuperAdmin && (
             <Button

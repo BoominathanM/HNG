@@ -1,6 +1,7 @@
 const PurchaseRequest = require('../../models/PurchaseRequest');
 const PurchaseOrder = require('../../models/PurchaseOrder');
 const LocalPurchase = require('../../models/LocalPurchase');
+const Vendor = require('../../models/Vendor');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -114,8 +115,9 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
     const amt = Number(req.body.amount);
     if (!Number.isNaN(amt) && amt >= 0) request.amount = amt;
   }
-  // Re-uploading after a Finance modification request sends it back for review
-  if (request.status === 'Modification') request.status = 'Pending';
+  // Re-uploading after a Finance modification request, or re-requesting after a
+  // rejection, sends it back to Pending for review
+  if (request.status === 'Modification' || request.status === 'Rejected') request.status = 'Pending';
   await request.save({ validateBeforeSave: false });
   notifyRoles({ modules: ['Financial'], userIds: [request.createdBy], type: 'purchase', title: 'Quotation File Uploaded', message: `Quotation uploaded for PR ${request.requestCode} (${request.itemName}) — ready for Finance review`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: request });
@@ -211,7 +213,21 @@ exports.getLocalPurchases = asyncHandler(async (req, res) => {
 
 exports.createLocalPurchase = asyncHandler(async (req, res) => {
   const lpCode = await generateCode('LP');
-  const lp = await LocalPurchase.create({ ...req.body, lpCode, createdBy: req.user._id });
+  let vendorId = req.body.vendorId || null;
+  // Local purchases are entered by name/phone (scanned invoice, no vendor picker) — auto-link
+  // to an existing Vendor by phone or exact name match so purchase history rolls up correctly,
+  // same upsert-matching pattern used for Party.
+  if (!vendorId && (req.body.vendorPhone || req.body.vendorName)) {
+    const match = await Vendor.findOne({
+      deletedAt: null,
+      $or: [
+        ...(req.body.vendorPhone ? [{ phone: req.body.vendorPhone }] : []),
+        ...(req.body.vendorName ? [{ name: new RegExp(`^${req.body.vendorName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }] : []),
+      ],
+    });
+    if (match) vendorId = match._id;
+  }
+  const lp = await LocalPurchase.create({ ...req.body, ...(vendorId ? { vendorId } : {}), lpCode, createdBy: req.user._id });
   res.status(201).json({ success: true, data: lp });
 });
 

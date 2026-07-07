@@ -32,6 +32,7 @@ import {
   useGetLocalPurchaseExpensesQuery,
   usePayLocalPurchaseExpenseMutation,
   useAddPurchaseNoteMutation,
+  useGetVendorsQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -76,6 +77,7 @@ export default function Financial() {
   const { data: localPurchaseExpData } = useGetLocalPurchaseExpensesQuery({ page: localExpPage, limit: localExpPageSize, ...(localExpPayFilter ? { paymentStatus: localExpPayFilter } : {}) });
   const [payLocalPurchase] = usePayLocalPurchaseExpenseMutation();
   const [addPurchaseNote] = useAddPurchaseNoteMutation();
+  const { data: vendorData } = useGetVendorsQuery();
 
   const raisedRequests = useMemo(() => (pendingReqData?.data || []).map((r) => ({
     ...r,
@@ -140,6 +142,11 @@ export default function Financial() {
   const [showEditReqModal, setShowEditReqModal] = useState(false);
   const [editReqTarget, setEditReqTarget] = useState(null);
   const [editReqForm] = Form.useForm();
+
+  /* ── Reject reason modal — so Purchase sees why a request was rejected ── */
+  const [showRejectReasonModal, setShowRejectReasonModal] = useState(false);
+  const [rejectReasonTarget, setRejectReasonTarget] = useState(null);
+  const [rejectReasonInput, setRejectReasonInput] = useState('');
 
   const handleAddReqNote = async (key) => {
     const text = reqNoteInput.trim();
@@ -267,7 +274,16 @@ export default function Financial() {
   const [viewPartyLedger, setViewPartyLedger] = useState(null);
   const [partiesData, setPartiesData] = useState([]);
   const [partyLedgerData, setPartyLedgerData] = useState([]);
-  const suppliersData = {};
+  // Real vendor lookup by name — used as a fallback wherever a request/order's
+  // vendorId wasn't populated (e.g. pre-migration data), so Phone/Email/Address/Bank
+  // still resolve instead of always showing "—".
+  const suppliersData = useMemo(() => {
+    const map = {};
+    (vendorData?.data || []).forEach((v) => {
+      map[v.name] = { id: v._id, name: v.name, phone: v.phone, email: v.email, address: v.address, bankDetails: v.bankDetails };
+    });
+    return map;
+  }, [vendorData]);
 
   // ── Expense Payments — from RTK Query ──
   const expenseRequests = useMemo(() => (expensePaymentsData?.data || []).map((e) => ({
@@ -548,15 +564,14 @@ export default function Financial() {
             >Re-Request Quotation</Button>
           </Badge>
         );
-        const supPhone = (suppliersData[r.supplier]?.phone || '').replace(/\D/g, '');
-        const latestNote = (r.notes || []).at(-1);
-        const waMsg = `*Quotation Request*\n\n*Item:* ${r.item}\n*Quantity:* ${r.qty} ${r.unit}\n*Payment Terms:* ${r.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nPlease provide a quotation at the earliest.`;
         const order = findOrderForRequest(r);
         return (
           <Space wrap size={[4, 4]}>
-            {r.quotation_file && (
+            {(r.quotationFiles?.length > 0 || r.quotation_file) && (
               <Button size="small" icon={<FileTextOutlined />} onClick={() => setViewQuotationFile(r)}
-                style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>File</Button>
+                style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>
+                File{r.quotationFiles?.length > 1 ? ` (${r.quotationFiles.length})` : ''}
+              </Button>
             )}
             {r.status === 'Pending' && (() => {
               const batchPendingCount = r.batchId
@@ -583,20 +598,11 @@ export default function Financial() {
                     </Button>
                   )}
                   <Button size="small" danger icon={<CloseCircleOutlined />}
-                    onClick={async () => {
-                      try { await rejectReq({ id: r.key }).unwrap(); enqueueSnackbar('Rejected', { variant: 'warning' }); }
-                      catch { enqueueSnackbar('Rejection failed', { variant: 'error' }); }
-                    }}>Reject</Button>
+                    onClick={() => { setRejectReasonTarget(r); setRejectReasonInput(''); setShowRejectReasonModal(true); }}
+                  >Reject</Button>
                 </>
               );
             })()}
-            {noteCount > 0 && (
-              <Button size="small" icon={<WhatsAppOutlined />}
-                style={{ borderColor: '#25D366', color: '#25D366' }}
-                onClick={() => window.open(`https://wa.me/${supPhone}?text=${encodeURIComponent(waMsg)}`, '_blank')}>
-                Ask
-              </Button>
-            )}
             {order && (
               <>
                 <Button size="small" icon={<EyeOutlined />} onClick={() => setViewRequest(order)}
@@ -618,7 +624,7 @@ export default function Financial() {
                 style={{ borderColor: '#722ed1', color: '#722ed1' }}
               >Edit</Button>
             )}
-            {noteBtn}
+            {r.status !== 'Approved' && noteBtn}
           </Space>
         );
       }
@@ -1191,7 +1197,7 @@ export default function Financial() {
                     try {
                       await updateQuotation({ id: editReqTarget.key, qty: vals.qty, paymentTerms: vals.payment_terms, amount: vals.amount }).unwrap();
                     } catch { /* silent */ }
-                    const phone = (suppliersData[editReqTarget.supplier]?.phone || '').replace(/\D/g, '');
+                    const phone = (editReqTarget.vendorId?.phone || suppliersData[editReqTarget.supplier]?.phone || '').replace(/\D/g, '');
                     const latestNote = (editReqTarget.notes || []).at(-1);
                     const msg = `*Updated Quotation Request*\n\n*Item:* ${editReqTarget.item}\n*Quantity:* ${vals.qty} ${editReqTarget.unit}\n*Payment Terms:* ${vals.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly provide an updated quotation at the earliest.`;
                     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
@@ -1201,6 +1207,55 @@ export default function Financial() {
                 }}>Save & Send via WhatsApp</Button>
             </div>
           </Form>
+        )}
+      </Modal>
+
+      {/* Reject Reason Modal — reason is passed to Purchase so they know why & can re-request */}
+      <Modal
+        title={
+          <Space>
+            <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+            <Text strong style={{ fontSize: 15 }}>Reject Request</Text>
+          </Space>
+        }
+        open={showRejectReasonModal}
+        onCancel={() => { setShowRejectReasonModal(false); setRejectReasonTarget(null); setRejectReasonInput(''); }}
+        footer={null}
+        width={420}
+        centered
+      >
+        {rejectReasonTarget && (
+          <>
+            <Text style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
+              Rejecting <Text strong>{rejectReasonTarget.item}</Text> ({rejectReasonTarget.qty} {rejectReasonTarget.unit}) from <Text strong>{rejectReasonTarget.supplier}</Text>.
+            </Text>
+            <Input.TextArea
+              rows={3}
+              placeholder="Reason for rejection (shown to Purchase, e.g. price too high, wrong vendor)..."
+              value={rejectReasonInput}
+              onChange={(e) => setRejectReasonInput(e.target.value)}
+              style={{ marginBottom: 14 }}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button style={{ flex: 1 }} onClick={() => { setShowRejectReasonModal(false); setRejectReasonTarget(null); setRejectReasonInput(''); }}>Cancel</Button>
+              <Button
+                danger
+                type="primary"
+                style={{ flex: 2 }}
+                onClick={async () => {
+                  try {
+                    await rejectReq({ id: rejectReasonTarget.key, reason: rejectReasonInput.trim() }).unwrap();
+                    enqueueSnackbar('Rejected', { variant: 'warning' });
+                    setShowRejectReasonModal(false);
+                    setRejectReasonTarget(null);
+                    setRejectReasonInput('');
+                  } catch { enqueueSnackbar('Rejection failed', { variant: 'error' }); }
+                }}
+              >
+                Confirm Reject
+              </Button>
+            </div>
+          </>
         )}
       </Modal>
 
@@ -1338,14 +1393,16 @@ export default function Financial() {
             <Button
               type="primary"
               icon={<UploadOutlined />}
-              disabled={!viewQuotationFile?.quotation_file_url}
+              disabled={!(viewQuotationFile?.quotationFiles?.length > 0 || viewQuotationFile?.quotation_file_url)}
               style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
               onClick={() => {
-                if (!viewQuotationFile?.quotation_file_url) return;
-                window.open(viewQuotationFile.quotation_file_url, '_blank');
+                const files = viewQuotationFile?.quotationFiles || [];
+                const url = files.length > 0 ? files[files.length - 1].url : viewQuotationFile?.quotation_file_url;
+                if (!url) return;
+                window.open(url, '_blank');
               }}
             >
-              Open / Download File
+              Open Latest File
             </Button>
           </div>
         }
@@ -1354,28 +1411,29 @@ export default function Financial() {
       >
         {viewQuotationFile && (
           <div style={{ marginTop: 16 }}>
-            {/* File banner */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A12,#D85C9E08)', border: '1.5px solid #B11E6A33', marginBottom: 16 }}>
-              <div style={{ width: 48, height: 48, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <FileTextOutlined style={{ color: '#fff', fontSize: 22 }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Text strong style={{ color: '#B11E6A', fontSize: 13, display: 'block', wordBreak: 'break-all' }}>{viewQuotationFile.quotation_file || 'No file uploaded'}</Text>
-                <Text type="secondary" style={{ fontSize: 11 }}>Uploaded by the Purchase team</Text>
-              </div>
+            {/* All uploaded quotation files — every re-request/re-submit is kept, not just the latest */}
+            <div style={{ borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A12,#D85C9E08)', border: '1.5px solid #B11E6A33', marginBottom: 16, padding: '12px 16px' }}>
+              <Text strong style={{ color: '#B11E6A', fontSize: 12, display: 'block', marginBottom: 8 }}>
+                <FileTextOutlined style={{ marginRight: 6 }} />
+                Uploaded Quotation Files{viewQuotationFile.quotationFiles?.length > 1 ? ` (${viewQuotationFile.quotationFiles.length})` : ''}
+              </Text>
+              {(!viewQuotationFile.quotationFiles || viewQuotationFile.quotationFiles.length === 0) && (
+                <Text type="secondary" style={{ fontSize: 12 }}>No file uploaded</Text>
+              )}
+              {(viewQuotationFile.quotationFiles || []).slice().reverse().map((f, i, arr) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: i > 0 ? `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` : 'none' }}>
+                  <FileTextOutlined style={{ color: '#B11E6A' }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={{ fontSize: 12, fontWeight: i === 0 ? 700 : 500, color: i === 0 ? '#B11E6A' : textColor }}>
+                      {i === 0 && arr.length > 1 ? 'Latest — ' : ''}{f.uploadedAt ? new Date(f.uploadedAt).toLocaleString() : `File ${arr.length - i}`}
+                    </Text>
+                  </div>
+                  <Button size="small" type="link" onClick={() => window.open(f.url, '_blank')} style={{ padding: 0, fontWeight: 600 }}>
+                    View
+                  </Button>
+                </div>
+              ))}
             </div>
-
-            {/* Inline preview of the uploaded quotation */}
-            {viewQuotationFile.quotation_file_url && (
-              /\.(png|jpe?g|gif|webp|bmp)$/i.test(viewQuotationFile.quotation_file_url) ? (
-                <Image src={viewQuotationFile.quotation_file_url} alt="Quotation" style={{ width: '100%', borderRadius: 8, marginBottom: 16, border: '1px solid #f0f0f0' }} />
-              ) : (
-                <a href={viewQuotationFile.quotation_file_url} target="_blank" rel="noreferrer"
-                  style={{ display: 'block', marginBottom: 16, color: '#B11E6A', fontWeight: 600 }}>
-                  <FileTextOutlined style={{ marginRight: 6 }} />Open attached document in new tab
-                </a>
-              )
-            )}
 
             {/* Request summary */}
             <Descriptions bordered size="small" column={2}>

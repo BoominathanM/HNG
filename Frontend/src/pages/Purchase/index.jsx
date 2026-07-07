@@ -11,13 +11,13 @@ import {
 import {
   PlusOutlined, DownloadOutlined, ShoppingOutlined, SearchOutlined,
   UploadOutlined, EyeOutlined, EditOutlined, FileTextOutlined, WarningOutlined, InfoCircleOutlined, WhatsAppOutlined,
-  TeamOutlined, ContactsOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined, SafetyCertificateOutlined,
+  TeamOutlined, ContactsOutlined, LeftOutlined, CheckOutlined, UserOutlined, CameraOutlined,
   ThunderboltOutlined, RobotOutlined, MessageOutlined, BellOutlined, CloseOutlined, ClockCircleOutlined, ReloadOutlined, SaveOutlined, TruckOutlined, CheckCircleOutlined,
   MoreOutlined, MinusOutlined, QrcodeOutlined, ExclamationCircleOutlined, PhoneOutlined, CarOutlined, SyncOutlined, SendOutlined,
   DollarCircleOutlined
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
-import { addRaisedRequest, addBulkRequests, dismissNewProductRequest, updateFinanceStatus, updateRequestQty, addRequestNote, updateQuotationDetails, setRaisedRequests, setPurchaseOrders } from '../../store/slices/purchaseSlice';
+import { addRaisedRequest, addBulkRequests, dismissNewProductRequest, updateRequestQty, addRequestNote, updateQuotationDetails, setRaisedRequests, setPurchaseOrders } from '../../store/slices/purchaseSlice';
 import {
   useGetVendorsQuery,
   useCreateVendorMutation,
@@ -34,6 +34,7 @@ import {
   useGetWhatsAppEventMappingsQuery,
   useUploadFilesMutation,
   useSendWhatsAppMessageMutation,
+  useAddPurchaseNoteMutation,
 } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
 import html2pdf from 'html2pdf.js';
@@ -71,6 +72,38 @@ const formatBankDetails = (bank) => {
 
 // All data loaded from backend API via useEffect below
 
+// Marks which inventory items already had "Ask Quotation" sent, so the row keeps
+// showing "Raise Request" (instead of reverting to "Ask Quotation") across a page
+// refresh — there's no backend record for this in-between state yet, so it's kept
+// in localStorage rather than lost as plain component state.
+const WHATSAPP_SENT_ITEMS_STORAGE_KEY = 'purchase_whatsappSentItems';
+const loadWhatsappSentItems = () => {
+  try {
+    const raw = localStorage.getItem(WHATSAPP_SENT_ITEMS_STORAGE_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+};
+const saveWhatsappSentItems = (set) => {
+  try { localStorage.setItem(WHATSAPP_SENT_ITEMS_STORAGE_KEY, JSON.stringify([...set])); } catch { /* best-effort */ }
+};
+
+// Captures the supplier + quantity chosen during "Ask Quotation" per item, so the
+// Raise Request modal can carry them over instead of asking again.
+const ASK_QUOTATION_DETAILS_STORAGE_KEY = 'purchase_askQuotationDetails';
+const loadAskQuotationDetails = () => {
+  try {
+    const raw = localStorage.getItem(ASK_QUOTATION_DETAILS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+const saveAskQuotationDetails = (map) => {
+  try { localStorage.setItem(ASK_QUOTATION_DETAILS_STORAGE_KEY, JSON.stringify(map)); } catch { /* best-effort */ }
+};
+
 export default function Purchase() {
   const makeUpload = useCloudinaryUpload();
   const isDark = useSelector((s) => s.theme.isDark);
@@ -97,6 +130,7 @@ export default function Purchase() {
   const [raiseRequestMutation] = useRaiseRequestMutation();
   const [createBulkRequestMutation] = useCreateBulkRequestMutation();
   const [uploadQuotationFile] = useUploadQuotationFileMutation();
+  const [addPurchaseNoteMutation] = useAddPurchaseNoteMutation();
   const { data: whatsAppMappingsData } = useGetWhatsAppEventMappingsQuery();
   const [uploadFilesMutation] = useUploadFilesMutation();
   const [sendWhatsAppMessageMutation] = useSendWhatsAppMessageMutation();
@@ -142,6 +176,7 @@ export default function Purchase() {
       status: r.status, notes: r.notes || [], financeNote: r.financeNote || '',
       requestType: r.requestType || 'individual', category: r.category || r.itemId?.category || 'Other',
       batchId: r.batchId || null, quotationFiles: r.quotationFiles || [],
+      amount: r.amount ?? null,
     }));
     if (mapped.length > 0) dispatch(setRaisedRequests(mapped));
   }, [requestsData]);
@@ -214,12 +249,36 @@ export default function Purchase() {
   const [raiseRequestScanLoading, setRaiseRequestScanLoading] = useState(false);
   const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
   const [raiseRequestAmount, setRaiseRequestAmount] = useState(null);
-  const [raiseReqQuotationAsked, setRaiseReqQuotationAsked] = useState(false);
-  const [raiseReqAskingQuotation, setRaiseReqAskingQuotation] = useState(false);
   const [raiseRequestForm] = Form.useForm();
+  const raiseReqQtyWatch = Form.useWatch('qty', raiseRequestForm);
+  const raiseReqUnitWatch = Form.useWatch('unit', raiseRequestForm);
 
-  /* ── WhatsApp sent tracking for stock status flow ── */
-  const [whatsappSentItems, setWhatsappSentItems] = useState(new Set());
+  /* ── Re-Request Quotation modal (Rejected requests — upload revised file + amount) ── */
+  const [showRerequestModal, setShowRerequestModal] = useState(false);
+  const [rerequestTarget, setRerequestTarget] = useState(null);
+  const [rerequestFile, setRerequestFile] = useState(null);
+  const [rerequestAmount, setRerequestAmount] = useState(null);
+  const [rerequestSubmitting, setRerequestSubmitting] = useState(false);
+
+  /* ── WhatsApp sent tracking for stock status flow (persisted so it survives a refresh) ── */
+  const [whatsappSentItems, setWhatsappSentItemsState] = useState(loadWhatsappSentItems);
+  const setWhatsappSentItems = (updater) => {
+    setWhatsappSentItemsState((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      saveWhatsappSentItems(next);
+      return next;
+    });
+  };
+
+  /* ── Supplier + qty captured per item at Ask Quotation time (persisted so Raise Request can reuse them) ── */
+  const [askQuotationDetails, setAskQuotationDetailsState] = useState(loadAskQuotationDetails);
+  const setAskQuotationDetails = (updater) => {
+    setAskQuotationDetailsState((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      saveAskQuotationDetails(next);
+      return next;
+    });
+  };
 
   /* ── Place Order modal ── */
   const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
@@ -233,14 +292,39 @@ export default function Purchase() {
   const [bulkPayTerms, setBulkPayTerms] = useState('');
   const [bulkReminderDate, setBulkReminderDate] = useState(null);
   const [bulkQuotationAsked, setBulkQuotationAsked] = useState(false);
-  const [bulkRaiseFile, setBulkRaiseFile] = useState(null);
-  const [bulkRaiseAmount, setBulkRaiseAmount] = useState(null);
-  const [bulkRaiseScanLoading, setBulkRaiseScanLoading] = useState(false);
   const [bulkAskingQuotation, setBulkAskingQuotation] = useState(false);
   const bulkSelectedItems = useMemo(() => bulkItems.filter(i => i.selected), [bulkItems]);
   const bulkQtyValid = bulkSelectedItems.length > 0 && bulkSelectedItems.every(i => Number(i.qty) > 0);
   const bulkReminderRequired = !!bulkPayTerms && bulkPayTerms !== '100% Payment';
   const bulkReminderValid = !bulkReminderRequired || !!bulkReminderDate;
+
+  /* ── Inline Upload+Amount completion for Pending rows in the Bulk Purchase
+     Requests table — lets Purchase attach/update the quotation straight from
+     the row's Action column instead of reopening the raise modal. Keyed by
+     request id (r.key). ── */
+  const [pendingRowFile, setPendingRowFile] = useState({});
+  const [pendingRowAmount, setPendingRowAmount] = useState({});
+  const [pendingRowSaving, setPendingRowSaving] = useState({});
+  const handlePendingRowSave = async (r) => {
+    const file = pendingRowFile[r.key];
+    const amount = pendingRowAmount[r.key];
+    if (!file) { enqueueSnackbar('Select the quotation file to upload', { variant: 'warning' }); return; }
+    if (amount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
+    setPendingRowSaving(prev => ({ ...prev, [r.key]: true }));
+    try {
+      const fd = new FormData();
+      fd.append('quotation', file);
+      fd.append('amount', amount);
+      await uploadQuotationFile({ id: r.key, formData: fd }).unwrap();
+      setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+      setPendingRowAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+      enqueueSnackbar('Quotation & amount saved', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Failed to save quotation', { variant: 'error' });
+    } finally {
+      setPendingRowSaving(prev => ({ ...prev, [r.key]: false }));
+    }
+  };
 
   /* ── WhatsApp reminder tracking (30-min intervals per inventory item key) ── */
   const reminderIntervalsRef = useRef({});
@@ -260,12 +344,6 @@ export default function Purchase() {
   const [editingReqKey, setEditingReqKey] = useState(null);
   const [editQtyValue, setEditQtyValue] = useState(1);
 
-  /* ── Finance status mock modal (demo: allow setting finance status) ── */
-  const [showFinanceStatusModal, setShowFinanceStatusModal] = useState(false);
-  const [financeStatusTarget, setFinanceStatusTarget] = useState(null);
-  const [financeNoteInput, setFinanceNoteInput] = useState('');
-  const [financeDecision, setFinanceDecision] = useState('');
-
   /* ── Track keys whose qty was recently edited (show Re-request button) ── */
   const [recentlyEditedKeys, setRecentlyEditedKeys] = useState(new Set());
 
@@ -274,13 +352,8 @@ export default function Purchase() {
   const [editQuotationTarget, setEditQuotationTarget] = useState(null);
   const [editReqForm] = Form.useForm();
 
-  /* ── Multi-select extra products for Ask Quotation modal ── */
-  const [quotationExtraProducts, setQuotationExtraProducts] = useState([]);
-  const [quotationExtraQtys, setQuotationExtraQtys] = useState({});
+  const [askQuotationSending, setAskQuotationSending] = useState(false);
 
-  /* ── Multi-select extra products for Raise Request modal ── */
-  const [raiseRequestExtraProducts, setRaiseRequestExtraProducts] = useState([]);
-  const [raiseRequestExtraQtys, setRaiseRequestExtraQtys] = useState({});
   const [placeOrderFiftyDate, setPlaceOrderFiftyDate] = useState(null);
 
   /* ── LR Tracking modal ── */
@@ -314,6 +387,7 @@ export default function Purchase() {
       lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
       lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
       paymentProof: o.paymentProofUrl || null,
+      paymentHistory: o.paymentHistory || [],
       deliveryStatus: o.dispatchStatus === 'Received' ? 'Delivered' : 'In Transit',
       receivedStatus: o.dispatchStatus === 'Received' ? 'received' : null,
     })));
@@ -552,16 +626,109 @@ export default function Purchase() {
     if (!requireAccess('add')) return;
     setSelectedProduct(product);
     setSelectedSupplier(null);
-    setQuotationExtraProducts([]);
-    setQuotationExtraQtys({});
-    const suggestQty = product.min > product.current ? (product.min - product.current) * 2 : product.min;
     purchaseForm.setFieldsValue({
       product: product.name,
       product_code: product.code || '',
-      qty: suggestQty,
+      qty: undefined,
       unit: product.unit
     });
     setShowAddPurchaseModal(true);
+  };
+
+  // Per-row "Ask Quotation" counterpart to handleBulkAskQuotation — builds a real
+  // Product/Required-Quantity PDF for just this table row's item and sends it through
+  // its own "purchase-ask-quotation" WhatsApp event/template mapping (separate from
+  // "bulk-purchase-request"), same reference pipeline as the bulk flow.
+  const handleAskQuotationSend = async () => {
+    let values;
+    try {
+      values = await purchaseForm.validateFields();
+    } catch {
+      return; // antd already highlights the invalid/empty fields (supplier, qty)
+    }
+    if (!selectedSupplier) { enqueueSnackbar('Please select a supplier first', { variant: 'warning' }); return; }
+    const mainQty = Number(values.qty) || 0;
+    if (mainQty <= 0) { enqueueSnackbar('Enter a valid quantity to request', { variant: 'warning' }); return; }
+
+    const items = [{
+      name: values.product,
+      category: selectedProduct?.category || 'Other',
+      qty: mainQty,
+      unit: values.unit || selectedProduct?.unit || '',
+    }];
+
+    // Carry the chosen supplier + qty forward so Raise Request doesn't ask again.
+    if (selectedProduct?.key) {
+      setAskQuotationDetails(prev => ({
+        ...prev,
+        [selectedProduct.key]: {
+          supplierId: selectedSupplier.id,
+          supplierName: selectedSupplier.name,
+          qty: mainQty,
+          unit: values.unit || selectedProduct?.unit || '',
+        },
+      }));
+    }
+
+    setAskQuotationSending(true);
+    try {
+      const pdfBlob = await generateBulkRequestPdfBlob(selectedSupplier.name, '', items, 'Quotation Request');
+      const filename = `quotation-request-${selectedSupplier.name}.pdf`;
+
+      let sent = false;
+      const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
+      const mapping = (whatsAppMappingsData?.data || []).find(
+        (m) => m.eventId?.key === 'purchase-ask-quotation' && m.isEnabled !== false && m.templateId?.name
+      );
+      if (selectedSupplier?.phone && isObjectId(selectedSupplier?.id) && mapping) {
+        const formData = new FormData();
+        formData.append('files', new File([pdfBlob], filename, { type: 'application/pdf' }));
+        const uploadRes = await uploadFilesMutation({ formData, folder: 'purchase' }).unwrap();
+        const documentUrl = uploadRes?.data?.[0]?.url;
+        if (documentUrl) {
+          const totalQty = items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0);
+          const fieldValues = {
+            vendorName: selectedSupplier.name,
+            itemName: values.product,
+            itemCount: String(items.length),
+            totalQty: String(totalQty),
+            companyName: 'HNG',
+          };
+          const parameters = {};
+          (mapping.variables || []).forEach((v) => {
+            if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
+          });
+          const phone = selectedSupplier.phone.replace(/\D/g, '');
+          await sendWhatsAppMessageMutation({
+            to: phone,
+            templateName: mapping.templateId.name,
+            language: mapping.templateId.language || 'en',
+            parameters,
+            documentUrl,
+            documentFilename: filename,
+          }).unwrap();
+          sent = true;
+        }
+      }
+      if (selectedProduct?.key) {
+        setWhatsappSentItems(prev => new Set(prev).add(selectedProduct.key));
+        startQuotationReminder(selectedProduct.key, selectedProduct.name, values.supplier);
+      }
+      enqueueSnackbar(
+        sent
+          ? 'Quotation request document sent to supplier via WhatsApp!'
+          : 'Quotation request document generated. Map a document template to the "Purchase - Ask Quotation (Per Item)" event in Integrations → WhatsApp to auto-send it to the supplier.',
+        { variant: sent ? 'success' : 'info', autoHideDuration: 5000 }
+      );
+      setShowAddPurchaseModal(false);
+      purchaseForm.resetFields();
+      setSelectedProduct(null);
+      setSelectedSupplier(null);
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || err?.message || 'Failed to prepare quotation request', { variant: 'error' });
+    } finally {
+      setAskQuotationSending(false);
+    }
   };
 
   const handleSupplierAIScan = () => {
@@ -621,98 +788,21 @@ export default function Purchase() {
 
   const handleOpenRaiseRequest = (product) => {
     setRaiseRequestProduct(product);
-    setRaiseRequestSupplier(null);
+    // Supplier + quantity were already captured when "Ask Quotation" was sent for this
+    // item — reuse them here instead of asking again.
+    const details = askQuotationDetails[product.key];
+    const supplierFromDetails = details
+      ? (suppliers.find(s => s.id === details.supplierId) || { id: details.supplierId, key: details.supplierId, name: details.supplierName, phone: '', email: '', address: '' })
+      : null;
+    setRaiseRequestSupplier(supplierFromDetails);
     setRaiseRequestFile(null);
     setRaiseRequestAmount(null);
-    setRaiseReqQuotationAsked(false);
     setRaiseRequestPaymentTerms('');
-    setRaiseRequestExtraProducts([]);
-    setRaiseRequestExtraQtys({});
-    const suggestQty = product.min > product.current ? (product.min - product.current) * 2 : product.min;
+    const qty = details?.qty ?? (product.min > product.current ? (product.min - product.current) * 2 : product.min);
+    const unit = details?.unit || product.unit;
     raiseRequestForm.resetFields();
-    raiseRequestForm.setFieldsValue({ product: product.name, product_code: product.code || '', qty: suggestQty, unit: product.unit });
+    raiseRequestForm.setFieldsValue({ product: product.name, product_code: product.code || '', qty, unit });
     setShowRaiseRequestModal(true);
-  };
-
-  // Separate-flow counterpart to handleBulkAskQuotation — reuses the same
-  // "bulk-purchase-request" WhatsApp event/template (no second "ask" event), just
-  // for the single main product + any "also raise for" extras.
-  const handleRaiseRequestAskQuotation = async () => {
-    if (!raiseRequestProduct) { enqueueSnackbar('Select a product first', { variant: 'warning' }); return; }
-    if (!raiseRequestSupplier) { enqueueSnackbar('Select a supplier first', { variant: 'warning' }); return; }
-    const values = raiseRequestForm.getFieldsValue();
-    if (!values.payment_terms) { enqueueSnackbar('Select payment terms', { variant: 'warning' }); return; }
-    const mainQty = Number(values.qty) || 0;
-    if (mainQty <= 0) { enqueueSnackbar('Enter a valid quantity', { variant: 'warning' }); return; }
-
-    const items = [{
-      name: raiseRequestProduct.name,
-      category: raiseRequestProduct.category || 'Other',
-      qty: mainQty,
-      unit: values.unit || raiseRequestProduct.unit || '',
-    }];
-    raiseRequestExtraProducts.forEach((productKey) => {
-      const inv = inventoryItems.find((i) => i.key === productKey);
-      items.push({
-        name: inv?.name || productKey,
-        category: inv?.category || 'Other',
-        qty: raiseRequestExtraQtys[productKey] || inv?.min || 1,
-        unit: inv?.unit || 'Pcs',
-      });
-    });
-
-    setRaiseReqAskingQuotation(true);
-    try {
-      const pdfBlob = await generateBulkRequestPdfBlob(raiseRequestSupplier.name, values.payment_terms, items);
-      const filename = `purchase-request-${raiseRequestSupplier.name}.pdf`;
-
-      let sent = false;
-      const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
-      const mapping = (whatsAppMappingsData?.data || []).find(
-        (m) => m.eventId?.key === 'bulk-purchase-request' && m.isEnabled !== false && m.templateId?.name
-      );
-      if (raiseRequestSupplier?.phone && isObjectId(raiseRequestSupplier?.id) && mapping) {
-        const formData = new FormData();
-        formData.append('files', new File([pdfBlob], filename, { type: 'application/pdf' }));
-        const uploadRes = await uploadFilesMutation({ formData, folder: 'purchase' }).unwrap();
-        const documentUrl = uploadRes?.data?.[0]?.url;
-        if (documentUrl) {
-          const totalQty = items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0);
-          const fieldValues = {
-            vendorName: raiseRequestSupplier.name,
-            itemCount: String(items.length),
-            totalQty: String(totalQty),
-            paymentTerms: values.payment_terms,
-            companyName: 'HNG',
-          };
-          const parameters = {};
-          (mapping.variables || []).forEach((v) => {
-            if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
-          });
-          const phone = raiseRequestSupplier.phone.replace(/\D/g, '');
-          await sendWhatsAppMessageMutation({
-            to: phone,
-            templateName: mapping.templateId.name,
-            language: mapping.templateId.language || 'en',
-            parameters,
-            documentUrl,
-            documentFilename: filename,
-          }).unwrap();
-          sent = true;
-        }
-      }
-      setRaiseReqQuotationAsked(true);
-      enqueueSnackbar(
-        sent
-          ? 'Quotation request document sent to supplier via WhatsApp!'
-          : 'Quotation request document generated. Map a document template to the "Bulk Purchase Request" event in Integrations → WhatsApp to auto-send it to the supplier.',
-        { variant: sent ? 'success' : 'info' }
-      );
-    } catch (err) {
-      enqueueSnackbar(err?.data?.message || err?.data || err?.message || 'Failed to prepare quotation request', { variant: 'error' });
-    } finally {
-      setRaiseReqAskingQuotation(false);
-    }
   };
 
   const handleRaiseRequestAIScan = () => {
@@ -731,37 +821,23 @@ export default function Purchase() {
 
   const handleRaiseRequestSubmit = () => {
     raiseRequestForm.validateFields().then(async (values) => {
-      if (!raiseReqQuotationAsked) { enqueueSnackbar('Ask the supplier for a quotation first', { variant: 'warning' }); return; }
       if (!raiseRequestFile) { enqueueSnackbar('Please upload the received quotation file to raise a request', { variant: 'warning' }); return; }
       if (raiseRequestAmount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
       const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
       const vendorId = raiseRequestSupplier?.id;
-      const paymentTerms = values.payment_terms || 'From Quotation';
+      const paymentTerms = values.payment_terms;
       const reminderRequired = paymentTerms === '50% Advance, 50% on Dispatch' || paymentTerms === '50% Advance, 50% After Delivery (Max 15 days)';
       if (reminderRequired && !values.payment_reminder_date) {
         enqueueSnackbar('Select a reminder date for the 2nd payment', { variant: 'warning' });
         return;
       }
 
-      // Build the list of items: main product + any extra products — submitted as
-      // ONE batched call so the backend assigns a shared batchId (a lone item is
-      // just a "batch of one"), giving this Separate flow the same consolidated
-      // order/amount/payment-history behavior as Bulk Purchase Request.
       const items = [{
         itemName: values.product,
         itemId: raiseRequestProduct?.key,
         qty: Number(values.qty) || 0,
         unit: values.unit || raiseRequestProduct?.unit || '',
       }];
-      raiseRequestExtraProducts.forEach((productKey) => {
-        const invItem = inventoryItems.find((i) => i.key === productKey);
-        items.push({
-          itemName: invItem?.name || productKey,
-          itemId: invItem?.key,
-          qty: raiseRequestExtraQtys[productKey] || invItem?.min || 1,
-          unit: invItem?.unit || 'Pcs',
-        });
-      });
 
       try {
         const payload = {
@@ -778,6 +854,7 @@ export default function Purchase() {
         };
         const res = await raiseRequestMutation(payload).unwrap();
         const created = res?.data || [];
+        const complaintNote = (values.complaint_notes || '').trim();
         for (const reqDoc of created) {
           const id = reqDoc?._id;
           if (id && raiseRequestFile) {
@@ -788,8 +865,16 @@ export default function Purchase() {
               await uploadQuotationFile({ id, formData: fd }).unwrap();
             } catch { /* file upload is best-effort */ }
           }
+          if (id && complaintNote) {
+            try {
+              await addPurchaseNoteMutation({ id, text: `Complaint/Issue: ${complaintNote}` }).unwrap();
+            } catch { /* note is best-effort */ }
+          }
         }
         enqueueSnackbar(`${created.length || items.length} request(s) sent to Financial Quotation!`, { variant: 'success' });
+        if (raiseRequestProduct?.key) {
+          setWhatsappSentItems(prev => { const s = new Set(prev); s.delete(raiseRequestProduct.key); return s; });
+        }
         setShowRaiseRequestModal(false);
         raiseRequestForm.resetFields();
         setRaiseRequestProduct(null);
@@ -797,9 +882,6 @@ export default function Purchase() {
         setRaiseRequestFile(null);
         setRaiseRequestPaymentTerms('');
         setRaiseRequestAmount(null);
-        setRaiseReqQuotationAsked(false);
-        setRaiseRequestExtraProducts([]);
-        setRaiseRequestExtraQtys({});
       } catch (err) {
         enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise request', { variant: 'error' });
       }
@@ -967,8 +1049,6 @@ export default function Purchase() {
   const handleBulkSupplierSelect = (supplierName) => {
     setBulkSupplierName(supplierName);
     setBulkQuotationAsked(false);
-    setBulkRaiseFile(null);
-    setBulkRaiseAmount(null);
     setBulkReminderDate(null);
     const supplierItems = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.sellerName === supplierName);
     const otherLowStock = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.sellerName !== supplierName);
@@ -989,7 +1069,7 @@ export default function Purchase() {
 
   // Renders a Product Name / Required Quantity table to a real PDF Blob using html2pdf
   // (html2canvas + jsPDF), the same recipe Billing uses for invoice/quotation documents.
-  const generateBulkRequestPdfBlob = async (supplierName, paymentTerms, items) => {
+  const generateBulkRequestPdfBlob = async (supplierName, paymentTerms, items, title = 'Bulk Purchase Request') => {
     const rows = items.map(i => `
       <tr>
         <td style="padding:8px 10px;border:1px solid #ddd;">${i.name}</td>
@@ -999,9 +1079,9 @@ export default function Purchase() {
       </tr>`).join('');
     const html = `
       <div style="font-family:Arial,sans-serif;padding:20px;width:700px;">
-        <h2 style="color:#B11E6A;margin:0 0 4px;">Bulk Purchase Request</h2>
+        <h2 style="color:#B11E6A;margin:0 0 4px;">${title}</h2>
         <p style="margin:0 0 2px;"><strong>Supplier:</strong> ${supplierName}</p>
-        <p style="margin:0 0 2px;"><strong>Payment Terms:</strong> ${paymentTerms}</p>
+        ${paymentTerms ? `<p style="margin:0 0 2px;"><strong>Payment Terms:</strong> ${paymentTerms}</p>` : ''}
         <p style="margin:0 0 14px;"><strong>Date:</strong> ${dayjs().format('DD MMM YYYY')}</p>
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
           <thead>
@@ -1097,8 +1177,6 @@ export default function Purchase() {
   };
 
   const handleBulkRaiseRequest = async () => {
-    if (!bulkRaiseFile) { enqueueSnackbar('Please upload the quotation file received from the supplier', { variant: 'warning' }); return; }
-    if (bulkRaiseAmount == null) { enqueueSnackbar('Enter the quoted amount for this batch', { variant: 'warning' }); return; }
     const selected = bulkSelectedItems;
     if (selected.length === 0) { enqueueSnackbar('Select at least one product', { variant: 'warning' }); return; }
     if (!bulkSupplierName) { enqueueSnackbar('Select a supplier first', { variant: 'warning' }); return; }
@@ -1108,7 +1186,7 @@ export default function Purchase() {
     const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
     const vendorId = suppliers.find(s => s.name === bulkSupplierName)?.id;
     try {
-      const res = await createBulkRequestMutation({
+      await createBulkRequestMutation({
         ...(isObjectId(vendorId) ? { vendorId } : {}),
         paymentTerms: bulkPayTerms,
         ...(bulkReminderRequired && bulkReminderDate ? { firstReminderDate: bulkReminderDate.toISOString() } : {}),
@@ -1120,41 +1198,46 @@ export default function Purchase() {
           category: item.category || 'Other',
         })),
       }).unwrap();
-      const created = res?.data || [];
-      for (const reqDoc of created) {
-        const id = reqDoc?._id;
-        if (id && bulkRaiseFile) {
-          try {
-            const fd = new FormData();
-            fd.append('quotation', bulkRaiseFile);
-            fd.append('amount', bulkRaiseAmount);
-            await uploadQuotationFile({ id, formData: fd }).unwrap();
-          } catch { /* best-effort file attach */ }
-        }
-      }
-      enqueueSnackbar(`${selected.length} bulk purchase request(s) raised — sent to Financial for approval!`, { variant: 'success' });
+      enqueueSnackbar(`${selected.length} bulk purchase request(s) raised — upload the quotation & amount from the table below once received.`, { variant: 'success' });
       setShowBulkPurchaseModal(false);
       setBulkSupplierName('');
       setBulkItems([]);
       setBulkPayTerms('');
       setBulkReminderDate(null);
       setBulkQuotationAsked(false);
-      setBulkRaiseFile(null);
-      setBulkRaiseAmount(null);
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise bulk requests', { variant: 'error' });
     }
   };
 
-  // Re-submit revised quotation file after Finance sends back for modification
-  const handleResubmitQuotation = async (requestId, file) => {
+  // Re-submit revised quotation file after Finance sends back for modification (or
+  // rejects it) — amount is optional since Modification re-submits don't collect one.
+  const handleResubmitQuotation = async (requestId, file, amount) => {
     try {
       const fd = new FormData();
       fd.append('quotation', file);
+      if (amount !== undefined && amount !== null && amount !== '') fd.append('amount', amount);
       await uploadQuotationFile({ id: requestId, formData: fd }).unwrap();
       enqueueSnackbar('Quotation re-submitted — Finance will review it again.', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to re-submit quotation', { variant: 'error' });
+    }
+  };
+
+  // Re-Request Quotation modal (for Rejected requests) — collects both the revised
+  // quotation file AND the quoted amount before sending it back to Finance as Pending.
+  const handleRerequestSubmit = async () => {
+    if (!rerequestFile) { enqueueSnackbar('Please upload the revised quotation file', { variant: 'warning' }); return; }
+    if (rerequestAmount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
+    setRerequestSubmitting(true);
+    try {
+      await handleResubmitQuotation(rerequestTarget.key, rerequestFile, rerequestAmount);
+      setShowRerequestModal(false);
+      setRerequestTarget(null);
+      setRerequestFile(null);
+      setRerequestAmount(null);
+    } finally {
+      setRerequestSubmitting(false);
     }
   };
 
@@ -1447,9 +1530,14 @@ export default function Purchase() {
                             key: 'finance_status',
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
-                              if (!req?.financeStatus) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-                              if (req.financeStatus === 'Approved') return <Tag color="success" style={{ borderRadius: 12 }}>Approved</Tag>;
-                              if (req.financeStatus === 'ModifyRequested') return (
+                              if (!req) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              if (req.status === 'Approved') return <Tag color="success" style={{ borderRadius: 12 }}>Approved</Tag>;
+                              if (req.status === 'Rejected') return (
+                                <Tooltip title={req.financeNote || 'Rejected by finance'}>
+                                  <Tag color="error" style={{ borderRadius: 12, cursor: 'pointer' }}>Rejected</Tag>
+                                </Tooltip>
+                              );
+                              if (req.status === 'Modification') return (
                                 <Tooltip title={req.financeNote || 'Modify requested by finance'}>
                                   <Tag color="warning" style={{ borderRadius: 12, cursor: 'pointer' }}>Modify Requested</Tag>
                                 </Tooltip>
@@ -1524,7 +1612,8 @@ export default function Purchase() {
                                 );
                               };
 
-                              if (orderAlreadyRaised) return <Space>{noteCount > 0 ? buildReqWABtn() : null}{noteBtn}</Space>;
+                              // Approved (order not yet raised) — no Ask Quotation once Finance has signed off
+                              if (orderAlreadyRaised) return <Space>{noteBtn}</Space>;
 
                               if (req?.status === 'Approved') return (
                                 <Space wrap size={4}>
@@ -1537,7 +1626,6 @@ export default function Purchase() {
                                   >
                                     Place Order
                                   </Button>
-                                  {noteCount > 0 ? buildReqWABtn() : null}
                                   {noteBtn}
                                 </Space>
                               );
@@ -1567,6 +1655,33 @@ export default function Purchase() {
                                         Re-Submit Quotation
                                       </Button>
                                     </Upload>
+                                    {noteBtn}
+                                  </Space>
+                                </Space>
+                              );
+
+                              // Rejected: Finance turned it down — Purchase can either re-request
+                              // (upload a revised quotation + amount) or go back to asking the
+                              // supplier again over WhatsApp.
+                              if (req?.status === 'Rejected') return (
+                                <Space direction="vertical" size={4}>
+                                  {req.financeNote && (
+                                    <Tooltip title={req.financeNote}>
+                                      <Tag color="error" style={{ fontSize: 11, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                        Rejected: {req.financeNote}
+                                      </Tag>
+                                    </Tooltip>
+                                  )}
+                                  <Space size={4} wrap>
+                                    <Button
+                                      size="small"
+                                      icon={<UploadOutlined />}
+                                      onClick={() => { setRerequestTarget(req); setRerequestFile(null); setRerequestAmount(null); setShowRerequestModal(true); }}
+                                      style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
+                                    >
+                                      Re-Request Quotation
+                                    </Button>
+                                    {buildReqWABtn()}
                                     {noteBtn}
                                   </Space>
                                 </Space>
@@ -1650,6 +1765,9 @@ export default function Purchase() {
                                 payment_terms: first.payment_terms,
                                 date: first.date,
                                 status,
+                                amount: first.amount ?? null,
+                                quotationFiles: first.quotationFiles || [],
+                                batchId: first.batchId,
                                 children: batchItems,
                               });
                             } else {
@@ -1692,6 +1810,12 @@ export default function Purchase() {
                             render: v => <Text style={{ fontSize: 12 }}>{v || '-'}</Text>
                           },
                           {
+                            title: 'Amount', key: 'amount', width: 110, align: 'right',
+                            render: (_, r) => r.amount != null
+                              ? <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{r.amount.toLocaleString()}</Text>
+                              : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                          },
+                          {
                             title: 'Date', dataIndex: 'date', key: 'date', width: 100,
                             render: v => <Text style={{ fontSize: 12 }}>{v}</Text>
                           },
@@ -1705,9 +1829,13 @@ export default function Purchase() {
                           {
                             title: 'Finance Status', key: 'finance_status', width: 130,
                             render: (_, r) => {
-                              if (!r.financeStatus) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-                              if (r.financeStatus === 'Approved') return <Tag color="success" style={{ borderRadius: 12 }}>Approved</Tag>;
-                              if (r.financeStatus === 'ModifyRequested') return (
+                              if (r.status === 'Approved') return <Tag color="success" style={{ borderRadius: 12 }}>Approved</Tag>;
+                              if (r.status === 'Rejected') return (
+                                <Tooltip title={r.financeNote || 'Rejected by finance'}>
+                                  <Tag color="error" style={{ borderRadius: 12, cursor: 'pointer' }}>Rejected</Tag>
+                                </Tooltip>
+                              );
+                              if (r.status === 'Modification') return (
                                 <Tooltip title={r.financeNote || 'Modify requested by finance'}>
                                   <Tag color="warning" style={{ borderRadius: 12, cursor: 'pointer' }}>Modify Requested</Tag>
                                 </Tooltip>
@@ -1717,9 +1845,20 @@ export default function Purchase() {
                           },
                           {
                             title: 'Quotation File', key: 'quotation_file', width: 130,
-                            render: (_, r) => r.quotation_file
-                              ? <Space size={4}><FileTextOutlined style={{ color: '#B11E6A' }} /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{r.quotation_file}</Text></Space>
-                              : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                            render: (_, r) => {
+                              const files = r.quotationFiles || [];
+                              if (files.length === 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              return (
+                                <Button
+                                  size="small"
+                                  icon={<FileTextOutlined />}
+                                  onClick={() => setViewApprovalDoc({ ...r, quotationFiles: files, paymentHistory: findLinkedOrder(r)?.paymentHistory || [] })}
+                                  style={{ color: '#B11E6A', borderColor: '#B11E6A', fontSize: 11 }}
+                                >
+                                  File{files.length > 1 ? ` (${files.length})` : ''}
+                                </Button>
+                              );
+                            }
                           },
                           {
                             title: 'Action', key: 'action', fixed: 'right', width: 200,
@@ -1746,20 +1885,46 @@ export default function Purchase() {
                                 </Space>
                               );
 
+                              // Pending: quotation was already asked for as part of raising the
+                              // request — let Purchase attach/update the quotation file & amount
+                              // directly from the row instead of a plain WhatsApp follow-up link.
                               if (r.status === 'Pending') {
-                                const sup = suppliers.find(s => s.name === r.supplier);
-                                const phone = sup ? sup.phone.replace(/\D/g, '') : '';
-                                const latestNote = (r.notes || []).at(-1);
-                                const msg = `*Bulk Order Follow-up*\n\n*Item:* ${r.item}\n*Quantity:* ${r.qty} ${r.unit}\n*Payment Terms:* ${r.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly share the quotation at the earliest.`;
+                                const file = pendingRowFile[r.key];
+                                const amount = pendingRowAmount[r.key] ?? r.amount ?? null;
+                                const saving = !!pendingRowSaving[r.key];
                                 return (
-                                  <Button
-                                    size="small"
-                                    icon={<WhatsAppOutlined />}
-                                    style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
-                                    onClick={() => window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank')}
-                                  >
-                                    Ask Quotation
-                                  </Button>
+                                  <Space direction="vertical" size={4} style={{ width: 170 }}>
+                                    <Text type="secondary" style={{ fontSize: 10 }}>{r.payment_terms || '-'}</Text>
+                                    <Upload
+                                      maxCount={1}
+                                      beforeUpload={f => { setPendingRowFile(prev => ({ ...prev, [r.key]: f })); return false; }}
+                                      onRemove={() => setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; })}
+                                      accept=".pdf,.jpg,.jpeg,.png"
+                                      fileList={file ? [{ uid: '1', name: file.name, status: 'done' }] : []}
+                                    >
+                                      <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600, width: '100%' }}>
+                                        {file ? `✓ ${file.name}` : (r.quotationFiles?.length ? 'Re-Upload' : 'Upload Quotation')}
+                                      </Button>
+                                    </Upload>
+                                    <InputNumber
+                                      size="small"
+                                      min={0}
+                                      placeholder="Amount (₹)"
+                                      value={amount}
+                                      onChange={v => setPendingRowAmount(prev => ({ ...prev, [r.key]: v }))}
+                                      style={{ width: '100%' }}
+                                    />
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      loading={saving}
+                                      disabled={!file || amount == null}
+                                      onClick={() => handlePendingRowSave(r)}
+                                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600, width: '100%' }}
+                                    >
+                                      Save
+                                    </Button>
+                                  </Space>
                                 );
                               }
 
@@ -1784,6 +1949,44 @@ export default function Purchase() {
                                   </Upload>
                                 </Space>
                               );
+
+                              // Rejected: Finance turned it down — Purchase can either re-request
+                              // (upload a revised quotation + amount) or ask the supplier again over WhatsApp.
+                              if (r.status === 'Rejected') {
+                                const sup = suppliers.find(s => s.name === r.supplier);
+                                const phone = sup ? sup.phone.replace(/\D/g, '') : '';
+                                const latestNote = (r.notes || []).at(-1);
+                                const msg = `*Bulk Order Follow-up*\n\n*Item:* ${r.item}\n*Quantity:* ${r.qty} ${r.unit}\n*Payment Terms:* ${r.payment_terms}${latestNote ? `\n\nNote: ${latestNote.text}` : ''}\n\nKindly share the quotation at the earliest.`;
+                                return (
+                                  <Space direction="vertical" size={4}>
+                                    {r.financeNote && (
+                                      <Tooltip title={r.financeNote}>
+                                        <Tag color="error" style={{ fontSize: 11, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                          Rejected: {r.financeNote}
+                                        </Tag>
+                                      </Tooltip>
+                                    )}
+                                    <Space size={4} wrap>
+                                      <Button
+                                        size="small"
+                                        icon={<UploadOutlined />}
+                                        onClick={() => { setRerequestTarget(r); setRerequestFile(null); setRerequestAmount(null); setShowRerequestModal(true); }}
+                                        style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
+                                      >
+                                        Re-Request
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        icon={<WhatsAppOutlined />}
+                                        style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
+                                        onClick={() => window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank')}
+                                      >
+                                        Ask Quotation
+                                      </Button>
+                                    </Space>
+                                  </Space>
+                                );
+                              }
 
                               return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
                             }
@@ -1937,13 +2140,41 @@ export default function Purchase() {
                           },
                           {
                             title: 'Payment Proof', key: 'payment_proof', width: 130, align: 'center',
-                            render: (_, r) => r.paymentProof ? (
-                              <Button size="small" icon={<EyeOutlined />}
-                                style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}
-                                onClick={() => window.open(r.paymentProof, '_blank')}>
-                                View Proof
-                              </Button>
-                            ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                            render: (_, r) => {
+                              const proofs = (r.paymentHistory || []).filter(p => p.proofUrl);
+                              if (proofs.length === 0 && !r.paymentProof) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              if (proofs.length === 0) {
+                                // Older order paid before paymentHistory existed — only the legacy single proof is available
+                                return (
+                                  <Button size="small" icon={<EyeOutlined />}
+                                    style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}
+                                    onClick={() => window.open(r.paymentProof, '_blank')}>
+                                    View Proof
+                                  </Button>
+                                );
+                              }
+                              return (
+                                <Popover
+                                  trigger="click"
+                                  title={`Payment Proofs (${proofs.length})`}
+                                  content={
+                                    <Space direction="vertical" size={4}>
+                                      {proofs.slice().reverse().map((p, i) => (
+                                        <Button key={i} size="small" type="link" icon={<EyeOutlined />}
+                                          onClick={() => window.open(p.proofUrl, '_blank')}
+                                          style={{ padding: 0, height: 'auto', fontSize: 11 }}>
+                                          ₹{(p.amount || 0).toLocaleString()} — {p.paidDate ? new Date(p.paidDate).toLocaleDateString() : ''}
+                                        </Button>
+                                      ))}
+                                    </Space>
+                                  }
+                                >
+                                  <Button size="small" icon={<EyeOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}>
+                                    View Proof{proofs.length > 1 ? `s (${proofs.length})` : ''}
+                                  </Button>
+                                </Popover>
+                              );
+                            }
                           },
                           {
                             title: 'Delivery Status', key: 'delivery_status', width: 120, align: 'center',
@@ -3241,89 +3472,14 @@ export default function Purchase() {
             </Row>
           </div>
 
-          {/* Multi-select additional low-stock products */}
-          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-            <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 8 }}>
-              Also include in this quotation request: <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>(optional — select more low-stock items)</Text>
-            </Text>
-            <Select
-              mode="multiple"
-              placeholder="Select additional products..."
-              style={{ width: '100%', borderRadius: 8 }}
-              value={quotationExtraProducts}
-              onChange={(vals) => {
-                setQuotationExtraProducts(vals);
-                const newQtys = { ...quotationExtraQtys };
-                vals.forEach(v => { if (!newQtys[v]) { const inv = inventoryItems.find(i => i.key === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
-                setQuotationExtraQtys(newQtys);
-              }}
-              optionLabelProp="label"
-            >
-              {inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== selectedProduct?.name).map(i => (
-                <Option key={i.key} value={i.key} label={dupeItemNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name}>
-                  <Space>
-                    <Tag color={i.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0 }}>{i.status}</Tag>
-                    <Text>{dupeItemNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name}</Text>
-                    <Text type="secondary" style={{ fontSize: 11 }}>({i.current}/{i.min} {i.unit})</Text>
-                  </Space>
-                </Option>
-              ))}
-            </Select>
-            {quotationExtraProducts.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                {quotationExtraProducts.map(productKey => {
-                  const inv = inventoryItems.find(i => i.key === productKey);
-                  return (
-                    <Row key={productKey} gutter={8} align="middle" style={{ marginBottom: 6 }}>
-                      <Col flex="auto"><Text style={{ fontSize: 12 }}>{inv?.name || productKey}</Text></Col>
-                      <Col style={{ width: 120 }}>
-                        <InputNumber
-                          size="small"
-                          min={1}
-                          value={quotationExtraQtys[productKey]}
-                          onChange={v => setQuotationExtraQtys(prev => ({ ...prev, [productKey]: v }))}
-                          addonAfter={<Text style={{ fontSize: 11 }}>{inv?.unit || 'Pcs'}</Text>}
-                          style={{ width: '100%' }}
-                        />
-                      </Col>
-                    </Row>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); setSelectedSupplier(null); setQuotationExtraProducts([]); setQuotationExtraQtys({}); }} style={{ flex: 1, height: 44, borderRadius: 10 }}>Cancel</Button>
+            <Button onClick={() => { setShowAddPurchaseModal(false); purchaseForm.resetFields(); setSelectedProduct(null); setSelectedSupplier(null); }} style={{ flex: 1, height: 44, borderRadius: 10 }}>Cancel</Button>
             <Button
               block
               icon={<WhatsAppOutlined />}
-              onClick={() => {
-                const values = purchaseForm.getFieldsValue();
-                if (!values.supplier) { enqueueSnackbar('Please select a supplier first', { variant: 'warning' }); return; }
-                const mainLine = `• *${values.product}* — Qty: ${values.qty || 'N/A'} ${values.unit || ''}`;
-                const extraLines = quotationExtraProducts.map(p => {
-                  const inv = inventoryItems.find(i => i.key === p);
-                  return `• *${inv?.name || p}* — Qty: ${quotationExtraQtys[p] || 'N/A'} ${inv?.unit || 'Pcs'}`;
-                });
-                const allLines = [mainLine, ...extraLines].join('\n');
-                const msg = `Hello, I would like to request a quotation for the following items:\n\n${allLines}\n\nPlease advise on pricing and availability.`;
-                const phone = selectedSupplier ? selectedSupplier.phone.replace(/\D/g, '') : '';
-                window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-                if (selectedProduct?.key) {
-                  setWhatsappSentItems(prev => new Set(prev).add(selectedProduct.key));
-                  // Start 30-min reminder until quotation received
-                  startQuotationReminder(selectedProduct.key, selectedProduct.name, values.supplier);
-                  enqueueSnackbar('30-minute quotation reminders started. You will be reminded until quotation is received.', { variant: 'info', autoHideDuration: 5000 });
-                }
-                setShowAddPurchaseModal(false);
-                purchaseForm.resetFields();
-                setSelectedProduct(null);
-                setSelectedSupplier(null);
-                setQuotationExtraProducts([]);
-                setQuotationExtraQtys({});
-              }}
+              loading={askQuotationSending}
+              onClick={handleAskQuotationSend}
               style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#25D366,#128C7E)', border: 'none', color: '#fff', fontWeight: 700, fontSize: 14 }}
             >
               Send via WhatsApp
@@ -3346,14 +3502,16 @@ export default function Purchase() {
           </div>
         }
         open={showRaiseRequestModal}
-        onCancel={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestAmount(null); setRaiseReqQuotationAsked(false); setRaiseRequestPaymentTerms(''); }}
+        onCancel={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestAmount(null); setRaiseRequestPaymentTerms(''); }}
         footer={null}
         width={560}
         centered
       >
         <Form form={raiseRequestForm} layout="vertical" style={{ marginTop: 4 }}>
 
-          {/* Product info banner */}
+          {/* Request Summary — item, quantity, and supplier were already captured when
+              "Ask Quotation" was sent for this row, so they're carried over here read-only
+              instead of asking again. */}
           {raiseRequestProduct && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 10, background: isDark ? '#1a0f14' : '#fff8fb', border: '1px solid #B11E6A33', marginBottom: 16 }}>
               <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3368,103 +3526,21 @@ export default function Purchase() {
                   )}
                   <Text strong style={{ color: textColor, fontSize: 14 }}>{raiseRequestProduct.name}</Text>
                 </Space>
-                <Space size={12} style={{ marginTop: 2 }}>
-                  <Text style={{ fontSize: 11, color: raiseRequestProduct.current <= raiseRequestProduct.min ? '#ff4d4f' : '#52c41a' }}>
-                    Stock Count: {raiseRequestProduct.current}
-                  </Text>
-                  {raiseRequestProduct.unitValue ? (
-                    <Text style={{ fontSize: 11, color: '#1890ff' }}>Product Qty: {raiseRequestProduct.unitValue} {raiseRequestProduct.unit}</Text>
-                  ) : null}
-                  <Text style={{ fontSize: 11, color: '#fa8c16' }}>Min: {raiseRequestProduct.min}</Text>
-                  <Tag color={raiseRequestProduct.current <= raiseRequestProduct.min ? 'error' : 'success'} style={{ borderRadius: 10, fontSize: 10, margin: 0 }}>
-                    {raiseRequestProduct.current <= raiseRequestProduct.min ? 'Low Stock' : 'Healthy'}
-                  </Tag>
+                <Space size={12} wrap style={{ marginTop: 2 }}>
+                  <Text style={{ fontSize: 11, color: '#888' }}>Qty: <Text strong style={{ color: '#B11E6A' }}>{raiseReqQtyWatch ?? '—'} {raiseReqUnitWatch || ''}</Text></Text>
+                  <Text style={{ fontSize: 11, color: '#888' }}>Supplier: <Text strong style={{ color: '#B11E6A' }}>{raiseRequestSupplier?.name || '—'}</Text></Text>
                 </Space>
               </div>
               <Form.Item name="product" hidden><Input /></Form.Item>
               <Form.Item name="product_code" hidden><Input /></Form.Item>
               <Form.Item name="unit" hidden><Input /></Form.Item>
+              <Form.Item name="qty" hidden rules={[{ required: true, message: 'Required' }]}><InputNumber /></Form.Item>
             </div>
           )}
 
-          {/* Supplier */}
-          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-            <Form.Item label="Supplier" name="supplier" rules={[{ required: true, message: 'Select a supplier' }]} style={{ marginBottom: 0 }}>
-              <Select
-                placeholder="Select supplier"
-                style={{ borderRadius: 8 }}
-                onChange={(val) => {
-                  if (val === '__add_new__') {
-                    setInlineDropdownContext('raise_request');
-                    setShowAddSupplierInlineModal(true);
-                    raiseRequestForm.setFieldValue('supplier', undefined);
-                    return;
-                  }
-                  setRaiseRequestSupplier(suppliers.find(s => s.name === val) || null);
-                }}
-                dropdownRender={menu => (
-                  <>
-                    {menu}
-                    <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0' }}>
-                      <Button
-                        type="link"
-                        icon={<PlusOutlined />}
-                        style={{ color: '#B11E6A', padding: 0, fontWeight: 600 }}
-                        onClick={() => { setInlineDropdownContext('raise_request'); setShowAddSupplierInlineModal(true); }}
-                      >
-                        Add New Supplier
-                      </Button>
-                    </div>
-                  </>
-                )}
-              >
-                {suppliers.map(s => <Option key={s.id} value={s.name}>{s.name}</Option>)}
-              </Select>
-            </Form.Item>
-            {raiseRequestSupplier && (
-              <div style={{ marginTop: 10, display: 'flex', gap: 0 }}>
-                {[
-                  { label: 'Phone', value: raiseRequestSupplier.phone },
-                  { label: 'Email', value: raiseRequestSupplier.email },
-                  { label: 'Address', value: raiseRequestSupplier.address },
-                ].map((item, i) => (
-                  <div key={i} style={{ flex: 1, borderRight: i < 2 ? `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` : 'none', padding: '0 10px', paddingLeft: i === 0 ? 0 : 10 }}>
-                    <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>{item.label}</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, wordBreak: 'break-word' }}>{item.value}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Ask Quotation via WhatsApp — same bulk-purchase-request event/template Bulk uses */}
-          <div style={{ marginBottom: 16, padding: '14px 16px', borderRadius: 12, border: `1.5px dashed ${raiseReqQuotationAsked ? '#52c41a66' : '#25D36666'}`, background: isDark ? '#0d1f14' : '#f6fff8' }}>
-            {!raiseReqQuotationAsked ? (
-              <Button
-                icon={<WhatsAppOutlined />}
-                onClick={handleRaiseRequestAskQuotation}
-                loading={raiseReqAskingQuotation}
-                style={{ width: '100%', height: 40, borderColor: '#25D366', color: '#25D366', fontWeight: 600, borderRadius: 8, fontSize: 13 }}
-              >
-                Ask Quotation via WhatsApp
-              </Button>
-            ) : (
-              <Alert
-                type="success"
-                message="Quotation request sent via WhatsApp"
-                description="Upload the received quotation document and enter the quoted amount below."
-                showIcon
-                style={{ borderRadius: 8 }}
-                action={
-                  <Button size="small" icon={<WhatsAppOutlined />} loading={raiseReqAskingQuotation} onClick={handleRaiseRequestAskQuotation} style={{ borderColor: '#25D366', color: '#25D366', fontSize: 11 }}>
-                    Re-ask
-                  </Button>
-                }
-              />
-            )}
-          </div>
-
-          {/* Upload Quotation File + AI Scan */}
+          {/* Upload Quotation File + AI Scan — quotation was already requested from the
+              table's "Ask Quotation" step, so raising the request here only needs the
+              received document (+ quoted amount) uploaded. */}
           <div style={{ marginBottom: 16, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3515,22 +3591,6 @@ export default function Purchase() {
             </div>
           </div>
 
-          {/* Quantity */}
-          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-            <Row gutter={12}>
-              <Col span={16}>
-                <Form.Item label="Quantity" name="qty" rules={[{ required: true, message: 'Required' }]} style={{ marginBottom: 0 }}>
-                  <InputNumber style={{ width: '100%', borderRadius: 8 }} placeholder="0" min={1} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item label="Unit" name="unit_display" style={{ marginBottom: 0 }}>
-                  <Input value={raiseRequestProduct?.unit} disabled style={{ borderRadius: 8, textAlign: 'center' }} />
-                </Form.Item>
-              </Col>
-            </Row>
-          </div>
-
           {/* Payment Terms */}
           <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
             <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Select payment terms' }]} style={{ marginBottom: 0 }}>
@@ -3538,7 +3598,6 @@ export default function Purchase() {
                 <Option value="100% Payment">100% Payment</Option>
                 <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
                 <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery (Max 15 days)</Option>
-                <Option value="From Quotation">From Quotation</Option>
               </Select>
             </Form.Item>
             {(raiseRequestPaymentTerms === '50% Advance, 50% on Dispatch' || raiseRequestPaymentTerms === '50% Advance, 50% After Delivery (Max 15 days)') && (
@@ -3595,72 +3654,17 @@ export default function Purchase() {
             </Form.Item>
           </div>
 
-          {/* Multi-select additional products */}
-          <div style={{ background: isDark ? '#16192a' : '#fafafa', borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
-            <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 8 }}>
-              Also raise request for: <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>(optional — select more low-stock items for same supplier)</Text>
-            </Text>
-            <Select
-              mode="multiple"
-              placeholder="Select additional low-stock products..."
-              style={{ width: '100%', borderRadius: 8 }}
-              value={raiseRequestExtraProducts}
-              onChange={(vals) => {
-                setRaiseRequestExtraProducts(vals);
-                const newQtys = { ...raiseRequestExtraQtys };
-                vals.forEach(v => { if (!newQtys[v]) { const inv = inventoryItems.find(i => i.key === v); newQtys[v] = inv ? Math.max(inv.min - inv.current, inv.min) : 1; } });
-                setRaiseRequestExtraQtys(newQtys);
-              }}
-              optionLabelProp="label"
-            >
-              {inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.name !== raiseRequestProduct?.name).map(i => (
-                <Option key={i.key} value={i.key} label={dupeItemNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name}>
-                  <Space>
-                    <Tag color={i.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0 }}>{i.status}</Tag>
-                    <Text>{dupeItemNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name}</Text>
-                    <Text type="secondary" style={{ fontSize: 11 }}>({i.current}/{i.min} {i.unit})</Text>
-                  </Space>
-                </Option>
-              ))}
-            </Select>
-            {raiseRequestExtraProducts.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                {raiseRequestExtraProducts.map(productKey => {
-                  const inv = inventoryItems.find(i => i.key === productKey);
-                  return (
-                    <Row key={productKey} gutter={8} align="middle" style={{ marginBottom: 6 }}>
-                      <Col flex="auto"><Text style={{ fontSize: 12 }}>{inv?.name || productKey}</Text></Col>
-                      <Col style={{ width: 130 }}>
-                        <InputNumber
-                          size="small"
-                          min={1}
-                          value={raiseRequestExtraQtys[productKey]}
-                          onChange={v => setRaiseRequestExtraQtys(prev => ({ ...prev, [productKey]: v }))}
-                          addonAfter={<Text style={{ fontSize: 11 }}>{inv?.unit || 'Pcs'}</Text>}
-                          style={{ width: '100%' }}
-                        />
-                      </Col>
-                    </Row>
-                  );
-                })}
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  {raiseRequestExtraProducts.length + 1} total request(s) will be raised
-                </Text>
-              </div>
-            )}
-          </div>
-
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: 8 }}>
             <Button
-              onClick={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestAmount(null); setRaiseReqQuotationAsked(false); setRaiseRequestPaymentTerms(''); setRaiseRequestExtraProducts([]); setRaiseRequestExtraQtys({}); }}
+              onClick={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestAmount(null); setRaiseRequestPaymentTerms(''); }}
               style={{ flex: 1, height: 44, borderRadius: 10 }}
             >
               Cancel
             </Button>
             <Button
               type="primary"
-              disabled={!raiseReqQuotationAsked || !raiseRequestFile || raiseRequestAmount == null}
+              disabled={!raiseRequestFile || raiseRequestAmount == null}
               onClick={handleRaiseRequestSubmit}
               style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
             >
@@ -3668,6 +3672,97 @@ export default function Purchase() {
             </Button>
           </div>
         </Form>
+      </Modal>
+
+      {/* Re-Request Quotation Modal — Finance rejected this request; Purchase uploads a
+          revised quotation + amount, which sends it back to Finance as Pending. */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <UploadOutlined style={{ color: '#fff', fontSize: 18 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Re-Request Quotation</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Upload a revised quotation → sends it back to Finance for review</div>
+            </div>
+          </div>
+        }
+        open={showRerequestModal}
+        onCancel={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); }}
+        footer={null}
+        width={460}
+        centered
+      >
+        {rerequestTarget && (
+          <>
+            {rerequestTarget.financeNote && (
+              <Alert
+                type="error"
+                showIcon
+                message="Rejection Reason"
+                description={rerequestTarget.financeNote}
+                style={{ borderRadius: 8, marginBottom: 14 }}
+              />
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 10, background: isDark ? '#1a0f14' : '#fff8fb', border: '1px solid #B11E6A33', marginBottom: 16 }}>
+              <div style={{ flex: 1 }}>
+                <Text strong style={{ color: textColor, fontSize: 14 }}>{rerequestTarget.item}</Text>
+                <div style={{ marginTop: 2 }}>
+                  <Text style={{ fontSize: 11, color: '#888' }}>Qty: <Text strong style={{ color: '#B11E6A' }}>{rerequestTarget.qty} {rerequestTarget.unit}</Text></Text>
+                  <Text style={{ fontSize: 11, color: '#888', marginLeft: 12 }}>Supplier: <Text strong style={{ color: '#B11E6A' }}>{rerequestTarget.supplier}</Text></Text>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
+                Revised Quotation File <Text type="danger">*</Text>
+              </Text>
+              <Upload
+                maxCount={1}
+                beforeUpload={(file) => { setRerequestFile(file); return false; }}
+                onRemove={() => setRerequestFile(null)}
+                accept=".pdf,.jpg,.jpeg,.png"
+              >
+                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                  {rerequestFile ? rerequestFile.name : 'Upload Quotation File'}
+                </Button>
+              </Upload>
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
+                Quoted Amount (₹) <Text type="danger">*</Text>
+              </Text>
+              <InputNumber
+                style={{ width: '100%', borderRadius: 8 }}
+                min={0}
+                placeholder="Total amount quoted by supplier"
+                value={rerequestAmount}
+                onChange={setRerequestAmount}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button
+                onClick={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); }}
+                style={{ flex: 1, height: 44, borderRadius: 10 }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="primary"
+                loading={rerequestSubmitting}
+                disabled={!rerequestFile || rerequestAmount == null}
+                onClick={handleRerequestSubmit}
+                style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
+              >
+                Send to Financial
+              </Button>
+            </div>
+          </>
+        )}
       </Modal>
 
       {/* Add Supplier Modal */}
@@ -4023,7 +4118,7 @@ export default function Purchase() {
           </div>
         }
         open={showBulkPurchaseModal}
-        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); setBulkRaiseFile(null); setBulkRaiseAmount(null); }}
+        onCancel={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); }}
         footer={null}
         width={640}
         centered
@@ -4231,48 +4326,10 @@ export default function Purchase() {
                   <Alert
                     type="success"
                     message="Quotation request sent via WhatsApp"
-                    description="Upload the received quotation document to raise the formal request."
+                    description='Raise the request now. Once the supplier replies, upload the quotation document and enter the quoted amount from the "Bulk Purchase Requests" table below.'
                     showIcon
                     style={{ marginBottom: 12, borderRadius: 8 }}
                   />
-                  <div style={{ marginBottom: 10 }}>
-                    <Upload
-                      maxCount={1}
-                      beforeUpload={(file) => { setBulkRaiseFile(file); return false; }}
-                      onRemove={() => setBulkRaiseFile(null)}
-                      accept=".pdf,.jpg,.jpeg,.png"
-                      fileList={bulkRaiseFile ? [{ uid: '1', name: bulkRaiseFile.name, status: 'done' }] : []}
-                    >
-                      <Button icon={<UploadOutlined />} style={{ borderRadius: 8, width: '100%', marginBottom: 8 }}>
-                        {bulkRaiseFile ? `✓ ${bulkRaiseFile.name}` : 'Upload Received Quotation Document'}
-                      </Button>
-                    </Upload>
-                    {bulkRaiseFile && (
-                      <Button
-                        icon={<RobotOutlined />}
-                        loading={bulkRaiseScanLoading}
-                        onClick={() => {
-                          setBulkRaiseScanLoading(true);
-                          setTimeout(() => { setBulkRaiseScanLoading(false); enqueueSnackbar('AI extracted details from quotation!', { variant: 'success' }); }, 2000);
-                        }}
-                        style={{ width: '100%', borderRadius: 8, borderColor: '#722ed1', color: '#722ed1', marginBottom: 8 }}
-                      >
-                        Scan with AI
-                      </Button>
-                    )}
-                  </div>
-                  <div style={{ marginBottom: 10 }}>
-                    <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
-                      Quoted Amount (₹) for this batch <Text type="danger">*</Text>
-                    </Text>
-                    <InputNumber
-                      style={{ width: '100%', borderRadius: 8 }}
-                      min={0}
-                      placeholder="Total amount quoted by supplier for all items"
-                      value={bulkRaiseAmount}
-                      onChange={setBulkRaiseAmount}
-                    />
-                  </div>
                   <Button
                     size="small"
                     icon={<WhatsAppOutlined />}
@@ -4290,12 +4347,12 @@ export default function Purchase() {
 
           <div style={{ display: 'flex', gap: 8 }}>
             <Button
-              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); setBulkRaiseFile(null); setBulkRaiseAmount(null); }}
+              onClick={() => { setShowBulkPurchaseModal(false); setBulkSupplierName(''); setBulkItems([]); setBulkPayTerms(''); setBulkReminderDate(null); setBulkQuotationAsked(false); }}
               style={{ flex: 1, height: 44, borderRadius: 10 }}
             >Cancel</Button>
             <Button
               type="primary"
-              disabled={!bulkQuotationAsked || !bulkRaiseFile || bulkRaiseAmount == null || bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms || !bulkQtyValid || !bulkReminderValid}
+              disabled={!bulkQuotationAsked || bulkItems.filter(i => i.selected).length === 0 || !bulkPayTerms || !bulkQtyValid || !bulkReminderValid}
               onClick={handleBulkRaiseRequest}
               style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
             >
@@ -4450,91 +4507,6 @@ export default function Purchase() {
             </div>
           </Form>
         )}
-      </Modal>
-
-      {/* Finance Status Demo Modal */}
-      <Modal
-        title={
-          <Space>
-            <SafetyCertificateOutlined style={{ color: '#722ed1' }} />
-            <Text strong style={{ fontSize: 15 }}>Finance: Set Approval Status</Text>
-          </Space>
-        }
-        open={showFinanceStatusModal}
-        onCancel={() => { setShowFinanceStatusModal(false); setFinanceStatusTarget(null); setFinanceNoteInput(''); setFinanceDecision(''); }}
-        footer={null}
-        width={480}
-        centered
-      >
-        <div style={{ padding: '8px 0' }}>
-          <div style={{ marginBottom: 16, padding: '8px 12px', background: isDark ? '#1a0a2a' : '#f9f0ff', borderRadius: 8, border: '1px solid #d3adf7' }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              This simulates Finance team approval actions on purchase requests.
-            </Text>
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <Text style={{ fontSize: 12, fontWeight: 600 }}>Select Request:</Text>
-            <Select
-              style={{ width: '100%', marginTop: 6 }}
-              placeholder="Choose a request..."
-              value={financeStatusTarget || undefined}
-              onChange={v => setFinanceStatusTarget(v)}
-              options={raisedRequests
-                .filter(r => r.status !== 'Rejected' && !findLinkedOrder(r))
-                .map(r => ({ value: r.key, label: `${r.item} — ${r.supplier} (${r.qty} ${r.unit})` }))}
-            />
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <Text style={{ fontSize: 12, fontWeight: 600 }}>Finance Decision:</Text>
-            <Select
-              style={{ width: '100%', marginTop: 6 }}
-              placeholder="Select decision..."
-              value={financeDecision || undefined}
-              onChange={v => setFinanceDecision(v)}
-              options={[
-                { value: 'Approved', label: '✅  Approved — proceed with order' },
-                { value: 'ModifyRequested', label: '⚠️  Modify Requested — quantity needs revision' },
-              ]}
-            />
-          </div>
-          {financeDecision === 'ModifyRequested' && (
-            <div style={{ marginBottom: 14 }}>
-              <Text style={{ fontSize: 12, fontWeight: 600 }}>Modify Note <Text type="danger">(required)</Text>:</Text>
-              <Input.TextArea
-                rows={3}
-                placeholder="Explain what needs to be modified (e.g. reduce quantity to 50 units)..."
-                value={financeNoteInput}
-                onChange={e => setFinanceNoteInput(e.target.value)}
-                style={{ marginTop: 6, borderRadius: 8 }}
-              />
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-            <Button
-              onClick={() => { setShowFinanceStatusModal(false); setFinanceStatusTarget(null); setFinanceNoteInput(''); setFinanceDecision(''); }}
-              style={{ flex: 1, height: 40, borderRadius: 8 }}
-            >Cancel</Button>
-            <Button
-              type="primary"
-              disabled={!financeStatusTarget || !financeDecision || (financeDecision === 'ModifyRequested' && !financeNoteInput.trim())}
-              onClick={() => {
-                dispatch(updateFinanceStatus({
-                  key: financeStatusTarget,
-                  financeStatus: financeDecision,
-                  financeNote: financeNoteInput.trim(),
-                }));
-                enqueueSnackbar(financeDecision === 'Approved' ? 'Request approved by Finance!' : 'Modify note sent to Purchase team!', { variant: 'success' });
-                setShowFinanceStatusModal(false);
-                setFinanceStatusTarget(null);
-                setFinanceNoteInput('');
-                setFinanceDecision('');
-              }}
-              style={{ flex: 2, height: 40, borderRadius: 8, background: financeDecision === 'Approved' ? '#52c41a' : '#fa8c16', border: 'none', fontWeight: 700 }}
-            >
-              {financeDecision === 'Approved' ? 'Approve Request' : financeDecision === 'ModifyRequested' ? 'Send Modify Note' : 'Submit'}
-            </Button>
-          </div>
-        </div>
       </Modal>
 
       {/* Payment Document View Modal */}

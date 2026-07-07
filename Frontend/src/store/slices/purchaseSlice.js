@@ -38,14 +38,6 @@ const purchaseSlice = createSlice({
     dismissNewProductRequest(state, action) {
       state.newProductRequests = state.newProductRequests.filter((r) => r.key !== action.payload);
     },
-    updateFinanceStatus(state, action) {
-      const req = state.raisedRequests.find((r) => r.key === action.payload.key);
-      if (req) {
-        req.financeStatus = action.payload.financeStatus;
-        req.financeNote = action.payload.financeNote || '';
-        if (action.payload.financeStatus === 'Approved') req.status = 'Approved';
-      }
-    },
     updateRequestQty(state, action) {
       const req = state.raisedRequests.find((r) => r.key === action.payload.key);
       if (req) {
@@ -92,7 +84,6 @@ export const {
   addNewProductRequest,
   addBulkRequests,
   dismissNewProductRequest,
-  updateFinanceStatus,
   updateRequestQty,
   addRequestNote,
   updateQuotationDetails,

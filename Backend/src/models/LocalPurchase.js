@@ -4,6 +4,7 @@ const localPurchaseSchema = new mongoose.Schema({
   lpCode: { type: String, unique: true },
   invoiceNo: { type: String, required: true },
   invoiceFileUrl: String,
+  vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
   vendorName: String,
   vendorPhone: String,
   items: [{

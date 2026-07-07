@@ -26,7 +26,9 @@ const paymentSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 paymentSchema.pre('save', function (next) {
-  this.netAmount = (this.amount || 0) + (this.courierCharge || 0) - (this.roundOff || 0);
+  // Courier charge and round off are both credited toward the invoice — round off
+  // is the paise-level gap the business forgives, so it counts as paid, not a deduction.
+  this.netAmount = (this.amount || 0) + (this.courierCharge || 0) + (this.roundOff || 0);
   next();
 });
 

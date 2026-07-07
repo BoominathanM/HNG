@@ -166,6 +166,10 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/vendors/${id}/history` }),
       providesTags: (result, error, id) => [{ type: 'Vendors', id }],
     }),
+    getVendorLedger: builder.query({
+      query: (id) => ({ url: `/vendors/${id}/ledger` }),
+      providesTags: (result, error, id) => [{ type: 'Vendors', id }],
+    }),
     updateVendorStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/vendors/${id}/status`, method: 'patch', data: { status } }),
       invalidatesTags: ['Vendors'],
@@ -182,19 +186,19 @@ export const apiSlice = createApi({
     }),
     createBulkRequest: builder.mutation({
       query: (data) => ({ url: '/purchase/requests/bulk', method: 'post', data }),
-      invalidatesTags: ['Purchase'],
+      invalidatesTags: ['Purchase', 'Financial'],
     }),
     raiseRequest: builder.mutation({
       query: (data) => ({ url: '/purchase/requests', method: 'post', data }),
-      invalidatesTags: ['Purchase'],
+      invalidatesTags: ['Purchase', 'Financial'],
     }),
     uploadQuotationFile: builder.mutation({
       query: ({ id, formData }) => ({ url: `/purchase/requests/${id}/upload-quotation`, method: 'post', data: formData }),
-      invalidatesTags: ['Purchase'],
+      invalidatesTags: ['Purchase', 'Financial'],
     }),
     addPurchaseNote: builder.mutation({
       query: ({ id, text }) => ({ url: `/purchase/requests/${id}/notes`, method: 'patch', data: { text } }),
-      invalidatesTags: ['Purchase'],
+      invalidatesTags: ['Purchase', 'Financial'],
     }),
     getPurchaseOrders: builder.query({
       query: (params) => ({ url: '/purchase/orders', params }),
@@ -422,7 +426,7 @@ export const apiSlice = createApi({
     }),
     rejectFinancialRequest: builder.mutation({
       query: ({ id, reason }) => ({ url: `/financial/requests/${id}/reject`, method: 'patch', data: { reason } }),
-      invalidatesTags: ['Financial'],
+      invalidatesTags: ['Financial', 'Purchase'],
     }),
     updateFinancialQuotation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/financial/requests/${id}/quotation`, method: 'put', data }),
@@ -1127,6 +1131,7 @@ export const {
   useUpdateVendorMutation,
   useDeleteVendorMutation,
   useGetVendorHistoryQuery,
+  useGetVendorLedgerQuery,
   useUpdateVendorStatusMutation,
   useGenerateAiSummaryMutation,
   // Purchase

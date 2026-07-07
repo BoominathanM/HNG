@@ -233,8 +233,12 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
   if (!invoice) return next(new AppError('Invoice not found', 404));
 
   const payRef = await generateCode('REC');
-  // Courier charge adds to what's owed and gets collected here too; round off shaves the odd paise off the total.
-  const netAmount = (req.body.amount || 0) + (req.body.courierCharge || 0) - (req.body.roundOff || 0);
+  // Courier charge is an extra amount owed on top of the invoice — it raises the invoice
+  // total, then is collected here too. Round off is the paise-level gap the business
+  // forgives, so it counts as paid (credited), not subtracted from what was collected.
+  const courierCharge = Number(req.body.courierCharge) || 0;
+  const roundOff = Number(req.body.roundOff) || 0;
+  const netAmount = (req.body.amount || 0) + courierCharge + roundOff;
 
   const payment = await Payment.create({
     ...req.body,
@@ -243,6 +247,9 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
     invoiceId: invoice._id,
     createdBy: req.user._id,
   });
+
+  // Courier charge raises what's actually owed on the invoice before we credit the payment.
+  if (courierCharge) invoice.total = (invoice.total || 0) + courierCharge;
 
   // Update invoice balance
   invoice.advanceAmount = (invoice.advanceAmount || 0) + netAmount;
@@ -283,6 +290,10 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
       paymentMethod: req.body.paymentMode || 'Cash',
       paymentMode: req.body.paymentMode || 'Cash',
       paidAmount: netAmount,
+      // Carried onto the order's own paymentCollection so the kit-aware total (Sales/Billing/
+      // Operations) can fold this payment's courier charge into the order's grand total too.
+      courierCharge,
+      roundOff,
       note: req.body.note || '',
       notes: req.body.note || '',
       paymentDate: new Date().toISOString(),

@@ -120,10 +120,63 @@ exports.getParties = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, total, page, data: withTotals });
 });
 
+// Same kit-aware-ish total/paid calc used by getParties, kept identical so the
+// party list totals and the ledger detail totals never disagree.
+const computeOrderTotal = (o) => {
+  const items = o.items?.length ? o.items : (o.products || []);
+  const sub = items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
+  const gstFromItems = items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+  const gst = gstFromItems > 0 ? gstFromItems : (Number(o.gstAmount) || 0);
+  return sub > 0 ? Math.round((sub + gst) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
+};
+const computeOrderPaid = (o) => {
+  const collTotal = (o.paymentCollection || []).reduce((cs, e) => cs + Number(e.paidAmount || 0), 0);
+  return collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
+};
+
+// Builds the full ledger for a party: real LedgerEntry rows (Invoice/Payment/
+// Credit/Debit Note/Opening Balance) PLUS a synthetic Bill/Payment row for every
+// order that isn't already backed by a real ledger entry — so "paid and unpaid
+// history" covers every order under the party, not just the ones Billing wrote a
+// LedgerEntry for. An Invoice *document* existing isn't enough to skip an order:
+// some historical invoices never got a LedgerEntry written (a gap in the billing
+// flow that predates this), which would otherwise hide that order's amount
+// entirely — so the check is against real 'Invoice' ledger rows, not Invoice docs.
+const buildPartyLedger = async (party) => {
+  const entries = await LedgerEntry.find({ partyId: party._id }).sort('entryDate').lean();
+  const invoicedNumbersInLedger = new Set(entries.filter((e) => e.type === 'Invoice' && e.docRef).map((e) => e.docRef));
+
+  const nameRe = new RegExp(`^${party.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+  const [orders, invoices] = await Promise.all([
+    Order.find({ $or: [{ clientPartyId: party._id }, { clientName: nameRe }], deletedAt: null }).lean(),
+    Invoice.find({ partyId: party._id }).select('orderId invoiceNumber').lean(),
+  ]);
+  const invoiceByOrderId = new Map(invoices.filter((i) => i.orderId).map((i) => [i.orderId.toString(), i]));
+  const unbilledOrders = orders.filter((o) => {
+    const inv = invoiceByOrderId.get(o._id.toString());
+    return !(inv && invoicedNumbersInLedger.has(inv.invoiceNumber));
+  });
+
+  const synthetic = [];
+  unbilledOrders.forEach((o) => {
+    const total = computeOrderTotal(o);
+    const paid = computeOrderPaid(o);
+    if (total > 0) synthetic.push({ entryDate: o.createdAt, type: 'Order', docRef: o.orderCode, debit: total, credit: 0 });
+    if (paid > 0) synthetic.push({ entryDate: o.updatedAt || o.createdAt, type: 'Payment', docRef: o.orderCode, debit: 0, credit: paid });
+  });
+
+  const merged = [...entries, ...synthetic].sort((a, b) => new Date(a.entryDate) - new Date(b.entryDate));
+  let running = 0;
+  return merged.map((e) => {
+    running += (e.debit || 0) - (e.credit || 0);
+    return { ...e, balance: running };
+  });
+};
+
 exports.getPartyLedger = asyncHandler(async (req, res, next) => {
   const party = await Party.findOne({ _id: req.params.id, deletedAt: null });
   if (!party) return next(new AppError('Party not found', 404));
-  const entries = await LedgerEntry.find({ partyId: party._id }).sort('entryDate');
+  const entries = await buildPartyLedger(party);
   const runningBalance = entries.length ? entries[entries.length - 1].balance : 0;
   res.status(200).json({ success: true, data: entries, runningBalance, party });
 });
@@ -170,7 +223,7 @@ exports.deleteParty = asyncHandler(async (req, res, next) => {
 exports.downloadLedgerCsv = asyncHandler(async (req, res, next) => {
   const party = await Party.findOne({ _id: req.params.id, deletedAt: null });
   if (!party) return next(new AppError('Party not found', 404));
-  const entries = await LedgerEntry.find({ partyId: party._id }).sort('entryDate');
+  const entries = await buildPartyLedger(party);
   const csv = ['Date,Type,Document,Debit,Credit,Balance']
     .concat(entries.map((e) =>
       `${e.entryDate?.toISOString().slice(0,10)},${e.type},${e.docRef},${e.debit},${e.credit},${e.balance}`

@@ -28,7 +28,7 @@ import {
   useCreateVendorMutation,
   useUpdateVendorMutation,
   useDeleteVendorMutation,
-  useGetVendorHistoryQuery,
+  useGetVendorLedgerQuery,
   useUpdateVendorStatusMutation,
   useGenerateAiSummaryMutation,
   useCreateExpenseMutation,
@@ -113,15 +113,20 @@ export default function VendorsSuppliers() {
   const [createExpense] = useCreateExpenseMutation();
 
   const [viewVendor, setViewVendor] = useState(null);
-  const { data: vendorHistoryData } = useGetVendorHistoryQuery(viewVendor?.id, { skip: !viewVendor?.id });
-  const vendorHistoryRaw = useMemo(() => (vendorHistoryData?.data || []).map((h) => ({
-    key: h._id,
-    date: h.date?.slice(0, 10) || h.createdAt?.slice(0, 10),
-    bill_no: h.billNo || '—',
-    inv_no: h.invNo || '—',
-    items: (h.items || []).map((i) => ({ name: i.name, qty: `${i.qty} ${i.unit || ''}`, price: i.price ? `₹${i.price}` : '—', total: i.total ? `₹${i.total}` : '—' })),
-    status: h.status || '—',
-  })), [vendorHistoryData]);
+  // Bills for this vendor, merged across PurchaseOrder and LocalPurchase (the two
+  // separate collections vendor spend is split across) — same source as Parties & Ledger.
+  const { data: vendorLedgerData } = useGetVendorLedgerQuery(viewVendor?.id, { skip: !viewVendor?.id });
+  const vendorHistoryRaw = useMemo(() => (vendorLedgerData?.bills || []).map((b) => ({
+    key: b._id,
+    date: b.date ? b.date.slice(0, 10) : '',
+    bill_no: b.billNo || b.code || '—',
+    inv_no: b.code || '—',
+    items: (b.items || []).map((i) => ({ name: i.itemName, qty: `${i.qty ?? ''} ${i.unit || ''}`.trim() })),
+    status: b.status || '—',
+    amount: Number(b.amount) || 0,
+    paidAmount: Number(b.paidAmount) || 0,
+    balance: Number(b.balance) || 0,
+  })), [vendorLedgerData]);
 
   const vendors = useMemo(() => (vendorData?.data || []).map((v) => ({
     id: v._id,
@@ -134,8 +139,8 @@ export default function VendorsSuppliers() {
     bankDetails: v.bankDetails,
     status: v.status,
     aiSummary: v.aiSummary,
-    totalPaid: 0,
-    pending: 0,
+    totalPaid: v.totalPaid || 0,
+    pending: v.pending || 0,
   })), [vendorData]);
   const printingSuppliers = useMemo(() => (usersData?.data || []).filter(u => u.department === 'Vendors').map((u) => ({
     key: u._id,
@@ -442,12 +447,12 @@ export default function VendorsSuppliers() {
                                     <List
                                       size="small"
                                       dataSource={record.items}
+                                      locale={{ emptyText: 'No item details recorded' }}
                                       renderItem={item => (
                                         <List.Item style={{ padding: '4px 0', border: 'none' }}>
                                           <Space split={<Divider type="vertical" />}>
                                             <Text strong>{item.name}</Text>
                                             <Text>{item.qty}</Text>
-                                            <Text type="secondary">{item.price}</Text>
                                           </Space>
                                         </List.Item>
                                       )}
@@ -458,8 +463,7 @@ export default function VendorsSuppliers() {
                                   title: 'Total Amount',
                                   key: 'total',
                                   render: (_, r) => {
-                                    const total = r.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0);
-                                    return <Text strong>₹{total.toLocaleString()}</Text>;
+                                    return <Text strong>₹{r.amount.toLocaleString()}</Text>;
                                   }
                                 },
                                 { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => <Tag color="blue">{v}</Tag> },
@@ -1195,20 +1199,20 @@ export default function VendorsSuppliers() {
                 <Descriptions.Item label="Bill Number"><Text strong>{viewBillDetail.bill_no}</Text></Descriptions.Item>
                 <Descriptions.Item label="Invoice Date">{viewBillDetail.date}</Descriptions.Item>
                 <Descriptions.Item label="Vendor">{viewVendor?.name}</Descriptions.Item>
-                <Descriptions.Item label="Tax Amount">₹{(parseInt(viewBillDetail.items[0].total.replace(/[₹,]/g, '')) * 0.18).toLocaleString()}</Descriptions.Item>
-                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>{viewBillDetail.items.reduce((sum, i) => sum + parseInt(i.total.replace(/[₹,]/g, '')), 0).toLocaleString()} (INR)</Text></Descriptions.Item>
+                <Descriptions.Item label="Total Amount"><Text strong style={{ color: '#B11E6A', fontSize: 16 }}>₹{Number(viewBillDetail.amount || 0).toLocaleString()}</Text></Descriptions.Item>
+                <Descriptions.Item label="Paid"><Text strong style={{ color: '#52c41a' }}>₹{Number(viewBillDetail.paidAmount || 0).toLocaleString()}</Text></Descriptions.Item>
+                <Descriptions.Item label="Balance"><Text strong style={{ color: viewBillDetail.balance > 0 ? '#ff4d4f' : '#52c41a' }}>₹{Number(viewBillDetail.balance || 0).toLocaleString()}</Text></Descriptions.Item>
               </Descriptions>
 
-              <Divider orientation="left">AI Extracted Items</Divider>
+              <Divider orientation="left">Bill Items</Divider>
               <Table
                 size="small"
                 pagination={false}
                 dataSource={viewBillDetail.items}
+                locale={{ emptyText: 'No item details recorded' }}
                 columns={[
                   { title: 'Item', dataIndex: 'name', key: 'name' },
                   { title: 'Qty', dataIndex: 'qty', key: 'qty' },
-                  { title: 'Price', dataIndex: 'price', key: 'price' },
-                  { title: 'Total', dataIndex: 'total', key: 'total', render: v => <Text strong>{v}</Text> }
                 ]}
               />
             </Col>

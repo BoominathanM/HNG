@@ -574,8 +574,11 @@ function computeRecordBuckets(rec = {}) {
   const personalized = personalizedKit + sumProductRows(persProdRows);
   const separateProduct = sumProductRows(sepProdRows);
   const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
-  const grand = personalized + separateKit + separateProduct + fwd;
-  return { personalized, separateKit, separateProduct, fwd, grand };
+  // Courier/shipping charge recorded via Record Payment In (Billing) — extra amount owed
+  // on top of the order, entered per-payment rather than stored on the record itself.
+  const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+  const grand = r2(personalized + separateKit + separateProduct + fwd + courier);
+  return { personalized, separateKit, separateProduct, fwd, courier, grand };
 }
 
 // Backward-compatible scalar grand total (kept for existing call sites).
@@ -605,9 +608,10 @@ function computeCompositionGrandTotal(formData = {}, kitsData = []) {
   if ((formData.packagingIncludes || []).length > 0 && kitsData.length > 0) {
     const comp = computePersonalizedComposition(formData, kitsData);
     const fwd = formData.forwardingCharge ? r2(Number(formData.forwardingChargeAmount) || 0) : 0;
+    const courier = r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const B = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const C = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
-    return r2(comp.totalPersonalized + B + C + fwd);
+    return r2(comp.totalPersonalized + B + C + fwd + courier);
   }
   return computeRecordGrandTotal(formData);
 }
@@ -867,22 +871,24 @@ function PersonalizedCompositionPanel({ comp, isDark }) {
 // aware calculation (computePersonalizedComposition) is used instead of computeRecordBuckets,
 // which miscounts the A bucket when some kits/products are consumed inside the outer packaging.
 function CategoryTotalsBreakdown({ rec, isDark, kitsData = [] }) {
-  let personalized, separateKit, separateProduct, fwd, grand;
+  let personalized, separateKit, separateProduct, fwd, courier, grand;
   if ((rec.packagingIncludes || []).length > 0 && kitsData.length > 0) {
     const comp = computePersonalizedComposition(rec, kitsData);
     const B = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const C = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
     fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
+    courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     personalized = comp.totalPersonalized;
     separateKit = B;
     separateProduct = C;
-    grand = r2(personalized + separateKit + separateProduct + fwd);
+    grand = r2(personalized + separateKit + separateProduct + fwd + courier);
   } else {
     const b = computeRecordBuckets(rec);
     personalized = b.personalized;
     separateKit = b.separateKit;
     separateProduct = b.separateProduct;
     fwd = b.fwd;
+    courier = b.courier;
     grand = b.grand;
   }
   const rows = [
@@ -908,6 +914,11 @@ function CategoryTotalsBreakdown({ rec, isDark, kitsData = [] }) {
       {fwd > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, color: labelColor }}>
           <span>Forwarding Charge</span><span style={{ fontWeight: 600 }}>{fmtINR(fwd)}</span>
+        </div>
+      )}
+      {courier > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, color: labelColor }}>
+          <span>Courier Charge</span><span style={{ fontWeight: 600 }}>{fmtINR(courier)}</span>
         </div>
       )}
       <div style={{ borderTop: border, marginTop: 6, paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -11,6 +11,7 @@ router.get('/:id', ctrl.getVendor);
 router.put('/:id', ctrl.updateVendor);
 router.delete('/:id', ctrl.deleteVendor);
 router.get('/:id/history', ctrl.getVendorHistory);
+router.get('/:id/ledger', ctrl.getVendorLedger);
 router.patch('/:id/status', ctrl.updateVendorStatus);
 router.post('/:id/ai-summary', ctrl.generateAiSummary);
 

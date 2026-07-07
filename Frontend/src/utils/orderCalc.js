@@ -59,8 +59,14 @@ export function sumProductRows(rows = []) {
   return r2(sub + gst);
 }
 
+// Sum of courier/shipping charges recorded via payments (Record Payment In) — an extra
+// amount owed on top of the order, entered per-payment rather than stored on the record itself.
+export function sumCourierCharges(rec = {}) {
+  return r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+}
+
 // Single source of truth for category buckets.
-// Returns { personalized (A), separateKit (B), separateProduct (C), fwd, grand }.
+// Returns { personalized (A), separateKit (B), separateProduct (C), fwd, courier, grand }.
 export function computeRecordBuckets(rec = {}) {
   const prods = (rec.products || []).filter(Boolean);
   const kitOrders = (rec.kitOrders || []).filter(Boolean);
@@ -88,8 +94,9 @@ export function computeRecordBuckets(rec = {}) {
   const personalized = personalizedKit + sumProductRows(persProdRows);
   const separateProduct = sumProductRows(sepProdRows);
   const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
-  const grand = r2(personalized + separateKit + separateProduct + fwd);
-  return { personalized, separateKit, separateProduct, fwd, grand };
+  const courier = sumCourierCharges(rec);
+  const grand = r2(personalized + separateKit + separateProduct + fwd + courier);
+  return { personalized, separateKit, separateProduct, fwd, courier, grand };
 }
 
 // Backward-compatible scalar grand total.

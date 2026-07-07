@@ -129,16 +129,20 @@ const computeKitAwareTotal = (rec) => {
   const personalized = r2(personalizedKit + sumProds(persProds));
   const separateProduct = sumProds(sepProds);
   const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
-  return r2(personalized + separateKit + separateProduct + fwd);
+  // Courier/shipping charge recorded via Record Payment In — extra amount owed on top
+  // of the order, entered per-payment rather than stored on the record itself.
+  const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+  return r2(personalized + separateKit + separateProduct + fwd + courier);
 };
 
 function computeCompositionGrandTotal(formData = {}, kitsData = []) {
   if ((formData.packagingIncludes || []).length > 0 && kitsData.length > 0) {
     const comp = computePersonalizedComposition(formData, kitsData);
     const fwd = formData.forwardingCharge ? r2(Number(formData.forwardingChargeAmount) || 0) : 0;
+    const courier = r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const separateKit = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const separateProduct = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
-    return r2(comp.totalPersonalized + separateKit + separateProduct + fwd);
+    return r2(comp.totalPersonalized + separateKit + separateProduct + fwd + courier);
   }
   return computeKitAwareTotal(formData);
 }
@@ -264,6 +268,9 @@ export default function Billing() {
           packagingIncludesQty: fullOrder?.packagingIncludesQty || linkedLead?.packagingIncludesQty || quotationLead?.packagingIncludesQty || linkedQuotation?.packagingIncludesQty || {},
           forwardingCharge: fwdEnabled,
           forwardingChargeAmount: fwdAmt,
+          // Order is where Invoice-path payments push their paymentCollection entry (see
+          // syncOrderPaymentCollection in recordPayment) — courier charges live here.
+          paymentCollection: fullOrder?.paymentCollection || linkedLead?.paymentCollection || quotationLead?.paymentCollection || linkedQuotation?.paymentCollection || [],
         }
       : null;
     const kitTotal = srcRec ? computeCompositionGrandTotal(srcRec, kits) : 0;
@@ -372,6 +379,8 @@ export default function Billing() {
       packagingIncludesQty: linkedOrder?.packagingIncludesQty || lead?.packagingIncludesQty || q.packagingIncludesQty || {},
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
+      // Courier charges recorded via Record Payment In live wherever the payment was saved.
+      paymentCollection: linkedOrder?.paymentCollection || lead?.paymentCollection || q.paymentCollection || [],
     };
     const kitTotal = computeCompositionGrandTotal(sourceRec, kits);
     const composition = buildDocComposition(sourceRec, kits);
@@ -668,12 +677,12 @@ export default function Billing() {
 
   // Net amount actually credited toward the invoice/quotation balance:
   // + courier/shipping charge collected on top of the amount
-  // - round off (fine adjustment shaved off the total)
+  // + round off (the paise-level gap the business forgives — counts as paid)
   const computeNetPayable = () =>
     r2(
       (Number(payAmount) || 0)
       + (payCourierVisible ? Number(payCourierAmount) || 0 : 0)
-      - (payRoundOffVisible ? Number(payRoundOffAmount) || 0 : 0)
+      + (payRoundOffVisible ? Number(payRoundOffAmount) || 0 : 0)
     );
 
   // Propagate a new paidAmount to every linked record in the lead→quotation→negotiation→order chain.
