@@ -370,8 +370,20 @@ exports.updateTransportStatus = asyncHandler(async (req, res, next) => {
 });
 
 // ─── PICKUP ORDERS ──────────────────────────────────────────────────────────
+// "All Orders" — every pickup job regardless of scheduled date.
 exports.getPickupOrders = asyncHandler(async (req, res) => {
   const list = await PickupOrder.find().populate('pickupEmpId', 'fullName phone').sort('-createdAt').lean();
+  res.status(200).json({ success: true, total: list.length, data: list });
+});
+
+// "Today's Pickup Orders" — scheduledDate (Expected Delivery Date) falls today.
+exports.getTodaysPickupOrders = asyncHandler(async (req, res) => {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(); end.setHours(23, 59, 59, 999);
+  const list = await PickupOrder.find({ scheduledDate: { $gte: start, $lte: end } })
+    .populate('pickupEmpId', 'fullName phone')
+    .sort('-createdAt')
+    .lean();
   res.status(200).json({ success: true, total: list.length, data: list });
 });
 
@@ -380,8 +392,21 @@ exports.createPickupOrder = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: pickup });
 });
 
+// Handles both the "who picks up" choice (Finance settles it directly — treated as Paid
+// immediately, no reimbursement needed — vs Pickup Team pays out of pocket with
+// GPay/amount/proof and opens a reimbursement claim for Finance to pay back) and any
+// other field update (taken status, assigned pickup person, etc).
 exports.updatePickupOrder = asyncHandler(async (req, res, next) => {
-  const pickup = await PickupOrder.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  const update = { ...req.body };
+  if (update.takenStatus && update.takenStatus !== 'Pending') update.taken = true;
+  if (update.paymentBy === 'Finance') {
+    update.paymentStatus = 'Paid';
+    update.reimbursementStatus = 'Not Applicable';
+  } else if (update.paymentBy === 'Pickup Team') {
+    update.paymentStatus = 'Paid';
+    update.reimbursementStatus = 'Pending';
+  }
+  const pickup = await PickupOrder.findByIdAndUpdate(req.params.id, update, { new: true });
   if (!pickup) return next(new AppError('Pickup order not found', 404));
   res.status(200).json({ success: true, data: pickup });
 });

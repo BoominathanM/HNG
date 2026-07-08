@@ -33,6 +33,10 @@ const purchaseOrderSchema = new mongoose.Schema({
   lrNumber: String,
   trackingUrl: String,
   lrFileUrl: String,
+  expectedDeliveryDate: Date,
+  // Purchase's own Paid/Not Paid toggle captured at LR-upload time — separate from
+  // `paymentStatus` above (which tracks the vendor invoice amount paid via Financial).
+  lrPaymentStatus: { type: String, enum: ['Paid', 'Not Paid'] },
   dispatchStatus: { type: String, enum: ['Pending', 'In Transit', 'Received'], default: 'Pending' },
   receivedAt: Date,
   stockUpdated: { type: Boolean, default: false },

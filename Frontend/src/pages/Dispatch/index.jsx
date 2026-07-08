@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Typography, Space,
-  Descriptions, Alert, Select, Tabs, Divider, Collapse, Upload, InputNumber, Image,
+  Descriptions, Alert, Select, Tabs, Divider, Collapse, Upload, InputNumber,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -24,15 +24,16 @@ import { buildDispatchGroupedProducts, summarizeDispatchVerification } from '../
 import {
   useGetDispatchesQuery,
   useGetTodaysDispatchesQuery,
-  useGetPickupExpensesQuery,
   useGetCompanySettingsQuery,
   useUploadDispatchLRMutation,
   useConfirmDispatchMutation,
   useVerifyItemMutation,
   useGetTransportsQuery,
   useGetPickupOrdersQuery,
+  useGetTodaysPickupOrdersQuery,
   useUpdatePickupOrderMutation,
   useUpdateTransportStatusMutation,
+  useGetStaffQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -189,78 +190,83 @@ export default function Dispatch() {
     }));
   }, [transportRaw, dispatchOrders]);
 
-  // ── Pickup reimbursements — RTK Query ─────────────────────────────────────
-  const { data: pickupExpData } = useGetPickupExpensesQuery();
-  const apiReimbExpenses = useMemo(() => (pickupExpData?.data || []).map((r) => ({
-    key: r._id, orderId: r.orderId?.orderCode || '—',
-    date: r.createdAt?.slice(0, 10),
-    supplier: '—', item: '—',
-    amount: r.pickupAmount || 0,
-    pickupEmpId: r.pickupEmpId?.staffCode || '—',
-    pickupEmpName: r.pickupEmpId?.fullName || '—',
-    gPayNumber: r.pickupGPayNumber,
-    paymentStatus: r.paymentStatus,
-    paymentProof: r.paymentProofUrl,
-    paidDate: r.paidDate,
-    paidBy: r.paidBy,
-  })), [pickupExpData]);
-
-  // ── Pick Up Order tab state ────────────────────────────────────────────────
+  // ── Pick Up Order tab state — Today's / All Orders, both live from PickupOrder ──
   const { data: pickupOrdersRaw } = useGetPickupOrdersQuery();
+  const { data: todaysPickupOrdersRaw } = useGetTodaysPickupOrdersQuery();
   const [updatePickupOrder] = useUpdatePickupOrderMutation();
-  const [pickupOrders, setPickupOrders] = useState([]);
   const [pickupSubTab, setPickupSubTab] = useState('pickup_orders');
 
-  // Load pickup orders from the backend (falls back to any locally-tracked entries).
-  useEffect(() => {
-    if (pickupOrdersRaw?.data) {
-      setPickupOrders(pickupOrdersRaw.data.map((p) => ({
-        key: p._id,
-        orderId: p.orderCode || '—',
-        client: p.clientName || '—',
-        destination: p.destination || '—',
-        pickupPerson: p.pickupPersonName || p.pickupEmpId?.fullName || '—',
-        taken: p.taken,
-        amount: p.amount || 0,
-        paymentBy: p.paymentBy || '',
-        paymentStatus: p.paymentStatus || 'Unpaid',
-      })));
-    }
-  }, [pickupOrdersRaw]);
-
-  // ── Proof data (base64) — shared via hng_proofs localStorage cross-page ──
-  const [proofData, setProofData] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hng_proofs') || '{}'); } catch { return {}; }
+  const normalizePickup = (p) => ({
+    key: p._id,
+    orderId: p.orderCode || '—',
+    client: p.clientName || '—',
+    destination: p.destination || '—',
+    date: (p.scheduledDate || p.createdAt || '').slice(0, 10),
+    pickupEmpName: p.pickupPersonName || p.pickupEmpId?.fullName || '—',
+    pickupEmpId: p.pickupEmpId?._id || null,
+    taken: !!p.taken,
+    takenStatus: p.takenStatus || 'Pending',
+    amount: p.amount || 0,
+    paymentBy: p.paymentBy || '',
+    paymentStatus: p.paymentStatus || 'Unpaid',
+    gPayNumber: p.gPayNumber || '',
+    proofUrl: p.proofUrl || '',
+    reimbursementStatus: p.reimbursementStatus || 'Not Applicable',
+    reimbursedAmount: p.reimbursedAmount || 0,
+    reimbursementProofUrl: p.reimbursementProofUrl || '',
+    paidBy: p.paidBy || '',
+    paidDate: (p.paidDate || '').slice(0, 10),
   });
 
+  const allPickupOrders = useMemo(() => (pickupOrdersRaw?.data || []).map(normalizePickup), [pickupOrdersRaw]);
+  const todaysPickupOrders = useMemo(() => (todaysPickupOrdersRaw?.data || []).map(normalizePickup), [todaysPickupOrdersRaw]);
+  // Reimbursement claims — pickups a Pickup Team member paid for out of pocket
+  // (Finance-paid pickups need no reimbursement, so they never appear here).
+  const reimbExpenses = useMemo(() => allPickupOrders.filter((r) => r.paymentBy === 'Pickup Team'), [allPickupOrders]);
+
+  // Staff list for the "Pickup Employee Name" selector on the payment modal.
+  const { data: pickupStaffRaw } = useGetStaffQuery();
+  const pickupStaffOptions = useMemo(() => (pickupStaffRaw?.data || []).map((s) => ({
+    value: s._id, label: s.fullName,
+  })), [pickupStaffRaw]);
+
   // ── Taken Status / Payment By modal state ────────────────────────────────
-  const [pickupStatusMap, setPickupStatusMap] = useState({});
-  const [pickupPayByMap, setPickupPayByMap] = useState({});
   const [showPickupPayModal, setShowPickupPayModal] = useState(false);
   const [pickupPayTarget, setPickupPayTarget] = useState(null);
   const [pickupPayForm] = Form.useForm();
   const [showReceivedModal, setShowReceivedModal] = useState(false);
   const [receivedTarget, setReceivedTarget] = useState(null);
 
-  // reimbExpenses comes from RTK Query (apiReimbExpenses) — local state used for UI-only overrides
-  const [reimbExpenses, setReimbExpenses] = useState([]);
-  useEffect(() => {
-    if (apiReimbExpenses.length > 0) setReimbExpenses(apiReimbExpenses);
-  }, [apiReimbExpenses]);
-
   // ── Pickup Status / Payment handlers ──────────────────────────────────────
-  const handlePickupStatusChange = (record, status) => {
+  const handlePickupStatusChange = async (record, status) => {
     if (!requireAccess('edit')) return;
-    setPickupStatusMap(prev => ({ ...prev, [record.key]: status }));
+    const takenStatus = status === 'pickup_dropped' ? 'Pickup Dropped' : 'Taken';
+    try {
+      await updatePickupOrder({ id: record.key, takenStatus }).unwrap();
+    } catch {
+      enqueueSnackbar('Failed to update taken status', { variant: 'error' });
+      return;
+    }
     if (status === 'pickup_dropped') {
       setReceivedTarget(record);
       setShowReceivedModal(true);
     }
   };
 
-  const handlePickupPayByChange = (record, payBy) => {
+  // Finance settles it directly (no form needed — treated as paid immediately).
+  // Pickup Team pays out of pocket, so it opens the modal to capture GPay/amount/proof
+  // and raises a reimbursement claim for Finance to pay back (full or partial).
+  const handlePickupPayByChange = async (record, payBy) => {
     if (!requireAccess('edit')) return;
-    setPickupPayByMap(prev => ({ ...prev, [record.key]: payBy }));
+    if (payBy === 'finance') {
+      try {
+        await updatePickupOrder({ id: record.key, paymentBy: 'Finance' }).unwrap();
+        enqueueSnackbar('Marked as paid by Finance.', { variant: 'success' });
+      } catch {
+        enqueueSnackbar('Failed to update payment', { variant: 'error' });
+      }
+      return;
+    }
     setPickupPayTarget({ ...record, payBy });
     pickupPayForm.resetFields();
     setShowPickupPayModal(true);
@@ -268,82 +274,35 @@ export default function Dispatch() {
 
   const handlePickupPaySubmit = async (vals) => {
     const fileItem = vals.proof?.fileList?.[0];
-    // Use Cloudinary URL if file was already uploaded via customRequest
-    const proofUrl = fileItem?.url || fileItem?.name || null;
-    const payBy = pickupPayTarget.payBy;
-    const gPayNum = vals.gPayNumber || null;
-    const amt = vals.amount || 0;
-    const expenseKey = `DT-${Date.now()}`;
-
-    const newExpense = {
-      key: expenseKey,
-      orderId: pickupPayTarget.orderId || pickupPayTarget.id || '—',
-      date: new Date().toISOString().slice(0, 10),
-      supplier: pickupPayTarget.supplier || '—',
-      item: pickupPayTarget.item || '—',
-      amount: amt,
-      pickupEmpId: pickupPayTarget.pickupEmpId || '—',
-      pickupEmpName: pickupPayTarget.pickupEmpName || '—',
-      category: 'PICKUP',
-      gPayNumber: gPayNum,
-      proof: proofUrl,
-      paymentSource: payBy === 'finance' ? 'Finance' : 'Pickup Team',
-      paymentStatus: payBy === 'pickup_team' ? 'Paid' : 'Pending',
-      paymentProof: payBy === 'pickup_team' ? proofUrl : null,
-      paidDate: payBy === 'pickup_team' ? new Date().toISOString().slice(0, 10) : null,
-      paidBy: payBy === 'pickup_team' ? 'Pickup Team' : null,
-    };
-
-    const updatedExpenses = [...reimbExpenses, newExpense];
-    setReimbExpenses(updatedExpenses);
-    localStorage.setItem('hng_pickup_expenses', JSON.stringify(updatedExpenses));
-
-    if (proofUrl) {
-      const proofEntry = {
-        proof: proofUrl,
-        ...(payBy === 'pickup_team' ? { paymentProof: proofUrl } : {}),
-      };
-      const existing = JSON.parse(localStorage.getItem('hng_proofs') || '{}');
-      existing[expenseKey] = proofEntry;
-      existing[pickupPayTarget.key] = proofEntry;
-      localStorage.setItem('hng_proofs', JSON.stringify(existing));
-      setProofData(prev => ({
-        ...prev,
-        [expenseKey]: proofEntry,
-        [pickupPayTarget.key]: proofEntry,
-      }));
+    const proofUrl = fileItem?.url || null;
+    const staffMember = pickupStaffOptions.find((s) => s.value === vals.pickupEmpId);
+    try {
+      await updatePickupOrder({
+        id: pickupPayTarget.key,
+        paymentBy: 'Pickup Team',
+        amount: vals.amount,
+        pickupEmpId: vals.pickupEmpId,
+        pickupPersonName: staffMember?.label || '',
+        gPayNumber: vals.gPayNumber,
+        ...(proofUrl ? { proofUrl } : {}),
+      }).unwrap();
+    } catch {
+      enqueueSnackbar('Failed to submit payment', { variant: 'error' });
+      return;
     }
-
-    const updatedOrders = pickupOrders.map(o => o.key === pickupPayTarget.key
-      ? {
-          ...o,
-          takenStatus: 'taken',
-          takenProof: proofUrl,
-          paymentBy: payBy,
-          expenseKey,
-          paymentStatus: payBy === 'pickup_team' ? 'Paid' : 'Pending',
-          paymentProof: payBy === 'pickup_team' ? proofUrl : null,
-          paidBy: payBy === 'pickup_team' ? 'Pickup Team' : null,
-        }
-      : o);
-    setPickupOrders(updatedOrders);
-    localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedOrders));
-
-    enqueueSnackbar(payBy === 'pickup_team'
-      ? 'Payment proof uploaded — visible to Finance team as Paid.'
-      : 'Sent to Finance team with GPay number and proof.', { variant: 'success' });
+    enqueueSnackbar('Payment proof submitted — visible in Reimbursement Claims for Finance to process.', { variant: 'success' });
     setShowPickupPayModal(false);
     setPickupPayTarget(null);
     pickupPayForm.resetFields();
   };
 
-  const handlePickupDroppedConfirm = () => {
-    const updatedOrders = pickupOrders.map(o => o.key === receivedTarget?.key
-      ? { ...o, takenStatus: 'pickup_dropped', deliveryStatus: 'Received' }
-      : o);
-    setPickupOrders(updatedOrders);
-    localStorage.setItem('hng_dispatch_tracking', JSON.stringify(updatedOrders));
-    enqueueSnackbar(`Order ${receivedTarget?.orderId} marked as Pickup Dropped — received order process started.`, { variant: 'success' });
+  const handlePickupDroppedConfirm = async () => {
+    try {
+      await updatePickupOrder({ id: receivedTarget.key, takenStatus: 'Pickup Dropped' }).unwrap();
+      enqueueSnackbar(`Order ${receivedTarget?.orderId} marked as Pickup Dropped — received order process started.`, { variant: 'success' });
+    } catch {
+      enqueueSnackbar('Failed to update status', { variant: 'error' });
+    }
     setShowReceivedModal(false);
     setReceivedTarget(null);
   };
@@ -682,6 +641,82 @@ export default function Dispatch() {
     { title: 'Status', dataIndex: 'status', width: 105, render: (v) => <Tag color={v === 'Delivered' ? 'success' : 'processing'} style={{ fontSize: 13 }}>{v}</Tag> },
   ];
 
+  // Shared columns for the "Today's Pickup Orders" and "All Orders" Pick Up Order tables.
+  const pickupColumns = [
+    { title: 'Date', dataIndex: 'date', width: 95 },
+    { title: 'Order ID', dataIndex: 'orderId', width: 100, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'From / Client', dataIndex: 'client', width: 150, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
+    { title: 'Destination', dataIndex: 'destination', width: 150, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Pickup Employee', key: 'emp', width: 150, render: (_, r) => <Text strong style={{ fontSize: 13 }}>{r.pickupEmpName || '—'}</Text> },
+    {
+      title: 'Taken Status', key: 'taken', width: 165,
+      render: (_, r) => (
+        <Select
+          size="small"
+          value={r.takenStatus === 'Pending' ? undefined : (r.takenStatus === 'Pickup Dropped' ? 'pickup_dropped' : 'taken')}
+          placeholder="Select status"
+          style={{ width: 152 }}
+          onClick={e => e.stopPropagation()}
+          onChange={v => handlePickupStatusChange(r, v)}
+        >
+          <Option value="taken">Taken</Option>
+          <Option value="pickup_dropped">Pickup Dropped</Option>
+        </Select>
+      )
+    },
+    {
+      title: 'Payment By', key: 'paymentBy', width: 185,
+      render: (_, r) => {
+        if (r.paymentBy) {
+          return <Tag color={r.paymentBy === 'Finance' ? 'blue' : 'green'} style={{ borderRadius: 8, fontWeight: 600 }}>{r.paymentBy}</Tag>;
+        }
+        if (r.paymentStatus === 'Paid') return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+        return (
+          <Select
+            size="small"
+            placeholder="Select payer"
+            style={{ width: 170 }}
+            onClick={e => e.stopPropagation()}
+            onChange={v => handlePickupPayByChange(r, v)}
+          >
+            <Option value="finance">Payment by Finance</Option>
+            <Option value="pickup_team">Payment by Pickup Team</Option>
+          </Select>
+        );
+      }
+    },
+    { title: 'Amount', dataIndex: 'amount', width: 100, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
+    { title: 'GPay Number', dataIndex: 'gPayNumber', width: 130, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
+    { title: 'Payment Proof', dataIndex: 'proofUrl', width: 125, render: v => v ? <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button> : <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Uploaded</Tag> },
+    {
+      title: 'Payment Status', dataIndex: 'paymentStatus', width: 120, align: 'center',
+      render: v => <Tag color={v === 'Paid' ? 'success' : 'warning'} style={{ borderRadius: 10, fontWeight: 600, fontSize: 12 }}>{v}</Tag>
+    },
+  ];
+
+  const reimbursementColumns = [
+    { title: 'Date', dataIndex: 'date', width: 95 },
+    { title: 'Order ID', dataIndex: 'orderId', width: 100, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
+    { title: 'From', dataIndex: 'client', width: 140, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
+    { title: 'Pickup Employee', key: 'emp', width: 150, render: (_, r) => <Text strong style={{ fontSize: 13 }}>{r.pickupEmpName || '—'}</Text> },
+    { title: 'GPay Number', dataIndex: 'gPayNumber', width: 130, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
+    { title: 'Amount', dataIndex: 'amount', width: 100, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
+    { title: 'Payment Proof', dataIndex: 'proofUrl', width: 125, render: v => v ? <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button> : <Tag color="warning" style={{ borderRadius: 8, fontSize: 11 }}>Not Uploaded</Tag> },
+    {
+      title: 'Reimbursement', key: 'reimb', width: 150, align: 'center',
+      render: (_, r) => (
+        <div>
+          <Tag color={r.reimbursementStatus === 'Paid' ? 'success' : r.reimbursementStatus === 'Partial' ? 'processing' : 'warning'} style={{ borderRadius: 10, fontSize: 12 }}>
+            {r.reimbursementStatus}
+          </Tag>
+          {r.reimbursementStatus !== 'Pending' && <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>&#8377;{r.reimbursedAmount} of &#8377;{r.amount}</Text>}
+        </div>
+      )
+    },
+    { title: 'Reimbursed By', dataIndex: 'paidBy', width: 120, render: v => v ? <Tag color="blue" style={{ borderRadius: 8, fontSize: 12 }}>{v}</Tag> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text> },
+    { title: 'Finance Proof', dataIndex: 'reimbursementProofUrl', width: 130, render: v => v ? <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button> : <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Paid</Tag> },
+  ];
+
   const applyFilters = (orders) => orders.filter((o) => {
     const s = !searchText || (o.id || '').toLowerCase().includes(searchText.toLowerCase()) || (o.client || '').toLowerCase().includes(searchText.toLowerCase()) || (o.address || '').toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
     const p = paymentFilter === 'All' || o.payment === paymentFilter;
@@ -891,160 +926,108 @@ export default function Dispatch() {
                   items={[
                     {
                       key: 'pickup_orders',
-                      label: 'Today\'s Pickup Orders',
+                      label: (
+                        <Space>
+                          Today's Pickup Orders
+                          {todaysPickupOrders.length > 0 && (
+                            <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', fontSize: 11 }}>
+                              {todaysPickupOrders.length}
+                            </Tag>
+                          )}
+                        </Space>
+                      ),
                       children: (
                         <div>
                           <div style={{ marginBottom: 12 }}>
                             <Text strong style={{ color: textColor }}>Current Day Pickup Orders</Text>
-                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Orders assigned for pickup today</Text>
+                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Pickups whose Expected Delivery Date is today</Text>
                           </div>
                           <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order ID, supplier, item..." allowClear value={pickupSearch} onChange={(e) => setPickupSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order ID, client..." allowClear value={pickupSearch} onChange={(e) => setPickupSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
                             <Select allowClear placeholder="Taken Status" value={pickupTakenFilter} onChange={setPickupTakenFilter} style={{ width: 160, borderRadius: 8 }}>
-                              <Option value="taken">Taken</Option>
-                              <Option value="pickup_dropped">Pickup Dropped</Option>
+                              <Option value="Taken">Taken</Option>
+                              <Option value="Pickup Dropped">Pickup Dropped</Option>
                             </Select>
                             <Select allowClear placeholder="Payment Status" value={pickupPayFilter} onChange={setPickupPayFilter} style={{ width: 160, borderRadius: 8 }}>
                               <Option value="Paid">Paid</Option>
                               <Option value="Unpaid">Unpaid</Option>
                             </Select>
                           </div>
-                          {pickupOrders.filter((r) => {
-                            const q = pickupSearch.toLowerCase();
-                            const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q);
-                            const matchTaken = !pickupTakenFilter || (r.takenStatus || pickupStatusMap[r.key] || '') === pickupTakenFilter;
-                            const matchPay = !pickupPayFilter || r.paymentStatus === pickupPayFilter;
-                            return matchSearch && matchTaken && matchPay;
-                          }).length === 0 && pickupOrders.length > 0 ? (
-                            <div style={{ textAlign: 'center', padding: '24px', color: isDark ? '#aaa' : '#888' }}>No results match your filters.</div>
-                          ) : pickupOrders.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
-                              <CarOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
-                              <Text type="secondary">No pickup orders for today.</Text>
-                            </div>
-                          ) : (
-                            <Table
-                              size="small"
-                              dataSource={pickupOrders.filter((r) => {
-                                const q = pickupSearch.toLowerCase();
-                                const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q);
-                                const matchTaken = !pickupTakenFilter || (r.takenStatus || pickupStatusMap[r.key] || '') === pickupTakenFilter;
-                                const matchPay = !pickupPayFilter || r.paymentStatus === pickupPayFilter;
-                                return matchSearch && matchTaken && matchPay;
-                              })}
-                              rowKey="key"
-                              pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
-                              scroll={{ x: 'max-content' }}
-                              columns={[
-                                { title: 'Date', dataIndex: 'date', width: 95 },
-                                { title: 'Order ID', dataIndex: 'orderId', width: 95, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
-                                { title: 'Supplier', dataIndex: 'supplier', width: 135, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
-                                { title: 'Item', dataIndex: 'item', width: 165, render: v => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
-                                {
-                                  title: 'Pickup Employee', key: 'emp', width: 155,
-                                  render: (_, r) => (
-                                    <div>
-                                      <Text strong style={{ fontSize: 13 }}>{r.pickupEmpName || '—'}</Text>
-                                      <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>{r.pickupEmpId}</Text>
-                                    </div>
-                                  )
-                                },
-                                { title: 'LR Number', dataIndex: 'lrNumber', width: 115, render: v => v ? <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> : <Text type="secondary">—</Text> },
-                                {
-                                  title: 'Taken Status', key: 'taken', width: 165,
-                                  render: (_, r) => {
-                                    const currentStatus = pickupStatusMap[r.key] ?? r.takenStatus ?? undefined;
-                                    const alreadyDone = !pickupStatusMap[r.key] && r.paymentBy;
-                                    return (
-                                      <Select
-                                        size="small"
-                                        value={currentStatus}
-                                        placeholder="Select status"
-                                        style={{ width: 152 }}
-                                        onClick={e => e.stopPropagation()}
-                                        onChange={v => handlePickupStatusChange(r, v)}
-                                        disabled={!!alreadyDone}
-                                      >
-                                        <Option value="taken">Taken</Option>
-                                        <Option value="pickup_dropped">Pickup Dropped</Option>
-                                      </Select>
-                                    );
-                                  }
-                                },
-                                {
-                                  title: 'Payment By', key: 'paymentBy', width: 185,
-                                  render: (_, r) => {
-                                    const currentStatus = pickupStatusMap[r.key] ?? r.takenStatus ?? undefined;
-                                    const currentPayBy = pickupPayByMap[r.key] ?? r.paymentBy ?? undefined;
-                                    if (currentStatus !== 'taken') return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
-                                    if (currentPayBy) {
-                                      return (
-                                        <Tag
-                                          color={currentPayBy === 'finance' ? 'blue' : 'green'}
-                                          style={{ borderRadius: 8, fontWeight: 600 }}
-                                        >
-                                          {currentPayBy === 'finance' ? 'Finance' : 'Pickup Team'}
-                                        </Tag>
-                                      );
-                                    }
-                                    return (
-                                      <Select
-                                        size="small"
-                                        placeholder="Select payer"
-                                        style={{ width: 170 }}
-                                        onClick={e => e.stopPropagation()}
-                                        onChange={v => handlePickupPayByChange(r, v)}
-                                      >
-                                        <Option value="finance">Payment by Finance</Option>
-                                        <Option value="pickup_team">Payment by Pickup Team</Option>
-                                      </Select>
-                                    );
-                                  }
-                                },
-                                {
-                                  title: 'Finance Payment Proof', key: 'finProof', width: 155,
-                                  render: (_, r) => {
-                                    const lookupKey = r.key;
-                                    const altKey = r.expenseKey;
-                                    const url = proofData[lookupKey]?.paymentProof || proofData[altKey]?.paymentProof;
-                                    if (url) {
-                                      const isImg = url.startsWith('data:image');
-                                      return isImg
-                                        ? <Image src={url} width={46} height={46} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #52c41a55' }} preview={{ mask: <EyeOutlined style={{ fontSize: 13 }} /> }} />
-                                        : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 12 }}>View File</Button>;
-                                    }
-                                    if (r.paymentProof) return <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>;
-                                    return <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Paid</Tag>;
-                                  }
-                                },
-                                {
-                                  title: 'Payment Status', key: 'payStatus', width: 130, align: 'center',
-                                  render: (_, r) => {
-                                    const status = r.paymentStatus;
-                                    if (!status) return <Tag style={{ borderRadius: 8, fontSize: 12 }}>—</Tag>;
-                                    return (
-                                      <div>
-                                        <Tag
-                                          color={status === 'Paid' ? 'success' : 'warning'}
-                                          style={{ borderRadius: 10, fontWeight: 600, fontSize: 12 }}
-                                        >
-                                          {status === 'Paid' ? 'Paid' : 'Pending'}
-                                        </Tag>
-                                        {r.paidBy && <Text type="secondary" style={{ display: 'block', fontSize: 10, marginTop: 2 }}>{r.paidBy}</Text>}
-                                      </div>
-                                    );
-                                  }
-                                },
-                                {
-                                  title: 'Delivery Status', dataIndex: 'deliveryStatus', width: 120,
-                                  render: v => {
-                                    const colorMap = { 'Delivered': 'success', 'Partial Delivery': 'warning', 'In Transit': 'processing', 'Received': 'success' };
-                                    return <Tag color={colorMap[v] || 'default'} style={{ borderRadius: 8 }}>{v || 'Pending'}</Tag>;
-                                  }
-                                },
-                              ]}
-                            />
-                          )}
+                          {(() => {
+                            const rows = todaysPickupOrders.filter((r) => {
+                              const q = pickupSearch.toLowerCase();
+                              const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.client || '').toLowerCase().includes(q);
+                              const matchTaken = !pickupTakenFilter || r.takenStatus === pickupTakenFilter;
+                              const matchPay = !pickupPayFilter || r.paymentStatus === pickupPayFilter;
+                              return matchSearch && matchTaken && matchPay;
+                            });
+                            if (todaysPickupOrders.length === 0) return (
+                              <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
+                                <CarOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
+                                <Text type="secondary">No pickup orders for today.</Text>
+                              </div>
+                            );
+                            if (rows.length === 0) return <div style={{ textAlign: 'center', padding: '24px', color: isDark ? '#aaa' : '#888' }}>No results match your filters.</div>;
+                            return (
+                              <Table
+                                size="small"
+                                dataSource={rows}
+                                rowKey="key"
+                                pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                                scroll={{ x: 'max-content' }}
+                                columns={pickupColumns}
+                              />
+                            );
+                          })()}
+                        </div>
+                      ),
+                    },
+                    {
+                      key: 'all_pickup_orders',
+                      label: 'All Orders',
+                      children: (
+                        <div>
+                          <div style={{ marginBottom: 12 }}>
+                            <Text strong style={{ color: textColor }}>All Pickup Orders</Text>
+                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Every pickup job, regardless of Expected Delivery Date</Text>
+                          </div>
+                          <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order ID, client..." allowClear value={pickupSearch} onChange={(e) => setPickupSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                            <Select allowClear placeholder="Taken Status" value={pickupTakenFilter} onChange={setPickupTakenFilter} style={{ width: 160, borderRadius: 8 }}>
+                              <Option value="Taken">Taken</Option>
+                              <Option value="Pickup Dropped">Pickup Dropped</Option>
+                            </Select>
+                            <Select allowClear placeholder="Payment Status" value={pickupPayFilter} onChange={setPickupPayFilter} style={{ width: 160, borderRadius: 8 }}>
+                              <Option value="Paid">Paid</Option>
+                              <Option value="Unpaid">Unpaid</Option>
+                            </Select>
+                          </div>
+                          {(() => {
+                            const rows = allPickupOrders.filter((r) => {
+                              const q = pickupSearch.toLowerCase();
+                              const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.client || '').toLowerCase().includes(q);
+                              const matchTaken = !pickupTakenFilter || r.takenStatus === pickupTakenFilter;
+                              const matchPay = !pickupPayFilter || r.paymentStatus === pickupPayFilter;
+                              return matchSearch && matchTaken && matchPay;
+                            });
+                            if (allPickupOrders.length === 0) return (
+                              <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
+                                <CarOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
+                                <Text type="secondary">No pickup orders yet.</Text>
+                              </div>
+                            );
+                            if (rows.length === 0) return <div style={{ textAlign: 'center', padding: '24px', color: isDark ? '#aaa' : '#888' }}>No results match your filters.</div>;
+                            return (
+                              <Table
+                                size="small"
+                                dataSource={rows}
+                                rowKey="key"
+                                pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                                scroll={{ x: 'max-content' }}
+                                columns={pickupColumns}
+                              />
+                            );
+                          })()}
                         </div>
                       ),
                     },
@@ -1053,9 +1036,9 @@ export default function Dispatch() {
                       label: (
                         <Space>
                           Reimbursement Claims
-                          {reimbExpenses.filter(r => r.paymentStatus !== 'Paid').length > 0 && (
+                          {reimbExpenses.filter(r => r.reimbursementStatus !== 'Paid').length > 0 && (
                             <Tag style={{ borderRadius: 20, background: '#ff4d4f22', color: '#ff4d4f', border: '1px solid #ff4d4f44', fontSize: 10, padding: '0 5px' }}>
-                              {reimbExpenses.filter(r => r.paymentStatus !== 'Paid').length} Pending
+                              {reimbExpenses.filter(r => r.reimbursementStatus !== 'Paid').length} Pending
                             </Tag>
                           )}
                         </Space>
@@ -1064,13 +1047,14 @@ export default function Dispatch() {
                         <div>
                           <div style={{ marginBottom: 12 }}>
                             <Text strong style={{ color: textColor }}>Reimbursement Claims</Text>
-                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Pickup expenses — payment status from Finance team</Text>
+                            <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Pickups a Pickup Team member paid for out of pocket — reimbursement status from Finance</Text>
                           </div>
                           <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order, supplier, item..." allowClear value={reimbSearch} onChange={(e) => setReimbSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
-                            <Select allowClear placeholder="Payment Status" value={reimbPayFilter} onChange={setReimbPayFilter} style={{ width: 160, borderRadius: 8 }}>
+                            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order, client, employee..." allowClear value={reimbSearch} onChange={(e) => setReimbSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
+                            <Select allowClear placeholder="Reimbursement Status" value={reimbPayFilter} onChange={setReimbPayFilter} style={{ width: 180, borderRadius: 8 }}>
+                              <Option value="Pending">Pending</Option>
+                              <Option value="Partial">Partial</Option>
                               <Option value="Paid">Paid</Option>
-                              <Option value="Unpaid">Unpaid</Option>
                             </Select>
                           </div>
                           {reimbExpenses.length === 0 ? (
@@ -1083,89 +1067,14 @@ export default function Dispatch() {
                               size="small"
                               dataSource={reimbExpenses.filter((r) => {
                                 const q = reimbSearch.toLowerCase();
-                                const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
-                                const matchPay = !reimbPayFilter || r.paymentStatus === reimbPayFilter;
+                                const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.client || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
+                                const matchPay = !reimbPayFilter || r.reimbursementStatus === reimbPayFilter;
                                 return matchSearch && matchPay;
                               })}
                               rowKey="key"
                               pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                               scroll={{ x: 'max-content' }}
-                              columns={[
-                                { title: 'Date', dataIndex: 'date', width: 95 },
-                                { title: 'Order ID', dataIndex: 'orderId', width: 95, render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
-                                { title: 'Supplier', dataIndex: 'supplier', width: 135, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{v}</Text> },
-                                { title: 'Item', dataIndex: 'item', width: 155, render: v => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
-                                {
-                                  title: 'Employee', key: 'emp', width: 145,
-                                  render: (_, r) => (
-                                    <div>
-                                      <Text strong style={{ fontSize: 13 }}>{r.pickupEmpName}</Text>
-                                      <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>{r.pickupEmpId}</Text>
-                                    </div>
-                                  )
-                                },
-                                {
-                                  title: 'Payment Source', dataIndex: 'paymentSource', width: 130, align: 'center',
-                                  render: (v, r) => {
-                                    const src = v || (r.paidBy === 'Pickup Team' ? 'Pickup Team' : r.paidBy ? 'Finance' : null);
-                                    if (!src) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
-                                    return <Tag color={src === 'Finance' ? 'blue' : 'green'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{src}</Tag>;
-                                  }
-                                },
-                                {
-                                  title: 'G Pay', dataIndex: 'gPayNumber', width: 125,
-                                  render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text>
-                                },
-                                {
-                                  title: 'Amount', dataIndex: 'amount', width: 95, align: 'right',
-                                  render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text>
-                                },
-                                {
-                                  title: 'Uploaded Proof', dataIndex: 'proof', width: 130,
-                                  render: (v, r) => {
-                                    const url = proofData[r.key]?.proof;
-                                    if (url) {
-                                      const isImg = url.startsWith('data:image');
-                                      return isImg
-                                        ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #B11E6A33' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
-                                        : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A', fontSize: 12 }}>View File</Button>;
-                                    }
-                                    if (v) return <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button>;
-                                    return <Tag color="warning" style={{ borderRadius: 8, fontSize: 11 }}>Not Uploaded</Tag>;
-                                  }
-                                },
-                                {
-                                  title: 'Payment Status', dataIndex: 'paymentStatus', width: 135, align: 'center',
-                                  render: (v, r) => (
-                                    <div>
-                                      <Tag color={v === 'Paid' ? 'success' : 'warning'} style={{ borderRadius: 10, fontSize: 13 }}>
-                                        {v === 'Paid' ? 'Paid' : 'Pending (Finance)'}
-                                      </Tag>
-                                      {r.paidDate && <Text type="secondary" style={{ display: 'block', fontSize: 11, marginTop: 2 }}>{r.paidDate}</Text>}
-                                    </div>
-                                  )
-                                },
-                                {
-                                  title: 'Paid By', key: 'paidBy', width: 115,
-                                  render: (_, r) => r.paidBy
-                                    ? <Tag color={r.paidBy === 'Pickup Team' ? 'green' : 'blue'} style={{ borderRadius: 8, fontSize: 12 }}>{r.paidBy}</Tag>
-                                    : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
-                                },
-                                {
-                                  title: 'Finance Payment Proof', dataIndex: 'paymentProof', width: 155,
-                                  render: (v, r) => {
-                                    const url = proofData[r.key]?.paymentProof;
-                                    if (url) {
-                                      const isImg = url.startsWith('data:image');
-                                      return isImg
-                                        ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #52c41a55' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
-                                        : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 12 }}>View File</Button>;
-                                    }
-                                    if (v) return <Button size="small" icon={<FileTextOutlined />} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>;
-                                    return <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Paid</Tag>;
-                                  }
-                                },
-                              ]}
+                              columns={reimbursementColumns}
                             />
                           )}
                         </div>
@@ -1230,14 +1139,11 @@ export default function Dispatch() {
         activeKey={activeKeyFor(activeTab)}
       />
 
-      {/* ── Pickup Payment Modal ─────────────────────────────────────────────── */}
+      {/* ── Pickup Payment Modal — Pickup Team pays out of pocket, so this always
+           captures amount/GPay/proof to raise a reimbursement claim (Finance's choice
+           settles immediately with no form). ── */}
       <Modal
-        title={
-          <Space>
-            <WalletOutlined style={{ color: '#B11E6A' }} />
-            <span>{pickupPayTarget?.payBy === 'finance' ? 'Send to Finance — GPay & Proof' : 'Pickup Team Payment — Upload Proof'}</span>
-          </Space>
-        }
+        title={<Space><WalletOutlined style={{ color: '#B11E6A' }} /><span>Pickup Team Payment — Upload Proof</span></Space>}
         open={showPickupPayModal}
         onCancel={() => { setShowPickupPayModal(false); setPickupPayTarget(null); pickupPayForm.resetFields(); }}
         footer={null}
@@ -1248,17 +1154,14 @@ export default function Dispatch() {
         {pickupPayTarget && (
           <Form form={pickupPayForm} layout="vertical" onFinish={handlePickupPaySubmit}>
             <div style={{ background: '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: '1px solid #e8f4ff' }}>
-              <Text strong style={{ display: 'block' }}>{pickupPayTarget.item || '—'}</Text>
-              <Text style={{ color: '#B11E6A' }}>{pickupPayTarget.supplier || '—'}</Text>
+              <Text strong style={{ display: 'block' }}>{pickupPayTarget.client || '—'}</Text>
               <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>
-                Order: {pickupPayTarget.orderId || pickupPayTarget.id || '—'} &nbsp;·&nbsp; Pickup: {pickupPayTarget.pickupEmpName || '—'}
+                Order: {pickupPayTarget.orderId || '—'} &nbsp;·&nbsp; Pickup: {pickupPayTarget.pickupEmpName || '—'}
               </Text>
-              <Tag color={pickupPayTarget.payBy === 'finance' ? 'blue' : 'green'} style={{ marginTop: 6, borderRadius: 8 }}>
-                {pickupPayTarget.payBy === 'finance' ? 'Payment by Finance' : 'Payment by Pickup Team'}
-              </Tag>
+              <Tag color="green" style={{ marginTop: 6, borderRadius: 8 }}>Payment by Pickup Team</Tag>
             </div>
 
-            <Form.Item label="Expense Amount (₹)" name="amount" rules={[{ required: true, message: 'Enter expense amount' }]}>
+            <Form.Item label="Amount Paid (₹)" name="amount" initialValue={pickupPayTarget.amount || undefined} rules={[{ required: true, message: 'Enter amount paid' }]}>
               <InputNumber
                 prefix="₹"
                 style={{ width: '100%' }}
@@ -1269,49 +1172,38 @@ export default function Dispatch() {
               />
             </Form.Item>
 
-            <Form.Item
-              label={pickupPayTarget.payBy === 'finance' ? 'GPay Number (Finance will send payment here)' : 'GPay Number (Pickup employee who paid)'}
-              name="gPayNumber"
-              rules={[{ required: true, message: 'Enter GPay / UPI number' }]}
-            >
+            <Form.Item label="Pickup Employee Name" name="pickupEmpId" rules={[{ required: true, message: 'Select the pickup employee' }]}>
+              <Select
+                showSearch
+                placeholder="Select pickup employee"
+                style={{ width: '100%' }}
+                options={pickupStaffOptions}
+                filterOption={(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+
+            <Form.Item label="GPay Number (Pickup employee who paid)" name="gPayNumber" rules={[{ required: true, message: 'Enter GPay / UPI number' }]}>
               <Input prefix={<PhoneOutlined />} placeholder="Enter G Pay / UPI number" style={{ borderRadius: 8 }} />
             </Form.Item>
 
-            <Form.Item
-              label={pickupPayTarget.payBy === 'finance' ? 'Upload Proof (Bill / Supplier Receipt)' : 'Upload Payment Proof (Payment Screenshot / Receipt)'}
-              name="proof"
-              rules={[{ required: true, message: 'Please upload proof' }]}
-            >
+            <Form.Item label="Upload Payment Proof (Payment Screenshot / Receipt)" name="proof" rules={[{ required: true, message: 'Please upload proof' }]}>
               <Upload.Dragger maxCount={1} customRequest={makeUpload('dispatch/proofs')} accept=".pdf,.jpg,.jpeg,.png">
                 <p className="ant-upload-drag-icon"><UploadOutlined style={{ color: '#B11E6A' }} /></p>
-                <p className="ant-upload-text" style={{ fontSize: 13 }}>
-                  {pickupPayTarget.payBy === 'finance'
-                    ? 'Click or drag supplier bill / receipt'
-                    : 'Click or drag payment screenshot / receipt'}
-                </p>
+                <p className="ant-upload-text" style={{ fontSize: 13 }}>Click or drag payment screenshot / receipt</p>
               </Upload.Dragger>
             </Form.Item>
 
-            {pickupPayTarget.payBy === 'finance' ? (
-              <Alert
-                type="info"
-                showIcon
-                style={{ borderRadius: 8, marginBottom: 14, fontSize: 12 }}
-                message="This will appear in Finance team's Reimbursement Expense tab with GPay number and proof. Finance will process and send payment."
-              />
-            ) : (
-              <Alert
-                type="success"
-                showIcon
-                style={{ borderRadius: 8, marginBottom: 14, fontSize: 12 }}
-                message="This will appear in Finance team's Reimbursement Expense tab as Paid with GPay number and uploaded proof."
-              />
-            )}
+            <Alert
+              type="success"
+              showIcon
+              style={{ borderRadius: 8, marginBottom: 14, fontSize: 12 }}
+              message="This raises a reimbursement claim in Finance team's Reimbursement Expense tab — they'll pay it back in full or in part."
+            />
 
             <div style={{ display: 'flex', gap: 8 }}>
               <Button block onClick={() => { setShowPickupPayModal(false); pickupPayForm.resetFields(); }}>Cancel</Button>
               <Button block type="primary" htmlType="submit" style={{ background: '#B11E6A', border: 'none', fontWeight: 600 }}>
-                {pickupPayTarget.payBy === 'finance' ? 'Send to Finance' : 'Submit Payment Proof'}
+                Submit Payment Proof
               </Button>
             </div>
           </Form>
@@ -1322,7 +1214,7 @@ export default function Dispatch() {
       <Modal
         title={<Space><CheckCircleOutlined style={{ color: '#fa8c16' }} /><span>Pickup Dropped — Received Order Process</span></Space>}
         open={showReceivedModal}
-        onCancel={() => { setShowReceivedModal(false); setReceivedTarget(null); setPickupStatusMap(prev => { const n = { ...prev }; if (receivedTarget) delete n[receivedTarget.key]; return n; }); }}
+        onCancel={() => { setShowReceivedModal(false); setReceivedTarget(null); }}
         onOk={handlePickupDroppedConfirm}
         okText="Confirm — Mark as Received"
         okButtonProps={{ style: { background: '#B11E6A', border: 'none' } }}
@@ -1335,7 +1227,7 @@ export default function Dispatch() {
               type="warning"
               showIcon
               message="Pickup Dropped"
-              description={`Order ${receivedTarget.orderId || '—'} from ${receivedTarget.supplier || '—'} will be marked as Pickup Dropped and the received order process will be initiated.`}
+              description={`Order ${receivedTarget.orderId || '—'} from ${receivedTarget.client || '—'} will be marked as Pickup Dropped and the received order process will be initiated.`}
               style={{ borderRadius: 8, marginBottom: 14 }}
             />
             <Text type="secondary" style={{ fontSize: 13 }}>

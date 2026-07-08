@@ -1,7 +1,7 @@
 const PurchaseRequest = require('../../models/PurchaseRequest');
 const PurchaseOrder = require('../../models/PurchaseOrder');
 const LocalPurchase = require('../../models/LocalPurchase');
-const DispatchRecord = require('../../models/DispatchRecord');
+const PickupOrder = require('../../models/PickupOrder');
 const Expense = require('../../models/Expense');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
@@ -272,49 +272,61 @@ exports.payExpense = asyncHandler(async (req, res, next) => {
 });
 
 // ─── REIMBURSEMENT — PICKUP ───────────────────────────────────────────────────
+// Reimbursement claims — a PickupOrder becomes a claim once a Pickup Team member (not
+// Finance) settled it out of pocket; that's what Dispatch's "Reimbursement Claims" tab
+// and this Financial tab both read, so a payment recorded here shows up there live.
 exports.getPickupExpenses = asyncHandler(async (req, res) => {
-  const filter = { pickupAmount: { $gt: 0 } };
-  if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
+  const filter = { paymentBy: 'Pickup Team' };
+  if (req.query.paymentStatus) filter.reimbursementStatus = req.query.paymentStatus;
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [records, total] = await Promise.all([
-    DispatchRecord.find(filter)
-      .populate('orderId', 'orderCode clientName')
+    PickupOrder.find(filter)
       .populate('pickupEmpId', 'fullName staffCode')
       .sort('-createdAt')
       .skip((page - 1) * limit)
       .limit(limit),
-    DispatchRecord.countDocuments(filter),
+    PickupOrder.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: records });
 });
 
 exports.payPickupExpense = asyncHandler(async (req, res, next) => {
-  const record = await DispatchRecord.findById(req.params.id).populate('orderId', 'orderCode');
-  if (!record) return next(new AppError('Dispatch record not found', 404));
-  record.paymentProofUrl = req.file?.path || req.body.proofUrl || record.paymentProofUrl;
-  record.paymentStatus = 'Paid';
-  record.paidDate = new Date();
-  record.paidBy = req.body.paidBy || req.body.paid_by || req.user.fullName;
-  await record.save({ validateBeforeSave: false });
+  const pickup = await PickupOrder.findById(req.params.id);
+  if (!pickup) return next(new AppError('Pickup order not found', 404));
+
+  const proofUrl = req.file?.path || req.body.proofUrl || pickup.reimbursementProofUrl;
+  const paidBy = req.body.paidBy || req.body.paid_by || req.user.fullName;
+  const remaining = Math.max(0, (pickup.amount || 0) - (pickup.reimbursedAmount || 0));
+  const rawAmount = req.body.amount ?? req.body.paidAmount;
+  const payAmount = rawAmount !== undefined ? Math.min(Math.max(0, Number(rawAmount) || 0), remaining) : remaining;
+
+  pickup.reimbursedAmount = (pickup.reimbursedAmount || 0) + payAmount;
+  pickup.reimbursementProofUrl = proofUrl;
+  pickup.paidDate = new Date();
+  pickup.paidBy = paidBy;
+  pickup.reimbursementStatus = pickup.reimbursedAmount >= (pickup.amount || 0) ? 'Paid' : (pickup.reimbursedAmount > 0 ? 'Partial' : 'Pending');
+  await pickup.save({ validateBeforeSave: false });
 
   // Create expense record so the Expenses module reflects this payment
   const expCode = await generateCode('EXP');
+  const balanceAfter = Math.max(0, (pickup.amount || 0) - pickup.reimbursedAmount);
   await Expense.create({
     expenseCode: expCode,
     expenseDate: new Date(),
     category: 'Shipping / Transportation',
-    description: `Pickup reimbursement paid — Order: ${record.orderId?.orderCode || 'N/A'}`,
-    amount: record.pickupAmount || 0,
-    proofUrl: record.paymentProofUrl,
+    description: `Pickup reimbursement ${pickup.reimbursementStatus === 'Paid' ? 'paid in full' : 'part-paid'} — Order: ${pickup.orderCode || 'N/A'}${balanceAfter > 0 ? ` — Balance: Rs.${balanceAfter.toFixed(2)}` : ''}`,
+    amount: payAmount,
+    paidAmount: payAmount,
+    proofUrl,
     paymentStatus: 'Paid',
     paidDate: new Date(),
-    paidBy: record.paidBy,
+    paidBy,
     expenseSource: 'reimbursement',
     createdBy: req.user._id,
   });
 
-  res.status(200).json({ success: true, data: record });
+  res.status(200).json({ success: true, data: pickup });
 });
 
 // ─── REIMBURSEMENT — LOCAL PURCHASE ──────────────────────────────────────────

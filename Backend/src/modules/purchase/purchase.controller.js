@@ -4,6 +4,7 @@ const LocalPurchase = require('../../models/LocalPurchase');
 const Vendor = require('../../models/Vendor');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
+const PickupOrder = require('../../models/PickupOrder');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -234,17 +235,49 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
 });
 
 exports.uploadLR = asyncHandler(async (req, res, next) => {
+  const { lrNumber, trackingUrl, expectedDeliveryDate, paymentStatus, proofUrl } = req.body;
   const order = await PurchaseOrder.findByIdAndUpdate(
     req.params.id,
     {
-      lrNumber: req.body.lrNumber,
-      trackingUrl: req.body.trackingUrl,
+      lrNumber,
+      trackingUrl,
       ...(req.file && { lrFileUrl: req.file.path }),
+      ...(!req.file && proofUrl && { lrFileUrl: proofUrl }),
+      ...(expectedDeliveryDate && { expectedDeliveryDate }),
+      ...(paymentStatus && { lrPaymentStatus: paymentStatus }),
       dispatchStatus: 'In Transit',
     },
     { new: true }
-  );
+  ).populate('vendorId', 'name');
   if (!order) return next(new AppError('Purchase order not found', 404));
+
+  // Raise/refresh the matching Dispatch "Pick Up Order" entry — this is what makes the
+  // shipment show up in Dispatch's Pick Up Order / Today's Pickup Orders / All Orders
+  // tabs, keyed off this LR's expected delivery date.
+  const commonFields = {
+    purchaseOrderId: order._id,
+    orderCode: order.poCode,
+    clientName: order.vendorId?.name || '-',
+    destination: order.vendorId?.name ? `${order.vendorId.name} (Vendor)` : '-',
+    scheduledDate: order.expectedDeliveryDate || undefined,
+    amount: order.amount,
+  };
+  const existingPickup = await PickupOrder.findOne({ purchaseOrderId: order._id });
+  if (existingPickup) {
+    Object.assign(existingPickup, commonFields);
+    // Once Dispatch has picked a payer (Finance/Pickup Team) for this pickup, further LR
+    // edits from Purchase must not clobber that progress back to Unpaid — only follow
+    // Purchase's Paid/Not-Paid toggle here while Dispatch hasn't touched it yet.
+    if (!existingPickup.paymentBy) existingPickup.paymentStatus = paymentStatus === 'Not Paid' ? 'Unpaid' : 'Paid';
+    await existingPickup.save({ validateBeforeSave: false });
+  } else {
+    await PickupOrder.create({
+      ...commonFields,
+      paymentStatus: paymentStatus === 'Not Paid' ? 'Unpaid' : 'Paid',
+      createdBy: req.user._id,
+    });
+  }
+
   res.status(200).json({ success: true, data: order });
 });
 

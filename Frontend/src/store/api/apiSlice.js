@@ -300,6 +300,10 @@ export const apiSlice = createApi({
       query: () => ({ url: '/dispatch/pickups' }),
       providesTags: ['Pickups'],
     }),
+    getTodaysPickupOrders: builder.query({
+      query: () => ({ url: '/dispatch/pickups/today' }),
+      providesTags: ['Pickups'],
+    }),
     createPickupOrder: builder.mutation({
       query: (data) => ({ url: '/dispatch/pickups', method: 'post', data }),
       invalidatesTags: ['Pickups'],
@@ -1166,6 +1170,7 @@ export const {
   useGetTransportsQuery,
   useUpdateTransportStatusMutation,
   useGetPickupOrdersQuery,
+  useGetTodaysPickupOrdersQuery,
   useCreatePickupOrderMutation,
   useUpdatePickupOrderMutation,
   useGetComplaintHistoryQuery,

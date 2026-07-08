@@ -194,6 +194,9 @@ export default function Purchase() {
       bill_no: o.billNo || '', inv_no: o.invNo || '',
       status: o.paymentStatus, paid_amount: o.paidAmount || 0,
       payment_proof: o.paymentProofUrl || null, paymentHistory: o.paymentHistory || [],
+      lrNumber: o.lrNumber || null, lrFileUrl: o.lrFileUrl || null,
+      expectedDeliveryDate: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
+      lrPaymentStatus: o.lrPaymentStatus || null,
     }));
     if (mapped.length > 0) dispatch(setPurchaseOrders(mapped));
   }, [purchaseOrdersData]);
@@ -1665,7 +1668,13 @@ export default function Purchase() {
                               const req = raisedRequests.find(req => req.item === r.name);
                               const linkedOrder = req ? findLinkedOrder(req) : null;
                               if (!linkedOrder) return <Text type="secondary">—</Text>;
-                              const lr = lrData[linkedOrder.key];
+                              // Local lrData is session-only; fall back to the persisted PurchaseOrder
+                              // fields so an already-uploaded LR still shows after a refresh.
+                              const lr = lrData[linkedOrder.key] || (linkedOrder.lrNumber ? {
+                                lrNumber: linkedOrder.lrNumber,
+                                deliveryDate: linkedOrder.expectedDeliveryDate,
+                                paidStatus: linkedOrder.lrPaymentStatus || 'Not Paid',
+                              } : null);
                               if (lr) {
                                 return (
                                   <Space direction="vertical" size={2}>
@@ -4634,9 +4643,26 @@ export default function Purchase() {
       >
         {lrUploadTarget && (
           <Form form={lrUploadForm} layout="vertical" style={{ marginTop: 8 }}
-            onFinish={(vals) => {
+            onFinish={async (vals) => {
               const deliveryDate = vals.delivery_date ? vals.delivery_date.format('YYYY-MM-DD') : '';
-              const fileName = vals.lr_file?.fileList?.[0]?.name || '';
+              const fileItem = vals.lr_file?.fileList?.[0];
+              const fileUrl = fileItem?.url || null;
+              const fileName = fileItem?.name || '';
+              try {
+                // Persists the LR + Expected Delivery Date on the PurchaseOrder and
+                // upserts the matching Dispatch "Pick Up Order" entry — this is what
+                // makes it show up in Dispatch's pickup tabs.
+                await uploadPurchaseLR({
+                  id: lrUploadTarget.order.key,
+                  lrNumber: vals.lr_number,
+                  expectedDeliveryDate: deliveryDate,
+                  paymentStatus: vals.paid_status,
+                  ...(fileUrl ? { proofUrl: fileUrl } : {}),
+                }).unwrap();
+              } catch (err) {
+                enqueueSnackbar(err?.data?.message || 'Failed to save LR copy', { variant: 'error' });
+                return;
+              }
               const entry = { lrNumber: vals.lr_number, deliveryDate, fileName, paidStatus: vals.paid_status };
               setLrData(prev => ({ ...prev, [lrUploadTarget.order.key]: entry }));
               if (vals.paid_status === 'Not Paid') {

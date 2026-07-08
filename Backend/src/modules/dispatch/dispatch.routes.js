@@ -11,6 +11,7 @@ router.get('/today', ctrl.getTodaysDispatches);
 router.get('/transports', ctrl.getTransports);
 router.patch('/transports/:id/status', ctrl.updateTransportStatus);
 router.get('/pickups', ctrl.getPickupOrders);
+router.get('/pickups/today', ctrl.getTodaysPickupOrders);
 router.post('/pickups', ctrl.createPickupOrder);
 router.patch('/pickups/:id', ctrl.updatePickupOrder);
 router.post('/', ctrl.createDispatch);

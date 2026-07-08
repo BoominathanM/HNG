@@ -179,22 +179,22 @@ export default function Financial() {
     }
   };
 
-
-  const [proofData] = useState({});
-
-  // ── Reimbursement Expense tab — from RTK Query ──
+  // ── Reimbursement Expense tab — pickups a Pickup Team member paid for out of
+  // pocket (Finance-settled pickups need no reimbursement, so they never appear here).
   const reimbursementExpenses = useMemo(() => (pickupExpData?.data || []).map((r) => ({
     key: r._id,
-    orderId: r.orderId?.orderCode || '—',
+    orderId: r.orderCode || '—',
     date: r.createdAt?.slice(0, 10),
-    supplier: '—',
-    item: '—',
-    amount: r.pickupAmount || 0,
+    vendor: r.clientName || '—',
+    amount: r.amount || 0,
+    reimbursedAmount: r.reimbursedAmount || 0,
+    balance: Math.max(0, (r.amount || 0) - (r.reimbursedAmount || 0)),
     pickupEmpId: r.pickupEmpId?.staffCode || '—',
-    pickupEmpName: r.pickupEmpId?.fullName || '—',
-    gPayNumber: r.pickupGPayNumber,
-    paymentStatus: r.paymentStatus || 'Unpaid',
-    paymentProof: r.paymentProofUrl,
+    pickupEmpName: r.pickupPersonName || r.pickupEmpId?.fullName || '—',
+    gPayNumber: r.gPayNumber,
+    paymentStatus: r.reimbursementStatus || 'Pending',
+    paymentProof: r.proofUrl,
+    reimbursementProof: r.reimbursementProofUrl,
     paidDate: r.paidDate,
     paidBy: r.paidBy,
   })), [pickupExpData]);
@@ -250,6 +250,7 @@ export default function Financial() {
     try {
       const fd = new FormData();
       fd.append('paid_by', vals.paid_by || 'Finance Team');
+      fd.append('amount', vals.amount);
       const reimbProofFile = Array.isArray(vals.payment_proof) ? vals.payment_proof[0] : vals.payment_proof?.fileList?.[0];
       if (reimbProofFile?.url) {
         fd.append('proofUrl', reimbProofFile.url);
@@ -257,7 +258,7 @@ export default function Financial() {
         fd.append('proof', reimbProofFile.originFileObj);
       }
       await payPickup({ id: reimbPayTarget.key, formData: fd }).unwrap();
-      enqueueSnackbar('Reimbursement payment recorded!', { variant: 'success' });
+      enqueueSnackbar(vals.amount >= reimbPayTarget.balance ? 'Reimbursement paid in full!' : 'Partial reimbursement recorded!', { variant: 'success' });
     } catch { enqueueSnackbar('Payment failed', { variant: 'error' }); }
     setShowReimbPaymentModal(false);
     setReimbPayTarget(null);
@@ -884,7 +885,7 @@ export default function Financial() {
                           <div style={{ marginTop: 8 }}>
                             <div style={{ marginBottom: 12 }}>
                               <Title level={5} style={{ margin: 0, color: textColor }}>Pickup Expense Reimbursement</Title>
-                              <Text type="secondary">Pickup employee expenses from dispatch order taken workflow — review and process payments</Text>
+                              <Text type="secondary">Pickup Team out-of-pocket payments from Dispatch's Pick Up Order tab — review and reimburse in full or in part</Text>
                             </div>
                             <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                               <Input
@@ -897,13 +898,14 @@ export default function Financial() {
                               />
                               <Select
                                 allowClear
-                                placeholder="Payment Status"
+                                placeholder="Reimbursement Status"
                                 value={pickupPayFilter}
                                 onChange={(val) => { setPickupPayFilter(val); setPickupPage(1); }}
-                                style={{ width: 160, borderRadius: 8 }}
+                                style={{ width: 180, borderRadius: 8 }}
                               >
+                                <Option value="Pending">Pending</Option>
+                                <Option value="Partial">Partial</Option>
                                 <Option value="Paid">Paid</Option>
-                                <Option value="Unpaid">Unpaid</Option>
                               </Select>
                             </div>
                             {reimbursementExpenses.length === 0 ? (
@@ -916,7 +918,7 @@ export default function Financial() {
                                 size="small"
                                 dataSource={reimbursementExpenses.filter((r) => {
                                   const q = pickupSearch.toLowerCase();
-                                  return !q || (r.orderId || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
+                                  return !q || (r.orderId || '').toLowerCase().includes(q) || (r.vendor || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
                                 })}
                                 rowKey="key"
                                 pagination={{
@@ -932,17 +934,7 @@ export default function Financial() {
                                 columns={[
                                   { title: 'Date', dataIndex: 'date', key: 'date', width: 95 },
                                   { title: 'Order ID', dataIndex: 'orderId', key: 'orderId', width: 90, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                                  { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', width: 130, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                                  { title: 'Item', dataIndex: 'item', key: 'item', width: 160, render: v => <Text strong>{v}</Text> },
-                                  { title: 'Category', dataIndex: 'category', key: 'category', width: 90, render: v => <Tag color="blue" style={{ borderRadius: 8, fontSize: 13 }}>{v}</Tag> },
-                                  {
-                                    title: 'Payment Source', dataIndex: 'paymentSource', key: 'paymentSource', width: 130, align: 'center',
-                                    render: (v, r) => {
-                                      const src = v || (r.paidBy === 'Pickup Team' ? 'Pickup Team' : r.paidBy ? 'Finance' : null);
-                                      if (!src) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
-                                      return <Tag color={src === 'Finance' ? 'blue' : 'green'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{src}</Tag>;
-                                    }
-                                  },
+                                  { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', width: 150, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
                                   {
                                     title: 'Pickup Employee', key: 'employee', width: 165,
                                     render: (_, r) => (
@@ -955,47 +947,32 @@ export default function Financial() {
                                   { title: 'G Pay Number', dataIndex: 'gPayNumber', key: 'gpay', width: 135, render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text> },
                                   { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
                                   {
-                                    title: 'Uploaded Proof', dataIndex: 'proof', key: 'proof', width: 130,
-                                    render: (v, r) => {
-                                      const url = proofData[r.key]?.proof;
-                                      if (url) {
-                                        const isImg = url.startsWith('data:image');
-                                        return isImg
-                                          ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #B11E6A33' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
-                                          : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A', fontSize: 12 }}>View File</Button>;
-                                      }
-                                      if (v) return <Button size="small" icon={<EyeOutlined />} style={{ fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button>;
-                                      return <Tag color="warning" style={{ borderRadius: 8, fontSize: 11 }}>Not Uploaded</Tag>;
-                                    }
+                                    title: 'Uploaded Proof', dataIndex: 'paymentProof', key: 'proof', width: 130,
+                                    render: v => v
+                                      ? <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ color: '#B11E6A', borderColor: '#B11E6A', fontSize: 12 }}>View</Button>
+                                      : <Tag color="warning" style={{ borderRadius: 8, fontSize: 11 }}>Not Uploaded</Tag>
                                   },
                                   {
-                                    title: 'Payment Status', dataIndex: 'paymentStatus', key: 'pay_status', width: 125, align: 'center',
+                                    title: 'Reimbursement Status', dataIndex: 'paymentStatus', key: 'pay_status', width: 150, align: 'center',
                                     render: (v, r) => (
                                       <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
-                                        <Tag color={v === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 10, margin: 0, fontSize: 13 }}>{v || 'Unpaid'}</Tag>
-                                        {r.paidDate && <Text type="secondary" style={{ fontSize: 11 }}>{r.paidDate}</Text>}
+                                        <Tag color={v === 'Paid' ? 'success' : v === 'Partial' ? 'warning' : 'error'} style={{ borderRadius: 10, margin: 0, fontSize: 13 }}>{v || 'Pending'}</Tag>
+                                        {v === 'Partial' && <Text type="secondary" style={{ fontSize: 11 }}>&#8377;{r.reimbursedAmount} of &#8377;{r.amount}</Text>}
+                                        {r.paidDate && <Text type="secondary" style={{ fontSize: 11 }}>{(r.paidDate || '').slice(0, 10)}</Text>}
                                       </Space>
                                     )
                                   },
                                   {
                                     title: 'Paid By', dataIndex: 'paidBy', key: 'paidBy', width: 120, align: 'center',
                                     render: v => v
-                                      ? <Tag color={v === 'Pickup Team' ? 'green' : 'blue'} style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{v}</Tag>
+                                      ? <Tag color="blue" style={{ borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{v}</Tag>
                                       : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
                                   },
                                   {
-                                    title: 'Finance Payment Proof', dataIndex: 'paymentProof', key: 'pay_proof', width: 155,
-                                    render: (v, r) => {
-                                      const url = proofData[r.key]?.paymentProof;
-                                      if (url) {
-                                        const isImg = url.startsWith('data:image');
-                                        return isImg
-                                          ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 6, border: '2px solid #52c41a55' }} preview={{ mask: <EyeOutlined style={{ fontSize: 14 }} /> }} />
-                                          : <Button size="small" icon={<FileTextOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 12 }}>View File</Button>;
-                                      }
-                                      if (v) return <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>;
-                                      return <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Uploaded</Tag>;
-                                    }
+                                    title: 'Finance Payment Proof', dataIndex: 'reimbursementProof', key: 'pay_proof', width: 155,
+                                    render: v => v
+                                      ? <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button>
+                                      : <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Uploaded</Tag>
                                   },
                                   {
                                     title: 'Actions', key: 'actions', fixed: 'right', width: 115,
@@ -1003,7 +980,7 @@ export default function Financial() {
                                       <Tag color="success" style={{ borderRadius: 8, fontSize: 13 }}>Paid</Tag>
                                     ) : (
                                       <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { if (!requireAccess('edit')) return; setReimbPayTarget(r); setShowReimbPaymentModal(true); }}>
-                                        Pay Now
+                                        {r.paymentStatus === 'Partial' ? 'Pay Remaining' : 'Pay Now'}
                                       </Button>
                                     )
                                   },
@@ -1525,16 +1502,27 @@ export default function Financial() {
         {reimbPayTarget && (
           <Form form={reimbPayForm} layout="vertical" onFinish={handleReimbPayment}>
             <div style={{ background: isDark ? '#1a1a2e' : '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#e8f4ff'}` }}>
-              <Text strong style={{ display: 'block', marginBottom: 4 }}>{reimbPayTarget.item}</Text>
-              <Text style={{ color: '#B11E6A' }}>{reimbPayTarget.supplier}</Text>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>{reimbPayTarget.vendor}</Text>
               <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Order: {reimbPayTarget.orderId} · Pickup: {reimbPayTarget.pickupEmpName} ({reimbPayTarget.pickupEmpId})</Text>
-              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Category: {reimbPayTarget.category} · Amount: &#8377;{reimbPayTarget.amount?.toLocaleString()}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Amount: &#8377;{reimbPayTarget.amount?.toLocaleString()}</Text>
+              {reimbPayTarget.reimbursedAmount > 0 && (
+                <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Already Reimbursed: &#8377;{reimbPayTarget.reimbursedAmount.toLocaleString()} · Balance: &#8377;{reimbPayTarget.balance.toLocaleString()}</Text>
+              )}
               {reimbPayTarget.gPayNumber && (
                 <Text style={{ display: 'block', fontSize: 12, color: '#52c41a', marginTop: 4 }}>
                   G Pay: {reimbPayTarget.gPayNumber}
                 </Text>
               )}
             </div>
+            <Form.Item
+              label="Amount to Pay"
+              name="amount"
+              initialValue={reimbPayTarget.balance ?? reimbPayTarget.amount}
+              tooltip="Pay the full balance, or a lesser amount to record a partial reimbursement"
+              rules={[{ required: true, message: 'Enter the amount being paid' }]}
+            >
+              <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} max={reimbPayTarget.balance ?? reimbPayTarget.amount} />
+            </Form.Item>
             <Form.Item label="Paid By" name="paid_by" initialValue="Finance Team">
               <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
             </Form.Item>
@@ -1551,7 +1539,7 @@ export default function Financial() {
             </Form.Item>
             <div style={{ padding: '10px 12px', background: isDark ? '#1e2235' : '#f0f7ff', borderRadius: 8, border: `1px solid ${isDark ? '#2a3040' : '#bae0ff'}`, marginBottom: 14, fontSize: 12 }}>
               <SendOutlined style={{ color: '#1890ff', marginRight: 6 }} />
-              After submission, payment status will be updated in <Text strong>Dispatch Order Tracking</Text> and <Text strong>Dispatch Pick Up Order</Text> pages.
+              A partial payment sets status to <Text strong>Partial</Text>; paying the full balance sets it to <Text strong>Paid</Text>. This updates in the <Text strong>Dispatch Pick Up Order — Reimbursement Claims</Text> tab.
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button block onClick={() => { setShowReimbPaymentModal(false); reimbPayForm.resetFields(); }}>Cancel</Button>
