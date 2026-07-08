@@ -52,9 +52,27 @@ async function upsertOrderForApprovedRequest(request, userId) {
       createdBy: userId,
     });
   } else {
-    const alreadyIn = (order.items || []).some((it) => String(it.requestId) === String(request._id));
-    if (!alreadyIn) order.items.push(itemEntry);
-    if (order.amount == null && request.amount != null) order.amount = request.amount;
+    const existingItem = (order.items || []).find((it) => String(it.requestId) === String(request._id));
+    if (existingItem) {
+      // Re-approval after Purchase edited & resent the request (see updateRequestDetails)
+      // — sync the item's latest qty/unit instead of leaving the order stale.
+      existingItem.qty = request.qty;
+      existingItem.unit = request.unit;
+      existingItem.itemName = request.itemName;
+    } else {
+      order.items.push(itemEntry);
+    }
+    // Single-item orders (solo requests, or the only item in a batch) mirror the
+    // request 1:1 — safe to re-sync on every (re-)approval. Multi-item batch totals
+    // stay untouched here; Finance manages those separately via updateOrderAmount.
+    if (order.items.length === 1) {
+      order.qty = request.qty;
+      order.unit = request.unit;
+      order.paymentTerms = request.paymentTerms;
+      if (request.amount != null) order.amount = request.amount;
+    } else if (order.amount == null && request.amount != null) {
+      order.amount = request.amount;
+    }
     await order.save({ validateBeforeSave: false });
   }
   return order;

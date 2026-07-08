@@ -123,6 +123,49 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: request });
 });
 
+// Purchase edits an already-Approved request's order details (qty/unit/paymentTerms/
+// amount) and resends it to Finance for re-approval — mirrors the Modification/Rejected
+// resubmit-to-Pending pattern in uploadQuotationFile, but for requests Finance already
+// signed off on (so the PO Finance created stays in sync once they re-approve).
+exports.updateRequestDetails = asyncHandler(async (req, res, next) => {
+  const request = await PurchaseRequest.findById(req.params.id);
+  if (!request) return next(new AppError('Request not found', 404));
+  if (request.status !== 'Approved') return next(new AppError('Only an approved request can be updated and resent for approval', 400));
+
+  const changes = [];
+  if (req.body.qty !== undefined && req.body.qty !== '' && Number(req.body.qty) !== request.qty) {
+    changes.push(`Qty: ${request.qty} → ${req.body.qty}`);
+    request.qty = Number(req.body.qty);
+  }
+  if (req.body.unit !== undefined && req.body.unit !== '' && req.body.unit !== request.unit) {
+    changes.push(`Unit: ${request.unit || '-'} → ${req.body.unit}`);
+    request.unit = req.body.unit;
+  }
+  if (req.body.paymentTerms !== undefined && req.body.paymentTerms !== '' && req.body.paymentTerms !== request.paymentTerms) {
+    changes.push(`Payment Terms: ${request.paymentTerms || '-'} → ${req.body.paymentTerms}`);
+    request.paymentTerms = req.body.paymentTerms;
+  }
+  if (req.body.amount !== undefined && req.body.amount !== '') {
+    const amt = Number(req.body.amount);
+    if (!Number.isNaN(amt) && amt >= 0 && amt !== request.amount) {
+      changes.push(`Amount: ₹${request.amount ?? 0} → ₹${amt}`);
+      request.amount = amt;
+    }
+  }
+
+  if (changes.length === 0) return next(new AppError('No changes to update', 400));
+
+  request.notes.push({ text: `Order details updated by Purchase — resent for approval (${changes.join(', ')})`, createdBy: req.user._id });
+  request.status = 'Pending';
+  request.approvedBy = undefined;
+  request.approvedAt = undefined;
+  request.financeNote = '';
+  await request.save({ validateBeforeSave: false });
+
+  notifyRoles({ modules: ['Financial'], type: 'purchase', title: 'Purchase Request Updated', message: `PR ${request.requestCode} (${request.itemName}) updated by Purchase — needs re-approval`, link: '/financial' }).catch(() => {});
+  res.status(200).json({ success: true, data: request, message: 'Order details updated — sent to Finance for re-approval' });
+});
+
 exports.addNote = asyncHandler(async (req, res, next) => {
   const request = await PurchaseRequest.findById(req.params.id);
   if (!request) return next(new AppError('Request not found', 404));

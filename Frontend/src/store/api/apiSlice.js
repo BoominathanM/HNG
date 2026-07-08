@@ -196,6 +196,10 @@ export const apiSlice = createApi({
       query: ({ id, formData }) => ({ url: `/purchase/requests/${id}/upload-quotation`, method: 'post', data: formData }),
       invalidatesTags: ['Purchase', 'Financial'],
     }),
+    updatePurchaseRequestDetails: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/purchase/requests/${id}/update-details`, method: 'patch', data }),
+      invalidatesTags: ['Purchase', 'Financial', 'PurchaseOrders'],
+    }),
     addPurchaseNote: builder.mutation({
       query: ({ id, text }) => ({ url: `/purchase/requests/${id}/notes`, method: 'patch', data: { text } }),
       invalidatesTags: ['Purchase', 'Financial'],
@@ -1139,6 +1143,7 @@ export const {
   useCreateBulkRequestMutation,
   useRaiseRequestMutation,
   useUploadQuotationFileMutation,
+  useUpdatePurchaseRequestDetailsMutation,
   useAddPurchaseNoteMutation,
   useGetPurchaseOrdersQuery,
   useReceiveOrderMutation,

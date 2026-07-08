@@ -28,6 +28,7 @@ import {
   useRaiseRequestMutation,
   useCreateBulkRequestMutation,
   useUploadQuotationFileMutation,
+  useUpdatePurchaseRequestDetailsMutation,
   useReceiveOrderMutation,
   useUploadPurchaseLRMutation,
   useCreateLocalPurchaseMutation,
@@ -130,6 +131,7 @@ export default function Purchase() {
   const [raiseRequestMutation] = useRaiseRequestMutation();
   const [createBulkRequestMutation] = useCreateBulkRequestMutation();
   const [uploadQuotationFile] = useUploadQuotationFileMutation();
+  const [updatePurchaseRequestDetails] = useUpdatePurchaseRequestDetailsMutation();
   const [addPurchaseNoteMutation] = useAddPurchaseNoteMutation();
   const { data: whatsAppMappingsData } = useGetWhatsAppEventMappingsQuery();
   const [uploadFilesMutation] = useUploadFilesMutation();
@@ -260,6 +262,12 @@ export default function Purchase() {
   const [rerequestAmount, setRerequestAmount] = useState(null);
   const [rerequestSubmitting, setRerequestSubmitting] = useState(false);
 
+  /* ── Update Order Details modal (Approved requests — edit & resend to Finance for re-approval) ── */
+  const [showUpdateDetailsModal, setShowUpdateDetailsModal] = useState(false);
+  const [updateDetailsTarget, setUpdateDetailsTarget] = useState(null);
+  const [updateDetailsForm] = Form.useForm();
+  const [updateDetailsSubmitting, setUpdateDetailsSubmitting] = useState(false);
+
   /* ── WhatsApp sent tracking for stock status flow (persisted so it survives a refresh) ── */
   const [whatsappSentItems, setWhatsappSentItemsState] = useState(loadWhatsappSentItems);
   const setWhatsappSentItems = (updater) => {
@@ -353,6 +361,10 @@ export default function Purchase() {
   const [editReqForm] = Form.useForm();
 
   const [askQuotationSending, setAskQuotationSending] = useState(false);
+
+  /* ── Per-request loading maps for Modification-status row actions ── */
+  const [reAskQuotationLoading, setReAskQuotationLoading] = useState({});
+  const [resubmitLoading, setResubmitLoading] = useState({});
 
   const [placeOrderFiftyDate, setPlaceOrderFiftyDate] = useState(null);
 
@@ -731,6 +743,70 @@ export default function Purchase() {
     }
   };
 
+  // Re-Ask Quotation for a request Finance sent back for Modification — re-sends the
+  // same "Purchase - Ask Quotation (Per Item)" WhatsApp request (regenerated PDF from
+  // the request's already-known item/qty/unit/supplier) instead of making Purchase
+  // re-open the Ask Quotation modal and re-enter details that were already captured
+  // when the request was first raised.
+  const handleReAskQuotation = async (req) => {
+    const isObjectId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ''));
+    const sup = suppliers.find(s => s.name === req.supplier);
+    if (!sup?.phone || !isObjectId(sup?.id)) {
+      enqueueSnackbar('Supplier WhatsApp details not found for this request', { variant: 'warning' });
+      return;
+    }
+    setReAskQuotationLoading(prev => ({ ...prev, [req.key]: true }));
+    try {
+      const items = [{ name: req.item, category: req.category || 'Other', qty: req.qty, unit: req.unit }];
+      const pdfBlob = await generateBulkRequestPdfBlob(sup.name, req.payment_terms, items, 'Quotation Request');
+      const filename = `quotation-request-${sup.name}.pdf`;
+
+      let sent = false;
+      const mapping = (whatsAppMappingsData?.data || []).find(
+        (m) => m.eventId?.key === 'purchase-ask-quotation' && m.isEnabled !== false && m.templateId?.name
+      );
+      if (mapping) {
+        const formData = new FormData();
+        formData.append('files', new File([pdfBlob], filename, { type: 'application/pdf' }));
+        const uploadRes = await uploadFilesMutation({ formData, folder: 'purchase' }).unwrap();
+        const documentUrl = uploadRes?.data?.[0]?.url;
+        if (documentUrl) {
+          const fieldValues = {
+            vendorName: sup.name,
+            itemName: req.item,
+            itemCount: '1',
+            totalQty: String(req.qty || 0),
+            companyName: 'HNG',
+          };
+          const parameters = {};
+          (mapping.variables || []).forEach((v) => {
+            if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
+          });
+          const phone = sup.phone.replace(/\D/g, '');
+          await sendWhatsAppMessageMutation({
+            to: phone,
+            templateName: mapping.templateId.name,
+            language: mapping.templateId.language || 'en',
+            parameters,
+            documentUrl,
+            documentFilename: filename,
+          }).unwrap();
+          sent = true;
+        }
+      }
+      enqueueSnackbar(
+        sent
+          ? 'Quotation request re-sent to supplier via WhatsApp!'
+          : 'Quotation request document generated. Map a document template to the "Purchase - Ask Quotation (Per Item)" event in Integrations → WhatsApp to auto-send it to the supplier.',
+        { variant: sent ? 'success' : 'info', autoHideDuration: 5000 }
+      );
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || err?.message || 'Failed to re-ask quotation', { variant: 'error' });
+    } finally {
+      setReAskQuotationLoading(prev => { const n = { ...prev }; delete n[req.key]; return n; });
+    }
+  };
+
   const handleSupplierAIScan = () => {
     if (!supplierScannedFile) { enqueueSnackbar('Please upload a document first', { variant: 'warning' }); return; }
     setSupplierScanLoading(true);
@@ -855,13 +931,32 @@ export default function Purchase() {
         const res = await raiseRequestMutation(payload).unwrap();
         const created = res?.data || [];
         const complaintNote = (values.complaint_notes || '').trim();
+
+        enqueueSnackbar(`${created.length || items.length} request(s) sent to Financial Quotation!`, { variant: 'success' });
+        if (raiseRequestProduct?.key) {
+          setWhatsappSentItems(prev => { const s = new Set(prev); s.delete(raiseRequestProduct.key); return s; });
+        }
+
+        // Close the modal immediately once the request itself has been raised — the
+        // quotation-file upload and complaint note below are best-effort follow-ups
+        // and shouldn't hold the modal open while they run.
+        const fileToUpload = raiseRequestFile;
+        const amountToUpload = raiseRequestAmount;
+        setShowRaiseRequestModal(false);
+        raiseRequestForm.resetFields();
+        setRaiseRequestProduct(null);
+        setRaiseRequestSupplier(null);
+        setRaiseRequestFile(null);
+        setRaiseRequestPaymentTerms('');
+        setRaiseRequestAmount(null);
+
         for (const reqDoc of created) {
           const id = reqDoc?._id;
-          if (id && raiseRequestFile) {
+          if (id && fileToUpload) {
             try {
               const fd = new FormData();
-              fd.append('quotation', raiseRequestFile);
-              fd.append('amount', raiseRequestAmount);
+              fd.append('quotation', fileToUpload);
+              fd.append('amount', amountToUpload);
               await uploadQuotationFile({ id, formData: fd }).unwrap();
             } catch { /* file upload is best-effort */ }
           }
@@ -871,17 +966,6 @@ export default function Purchase() {
             } catch { /* note is best-effort */ }
           }
         }
-        enqueueSnackbar(`${created.length || items.length} request(s) sent to Financial Quotation!`, { variant: 'success' });
-        if (raiseRequestProduct?.key) {
-          setWhatsappSentItems(prev => { const s = new Set(prev); s.delete(raiseRequestProduct.key); return s; });
-        }
-        setShowRaiseRequestModal(false);
-        raiseRequestForm.resetFields();
-        setRaiseRequestProduct(null);
-        setRaiseRequestSupplier(null);
-        setRaiseRequestFile(null);
-        setRaiseRequestPaymentTerms('');
-        setRaiseRequestAmount(null);
       } catch (err) {
         enqueueSnackbar(err?.data?.message || err?.data || 'Failed to raise request', { variant: 'error' });
       }
@@ -1213,6 +1297,7 @@ export default function Purchase() {
   // Re-submit revised quotation file after Finance sends back for modification (or
   // rejects it) — amount is optional since Modification re-submits don't collect one.
   const handleResubmitQuotation = async (requestId, file, amount) => {
+    setResubmitLoading(prev => ({ ...prev, [requestId]: true }));
     try {
       const fd = new FormData();
       fd.append('quotation', file);
@@ -1221,6 +1306,8 @@ export default function Purchase() {
       enqueueSnackbar('Quotation re-submitted — Finance will review it again.', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to re-submit quotation', { variant: 'error' });
+    } finally {
+      setResubmitLoading(prev => { const n = { ...prev }; delete n[requestId]; return n; });
     }
   };
 
@@ -1238,6 +1325,32 @@ export default function Purchase() {
       setRerequestAmount(null);
     } finally {
       setRerequestSubmitting(false);
+    }
+  };
+
+  // Update Order Details modal (for Approved requests) — Purchase edits qty/unit/
+  // payment terms/amount and resends the request to Finance as Pending for re-approval.
+  const handleUpdateDetailsSubmit = async () => {
+    if (!updateDetailsTarget) return;
+    try {
+      const vals = await updateDetailsForm.validateFields();
+      setUpdateDetailsSubmitting(true);
+      await updatePurchaseRequestDetails({
+        id: updateDetailsTarget.key,
+        qty: vals.qty,
+        unit: vals.unit,
+        paymentTerms: vals.payment_terms,
+        amount: vals.amount,
+      }).unwrap();
+      enqueueSnackbar('Order details updated — sent to Finance for re-approval.', { variant: 'success' });
+      setShowUpdateDetailsModal(false);
+      setUpdateDetailsTarget(null);
+      updateDetailsForm.resetFields();
+    } catch (err) {
+      if (err?.errorFields) return; // form validation error, already shown inline
+      enqueueSnackbar(err?.data?.message || 'Failed to update order details', { variant: 'error' });
+    } finally {
+      setUpdateDetailsSubmitting(false);
     }
   };
 
@@ -1612,8 +1725,28 @@ export default function Purchase() {
                                 );
                               };
 
-                              // Approved (order not yet raised) — no Ask Quotation once Finance has signed off
-                              if (orderAlreadyRaised) return <Space>{noteBtn}</Space>;
+                              // Approved & PO already created (the normal case, since Finance's approve
+                              // action creates the PO immediately) — Purchase can still edit qty/unit/
+                              // payment terms/amount and resend to Finance for re-approval.
+                              if (orderAlreadyRaised) return (
+                                <Space wrap size={4}>
+                                  {req?.status === 'Approved' && (
+                                    <Button
+                                      size="small"
+                                      icon={<EditOutlined />}
+                                      onClick={() => {
+                                        setUpdateDetailsTarget(req);
+                                        updateDetailsForm.setFieldsValue({ qty: req.qty, unit: req.unit, payment_terms: req.payment_terms, amount: req.amount });
+                                        setShowUpdateDetailsModal(true);
+                                      }}
+                                      style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
+                                    >
+                                      Update Order Details
+                                    </Button>
+                                  )}
+                                  {noteBtn}
+                                </Space>
+                              );
 
                               if (req?.status === 'Approved') return (
                                 <Space wrap size={4}>
@@ -1630,11 +1763,14 @@ export default function Purchase() {
                                 </Space>
                               );
 
-                              // Pending: always show Ask Quotation so purchase team can follow up
-                              // after raising request or after Finance edits and resets to Pending
-                              if (req?.status === 'Pending') return <Space>{buildReqWABtn()}{noteBtn}</Space>;
+                              // Pending: request has already been raised & sent to Finance for
+                              // review — no need to ask the supplier again until Finance responds
+                              // (Approved / Rejected / Modification), so just leave the notes button.
+                              if (req?.status === 'Pending') return <Space>{noteBtn}</Space>;
 
-                              // Modification: Finance sent the quotation back — Purchase must re-upload a revised file
+                              // Modification: Finance sent the quotation back — Purchase can re-ask
+                              // the supplier for a fresh quote (same item/qty/supplier, same WhatsApp
+                              // event as the original Ask Quotation) and/or re-upload a revised file.
                               if (req?.status === 'Modification') return (
                                 <Space direction="vertical" size={4}>
                                   {req.financeNote && (
@@ -1644,14 +1780,24 @@ export default function Purchase() {
                                       </Tag>
                                     </Tooltip>
                                   )}
-                                  <Space size={4}>
+                                  <Space size={4} wrap>
+                                    <Button
+                                      size="small"
+                                      icon={<WhatsAppOutlined />}
+                                      loading={!!reAskQuotationLoading[req.key]}
+                                      onClick={() => handleReAskQuotation(req)}
+                                      style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
+                                    >
+                                      Re-Ask Quotation
+                                    </Button>
                                     <Upload
                                       maxCount={1}
                                       beforeUpload={file => { handleResubmitQuotation(req.key, file); return false; }}
                                       accept=".pdf,.jpg,.jpeg,.png"
                                       showUploadList={false}
+                                      disabled={!!resubmitLoading[req.key]}
                                     >
-                                      <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#fa8c16', color: '#fa8c16', fontWeight: 600 }}>
+                                      <Button size="small" icon={<UploadOutlined />} loading={!!resubmitLoading[req.key]} style={{ borderColor: '#fa8c16', color: '#fa8c16', fontWeight: 600 }}>
                                         Re-Submit Quotation
                                       </Button>
                                     </Upload>
@@ -1865,7 +2011,25 @@ export default function Purchase() {
                             render: (_, r) => {
                               if (r.isBatchGroup) return <Text type="secondary" style={{ fontSize: 11 }}>Expand to view {r.children.length} items</Text>;
                               const orderAlreadyRaised = !!findLinkedOrder(r);
-                              if (orderAlreadyRaised) return <Tag color="success" style={{ borderRadius: 10 }}>Order Placed</Tag>;
+                              if (orderAlreadyRaised) return (
+                                <Space direction="vertical" size={4}>
+                                  <Tag color="success" style={{ borderRadius: 10, margin: 0 }}>Order Placed</Tag>
+                                  {r.status === 'Approved' && (
+                                    <Button
+                                      size="small"
+                                      icon={<EditOutlined />}
+                                      onClick={() => {
+                                        setUpdateDetailsTarget(r);
+                                        updateDetailsForm.setFieldsValue({ qty: r.qty, unit: r.unit, payment_terms: r.payment_terms, amount: r.amount });
+                                        setShowUpdateDetailsModal(true);
+                                      }}
+                                      style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
+                                    >
+                                      Update Details
+                                    </Button>
+                                  )}
+                                </Space>
+                              );
 
                               if (r.status === 'Approved') return (
                                 <Space wrap size={4}>
@@ -1937,16 +2101,28 @@ export default function Purchase() {
                                       </Tag>
                                     </Tooltip>
                                   )}
-                                  <Upload
-                                    maxCount={1}
-                                    beforeUpload={file => { handleResubmitQuotation(r.key, file); return false; }}
-                                    accept=".pdf,.jpg,.jpeg,.png"
-                                    showUploadList={false}
-                                  >
-                                    <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#fa8c16', color: '#fa8c16', fontWeight: 600 }}>
-                                      Re-Submit
+                                  <Space size={4} wrap>
+                                    <Button
+                                      size="small"
+                                      icon={<WhatsAppOutlined />}
+                                      loading={!!reAskQuotationLoading[r.key]}
+                                      onClick={() => handleReAskQuotation(r)}
+                                      style={{ borderColor: '#25D366', color: '#25D366', fontWeight: 600 }}
+                                    >
+                                      Re-Ask
                                     </Button>
-                                  </Upload>
+                                    <Upload
+                                      maxCount={1}
+                                      beforeUpload={file => { handleResubmitQuotation(r.key, file); return false; }}
+                                      accept=".pdf,.jpg,.jpeg,.png"
+                                      showUploadList={false}
+                                      disabled={!!resubmitLoading[r.key]}
+                                    >
+                                      <Button size="small" icon={<UploadOutlined />} loading={!!resubmitLoading[r.key]} style={{ borderColor: '#fa8c16', color: '#fa8c16', fontWeight: 600 }}>
+                                        Re-Submit
+                                      </Button>
+                                    </Upload>
+                                  </Space>
                                 </Space>
                               );
 
@@ -3762,6 +3938,90 @@ export default function Purchase() {
               </Button>
             </div>
           </>
+        )}
+      </Modal>
+
+      {/* Update Order Details Modal — edit an already-Approved request's qty/unit/
+          payment terms/amount and resend it to Finance as Pending for re-approval. */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <EditOutlined style={{ color: '#fff', fontSize: 18 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Update Order Details</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Saving sends this request back to Finance for approval</div>
+            </div>
+          </div>
+        }
+        open={showUpdateDetailsModal}
+        onCancel={() => { setShowUpdateDetailsModal(false); setUpdateDetailsTarget(null); updateDetailsForm.resetFields(); }}
+        footer={null}
+        width={460}
+        centered
+        destroyOnClose
+      >
+        {updateDetailsTarget && (
+          <Form form={updateDetailsForm} layout="vertical" style={{ marginTop: 8 }}>
+            <Alert
+              type="info"
+              showIcon
+              message="This request was already approved. Updating and sending it will require Finance to approve it again before an order can proceed."
+              style={{ borderRadius: 8, marginBottom: 16, fontSize: 12 }}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 10, background: isDark ? '#1a0f14' : '#fff8fb', border: '1px solid #B11E6A33', marginBottom: 16 }}>
+              <div style={{ flex: 1 }}>
+                <Text strong style={{ color: textColor, fontSize: 14 }}>{updateDetailsTarget.item}</Text>
+                <div style={{ marginTop: 2 }}>
+                  <Text style={{ fontSize: 11, color: '#888' }}>Supplier: <Text strong style={{ color: '#B11E6A' }}>{updateDetailsTarget.supplier}</Text></Text>
+                </div>
+              </div>
+            </div>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="Quantity" name="qty" rules={[{ required: true, message: 'Required' }]}>
+                  <InputNumber min={1} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Unit" name="unit" rules={[{ required: true, message: 'Required' }]}>
+                  <Input />
+                </Form.Item>
+              </Col>
+              <Col span={24}>
+                <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Required' }]}>
+                  <Select>
+                    <Option value="100% Payment">100% Payment</Option>
+                    <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                    <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery</Option>
+                    <Option value="Credit 30 Days">Credit 30 Days</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={24}>
+                <Form.Item label="Quoted Amount (₹)" name="amount">
+                  <InputNumber min={0} style={{ width: '100%' }} placeholder="Total amount quoted by supplier" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <Button
+                onClick={() => { setShowUpdateDetailsModal(false); setUpdateDetailsTarget(null); updateDetailsForm.resetFields(); }}
+                style={{ flex: 1, height: 44, borderRadius: 10 }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="primary"
+                loading={updateDetailsSubmitting}
+                onClick={handleUpdateDetailsSubmit}
+                style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
+              >
+                Update & Send for Approval
+              </Button>
+            </div>
+          </Form>
         )}
       </Modal>
 
