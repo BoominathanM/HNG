@@ -1449,7 +1449,13 @@ export default function Billing() {
               <Text style={{ fontSize: 14, fontWeight: 600, color: '#1a1a2e' }}>Invoice</Text>
             </div>
             {payLinkedInvoices.map((inv) => {
-              const settled = Math.min(computeNetPayable(), inv.balance);
+              // Courier charge raises the invoice's own total before the payment is
+              // credited (mirrors backend recordPayment: invoice.total += courierCharge),
+              // so the preview here must grow the payable balance by courier too —
+              // otherwise ticking Courier Charge doesn't move the Settled figure at all.
+              const courier = payCourierVisible ? Number(payCourierAmount) || 0 : 0;
+              const invBalanceWithCourier = r2(inv.balance + courier);
+              const settled = Math.min(computeNetPayable(), invBalanceWithCourier);
               return (
                 <div key={inv.key} style={{ padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -1457,12 +1463,12 @@ export default function Billing() {
                       <Text style={{ fontWeight: 700, fontSize: 15, color: '#1a1a2e' }}>#{inv.inv || inv.key}</Text>
                       <div>
                         <Text style={{ fontSize: 12, color: '#888' }}>
-                          Inv Amt: {inv.balance.toLocaleString()} • {dayjs(inv.date?.split(' ')[0] || undefined).format('D MMM YYYY')}
+                          Inv Amt: {invBalanceWithCourier.toLocaleString()} • {dayjs(inv.date?.split(' ')[0] || undefined).format('D MMM YYYY')}
                         </Text>
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <Text style={{ fontSize: 15, color: '#1a1a2e' }}>₹ {inv.balance.toLocaleString()}</Text>
+                      <Text style={{ fontSize: 15, color: '#1a1a2e' }}>₹ {invBalanceWithCourier.toLocaleString()}</Text>
                       <div>
                         <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
                           ₹{settled.toLocaleString()} Settled <CheckCircleOutlined />

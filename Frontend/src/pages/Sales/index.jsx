@@ -4046,8 +4046,19 @@ export default function Sales() {
       delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'forwardingChargeAmount', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'creditDueDate', 'paymentProofs', 'paymentCollection'],
       products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitLamination', 'kitPrice', 'kitOverallQty', 'kitOrders', 'productType', 'packagingIncludes', 'packagingIncludesQty', 'displayUnitTab', 'displayUnit'],
     };
+    try {
+      await leadForm.validateFields(fieldsBySection[section]);
+    } catch (validationErr) {
+      if (validationErr?.errorFields?.length) {
+        enqueueSnackbar(`Please fix invalid fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
+      }
+      return;
+    }
     const rawValues = leadForm.getFieldsValue(fieldsBySection[section]);
     const values = { ...rawValues };
+    if (values.rowsInHotel !== undefined) {
+      values.numRooms = Number(values.rowsInHotel) || undefined;
+    }
     ['followUpDate', 'quotationDate', 'softwareExpiryDate', 'orderDeliveryDate', 'paymentReminderDate', 'creditDueDate'].forEach(f => {
       if (values[f]) values[f] = toStr(values[f]);
     });
@@ -10622,7 +10633,11 @@ export default function Sales() {
                         <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Full address" /></Form.Item></Col>
                         <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
                         <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
-                        <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item label="Pincode" name="pincode" rules={[{ pattern: /^[0-9]*$/, message: 'Pincode must contain only numbers' }]}>
+                            <Input placeholder="Pincode" maxLength={6} inputMode="numeric" />
+                          </Form.Item>
+                        </Col>
                         {watchedLeadType !== 'SAMPLE' && (
                           <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType"><Select placeholder="Select Bill Type" allowClear><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
                         )}
