@@ -272,12 +272,16 @@ function computeModel(type, data, settings) {
     ? r2d(Number(data.forwardingChargeAmount) || 0)
     : (typeof data.forwardingCharge === 'number' && data.forwardingCharge > 0
         ? data.forwardingCharge : 0);
+  // Courier Charge / Round Off recorded via Billing's Record Payment In — shown as their
+  // own line rows directly below Forwarding Charge, same as forwardingCharge above.
+  const courierCharge = r2d(Number(data.courierCharge) || 0);
+  const roundOff = r2d(Number(data.roundOff) || 0);
 
   const taxRows = resolveTaxRows(cfg.gstMode, taxableAmount, data);
   const taxRowsTotal = taxRows.reduce((s, [, v]) => s + (v || 0), 0);
   const totalAmount = data.total !== undefined
     ? data.total
-    : (taxableAmount + taxRowsTotal + forwardingCharge);
+    : (taxableAmount + taxRowsTotal + forwardingCharge + courierCharge + roundOff);
 
   const customer = data.customer || {
     name: data.client || 'SDA SHOPPEE',
@@ -296,7 +300,7 @@ function computeModel(type, data, settings) {
 
   return {
     cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
-    forwardingCharge, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
+    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
   };
 }
 
@@ -487,7 +491,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
 export function generatePrintHTML(type, data = {}, settings = {}) {
   const m = computeModel(type, data, settings);
   const { cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
-    forwardingCharge, taxRows, totalAmount, customer, docNumber, docDate, secondDate } = m;
+    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate } = m;
   const ACCENT = cfg.theme.accent;
   const LIGHT = cfg.theme.light;
   const BORDER = cfg.theme.border;
@@ -573,6 +577,19 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
       <td style="padding:4px 0;font-size:11px;color:#333;">FORWARDING CHARGE</td>
       <td style="padding:4px 0;font-size:11px;text-align:right;">&#x20B9;${forwardingCharge.toLocaleString()}</td>
     </tr>`;
+
+  // Courier Charge / Round Off rows — shown directly below Forwarding Charge, only when
+  // a value was recorded via Billing's Record Payment In (Courier Charge / Round Off).
+  const courierRow = courierCharge > 0 ? `
+    <tr>
+      <td style="padding:4px 0;font-size:11px;color:#333;">COURIER CHARGE</td>
+      <td style="padding:4px 0;font-size:11px;text-align:right;">&#x20B9;${courierCharge.toLocaleString()}</td>
+    </tr>` : '';
+  const roundOffRow = roundOff > 0 ? `
+    <tr>
+      <td style="padding:4px 0;font-size:11px;color:#333;">ROUND OFF</td>
+      <td style="padding:4px 0;font-size:11px;text-align:right;">&#x20B9;${roundOff.toLocaleString()}</td>
+    </tr>` : '';
 
   return `<!DOCTYPE html>
 <html>
@@ -682,6 +699,8 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
       <div style="flex:1;padding:12px 16px;">
         <table style="border-collapse:collapse;width:100%;">
           ${fwdRow}
+          ${courierRow}
+          ${roundOffRow}
           <tr>
             <td style="padding:4px 0;font-size:11px;color:#333;">Taxable Amount</td>
             <td style="padding:4px 0;font-size:11px;text-align:right;">&#x20B9;${r2d(taxableAmount).toLocaleString()}</td>
@@ -889,7 +908,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
 export default function DocumentTemplate({ type = 'quotation', data = {}, settings = {} }) {
   const m = computeModel(type, data, settings);
   const { cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
-    forwardingCharge, taxRows, totalAmount, customer, docNumber, docDate, secondDate } = m;
+    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate } = m;
   const ACCENT = cfg.theme.accent;
   const LIGHT = cfg.theme.light;
   const BORDER = cfg.theme.border;
@@ -1042,6 +1061,18 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
                 <td style={{ padding: '4px 0', fontSize: 11, color: '#333' }}>FORWARDING CHARGE</td>
                 <td style={{ padding: '4px 0', fontSize: 11, textAlign: 'right' }}>₹{r2d(forwardingCharge).toLocaleString()}</td>
               </tr>
+              {courierCharge > 0 && (
+                <tr>
+                  <td style={{ padding: '4px 0', fontSize: 11, color: '#333' }}>COURIER CHARGE</td>
+                  <td style={{ padding: '4px 0', fontSize: 11, textAlign: 'right' }}>₹{courierCharge.toLocaleString()}</td>
+                </tr>
+              )}
+              {roundOff > 0 && (
+                <tr>
+                  <td style={{ padding: '4px 0', fontSize: 11, color: '#333' }}>ROUND OFF</td>
+                  <td style={{ padding: '4px 0', fontSize: 11, textAlign: 'right' }}>₹{roundOff.toLocaleString()}</td>
+                </tr>
+              )}
               <tr>
                 <td style={{ padding: '4px 0', fontSize: 11, color: '#333' }}>Taxable Amount</td>
                 <td style={{ padding: '4px 0', fontSize: 11, textAlign: 'right' }}>₹{r2d(taxableAmount).toLocaleString()}</td>

@@ -129,10 +129,11 @@ const computeKitAwareTotal = (rec) => {
   const personalized = r2(personalizedKit + sumProds(persProds));
   const separateProduct = sumProds(sepProds);
   const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
-  // Courier/shipping charge recorded via Record Payment In — extra amount owed on top
-  // of the order, entered per-payment rather than stored on the record itself.
+  // Courier/shipping charge and round off recorded via Record Payment In — both are extra
+  // amounts owed on top of the order, entered per-payment rather than stored on the record.
   const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
-  return r2(personalized + separateKit + separateProduct + fwd + courier);
+  const roundOffTotal = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
+  return r2(personalized + separateKit + separateProduct + fwd + courier + roundOffTotal);
 };
 
 function computeCompositionGrandTotal(formData = {}, kitsData = []) {
@@ -140,9 +141,10 @@ function computeCompositionGrandTotal(formData = {}, kitsData = []) {
     const comp = computePersonalizedComposition(formData, kitsData);
     const fwd = formData.forwardingCharge ? r2(Number(formData.forwardingChargeAmount) || 0) : 0;
     const courier = r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    const roundOffTotal = r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
     const separateKit = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const separateProduct = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
-    return r2(comp.totalPersonalized + separateKit + separateProduct + fwd + courier);
+    return r2(comp.totalPersonalized + separateKit + separateProduct + fwd + courier + roundOffTotal);
   }
   return computeKitAwareTotal(formData);
 }
@@ -280,6 +282,12 @@ export default function Billing() {
       : (srcRec ? computeKitTaxable(srcRec) : { taxable: 0, gst: 0 });
     // Chain: kitAwareTotal > order.total > lead.total > invoice.total
     const invTotal = r2(kitTotal > 0 ? kitTotal : (Number(fullOrder?.total) || Number(linkedLead?.total) || Number(quotationLead?.total) || Number(linkedQuotation?.total) || Number(inv.total) || 0));
+    // Courier Charge / Round Off totals recorded via Record Payment In — surfaced separately
+    // (below Forwarding Charge) on the invoice document view, on top of already being folded
+    // into invTotal above via computeCompositionGrandTotal.
+    const pcForCharges = srcRec?.paymentCollection || [];
+    const courierChargeTotal = r2(pcForCharges.reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    const roundOffTotal = r2(pcForCharges.reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
     const invPaid = sumPaid(fullOrder, linkedLead, quotationLead, linkedQuotation, inv);
     const invBalance = r2(Math.max(0, invTotal - invPaid));
     const invStatus = invTotal > 0
@@ -320,6 +328,9 @@ export default function Billing() {
       sgst: kitMoney.gst ? r2(kitMoney.gst / 2) : halfGst,
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
+      // Shown below Forwarding Charge on the invoice document (DocumentTemplate) when > 0
+      courierCharge: courierChargeTotal,
+      roundOff: roundOffTotal,
       // DocumentTemplate customer block — detailed address from the order/lead (richest source),
       // falling back to the billing party.
       customer: {
@@ -398,6 +409,9 @@ export default function Billing() {
       .filter(Boolean)
       .map((src) => src.paymentCollection || [])
       .reduce((best, c) => (collSum(c) > collSum(best) ? c : best), []);
+    // Shown below Forwarding Charge on the quotation document (DocumentTemplate) when > 0
+    const courierChargeTotal = r2(paymentCollection.reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    const roundOffTotal = r2(paymentCollection.reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
     const qStatus = total > 0
       ? (r2(paid) >= r2(total) ? 'Paid' : paid > 0 ? 'Partially Paid' : 'Unpaid')
       : (q.status || 'Unpaid');
@@ -434,6 +448,8 @@ export default function Billing() {
       // Boolean flag + amount (matches Order model pattern; DocumentTemplate understands both)
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
+      courierCharge: courierChargeTotal,
+      roundOff: roundOffTotal,
       customer: {
         name: clientDisplay,
         mobile: lead?.phone || '',
@@ -1449,13 +1465,16 @@ export default function Billing() {
               <Text style={{ fontSize: 14, fontWeight: 600, color: '#1a1a2e' }}>Invoice</Text>
             </div>
             {payLinkedInvoices.map((inv) => {
-              // Courier charge raises the invoice's own total before the payment is
-              // credited (mirrors backend recordPayment: invoice.total += courierCharge),
-              // so the preview here must grow the payable balance by courier too —
-              // otherwise ticking Courier Charge doesn't move the Settled figure at all.
+              // Courier charge AND round off both raise the invoice's own total before the
+              // payment is credited (mirrors backend recordPayment: invoice.total +=
+              // courierCharge + roundOff), so the preview here must grow the payable balance
+              // by both — otherwise ticking either box doesn't move the Settled figure,
+              // and it drifts from the New Party Balance total below (which already
+              // includes both via computeNetPayable()).
               const courier = payCourierVisible ? Number(payCourierAmount) || 0 : 0;
-              const invBalanceWithCourier = r2(inv.balance + courier);
-              const settled = Math.min(computeNetPayable(), invBalanceWithCourier);
+              const roundOffAmt = payRoundOffVisible ? Number(payRoundOffAmount) || 0 : 0;
+              const invBalanceWithExtras = r2(inv.balance + courier + roundOffAmt);
+              const settled = Math.min(computeNetPayable(), invBalanceWithExtras);
               return (
                 <div key={inv.key} style={{ padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -1463,12 +1482,12 @@ export default function Billing() {
                       <Text style={{ fontWeight: 700, fontSize: 15, color: '#1a1a2e' }}>#{inv.inv || inv.key}</Text>
                       <div>
                         <Text style={{ fontSize: 12, color: '#888' }}>
-                          Inv Amt: {invBalanceWithCourier.toLocaleString()} • {dayjs(inv.date?.split(' ')[0] || undefined).format('D MMM YYYY')}
+                          Inv Amt: {invBalanceWithExtras.toLocaleString()} • {dayjs(inv.date?.split(' ')[0] || undefined).format('D MMM YYYY')}
                         </Text>
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <Text style={{ fontSize: 15, color: '#1a1a2e' }}>₹ {invBalanceWithCourier.toLocaleString()}</Text>
+                      <Text style={{ fontSize: 15, color: '#1a1a2e' }}>₹ {invBalanceWithExtras.toLocaleString()}</Text>
                       <div>
                         <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
                           ₹{settled.toLocaleString()} Settled <CheckCircleOutlined />

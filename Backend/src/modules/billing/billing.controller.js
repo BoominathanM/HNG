@@ -233,9 +233,8 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
   if (!invoice) return next(new AppError('Invoice not found', 404));
 
   const payRef = await generateCode('REC');
-  // Courier charge is an extra amount owed on top of the invoice — it raises the invoice
-  // total, then is collected here too. Round off is the paise-level gap the business
-  // forgives, so it counts as paid (credited), not subtracted from what was collected.
+  // Courier charge and round off are both extra amounts owed on top of the invoice —
+  // each raises the invoice total, then is collected (credited) here too.
   const courierCharge = Number(req.body.courierCharge) || 0;
   const roundOff = Number(req.body.roundOff) || 0;
   const netAmount = (req.body.amount || 0) + courierCharge + roundOff;
@@ -248,8 +247,10 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
   });
 
-  // Courier charge raises what's actually owed on the invoice before we credit the payment.
+  // Courier charge and round off both raise what's actually owed on the invoice before
+  // we credit the payment against it.
   if (courierCharge) invoice.total = (invoice.total || 0) + courierCharge;
+  if (roundOff) invoice.total = (invoice.total || 0) + roundOff;
 
   // Update invoice balance
   invoice.advanceAmount = (invoice.advanceAmount || 0) + netAmount;
