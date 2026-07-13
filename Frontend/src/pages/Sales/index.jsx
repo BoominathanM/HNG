@@ -990,6 +990,9 @@ const _SIZES_LIQUID = ['15', '20', '25', '30'].map(v => ({ value: v, label: `${v
 
 // Attribute keys that support multiple selection (both in Inventory add-item and Lead spec).
 const MULTI_ATTR_KEYS = new Set(['fragrance', 'color', 'material', 'packingMaterial', 'brand']);
+// Attribute keys that are always Yes/No decisions (both in Inventory add-item and Lead spec),
+// used for generic/unrecognized product types whose attributes come straight from productAttributes.
+const YES_NO_ATTR_KEYS = new Set(['sticker', 'logo', 'printing', 'stickerPrinting']);
 
 // Per-product-type attribute fields — kept in sync with Inventory's PRODUCT_FIELD_DEFS so the
 // lead form shows exactly the attributes that inventory collects for each product type. The
@@ -1214,7 +1217,15 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const dynamicFieldDefs = React.useMemo(() => {
     if (productTypeKey && PRODUCT_FIELD_DEFS_LEAD[productTypeKey]) return PRODUCT_FIELD_DEFS_LEAD[productTypeKey];
     const attrs = invItem?.productAttributes || {};
-    return Object.keys(attrs).map((k) => ({ key: k, label: prettyAttrKeyLead(k), field: `product_attr_${k}`, options: [] }));
+    return Object.keys(attrs).map((k) => ({
+      key: k,
+      label: prettyAttrKeyLead(k),
+      field: `product_attr_${k}`,
+      // Sticker/Logo/Printing are per-order Yes/No decisions (same convention as the
+      // per-product-type defs above) — always offer both choices, not just the value
+      // that happens to be stored on this inventory item.
+      options: YES_NO_ATTR_KEYS.has(k) ? _YES_NO : [],
+    }));
   }, [productTypeKey, invItem]);
 
   // Pre-fill a spec field only when the inventory item defines a single value; when it offers

@@ -160,6 +160,9 @@ const GENERIC_PRODUCT_FIELD_DEFS = [
   { key: 'size', label: 'Size', field: 'generic_size', options: [] },
   { key: 'color', label: 'Color', field: 'generic_color', options: [], mode: 'multiple' },
   { key: 'packingMaterial', label: 'Packing Material', field: 'generic_packingMaterial', usePackingConfig: true, options: [], mode: 'multiple' },
+  { key: 'sticker', label: 'Sticker', field: 'generic_sticker', options: YES_NO },
+  { key: 'logo', label: 'Logo', field: 'generic_logo', options: YES_NO },
+  { key: 'printing', label: 'Printing', field: 'generic_printing', options: YES_NO },
 ];
 
 const getProductTypeKey = (name) => {
