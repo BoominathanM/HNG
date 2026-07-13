@@ -1500,12 +1500,12 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     {...rest}
                     name={[name, 'rate']}
                     style={{ marginBottom: 0 }}
-                    tooltip={invItem?.sellingPrice > 0 ? `Selling Price: ₹${invItem.sellingPrice} (min)` : undefined}
+                    tooltip={invItem?.purchasePrice > 0 ? `Purchase Price: ₹${invItem.purchasePrice} (min)${invItem?.sellingPrice > 0 ? ` · Selling Price: ₹${invItem.sellingPrice}` : ''}` : undefined}
                     rules={[
                       { required: true, message: '!' },
                       {
                         validator: (_, val) => {
-                          const minRate = invItem?.sellingPrice || 0;
+                          const minRate = invItem?.purchasePrice || 0;
                           if (minRate > 0 && (Number(val) || 0) < minRate) {
                             return Promise.reject(new Error(`Min ₹${minRate}`));
                           }
@@ -1514,7 +1514,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       },
                     ]}
                   >
-                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={invItem?.sellingPrice || 0} step={0.01} disabled={isItemDisabled} size="small" />
+                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={invItem?.purchasePrice || 0} step={0.01} disabled={isItemDisabled} size="small" />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
@@ -11313,8 +11313,8 @@ export default function Sales() {
                                 const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
                                 return (
                                   <>
-                                    <Form.Item label="Packing Material Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}
-                                      tooltip="Auto-filled from packing config selling price. Cannot go below purchase + margin cost."
+                                    <Form.Item label="Packing Material Price (₹) (Included with GST)" name="kitPrice" style={{ marginBottom: 0 }}
+                                      tooltip="Auto-filled from packing config selling price. Cannot go below purchase + margin cost. Price is inclusive of GST."
                                       rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice} (₹${st.purchasePrice||0} purchase + ₹${st.marginAmount||0} margin)`) : Promise.resolve() }] : []}
                                     >
                                       <InputNumber
@@ -11327,7 +11327,7 @@ export default function Sales() {
                                     </Form.Item>
                                     {st && minPrice > 0 && (
                                       <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-                                        Min: ₹{minPrice} (₹{st.purchasePrice||0} purchase + ₹{st.marginAmount||0} margin) | Sell: ₹{st.sellingPrice||0}
+                                        Min: ₹{minPrice} (₹{st.purchasePrice||0} purchase + ₹{st.marginAmount||0} margin) | Sell: ₹{st.sellingPrice||0} (Included with GST)
                                       </Text>
                                     )}
                                     {(() => {
@@ -12242,8 +12242,8 @@ export default function Sales() {
                                   const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
                                   return (
                                     <>
-                                      <Form.Item label="Packing Material Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}
-                                        tooltip="Auto-filled from packing config selling price. Cannot go below purchase + margin cost."
+                                      <Form.Item label="Packing Material Price (₹) (Included with GST)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}
+                                        tooltip="Auto-filled from packing config selling price. Cannot go below purchase + margin cost. Price is inclusive of GST."
                                         rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice} (₹${st.purchasePrice||0} purchase + ₹${st.marginAmount||0} margin)`) : Promise.resolve() }] : []}
                                       >
                                         <InputNumber
@@ -12256,7 +12256,7 @@ export default function Sales() {
                                       </Form.Item>
                                       {st && minPrice > 0 && (
                                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-                                          Min: ₹{minPrice} (₹{st.purchasePrice||0} purchase + ₹{st.marginAmount||0} margin) | Sell: ₹{st.sellingPrice||0}
+                                          Min: ₹{minPrice} (₹{st.purchasePrice||0} purchase + ₹{st.marginAmount||0} margin) | Sell: ₹{st.sellingPrice||0} (Included with GST)
                                         </Text>
                                       )}
                                       {(() => {
