@@ -4519,7 +4519,7 @@ export default function Sales() {
     // including the kit-level display unit (e.g. ZIPLOCK_POUCH).
     if (p?.sticker === 'YES') return 'Sticker';
     const hay = `${p?.printing || ''} ${p?.packingMaterial || ''} ${p?.materialCategory || ''} ${p?.logoType || ''} ${kitDisplayUnit}`.toLowerCase();
-    if (hay.includes('butter')) return 'Butter Paper';
+    if (hay.includes('butter') || hay.includes('paper')) return 'Butter Paper';
     if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
     if (hay.includes('box')) return 'Box';
     // When sticker is explicitly No, don't infer 'Sticker' from keyword matching — the packing

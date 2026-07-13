@@ -340,7 +340,8 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
     {
       dispatchId: dispatch._id, orderId: o?._id, orderCode: o?.orderCode, clientName: o?.clientName,
       transportCompany: update.transportName, lrNumber: update.lrNumber, trackingUrl: update.trackingUrl,
-      fromCity: update.fromCity, toCity: update.toCity, weight: update.weight,
+      fromCity: update.fromCity, toCity: update.toCity, weight: dispatch.weight || update.weight,
+      boxes: dispatch.boxes || Number(update.packages) || undefined,
       freight: Number(update.freight) || undefined, estimatedDelivery: update.estimatedDelivery,
       dispatchedAt: Date.now(), status: 'In Transit', createdBy: req.user._id,
     },

@@ -10,7 +10,10 @@ export const normYNOps = (v) => { const s = String(v ?? '').trim().toLowerCase()
 // Used as a fallback when the item has no config-map entry (old orders, unregistered names).
 export const packTabFromString = (pm) => {
   const p = (pm || '').toLowerCase();
-  if (p.includes('butter')) return 'Butter Paper';
+  // 'paper' is checked alongside 'butter' because "butter paper pouch" is sometimes
+  // typed with a typo (e.g. "butte paper pouch") — without this, the typo falls through
+  // to the 'pouch' match below and misroutes to Ziplock instead of Butter Paper.
+  if (p.includes('butter') || p.includes('paper')) return 'Butter Paper';
   if (p.includes('ziplock') || p.includes('frosted') || p.includes('pouch')) return 'Ziplock';
   if (p.includes('box')) return 'Box';
   return '';
@@ -33,7 +36,7 @@ export const inferItemLogoType = (sticker, printing, pmRaw, packingMaterialTab, 
   const hay = (pmRaw || '').toLowerCase();
   // Packing material decides the destination for everything else (incl. Printing=Yes items, which
   // go DIRECTLY to their box/ziplock/butter packaging tab rather than the Sticker tab).
-  if (hay.includes('butter')) return 'Butter Paper';
+  if (hay.includes('butter') || hay.includes('paper')) return 'Butter Paper';
   if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
   if (hay.includes('box')) return 'Box';
   if (packingMaterialTab === 'Butter Paper') return 'Butter Paper';
@@ -144,7 +147,9 @@ const hasFrostedPackaging = (item, order) => {
   if (item.packingMaterialTab === 'Ziplock') return true;
   if (item.logoType === 'Frosted Ziplock') return true;
   const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
-  if (pm.includes('ziplock') || pm.includes('frosted') || pm.includes('pouch')) return true;
+  // Exclude 'paper' so a "Butter (paper) pouch" packing material isn't misread as ziplock
+  // just because it also contains "pouch" — mirrors the duNameLc guard below.
+  if (!pm.includes('paper') && (pm.includes('ziplock') || pm.includes('frosted') || pm.includes('pouch'))) return true;
   // Kit items only: fall back to display unit name when displayUnitTab not yet stored.
   if (isKitItem) {
     const du = kitDuNameOf(item, order).toLowerCase();
