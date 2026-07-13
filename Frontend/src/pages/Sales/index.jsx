@@ -2893,7 +2893,7 @@ export default function Sales() {
                 {sticker && <Tag color={sticker === 'YES' ? 'cyan' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Sticker: {sticker === 'YES' ? 'Yes' : 'No'}</Tag>}
                 {logo && <Tag color={logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Logo: {logo === 'YES' ? 'Yes' : 'No'}</Tag>}
                 {printing && <Tag color={printing === 'YES' ? 'magenta' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Printing: {printing === 'YES' ? 'Yes' : 'No'}</Tag>}
-                {kitPrice > 0 && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>Kit Price: ₹{kitPrice.toLocaleString()}</Tag>}
+                {kitPrice > 0 && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>Packing Material Price: ₹{kitPrice.toLocaleString()}</Tag>}
                 {kitPrice > 0 && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>Kit Amount: ₹{(kitPrice * (overallQty || 1)).toLocaleString()}</Tag>}
               </div>
             );
@@ -6100,7 +6100,7 @@ export default function Sales() {
                       {qKitLogo && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Logo</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitLogo)}</Text></Col>}
                       {qKitPrinting && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Printing</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitPrinting)}</Text></Col>}
                       {qKitLamination && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Lamination</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(qKitLamination)}</Text></Col>}
-                      {(qKitPrice != null && qKitPrice !== '') && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Price (single)</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(qKitPrice).toLocaleString()}</Text></Col>}
+                      {(qKitPrice != null && qKitPrice !== '') && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Packing Material Price (single)</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(qKitPrice).toLocaleString()}</Text></Col>}
                       {Number(qKitQty) > 0 && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitQty} kit{Number(qKitQty) > 1 ? 's' : ''}</Text></Col>}
                       {(qKitPrice != null && qKitPrice !== '' && Number(qKitQty) > 0) && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{(Number(qKitPrice) * Number(qKitQty)).toLocaleString()}</Text></Col>}
                     </Row>
@@ -6624,7 +6624,7 @@ export default function Sales() {
                       {nKitLogo && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Logo</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitLogo)}</Text></Col>}
                       {nKitPrinting && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Printing</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitPrinting)}</Text></Col>}
                       {nKitLamination && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Lamination</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{normYN(nKitLamination)}</Text></Col>}
-                      {(nKitPrice != null && nKitPrice !== '') && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Price (single)</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(nKitPrice).toLocaleString()}</Text></Col>}
+                      {(nKitPrice != null && nKitPrice !== '') && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Packing Material Price (single)</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(nKitPrice).toLocaleString()}</Text></Col>}
                       {Number(nKitQty) > 0 && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitQty} kit{Number(nKitQty) > 1 ? 's' : ''}</Text></Col>}
                       {(nKitPrice != null && nKitPrice !== '' && Number(nKitQty) > 0) && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{(Number(nKitPrice) * Number(nKitQty)).toLocaleString()}</Text></Col>}
                     </Row>
@@ -7514,7 +7514,7 @@ export default function Sales() {
                       )}
                       {(paKitPrice != null && paKitPrice !== '') && (
                         <Col xs={12} sm={6}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>Kit Price (single)</Text>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Packing Material Price (single)</Text>
                           <Text strong style={{ fontSize: 13, display: 'block', color: '#722ed1' }}>₹{Number(paKitPrice).toLocaleString()}</Text>
                         </Col>
                       )}
@@ -8171,7 +8171,7 @@ export default function Sales() {
                               const st = (duCfg?.subtypes || []).find(s => s.value === duType);
                               const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
                               return (
-                                <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}
+                                <Form.Item label="Packing Material Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}
                                   rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice}`) : Promise.resolve() }] : []}>
                                   <InputNumber min={minPrice || 0} style={{ width: '100%' }} placeholder={st?.sellingPrice > 0 ? `Selling: ₹${st.sellingPrice}` : 'Single kit price'} formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
                                 </Form.Item>
@@ -8382,7 +8382,7 @@ export default function Sales() {
                           {/* Row 2: Kit Price */}
                           <Row gutter={12}>
                             <Col xs={12} sm={6}>
-                              <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
+                              <Form.Item label="Packing Material Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
                                 <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
                               </Form.Item>
                             </Col>
@@ -8964,7 +8964,7 @@ export default function Sales() {
                         </Form.Item>
                         <Row gutter={[10, 0]}>
                           <Col xs={12} sm={8}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 8 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
-                          <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 8 }}>
+                          <Col xs={12} sm={8}><Form.Item label="Packing Material Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 8 }}>
                             <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
                           </Form.Item></Col>
                         </Row>
@@ -8991,7 +8991,7 @@ export default function Sales() {
                         <Col xs={12} sm={4}><Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 8 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                         <Col xs={12} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 8 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                         <Col xs={12} sm={8}><Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 8 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
-                        <Col xs={12} sm={8}><Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 8 }}>
+                        <Col xs={12} sm={8}><Form.Item label="Packing Material Price (₹)" name="kitPrice" style={{ marginBottom: 8 }}>
                           <InputNumber min={0} style={{ width: '100%' }} placeholder="0" formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={v => (v || '').replace(/[₹,\s]/g, '')} />
                         </Form.Item></Col>
                       </Row>
@@ -9408,7 +9408,7 @@ export default function Sales() {
                               </Form.Item>
                             </Col>
                             <Col xs={24} sm={9}>
-                              <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}>
+                              <Form.Item label="Packing Material Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}>
                                 <InputNumber min={0} style={{ width: '100%' }} placeholder="Single kit price"
                                   formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                                   parser={v => (v || '').replace(/[₹,\s]/g, '')} />
@@ -9489,7 +9489,7 @@ export default function Sales() {
                                         </Form.Item>
                                         <Row gutter={[8, 0]} style={{ marginTop: 8 }}>
                                           <Col xs={12} sm={5}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
-                                          <Col xs={24} sm={9}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
+                                          <Col xs={24} sm={9}><Form.Item label="Packing Material Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
                                             <InputNumber min={0} style={{ width: '100%' }} placeholder="0"
                                               formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                                               parser={v => (v || '').replace(/[₹,\s]/g, '')} />
@@ -9658,7 +9658,7 @@ export default function Sales() {
                               </Form.Item>
                             </Col>
                             <Col xs={24} sm={9}>
-                              <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}>
+                              <Form.Item label="Packing Material Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}>
                                 <InputNumber min={0} style={{ width: '100%' }} placeholder="Single kit price"
                                   formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                                   parser={v => (v || '').replace(/[₹,\s]/g, '')} />
@@ -9739,7 +9739,7 @@ export default function Sales() {
                                         </Form.Item>
                                         <Row gutter={[8, 0]} style={{ marginTop: 8 }}>
                                           <Col xs={12} sm={5}><Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}><InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" /></Form.Item></Col>
-                                          <Col xs={24} sm={9}><Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
+                                          <Col xs={24} sm={9}><Form.Item label="Packing Material Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
                                             <InputNumber min={0} style={{ width: '100%' }} placeholder="0"
                                               formatter={v => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                                               parser={v => (v || '').replace(/[₹,\s]/g, '')} />
@@ -11089,7 +11089,7 @@ export default function Sales() {
                           )}
                           {(record.kitPrice != null && record.kitPrice !== '') && (
                             <Col xs={12} sm={6}>
-                              <InfoRow label="Kit Price (single)" value={`₹${Number(record.kitPrice).toLocaleString()}`} />
+                              <InfoRow label="Packing Material Price (single)" value={`₹${Number(record.kitPrice).toLocaleString()}`} />
                             </Col>
                           )}
                           {(Number(record.kitOverallQty) > 0) && (
@@ -11302,7 +11302,7 @@ export default function Sales() {
                                 const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
                                 return (
                                   <>
-                                    <Form.Item label="Kit Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}
+                                    <Form.Item label="Packing Material Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}
                                       tooltip="Auto-filled from packing config selling price. Cannot go below purchase + margin cost."
                                       rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice} (₹${st.purchasePrice||0} purchase + ₹${st.marginAmount||0} margin)`) : Promise.resolve() }] : []}
                                     >
@@ -11654,7 +11654,7 @@ export default function Sales() {
                                   </Row>
                                   <Row gutter={12}>
                                     <Col xs={12} sm={6}>
-                                      <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
+                                      <Form.Item label="Packing Material Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}>
                                         <InputNumber min={0} style={{ width: '100%' }} formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
                                       </Form.Item>
                                     </Col>
@@ -12018,7 +12018,7 @@ export default function Sales() {
                                       {kCfg.sticker && <Tag color={kCfg.sticker === 'YES' ? 'cyan' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Sticker: {kCfg.sticker === 'YES' ? 'Yes' : 'No'}</Tag>}
                                       {kCfg.logo && <Tag color={kCfg.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Logo: {kCfg.logo === 'YES' ? 'Yes' : 'No'}</Tag>}
                                       {kCfg.printing && <Tag color={kCfg.printing === 'YES' ? 'magenta' : 'default'} style={{ borderRadius: 12, fontSize: 11 }}>Printing: {kCfg.printing === 'YES' ? 'Yes' : 'No'}</Tag>}
-                                      {kitSingle > 0 && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>Kit Price: ₹{kitSingle.toLocaleString()}</Tag>}
+                                      {kitSingle > 0 && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>Packing Material Price: ₹{kitSingle.toLocaleString()}</Tag>}
                                       {kitSingle > 0 && <Tag color="purple" style={{ borderRadius: 12, fontSize: 11 }}>Kit Amount: ₹{(kitSingle * (overallQty || 1)).toLocaleString()}</Tag>}
                                     </div>
                                     {kCfg.specification && (
@@ -12231,7 +12231,7 @@ export default function Sales() {
                                   const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
                                   return (
                                     <>
-                                      <Form.Item label="Kit Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}
+                                      <Form.Item label="Packing Material Price (₹)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}
                                         tooltip="Auto-filled from packing config selling price. Cannot go below purchase + margin cost."
                                         rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice} (₹${st.purchasePrice||0} purchase + ₹${st.marginAmount||0} margin)`) : Promise.resolve() }] : []}
                                       >

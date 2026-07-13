@@ -164,7 +164,7 @@ function computeDocSections(data) {
     const gstRate = Number(p.gst || p.taxRate || 0);
     const taxAmt = r2d(qty * rate * gstRate / 100);
     const amount = r2d(qty * rate + taxAmt);
-    return { name: p.itemName || p.name || '—', qty, unit: p.unit || 'PCS', rate, gstRate, taxAmt, amount };
+    return { name: p.itemName || p.name || '—', qty, unit: p.unit || 'PCS', rate, gstRate, taxAmt, amount, size: p.size || p.defaultSize || '' };
   };
 
   // Enrich a kit order with its component rows from products[] and compute kitTotal.
@@ -463,20 +463,19 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
           C &nbsp;&mdash;&nbsp; SEPARATE PRODUCTS
         </td>
         <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:right;border-bottom:1px solid ${BORDER};">
-          ${rs(sections.separateProduct)}
         </td>
       </tr>`;
 
     sections.sepProdRows.forEach(p => {
       html += `
         <tr style="background:${cs.sub};">
-          <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">${p.name}</td>
+          <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">${p.name}${p.size ? ` (${p.size})` : ''}</td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;font-weight:700;">${p.qty != null ? p.qty : ''}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.rate.toLocaleString()}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${r2d((p.qty || 0) * p.rate).toLocaleString()}</td>
           <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${taxPct(p.gstRate)}</td>
-          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
+          <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${rs(p.amount)}</td>
         </tr>`;
     });
   }
@@ -867,18 +866,17 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                 C &nbsp;—&nbsp; SEPARATE PRODUCTS
               </td>
               <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'right', borderRight: 'none' }}>
-                {rs(sections.separateProduct)}
               </td>
             </tr>
             {sections.sepProdRows.map((p, i) => (
               <tr key={`sprod-${i}`} style={{ background: cs.sub }}>
-                <td style={{ ...td, paddingLeft: 24 }}>{p.name}</td>
+                <td style={{ ...td, paddingLeft: 24 }}>{p.name}{p.size ? ` (${p.size})` : ''}</td>
                 <td style={{ ...td, textAlign: 'center' }}></td>
                 <td style={{ ...td, textAlign: 'center', fontWeight: 700 }}>{p.qty != null ? p.qty : ''}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{p.rate.toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{r2d((p.qty || 0) * p.rate).toLocaleString()}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{taxPct(p.gstRate)}</td>
-                <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(p.amount)}</td>
+                <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{rs(p.amount)}</td>
               </tr>
             ))}
           </>

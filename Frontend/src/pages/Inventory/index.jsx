@@ -2551,7 +2551,7 @@ export default function Inventory() {
           layout="vertical"
           style={{ marginTop: 16 }}
           onValuesChange={(changed) => {
-            // Selling Price auto-fills to Purchase Price + Margin Amount whenever either changes,
+            // Selling Price auto-fills to Purchase Price + Limitations (margin_amount) whenever either changes,
             // so it can never start below the floor. The validator below blocks manual reductions.
             if ('purchase_price' in changed || 'margin_amount' in changed) {
               const pp = Number(String(addItemForm.getFieldValue('purchase_price') ?? '').replace(/[^0-9.]/g, '')) || 0;
@@ -2606,7 +2606,7 @@ export default function Inventory() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item label="Margin Amount" name="margin_amount" tooltip="Added on top of Purchase Price to set the Selling Price.">
+              <Form.Item label="Limitations" name="margin_amount" tooltip="Minimum amount that must be added on top of Purchase Price when setting the Selling Price.">
                 <Input prefix="₹" placeholder="0" />
               </Form.Item>
             </Col>
@@ -2614,15 +2614,15 @@ export default function Inventory() {
               <Form.Item
                 label="Selling Price"
                 name="selling_price"
-                tooltip="Auto-calculated as Purchase Price + Margin Amount. Cannot be reduced below that floor."
-                extra={<Text style={{ fontSize: 11, color: '#999' }}>= Purchase Price + Margin Amount</Text>}
+                tooltip="Auto-calculated as Purchase Price + Limitations. Cannot be reduced below that floor."
+                extra={<Text style={{ fontSize: 11, color: '#999' }}>= Purchase Price + Limitations</Text>}
                 rules={[{
                   validator: (_, val) => {
                     const pp = Number(String(addItemForm.getFieldValue('purchase_price') ?? '').replace(/[^0-9.]/g, '')) || 0;
                     const mm = Number(String(addItemForm.getFieldValue('margin_amount') ?? '').replace(/[^0-9.]/g, '')) || 0;
                     const sp = Number(String(val ?? '').replace(/[^0-9.]/g, '')) || 0;
                     const floor = pp + mm;
-                    if (sp < floor) return Promise.reject(new Error(`Cannot be below ₹${floor} (Purchase + Margin)`));
+                    if (sp < floor) return Promise.reject(new Error(`Cannot be below ₹${floor} (Purchase + Limitations)`));
                     return Promise.resolve();
                   },
                 }]}
