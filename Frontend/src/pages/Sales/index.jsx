@@ -1500,12 +1500,12 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     {...rest}
                     name={[name, 'rate']}
                     style={{ marginBottom: 0 }}
-                    tooltip={invItem?.purchasePrice > 0 ? `Purchase Price: ₹${invItem.purchasePrice} (min)${invItem?.sellingPrice > 0 ? ` · Selling Price: ₹${invItem.sellingPrice}` : ''}` : undefined}
+                    tooltip={invItem?.purchasePrice > 0 ? `Min ₹${(Number(invItem.purchasePrice) || 0) + (Number(invItem.marginAmount) || 0)} (₹${invItem.purchasePrice} purchase + ₹${invItem.marginAmount || 0} margin)${invItem?.sellingPrice > 0 ? ` · Selling Price: ₹${invItem.sellingPrice}` : ''}` : undefined}
                     rules={[
                       { required: true, message: '!' },
                       {
                         validator: (_, val) => {
-                          const minRate = invItem?.purchasePrice || 0;
+                          const minRate = invItem?.purchasePrice > 0 ? (Number(invItem.purchasePrice) || 0) + (Number(invItem.marginAmount) || 0) : 0;
                           if (minRate > 0 && (Number(val) || 0) < minRate) {
                             return Promise.reject(new Error(`Min ₹${minRate}`));
                           }
@@ -1514,7 +1514,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       },
                     ]}
                   >
-                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={invItem?.purchasePrice || 0} step={0.01} disabled={isItemDisabled} size="small" />
+                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={invItem?.purchasePrice > 0 ? (Number(invItem.purchasePrice) || 0) + (Number(invItem.marginAmount) || 0) : 0} step={0.01} disabled={isItemDisabled} size="small" />
                   </Form.Item>
                 </Col>
                 <Col span={8}>

@@ -2554,12 +2554,9 @@ export default function Inventory() {
           layout="vertical"
           style={{ marginTop: 16 }}
           onValuesChange={(changed) => {
-            // Selling Price auto-fills to Purchase Price + Limitations (margin_amount) whenever either changes,
-            // so it can never start below the floor. The validator below blocks manual reductions.
+            // Selling Price is a manual entry — not auto-filled from Purchase Price + Limitations.
+            // Re-validate it when either changes so the floor check below stays accurate.
             if ('purchase_price' in changed || 'margin_amount' in changed) {
-              const pp = Number(String(addItemForm.getFieldValue('purchase_price') ?? '').replace(/[^0-9.]/g, '')) || 0;
-              const mm = Number(String(addItemForm.getFieldValue('margin_amount') ?? '').replace(/[^0-9.]/g, '')) || 0;
-              addItemForm.setFieldValue('selling_price', String(pp + mm));
               addItemForm.validateFields(['selling_price']).catch(() => {});
             }
           }}
@@ -2617,8 +2614,8 @@ export default function Inventory() {
               <Form.Item
                 label="Selling Price"
                 name="selling_price"
-                tooltip="Auto-calculated as Purchase Price + Limitations. Cannot be reduced below that floor."
-                extra={<Text style={{ fontSize: 11, color: '#999' }}>= Purchase Price + Limitations</Text>}
+                tooltip="Enter manually. Cannot be below Purchase Price + Limitations."
+                extra={<Text style={{ fontSize: 11, color: '#999' }}>Min: Purchase Price + Limitations</Text>}
                 rules={[{
                   validator: (_, val) => {
                     const pp = Number(String(addItemForm.getFieldValue('purchase_price') ?? '').replace(/[^0-9.]/g, '')) || 0;
