@@ -2137,7 +2137,7 @@ export default function Inventory() {
                         </Form.Item>
                       </Col>
                       <Col xs={8}>
-                        <Form.Item name={[name, 'marginAmount']} label="Margin Amount (₹)" style={{ marginBottom: 0 }}>
+                        <Form.Item name={[name, 'marginAmount']} label="Limitations" style={{ marginBottom: 0 }}>
                           <InputNumber size="small" min={0} style={{ width: '100%' }} placeholder="0" />
                         </Form.Item>
                       </Col>

@@ -1523,21 +1523,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     {...rest}
                     name={[name, 'gst']}
                     style={{ marginBottom: 0 }}
-                    tooltip={invItem?.gstPercent > 0 ? `Product GST: ${invItem.gstPercent}% (min)` : undefined}
-                    rules={[{
-                      validator: (_, val) => {
-                        const minGst = invItem?.gstPercent || 0;
-                        if (minGst > 0 && (Number(val) || 0) < minGst) {
-                          return Promise.reject(new Error(`Min ${minGst}%`));
-                        }
-                        return Promise.resolve();
-                      }
-                    }]}
                   >
                     <InputNumber
                       placeholder="GST %"
                       style={{ width: '100%' }}
-                      min={invItem?.gstPercent || 0}
+                      min={0}
                       disabled={isItemDisabled}
                       size="small"
                     />

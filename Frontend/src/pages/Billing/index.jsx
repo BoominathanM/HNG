@@ -210,6 +210,7 @@ export default function Billing() {
   const [sendWhatsAppMessageMutation] = useSendWhatsAppMessageMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
   const [whatsAppSendingKey, setWhatsAppSendingKey] = useState(null);
+  const [downloadingKey, setDownloadingKey] = useState(null);
   const [createInvoiceMutation] = useCreateInvoiceMutation();
   const [recordPaymentMutation] = useRecordPaymentMutation();
   const [convertQuotationMutation] = useConvertQuotationToInvoiceMutation();
@@ -951,20 +952,6 @@ export default function Billing() {
     win.document.close();
   };
 
-  // Directly downloads the document as a file (no print-preview window in between).
-  const handleDownloadDocument = (docType, data) => {
-    const html = generatePrintHTML(docType, data, invoiceSettings);
-    const blob = new Blob([html], { type: 'text/html' });
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = `${docType === 'quotation' ? 'quotation' : 'invoice'}-${data?.quot || data?.inv || 'document'}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
-  };
-
   // Renders the same invoice/quotation markup used for print/download and rasterizes it to a
   // real PDF Blob (html2pdf = html2canvas + jsPDF under the hood). html2pdf deep-clones whatever
   // element is passed to `.from()` into its own hidden rendering container — cloning carries
@@ -989,6 +976,27 @@ export default function Billing() {
         .outputPdf('blob');
     } finally {
       document.body.removeChild(container);
+    }
+  };
+
+  // Directly downloads the document as a real PDF file (no print-preview window in between).
+  const handleDownloadDocument = async (docType, data) => {
+    const rowKey = data?.key || data?.inv || data?.quot;
+    setDownloadingKey(rowKey);
+    try {
+      const pdfBlob = await generateDocumentPdfBlob(docType, data);
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${docType === 'quotation' ? 'quotation' : 'invoice'}-${data?.quot || data?.inv || 'document'}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+    } catch (err) {
+      enqueueSnackbar(err?.message || 'Failed to generate PDF', { variant: 'error' });
+    } finally {
+      setDownloadingKey(null);
     }
   };
 
@@ -1101,7 +1109,7 @@ export default function Billing() {
           <Tooltip title="Edit GST"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openGstEdit(r)} /></Tooltip>
           <Tooltip title="Send invoice on WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp('invoice', r)} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
-          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownloadDocument('invoice', r)} /></Tooltip>
+          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument('invoice', r)} /></Tooltip>
           {r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
             <>
               <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
@@ -1146,7 +1154,7 @@ export default function Billing() {
             <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType(docType); setViewModal(true); }} /></Tooltip>
             <Tooltip title={isOrder ? 'Send invoice on WhatsApp' : 'Send quotation on WhatsApp'}><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp(docType, r)} /></Tooltip>
             <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
-            <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownloadDocument(docType, r)} /></Tooltip>
+            <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument(docType, r)} /></Tooltip>
             {/* Quotation-specific actions */}
             {tabType === 'in-process' && !isOrder && (
               <Button
@@ -1315,6 +1323,7 @@ export default function Billing() {
               icon={<DownloadOutlined />}
               type="primary"
               style={{ background: 'linear-gradient(135deg,#2d5016,#4a7c24)', border: 'none' }}
+              loading={!!selectedInv && downloadingKey === (selectedInv?.key || selectedInv?.inv || selectedInv?.quot)}
               onClick={() => handleDownloadDocument(viewDocType, selectedInv || {})}
             >
               PDF
