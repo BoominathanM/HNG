@@ -6,6 +6,7 @@ const Complaint = require('../../models/Complaint');
 const Party = require('../../models/Party');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
+const MaterialStock = require('../../models/MaterialStock');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -578,6 +579,57 @@ async function deductInventoryForOrder(order, userId) {
   }
 }
 
+// ─── MATERIAL STOCK DEDUCTION (packing materials tracked in Inventory > Material Stocks) ──
+// Resolve a packing-material string to a stock category by keyword match (mirrors
+// Frontend/src/pages/Operations/data.js packTabFromString, with an added 'bottle' category).
+function materialStockCategoryOf(pmRaw) {
+  const p = (pmRaw || '').toLowerCase();
+  if (p.includes('bottle')) return 'bottle';
+  if (p.includes('butter') || p.includes('paper')) return 'butterPaper';
+  if (p.includes('ziplock') || p.includes('frosted') || p.includes('pouch')) return 'ziplock';
+  if (p.includes('box')) return 'box';
+  return '';
+}
+// User-confirmed exact scope: only Box/Bottle/Butter Paper + sticker=YES deducts material
+// stock. Printing never deducts on its own, and Ziplock is never deducted — both fall out
+// naturally since deduction only fires when sticker === 'YES' for these three categories.
+const MATERIAL_STOCK_DEDUCTIBLE_CATEGORIES = new Set(['box', 'bottle', 'butterPaper']);
+
+async function deductMaterialStockForOrder(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const kitOrders = Array.isArray(order.kitOrders) ? order.kitOrders : [];
+  for (const it of items) {
+    if (String(it.sticker || '').trim().toUpperCase() !== 'YES') continue;
+    const category = materialStockCategoryOf([it.displayUnit, it.packingMaterial, it.material].filter(Boolean).join(' '));
+    if (!MATERIAL_STOCK_DEDUCTIBLE_CATEGORIES.has(category)) continue;
+
+    const perUnitQty = Number(it.qty) || 0;
+    if (perUnitQty <= 0) continue;
+    let qty = perUnitQty;
+    if (it.isKit) {
+      const kitCount = order.orderCategory === 'SAMPLE'
+        ? 1
+        : (Number(kitOrders.find((o) => o && o.kitId && o.kitId === it.kitId)?.overallQty) || Number(order.kitOverallQty) || 0);
+      if (kitCount <= 0) continue; // unknown kit count — skip rather than guess
+      qty = perUnitQty * kitCount;
+    }
+
+    try {
+      // Draw down the oldest-purchased matching stock first (FIFO), preferring a size match
+      // when the item specifies one.
+      const stocks = await MaterialStock.find().sort('purchaseDate');
+      const matches = stocks.filter((s) => materialStockCategoryOf(s.packingMaterial) === category);
+      if (!matches.length) continue;
+      const itemSize = String(it.size || '').trim().toLowerCase();
+      const target = (itemSize && matches.find((s) => String(s.size || '').trim().toLowerCase() === itemSize)) || matches[0];
+      target.stockCount = Math.max(0, (target.stockCount || 0) - qty);
+      await target.save();
+    } catch (err) {
+      console.error(`Material stock deduction failed for order ${order.orderCode}, item "${it.itemName || it.name}":`, err.message);
+    }
+  }
+}
+
 exports.convertToOrder = asyncHandler(async (req, res, next) => {
   const negotiation = await Negotiation.findById(req.params.id);
   if (!negotiation) return next(new AppError('Negotiation not found', 404));
@@ -683,6 +735,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     });
   }
   await deductInventoryForOrder(order, req.user._id);
+  await deductMaterialStockForOrder(order);
   notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} is now In Production`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: order });
 });
@@ -712,6 +765,7 @@ exports.createDirectOrder = asyncHandler(async (req, res) => {
     statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });
   await deductInventoryForOrder(order, req.user._id);
+  await deductMaterialStockForOrder(order);
   notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} created directly`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: order });
 });

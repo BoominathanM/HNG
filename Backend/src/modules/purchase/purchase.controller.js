@@ -287,6 +287,67 @@ exports.getLocalPurchases = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: localPurchases });
 });
 
+// A local purchase means goods are physically in hand right away (unlike a PurchaseOrder,
+// which needs a separate "receive" step) — so stock goes into Inventory as soon as the
+// record is created. Items are free-text (scanned invoice, no item picker), so each line
+// is matched against Inventory by exact item name (case-insensitive); if nothing matches,
+// a new Inventory item is created for it so it still "arrives" in Stock Inventory rather
+// than being silently dropped. Wrapped per-item so one bad line can't block the others or
+// the Local Purchase record itself from saving.
+async function addLocalPurchaseStock(lp, userId) {
+  for (const it of lp.items || []) {
+    const name = (it.itemName || '').trim();
+    const qty = Number(it.qty) || 0;
+    if (!name || qty <= 0) continue;
+    try {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      let item = await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null });
+      const purchaseDate = lp.createdAt || Date.now();
+      const supplyPrice = (Number(it.amount) || 0) / qty;
+      const batch = { vendorId: lp.vendorId || undefined, vendorName: lp.vendorName, purchaseDate, qty, remainingQty: qty };
+      const qtyBefore = item ? item.currentStock : 0;
+
+      if (item) {
+        item.purchaseBatches.push(batch);
+        item.currentStock = qtyBefore + qty;
+        await item.save({ validateBeforeSave: false });
+      } else {
+        const itemCode = await generateCode('ITEM');
+        item = await InventoryItem.create({
+          itemCode,
+          itemName: name,
+          unit: it.unit || 'Pcs',
+          purchasePrice: supplyPrice,
+          currentStock: qty,
+          vendorId: lp.vendorId || undefined,
+          purchaseBatches: [batch],
+          createdBy: userId,
+        });
+      }
+
+      await StockMovement.create({
+        itemId: item._id,
+        movementType: 'IN',
+        qty,
+        qtyBefore,
+        qtyAfter: item.currentStock,
+        referenceType: 'Purchase',
+        referenceId: lp._id,
+        supplyPrice,
+        vendorId: lp.vendorId || undefined,
+        vendorName: lp.vendorName,
+        purchaseDate,
+        approvalStatus: 'Approved',
+        approvedBy: userId,
+        approvedAt: Date.now(),
+        createdBy: userId,
+      });
+    } catch (err) {
+      console.error(`[local-purchase] stock sync failed for "${name}":`, err.message);
+    }
+  }
+}
+
 exports.createLocalPurchase = asyncHandler(async (req, res) => {
   const lpCode = await generateCode('LP');
   let vendorId = req.body.vendorId || null;
@@ -304,6 +365,7 @@ exports.createLocalPurchase = asyncHandler(async (req, res) => {
     if (match) vendorId = match._id;
   }
   const lp = await LocalPurchase.create({ ...req.body, ...(vendorId ? { vendorId } : {}), lpCode, createdBy: req.user._id });
+  await addLocalPurchaseStock(lp, req.user._id);
   res.status(201).json({ success: true, data: lp });
 });
 

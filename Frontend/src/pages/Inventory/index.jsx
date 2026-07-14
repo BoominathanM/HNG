@@ -160,9 +160,9 @@ const GENERIC_PRODUCT_FIELD_DEFS = [
   { key: 'size', label: 'Size', field: 'generic_size', options: [] },
   { key: 'color', label: 'Color', field: 'generic_color', options: [], mode: 'multiple' },
   { key: 'packingMaterial', label: 'Packing Material', field: 'generic_packingMaterial', usePackingConfig: true, options: [], mode: 'multiple' },
-  { key: 'sticker', label: 'Sticker', field: 'generic_sticker', options: YES_NO },
-  { key: 'logo', label: 'Logo', field: 'generic_logo', options: YES_NO },
-  { key: 'printing', label: 'Printing', field: 'generic_printing', options: YES_NO },
+  { key: 'sticker', label: 'Sticker', field: 'generic_sticker', options: YES_NO, mode: 'multiple' },
+  { key: 'logo', label: 'Logo', field: 'generic_logo', options: YES_NO, mode: 'multiple' },
+  { key: 'printing', label: 'Printing', field: 'generic_printing', options: YES_NO, mode: 'multiple' },
 ];
 
 const getProductTypeKey = (name) => {
@@ -180,6 +180,20 @@ const getProductTypeKey = (name) => {
   if (n.includes('sweing') || n.includes('sewing')) return 'sewing';
   if (n.includes('vanitykit') || n.includes('vanity kit') || n.includes('vanity')) return 'vanity_item';
   return null;
+};
+
+// Items saved before a field became multi-select store a plain scalar (e.g. sticker: "yes").
+// Wrap those into single-item arrays so the now-multiple Select can display them when editing.
+const normalizeAttrsForEdit = (attrs, itemName) => {
+  const typeKey = getProductTypeKey(itemName);
+  const defs = PRODUCT_FIELD_DEFS[typeKey]?.length ? PRODUCT_FIELD_DEFS[typeKey] : GENERIC_PRODUCT_FIELD_DEFS;
+  const out = { ...(attrs || {}) };
+  defs.forEach((fd) => {
+    if (fd.mode === 'multiple' && out[fd.key] != null && !Array.isArray(out[fd.key])) {
+      out[fd.key] = [out[fd.key]];
+    }
+  });
+  return out;
 };
 
 // Convert a camelCase / snake_case product-attribute key into a readable label
@@ -1078,7 +1092,7 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
-          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, vendorId: r.vendorId, purchaseDate: dayjs(), addStockQty: undefined, productAttrs: r.productAttributes || {} }); setAddItemModal(true); }}>Edit</Button>
+          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, vendorId: r.vendorId, purchaseDate: dayjs(), addStockQty: undefined, productAttrs: normalizeAttrsForEdit(r.productAttributes, r.name) }); setAddItemModal(true); }}>Edit</Button>
           {/* Add Stock / Sell Stock — hidden per request
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>

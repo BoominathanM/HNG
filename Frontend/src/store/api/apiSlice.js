@@ -222,7 +222,7 @@ export const apiSlice = createApi({
     }),
     createLocalPurchase: builder.mutation({
       query: (formData) => ({ url: '/purchase/local', method: 'post', data: formData }),
-      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses'],
+      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses', 'Inventory'],
     }),
     getLocalPurchase: builder.query({
       query: (id) => ({ url: `/purchase/local/${id}` }),
