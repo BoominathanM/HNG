@@ -590,9 +590,8 @@ function materialStockCategoryOf(pmRaw) {
   if (p.includes('box')) return 'box';
   return '';
 }
-// User-confirmed exact scope: only Box/Bottle/Butter Paper + sticker=YES deducts material
-// stock. Printing never deducts on its own, and Ziplock is never deducted — both fall out
-// naturally since deduction only fires when sticker === 'YES' for these three categories.
+// Deduction only fires for Box/Bottle/Butter Paper + sticker=YES items (Printing alone and
+// Ziplock never deduct on their own — both fall out naturally from this gate).
 const MATERIAL_STOCK_DEDUCTIBLE_CATEGORIES = new Set(['box', 'bottle', 'butterPaper']);
 
 async function deductMaterialStockForOrder(order) {
@@ -615,13 +614,26 @@ async function deductMaterialStockForOrder(order) {
     }
 
     try {
-      // Draw down the oldest-purchased matching stock first (FIFO), preferring a size match
-      // when the item specifies one.
       const stocks = await MaterialStock.find().sort('purchaseDate');
-      const matches = stocks.filter((s) => materialStockCategoryOf(s.packingMaterial) === category);
-      if (!matches.length) continue;
+      const pmName = String(it.packingMaterial || '').trim().toLowerCase();
       const itemSize = String(it.size || '').trim().toLowerCase();
-      const target = (itemSize && matches.find((s) => String(s.size || '').trim().toLowerCase() === itemSize)) || matches[0];
+
+      // Prefer an exact packing-material-name + size match (oldest purchase first); fall
+      // back to the old category keyword match (preferring a size match) when no exact
+      // match exists in stock — so an item is deducted exactly once, from the best match.
+      let target = pmName
+        ? stocks.find((s) =>
+            String(s.packingMaterial || '').trim().toLowerCase() === pmName &&
+            String(s.size || '').trim().toLowerCase() === itemSize
+          )
+        : null;
+
+      if (!target) {
+        const matches = stocks.filter((s) => materialStockCategoryOf(s.packingMaterial) === category);
+        if (!matches.length) continue;
+        target = (itemSize && matches.find((s) => String(s.size || '').trim().toLowerCase() === itemSize)) || matches[0];
+      }
+
       target.stockCount = Math.max(0, (target.stockCount || 0) - qty);
       await target.save();
     } catch (err) {

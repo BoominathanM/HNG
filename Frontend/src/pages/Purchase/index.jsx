@@ -271,6 +271,14 @@ export default function Purchase() {
   const [updateDetailsForm] = Form.useForm();
   const [updateDetailsSubmitting, setUpdateDetailsSubmitting] = useState(false);
 
+  /* ── Update Order Details — bulk batch variant: one modal listing every product
+     in the batch as a single row (qty/unit/amount only — payment terms aren't
+     editable per-product for a bulk request) instead of one modal per product. ── */
+  const [showBatchUpdateDetailsModal, setShowBatchUpdateDetailsModal] = useState(false);
+  const [batchUpdateDetailsTarget, setBatchUpdateDetailsTarget] = useState(null);
+  const [batchUpdateDetailsForm] = Form.useForm();
+  const [batchUpdateDetailsSubmitting, setBatchUpdateDetailsSubmitting] = useState(false);
+
   /* ── WhatsApp sent tracking for stock status flow (persisted so it survives a refresh) ── */
   const [whatsappSentItems, setWhatsappSentItemsState] = useState(loadWhatsappSentItems);
   const setWhatsappSentItems = (updater) => {
@@ -330,6 +338,33 @@ export default function Purchase() {
       setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       setPendingRowAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       enqueueSnackbar('Quotation & amount saved', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Failed to save quotation', { variant: 'error' });
+    } finally {
+      setPendingRowSaving(prev => ({ ...prev, [r.key]: false }));
+    }
+  };
+
+  /* ── Same upload+amount inline completion, but for a whole Bulk Purchase batch
+     group at once — one quotation/amount covers every item in the batch instead
+     of asking Purchase to repeat the upload per line item. Applies it to every
+     child request so Finance still sees amount/quotationFiles on each one. ── */
+  const handleBatchRowSave = async (r) => {
+    const file = pendingRowFile[r.key];
+    const amount = pendingRowAmount[r.key];
+    if (!file) { enqueueSnackbar('Select the quotation file to upload', { variant: 'warning' }); return; }
+    if (amount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
+    setPendingRowSaving(prev => ({ ...prev, [r.key]: true }));
+    try {
+      await Promise.all((r.children || []).map((child) => {
+        const fd = new FormData();
+        fd.append('quotation', file);
+        fd.append('amount', amount);
+        return uploadQuotationFile({ id: child.key, formData: fd }).unwrap();
+      }));
+      setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+      setPendingRowAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+      enqueueSnackbar('Quotation & amount saved for the whole batch', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to save quotation', { variant: 'error' });
     } finally {
@@ -1333,6 +1368,8 @@ export default function Purchase() {
 
   // Update Order Details modal (for Approved requests) — Purchase edits qty/unit/
   // payment terms/amount and resends the request to Finance as Pending for re-approval.
+  // Bulk-purchase requests don't expose payment terms here — that's fixed at the
+  // batch level, not editable per product.
   const handleUpdateDetailsSubmit = async () => {
     if (!updateDetailsTarget) return;
     try {
@@ -1342,7 +1379,7 @@ export default function Purchase() {
         id: updateDetailsTarget.key,
         qty: vals.qty,
         unit: vals.unit,
-        paymentTerms: vals.payment_terms,
+        paymentTerms: updateDetailsTarget.requestType === 'bulk' ? undefined : vals.payment_terms,
         amount: vals.amount,
       }).unwrap();
       enqueueSnackbar('Order details updated — sent to Finance for re-approval.', { variant: 'success' });
@@ -1354,6 +1391,49 @@ export default function Purchase() {
       enqueueSnackbar(err?.data?.message || 'Failed to update order details', { variant: 'error' });
     } finally {
       setUpdateDetailsSubmitting(false);
+    }
+  };
+
+  // Update Order Details — bulk batch variant: one submit walks every product row
+  // in the modal and resends only the ones that actually changed (the backend
+  // rejects a no-op update per request), each as its own request to Finance.
+  // Payment Terms and Amount are single fields shared by the whole batch (not
+  // per-product) — if either changed, every product in the batch is resent.
+  const handleBatchUpdateDetailsSubmit = async () => {
+    if (!batchUpdateDetailsTarget) return;
+    try {
+      const vals = await batchUpdateDetailsForm.validateFields();
+      const originals = batchUpdateDetailsTarget.children || [];
+      const paymentTermsChanged = vals.payment_terms !== batchUpdateDetailsTarget.payment_terms;
+      const amountChanged = (vals.amount ?? null) !== (batchUpdateDetailsTarget.amount ?? null);
+      const batchLevelChanged = paymentTermsChanged || amountChanged;
+      const changed = vals.products.filter((p, i) => {
+        const orig = originals[i];
+        return batchLevelChanged || !orig || Number(p.qty) !== Number(orig.qty) || p.unit !== orig.unit;
+      });
+      if (changed.length === 0) {
+        enqueueSnackbar('No changes to update', { variant: 'warning' });
+        return;
+      }
+      setBatchUpdateDetailsSubmitting(true);
+      await Promise.all(changed.map((p) =>
+        updatePurchaseRequestDetails({
+          id: p.key,
+          qty: p.qty,
+          unit: p.unit,
+          amount: amountChanged ? vals.amount : undefined,
+          paymentTerms: paymentTermsChanged ? vals.payment_terms : undefined,
+        }).unwrap()
+      ));
+      enqueueSnackbar(`Updated ${changed.length} product${changed.length > 1 ? 's' : ''} — sent to Finance for re-approval.`, { variant: 'success' });
+      setShowBatchUpdateDetailsModal(false);
+      setBatchUpdateDetailsTarget(null);
+      batchUpdateDetailsForm.resetFields();
+    } catch (err) {
+      if (err?.errorFields) return;
+      enqueueSnackbar(err?.data?.message || 'Failed to update order details', { variant: 'error' });
+    } finally {
+      setBatchUpdateDetailsSubmitting(false);
     }
   };
 
@@ -1923,7 +2003,7 @@ export default function Purchase() {
                                 amount: first.amount ?? null,
                                 quotationFiles: first.quotationFiles || [],
                                 batchId: first.batchId,
-                                children: batchItems,
+                                children: batchItems.map(b => ({ ...b, isBatchChild: true })),
                               });
                             } else {
                               rows.push(batchItems[0]);
@@ -2018,7 +2098,82 @@ export default function Purchase() {
                           {
                             title: 'Action', key: 'action', fixed: 'right', width: 200,
                             render: (_, r) => {
-                              if (r.isBatchGroup) return <Text type="secondary" style={{ fontSize: 11 }}>Expand to view {r.children.length} items</Text>;
+                              // Bulk batch, still Pending: one Upload/Amount/Save covers every
+                              // item in the batch — shown once on the group row instead of once
+                              // per child item, and applied to all of them on Save.
+                              if (r.isBatchGroup && r.status === 'Pending') {
+                                const file = pendingRowFile[r.key];
+                                const amount = pendingRowAmount[r.key] ?? r.amount ?? null;
+                                const saving = !!pendingRowSaving[r.key];
+                                return (
+                                  <Space direction="vertical" size={4} style={{ width: 170 }}>
+                                    <Text type="secondary" style={{ fontSize: 10 }}>{r.payment_terms || '-'} · whole batch</Text>
+                                    <Upload
+                                      maxCount={1}
+                                      beforeUpload={f => { setPendingRowFile(prev => ({ ...prev, [r.key]: f })); return false; }}
+                                      onRemove={() => setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; })}
+                                      accept=".pdf,.jpg,.jpeg,.png"
+                                      fileList={file ? [{ uid: '1', name: file.name, status: 'done' }] : []}
+                                    >
+                                      <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600, width: '100%' }}>
+                                        {file ? `✓ ${file.name}` : (r.quotationFiles?.length ? 'Re-Upload' : 'Upload Quotation')}
+                                      </Button>
+                                    </Upload>
+                                    <InputNumber
+                                      size="small"
+                                      min={0}
+                                      placeholder="Amount (₹)"
+                                      value={amount}
+                                      onChange={v => setPendingRowAmount(prev => ({ ...prev, [r.key]: v }))}
+                                      style={{ width: '100%' }}
+                                    />
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      loading={saving}
+                                      disabled={!file || amount == null}
+                                      onClick={() => handleBatchRowSave(r)}
+                                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600, width: '100%' }}
+                                    >
+                                      Save for Batch
+                                    </Button>
+                                  </Space>
+                                );
+                              }
+                              // A batch's items share ONE consolidated PurchaseOrder (see
+                              // findLinkedOrder), so "Order Placed" + editing is batch-wide —
+                              // show one tag + one "Update Details" (opens all products in one
+                              // modal) on the group row instead of once per child.
+                              if (r.isBatchGroup) {
+                                if (!!findLinkedOrder(r)) return (
+                                  <Space direction="vertical" size={4}>
+                                    <Tag color="success" style={{ borderRadius: 10, margin: 0 }}>Order Placed</Tag>
+                                    {r.status === 'Approved' && (
+                                      <Button
+                                        size="small"
+                                        icon={<EditOutlined />}
+                                        onClick={() => {
+                                          setBatchUpdateDetailsTarget(r);
+                                          batchUpdateDetailsForm.setFieldsValue({
+                                            payment_terms: r.payment_terms,
+                                            amount: r.amount,
+                                            products: r.children.map(c => ({ key: c.key, qty: c.qty, unit: c.unit })),
+                                          });
+                                          setShowBatchUpdateDetailsModal(true);
+                                        }}
+                                        style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
+                                      >
+                                        Update Details
+                                      </Button>
+                                    )}
+                                  </Space>
+                                );
+                                return <Text type="secondary" style={{ fontSize: 11 }}>Expand to view {r.children.length} items</Text>;
+                              }
+                              if (r.isBatchChild && r.status === 'Pending') return <Text type="secondary" style={{ fontSize: 11 }}>Quotation uploaded once, above</Text>;
+                              // Batch children never render their own action — editing happens
+                              // once for the whole batch via the group row above.
+                              if (r.isBatchChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
                               const orderAlreadyRaised = !!findLinkedOrder(r);
                               if (orderAlreadyRaised) return (
                                 <Space direction="vertical" size={4}>
@@ -3998,16 +4153,18 @@ export default function Purchase() {
                   <Input />
                 </Form.Item>
               </Col>
-              <Col span={24}>
-                <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Required' }]}>
-                  <Select>
-                    <Option value="100% Payment">100% Payment</Option>
-                    <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
-                    <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery</Option>
-                    <Option value="Credit 30 Days">Credit 30 Days</Option>
-                  </Select>
-                </Form.Item>
-              </Col>
+              {updateDetailsTarget.requestType !== 'bulk' && (
+                <Col span={24}>
+                  <Form.Item label="Payment Terms" name="payment_terms" rules={[{ required: true, message: 'Required' }]}>
+                    <Select>
+                      <Option value="100% Payment">100% Payment</Option>
+                      <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                      <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery</Option>
+                      <Option value="Credit 30 Days">Credit 30 Days</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+              )}
               <Col span={24}>
                 <Form.Item label="Quoted Amount (₹)" name="amount">
                   <InputNumber min={0} style={{ width: '100%' }} placeholder="Total amount quoted by supplier" />
@@ -4025,6 +4182,99 @@ export default function Purchase() {
                 type="primary"
                 loading={updateDetailsSubmitting}
                 onClick={handleUpdateDetailsSubmit}
+                style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
+              >
+                Update & Send for Approval
+              </Button>
+            </div>
+          </Form>
+        )}
+      </Modal>
+
+      {/* Update Order Details Modal — bulk batch variant. Every product raised
+          together shows up as one row (qty/unit/amount) in a single modal instead
+          of a separate modal per product; payment terms aren't editable here since
+          they're fixed for the whole batch. */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 4 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <EditOutlined style={{ color: '#fff', fontSize: 18 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: '20px' }}>Update Batch Order Details</div>
+              <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Saving sends the changed products back to Finance for approval</div>
+            </div>
+          </div>
+        }
+        open={showBatchUpdateDetailsModal}
+        onCancel={() => { setShowBatchUpdateDetailsModal(false); setBatchUpdateDetailsTarget(null); batchUpdateDetailsForm.resetFields(); }}
+        footer={null}
+        width={620}
+        centered
+        destroyOnClose
+      >
+        {batchUpdateDetailsTarget && (
+          <Form form={batchUpdateDetailsForm} layout="vertical" style={{ marginTop: 8 }}>
+            <Alert
+              type="info"
+              showIcon
+              message="These requests were already approved. Updating and sending them will require Finance to approve again before the order can proceed."
+              style={{ borderRadius: 8, marginBottom: 14, fontSize: 12 }}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: isDark ? '#1a0f14' : '#fff8fb', border: '1px solid #B11E6A33', marginBottom: 14 }}>
+              <Text style={{ fontSize: 11, color: '#888' }}>Supplier: <Text strong style={{ color: '#B11E6A' }}>{batchUpdateDetailsTarget.supplier}</Text></Text>
+            </div>
+            <Form.Item label="Payment Terms (applies to the whole batch)" name="payment_terms" rules={[{ required: true, message: 'Required' }]}>
+              <Select>
+                <Option value="100% Payment">100% Payment</Option>
+                <Option value="50% Advance, 50% on Dispatch">50% Advance, 50% on Dispatch</Option>
+                <Option value="50% Advance, 50% After Delivery (Max 15 days)">50% Advance, 50% After Delivery</Option>
+                <Option value="Credit 30 Days">Credit 30 Days</Option>
+              </Select>
+            </Form.Item>
+            <Form.Item label="Quoted Amount (₹) — applies to the whole batch" name="amount">
+              <InputNumber min={0} style={{ width: '100%' }} placeholder="Total amount quoted by supplier" />
+            </Form.Item>
+            <div style={{ display: 'flex', gap: 8, padding: '0 4px 6px' }}>
+              <div style={{ flex: 2 }}><Text style={{ fontSize: 11, fontWeight: 700, color: '#888' }}>Product</Text></div>
+              <div style={{ flex: 1 }}><Text style={{ fontSize: 11, fontWeight: 700, color: '#888' }}>Quantity</Text></div>
+              <div style={{ flex: 1 }}><Text style={{ fontSize: 11, fontWeight: 700, color: '#888' }}>Unit</Text></div>
+            </div>
+            <Form.List name="products">
+              {(fields) => (
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {fields.map((field) => {
+                    const product = batchUpdateDetailsTarget.children?.[field.name];
+                    return (
+                      <div key={field.key} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px', borderRadius: 8, background: isDark ? '#20232f' : '#fafafa', border: `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` }}>
+                        <div style={{ flex: 2 }}>
+                          <Text strong style={{ fontSize: 13 }}>{product?.item}</Text>
+                        </div>
+                        <Form.Item name={[field.name, 'key']} hidden><Input /></Form.Item>
+                        <Form.Item name={[field.name, 'qty']} style={{ flex: 1, marginBottom: 0 }} rules={[{ required: true, message: 'Required' }]}>
+                          <InputNumber min={1} style={{ width: '100%' }} />
+                        </Form.Item>
+                        <Form.Item name={[field.name, 'unit']} style={{ flex: 1, marginBottom: 0 }} rules={[{ required: true, message: 'Required' }]}>
+                          <Input />
+                        </Form.Item>
+                      </div>
+                    );
+                  })}
+                </Space>
+              )}
+            </Form.List>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <Button
+                onClick={() => { setShowBatchUpdateDetailsModal(false); setBatchUpdateDetailsTarget(null); batchUpdateDetailsForm.resetFields(); }}
+                style={{ flex: 1, height: 44, borderRadius: 10 }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="primary"
+                loading={batchUpdateDetailsSubmitting}
+                onClick={handleBatchUpdateDetailsSubmit}
                 style={{ flex: 2, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700, fontSize: 14 }}
               >
                 Update & Send for Approval

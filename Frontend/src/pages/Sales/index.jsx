@@ -11364,7 +11364,7 @@ export default function Sales() {
                                     <div>
                                       <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.6, display: 'block' }}>KIT AMOUNT</Text>
                                       <Text strong style={{ fontSize: 15, color: '#722ed1' }}>₹{kitAmt.toLocaleString()}</Text>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Single Kit Value: ₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
                                     </div>
                                     {comp.ownKitProdsTotal > 0 && (
                                       <>
@@ -11382,7 +11382,7 @@ export default function Sales() {
                                         <div>
                                           <Text style={{ fontSize: 11, fontWeight: 700, color: '#52c41a', letterSpacing: 0.6, display: 'block' }}>TOTAL PERSONALIZED</Text>
                                           <Text strong style={{ fontSize: 17, color: '#52c41a' }}>₹{comp.totalPersonalized.toLocaleString()}</Text>
-                                          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{comp.totalPerPersKit.toLocaleString()} per kit × {qty}</Text>
+                                          <Text strong style={{ fontSize: 12, color: '#52c41a', display: 'block' }}>Avg per kit: ₹{comp.totalPerPersKit.toLocaleString()}</Text>
                                         </div>
                                       </>
                                     )}
@@ -12312,9 +12312,9 @@ export default function Sales() {
                                 return (
                                   <div style={{ padding: '8px 14px', background: isDark ? 'rgba(24,144,255,0.1)' : 'rgba(24,144,255,0.06)', borderRadius: 10, border: '1px solid rgba(24,144,255,0.2)' }}>
                                     <div>
-                                      <Text style={{ fontSize: 11, fontWeight: 700, color: '#1890ff', letterSpacing: 0.6, display: 'block' }}>KIT AMOUNT</Text>
+                                      <Text style={{ fontSize: 11, fontWeight: 700, color: '#1890ff', letterSpacing: 0.6, display: 'block' }}>TOTAL KIT VALUE</Text>
                                       <Text strong style={{ fontSize: 15, color: '#1890ff' }}>₹{kitAmt.toLocaleString()}</Text>
-                                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
+                                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Single Kit Value: ₹{single.toLocaleString()} × {qty} kit{qty > 1 ? 's' : ''}</Text>
                                     </div>
                                     {includedBreakdown.map(r => (
                                       <React.Fragment key={r.id}>
