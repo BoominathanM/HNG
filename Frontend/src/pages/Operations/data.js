@@ -278,18 +278,53 @@ const EMERGENCY_COMPLETE_STATUSES = new Set(['Done', 'Received', 'Closed']);
 // Returns a Map of lowercase product name → emergency qty (number) or null if no qty specified.
 // When qty is present, only the order item with that exact qty should be marked emergency.
 // When qty is null, all items with that product name are emergency (legacy / no-qty entries).
+// '__kit__' (the "Kit (All Products)" split-date option) is expanded to each kit product's own
+// key, proportional to the kit-level emergency qty — mirrors OperationDetail.jsx's expandKit so
+// Personalized Kit orders get the same per-product emergency/gating treatment in the shared
+// Sticker/Box/Frosted/Butter queues (previously '__kit__' never matched any real product name,
+// so every item silently stayed isEmergencyGated=true forever — designing team saw everything disabled).
 export const getEmergencyProductQtyMap = (order) => {
   const map = new Map();
+
+  const expandKit = (kitEmergencyQty) => {
+    const kitItems = (order.items || []).filter((it) => it.isKit || it.kitType);
+    if (kitItems.length === 0) return;
+    if (kitEmergencyQty === null) {
+      kitItems.forEach((it) => {
+        const key = (it.product || it.itemName || '').toLowerCase();
+        if (key && !map.has(key)) map.set(key, null);
+      });
+      return;
+    }
+    const itemQtys = kitItems.map((it) => Number(it.qty) || 0).filter((q) => q > 0);
+    if (itemQtys.length === 0) return;
+    const totalKits = Math.min(...itemQtys);
+    kitItems.forEach((it) => {
+      const key = (it.product || it.itemName || '').toLowerCase();
+      if (!key || map.has(key)) return;
+      const itemQty = Number(it.qty) || 0;
+      const qty = Math.min(Math.round((kitEmergencyQty / totalKits) * itemQty), itemQty);
+      map.set(key, qty);
+    });
+  };
+
   (order.splitDates || []).forEach((sd) => {
     (sd.products || []).forEach((ep) => {
-      if (ep.product) {
+      if (!ep.product) return;
+      if (ep.product === '__kit__') {
+        expandKit(ep.qty != null ? Number(ep.qty) : null);
+      } else {
         const key = ep.product.toLowerCase();
         if (!map.has(key)) map.set(key, ep.qty != null ? Number(ep.qty) : null);
       }
     });
     if (sd.product) {
-      const key = sd.product.toLowerCase();
-      if (!map.has(key)) map.set(key, sd.qty != null ? Number(sd.qty) : null);
+      if (sd.product === '__kit__') {
+        expandKit(sd.qty != null ? Number(sd.qty) : null);
+      } else {
+        const key = sd.product.toLowerCase();
+        if (!map.has(key)) map.set(key, sd.qty != null ? Number(sd.qty) : null);
+      }
     }
   });
   return map;
