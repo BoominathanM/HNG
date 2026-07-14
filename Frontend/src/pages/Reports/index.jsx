@@ -214,6 +214,7 @@ export default function Reports() {
   const salesProductOptions = useMemo(() => [...new Set(salesRawData.map(r => r.product).filter(Boolean))], [salesRawData]);
   const plProductOptions = useMemo(() => activeProductPLData.map(p => p.product).filter(Boolean), [activeProductPLData]);
   const plMonthOptions = useMemo(() => plMonthlyDataActive.map(d => d.month), [plMonthlyDataActive]);
+  const billPlProductOptions = useMemo(() => [...new Set(apiBillPL.map(r => r.product).filter(Boolean))], [apiBillPL]);
 
   // Product distribution for sales pie
   const salesByProduct = Object.entries(
@@ -1114,7 +1115,7 @@ export default function Reports() {
                     <Space wrap>
                       <FilterOutlined style={{ color: '#B11E6A' }} />
                       <Select allowClear placeholder="All Products" value={billPlProductFilter} onChange={setBillPlProductFilter} style={{ width: 180 }}>
-                        {['Soap 50g', 'Shampoo 30ml', 'Dental Kit', 'Conditioner'].map(p => <Option key={p} value={p}>{p}</Option>)}
+                        {billPlProductOptions.map(p => <Option key={p} value={p}>{p}</Option>)}
                       </Select>
                       <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client..." allowClear value={billPlSearch} onChange={e => setBillPlSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
                       <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }}>Excel</Button>

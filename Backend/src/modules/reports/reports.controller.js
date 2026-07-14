@@ -1,59 +1,208 @@
 const Invoice = require('../../models/Invoice');
 const PurchaseOrder = require('../../models/PurchaseOrder');
+const LocalPurchase = require('../../models/LocalPurchase');
 const Expense = require('../../models/Expense');
 const Order = require('../../models/Order');
 const User = require('../../models/User');
 const Complaint = require('../../models/Complaint');
 const asyncHandler = require('../../utils/asyncHandler');
 
-const buildDateFilter = (req) => {
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Date filter on an arbitrary field (defaults to createdAt) — each model's report-relevant
+// date field differs (Invoice → invoiceDate, Expense → expenseDate, PO/LocalPurchase → createdAt).
+const buildDateFilterOn = (req, field = 'createdAt') => {
   const filter = {};
   if (req.query.startDate || req.query.endDate) {
-    filter.createdAt = {};
-    if (req.query.startDate) filter.createdAt.$gte = new Date(req.query.startDate);
-    if (req.query.endDate) filter.createdAt.$lte = new Date(req.query.endDate);
+    filter[field] = {};
+    if (req.query.startDate) filter[field].$gte = new Date(req.query.startDate);
+    if (req.query.endDate) filter[field].$lte = new Date(req.query.endDate);
   }
   return filter;
 };
 
-// ─── SALES REPORT ─────────────────────────────────────────────────────────────
-exports.getSalesReport = asyncHandler(async (req, res) => {
-  const dateFilter = buildDateFilter(req);
-  const filter = { deletedAt: null, status: { $ne: 'Cancelled' }, ...dateFilter };
-  if (req.query.product) filter['items.itemName'] = new RegExp(req.query.product, 'i');
-  if (req.query.customer) filter.clientName = new RegExp(req.query.customer, 'i');
+// Break a (possibly consolidated/batch) PurchaseOrder into one row per line item.
+// Older single-item POs have no items[] and fall back to their own top-level itemId/qty.
+// Batched POs record qty per item but only one combined `amount` for the whole batch (no
+// per-item price is stored), so each item's share of that amount is allocated proportionally
+// by quantity — the best approximation the schema supports.
+const explodePurchaseOrderItems = (po) => {
+  const amount = Number(po.amount) || 0;
+  if (po.items?.length) {
+    const totalQty = po.items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+    return po.items.map((it) => {
+      const share = totalQty > 0 ? (Number(it.qty) || 0) / totalQty : 1 / po.items.length;
+      return {
+        itemName: it.itemId?.itemName || it.itemName || '',
+        hsnCode: it.itemId?.hsnCode || '',
+        gstPercent: it.itemId?.gstPercent ?? 18,
+        qty: Number(it.qty) || 0,
+        amount: r2(amount * share),
+      };
+    });
+  }
+  return [{
+    itemName: po.itemId?.itemName || po.itemName || '',
+    hsnCode: po.itemId?.hsnCode || '',
+    gstPercent: po.itemId?.gstPercent ?? 18,
+    qty: Number(po.qty) || 0,
+    amount,
+  }];
+};
 
-  const orders = await Order.find(filter)
-    .populate('clientPartyId', 'name gstNumber state')
-    .sort('-createdAt');
+// LocalPurchase invoices carry no HSN/GST breakdown at all (informal vendor bill) — every
+// row is reported taxable-only, with 0% GST rather than fabricating a rate.
+const explodeLocalPurchaseItems = (lp) => {
+  const rows = lp.items?.length ? lp.items : [{ itemName: 'Local Purchase', qty: 0, amount: lp.totalAmount }];
+  return rows.map((it) => ({
+    itemName: it.itemName || 'Local Purchase',
+    hsnCode: '',
+    gstPercent: 0,
+    qty: Number(it.qty) || 0,
+    amount: Number(it.amount) || 0,
+  }));
+};
 
-  const monthlyMap = {};
+// Shared purchase-side rows for Purchase Report / Auditor Tax / CSV export — merges
+// PurchaseOrder (vendor POs) and LocalPurchase (informal/local vendor bills), which used to
+// be reported separately (LocalPurchase wasn't reported at all).
+const buildPurchaseRows = async (dateFilter) => {
+  const [orders, localPurchases] = await Promise.all([
+    PurchaseOrder.find(dateFilter)
+      .populate('vendorId', 'name taxId')
+      .populate('itemId', 'itemName hsnCode gstPercent')
+      .populate('items.itemId', 'itemName hsnCode gstPercent')
+      .sort('-createdAt'),
+    LocalPurchase.find(dateFilter).populate('vendorId', 'name taxId').sort('-createdAt'),
+  ]);
+
+  const rows = [];
   orders.forEach((o) => {
-    const key = o.createdAt?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, amount: 0 };
-    monthlyMap[key].amount += Number(o.total) || Number(o.amount) || 0;
+    explodePurchaseOrderItems(o).forEach((it, idx) => {
+      const gstRate = it.gstPercent ?? 18;
+      const taxable = gstRate > 0 ? it.amount / (1 + gstRate / 100) : it.amount;
+      const totalTax = it.amount - taxable;
+      rows.push({
+        key: `po-${o._id}-${idx}`,
+        vendor_gst: o.vendorId?.taxId || '',
+        supplier: o.vendorId?.name || '',
+        product: it.itemName,
+        hsn: it.hsnCode,
+        gst_rate: gstRate,
+        qty: it.qty,
+        unit_price: it.qty ? r2(taxable / it.qty) : 0,
+        state_code: '',
+        state_name: '',
+        inv_no: o.invNo || o.billNo || o.poCode || '',
+        orig_inv_no: '',
+        inv_date: o.createdAt?.toISOString().slice(0, 10) || '',
+        taxable: Math.round(taxable),
+        cgst: Math.round(totalTax / 2),
+        sgst: Math.round(totalTax / 2),
+        igst: 0,
+        total_tax: Math.round(totalTax),
+        inv_value: Math.round(it.amount),
+      });
+    });
+  });
+  localPurchases.forEach((l) => {
+    explodeLocalPurchaseItems(l).forEach((it, idx) => {
+      rows.push({
+        key: `lp-${l._id}-${idx}`,
+        vendor_gst: l.vendorId?.taxId || '',
+        supplier: l.vendorId?.name || l.vendorName || '',
+        product: it.itemName,
+        hsn: '',
+        gst_rate: 0,
+        qty: it.qty,
+        unit_price: it.qty ? r2(it.amount / it.qty) : it.amount,
+        state_code: '',
+        state_name: '',
+        inv_no: l.invoiceNo || l.lpCode || '',
+        orig_inv_no: '',
+        inv_date: l.createdAt?.toISOString().slice(0, 10) || '',
+        taxable: Math.round(it.amount),
+        cgst: 0,
+        sgst: 0,
+        igst: 0,
+        total_tax: 0,
+        inv_value: Math.round(it.amount),
+      });
+    });
   });
 
-  const totalGst = orders.reduce((s, o) => s + (Number(o.gstAmount) || 0), 0);
-  const totalTaxable = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
-  const totalValue = orders.reduce((s, o) => s + (Number(o.total) || Number(o.amount) || 0), 0);
+  return { rows, orderCount: orders.length, localPurchaseCount: localPurchases.length, orders, localPurchases };
+};
 
-  const data = orders.map((o) => {
-    const gstAmt = Number(o.gstAmount) || 0;
-    const taxable = Number(o.amount) || 0;
-    const invValue = Number(o.total) || (taxable + gstAmt);
-    const mainProduct = o.items?.[0]?.itemName || o.product || '';
+// Real average unit purchase cost per item name, from actual PurchaseOrder + LocalPurchase
+// records — replaces the flat 62%/65%-of-revenue COGS guesswork in Bill-wise/Product P&L
+// with real cost where purchase history exists for that item.
+const buildItemCostIndex = async (dateFilter = {}) => {
+  const { rows } = await buildPurchaseRows(dateFilter);
+  const acc = {};
+  rows.forEach((r) => {
+    if (!r.product || !r.qty) return;
+    const key = r.product.trim().toLowerCase();
+    if (!acc[key]) acc[key] = { amount: 0, qty: 0 };
+    acc[key].amount += r.inv_value;
+    acc[key].qty += r.qty;
+  });
+  const index = {};
+  Object.entries(acc).forEach(([k, v]) => { index[k] = v.qty > 0 ? v.amount / v.qty : 0; });
+  return index;
+};
+
+// ─── SALES REPORT ─────────────────────────────────────────────────────────────
+// Sourced from Invoice (the actual billed document), not Order — an order isn't
+// a sale for GST/reporting purposes until it has been converted to an invoice in
+// Billing, and only the invoice carries the real invoice number/date/value.
+exports.getSalesReport = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (req.query.startDate || req.query.endDate) {
+    filter.invoiceDate = {};
+    if (req.query.startDate) filter.invoiceDate.$gte = new Date(req.query.startDate);
+    if (req.query.endDate) filter.invoiceDate.$lte = new Date(req.query.endDate);
+  }
+  if (req.query.product) filter['items.itemName'] = new RegExp(req.query.product, 'i');
+  if (req.query.customer) {
+    const Party = require('../../models/Party');
+    const partyIds = await Party.find({ name: new RegExp(req.query.customer, 'i') }).distinct('_id');
+    filter.partyId = { $in: partyIds };
+  }
+
+  const invoices = await Invoice.find(filter)
+    .populate('partyId', 'name gstNumber state')
+    .populate('orderId', 'orderCode state')
+    .sort('-invoiceDate');
+
+  const monthlyMap = {};
+  invoices.forEach((inv) => {
+    const key = inv.invoiceDate?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, amount: 0 };
+    monthlyMap[key].amount += Number(inv.total) || 0;
+  });
+
+  const totalGst = invoices.reduce((s, i) => s + (Number(i.gstAmount) || 0), 0);
+  const totalTaxable = invoices.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
+  const totalValue = invoices.reduce((s, i) => s + (Number(i.total) || 0), 0);
+
+  const data = invoices.map((inv) => {
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const gstAmt = Number(inv.gstAmount) || 0;
+    const taxable = Number(inv.subtotal) || 0;
+    const invValue = Number(inv.total) || (taxable + gstAmt);
+    const mainProduct = inv.items?.[0]?.itemName || '';
 
     return {
-      key: String(o._id),
-      gst_no: o.gstNumber || o.clientPartyId?.gstNumber || '',
-      customer: o.clientName || o.clientPartyId?.name || '',
+      key: String(inv._id),
+      gst_no: inv.partyId?.gstNumber || '',
+      customer: inv.partyId?.name || '',
       product: mainProduct,
       state_code: '',
-      state_name: o.state || o.clientPartyId?.state || '',
-      inv_no: o.orderCode || '',
+      state_name: order?.state || inv.partyId?.state || '',
+      inv_no: inv.invoiceNumber || '',
       orig_inv_no: '',
-      inv_date: o.createdAt?.toISOString().slice(0, 10) || '',
+      inv_date: inv.invoiceDate?.toISOString().slice(0, 10) || '',
       inv_value: invValue,
       total_tax: gstAmt,
       taxable,
@@ -66,54 +215,26 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     data,
-    summary: { totalValue, totalTaxable, totalGst, count: orders.length },
+    summary: { totalValue, totalTaxable, totalGst, count: invoices.length },
     chartData: Object.values(monthlyMap),
   });
 });
 
 // ─── PURCHASE REPORT ──────────────────────────────────────────────────────────
+// Merges vendor PurchaseOrders and informal LocalPurchase bills (previously excluded
+// entirely) into one report, exploding consolidated/batched POs into one row per item.
 exports.getPurchaseReport = asyncHandler(async (req, res) => {
-  const dateFilter = buildDateFilter(req);
-  const orders = await PurchaseOrder.find(dateFilter)
-    .populate('vendorId', 'name taxId')
-    .populate('itemId', 'itemName hsnCode gstPercent')
-    .sort('-createdAt');
+  const dateFilter = buildDateFilterOn(req, 'createdAt');
+  const { rows: data, orders, localPurchases } = await buildPurchaseRows(dateFilter);
 
   const monthlyMap = {};
-  orders.forEach((o) => {
-    const key = o.createdAt?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
+  const bump = (date, amt) => {
+    const key = date?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
     if (!monthlyMap[key]) monthlyMap[key] = { month: key, amount: 0 };
-    monthlyMap[key].amount += o.amount || 0;
-  });
-
-  const data = orders.map((o) => {
-    const amt = Number(o.amount) || 0;
-    const gstRate = o.itemId?.gstPercent ?? 18;
-    const taxable = gstRate > 0 ? amt / (1 + gstRate / 100) : amt;
-    const totalTax = amt - taxable;
-
-    return {
-      key: String(o._id),
-      vendor_gst: o.vendorId?.taxId || '',
-      supplier: o.vendorId?.name || '',
-      product: o.itemId?.itemName || o.itemName || '',
-      hsn: o.itemId?.hsnCode || '',
-      gst_rate: gstRate,
-      qty: o.qty || 0,
-      unit_price: o.qty ? Math.round((taxable / o.qty) * 100) / 100 : 0,
-      state_code: '',
-      state_name: '',
-      inv_no: o.invNo || o.billNo || o.poCode || '',
-      orig_inv_no: '',
-      inv_date: o.createdAt?.toISOString().slice(0, 10) || '',
-      taxable: Math.round(taxable),
-      cgst: Math.round(totalTax / 2),
-      sgst: Math.round(totalTax / 2),
-      igst: 0,
-      total_tax: Math.round(totalTax),
-      inv_value: amt,
-    };
-  });
+    monthlyMap[key].amount += amt;
+  };
+  orders.forEach((o) => bump(o.createdAt, Number(o.amount) || 0));
+  localPurchases.forEach((l) => bump(l.createdAt, Number(l.totalAmount) || 0));
 
   const totalValue = data.reduce((s, r) => s + r.inv_value, 0);
 
@@ -122,7 +243,7 @@ exports.getPurchaseReport = asyncHandler(async (req, res) => {
     data,
     withGst: data.filter((r) => r.total_tax > 0),
     withoutGst: data.filter((r) => r.total_tax === 0),
-    summary: { totalValue, count: orders.length },
+    summary: { totalValue, count: orders.length + localPurchases.length },
     chartData: Object.values(monthlyMap),
   });
 });
@@ -139,16 +260,21 @@ const emptyExpenses = () => ({ rent: 0, salary: 0, utilities: 0, transport: 0, m
 
 // ─── PROFIT & LOSS ─────────────────────────────────────────────────────────────
 exports.getProfitLoss = asyncHandler(async (req, res) => {
-  const dateFilter = buildDateFilter(req);
-  const [orders, purchaseOrders, expenses] = await Promise.all([
-    Order.find({ deletedAt: null, status: { $ne: 'Cancelled' }, ...dateFilter }),
-    PurchaseOrder.find(dateFilter),
-    Expense.find(dateFilter),
+  const poDateFilter = buildDateFilterOn(req, 'createdAt');
+  const [orders, purchaseOrders, localPurchases, expenses, itemCostIndex] = await Promise.all([
+    Order.find({ deletedAt: null, status: { $ne: 'Cancelled' }, ...poDateFilter }),
+    PurchaseOrder.find(poDateFilter),
+    LocalPurchase.find(poDateFilter),
+    // Expenses are dated by expenseDate, not createdAt — filtering by createdAt would
+    // exclude/include the wrong entries whenever an expense is backdated.
+    Expense.find(buildDateFilterOn(req, 'expenseDate')),
+    buildItemCostIndex(poDateFilter),
   ]);
 
   const totalSales = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
   const totalSalesGst = orders.reduce((s, o) => s + (Number(o.gstAmount) || 0), 0);
-  const totalCogs = purchaseOrders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+  const totalCogs = purchaseOrders.reduce((s, o) => s + (Number(o.amount) || 0), 0)
+    + localPurchases.reduce((s, l) => s + (Number(l.totalAmount) || 0), 0);
   const grossProfit = totalSales - totalCogs;
 
   const expenseBreakdown = emptyExpenses();
@@ -175,6 +301,12 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     monthlyMap[key].cogs += amt;
     monthlyMap[key].cogsGst += Math.round(amt - amt / 1.18);
   });
+  localPurchases.forEach((lp) => {
+    const key = lp.createdAt?.toLocaleString('default', { month: 'short' }) || '';
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
+    // No GST captured on local purchases — counts toward COGS but not input-GST credit.
+    monthlyMap[key].cogs += Number(lp.totalAmount) || 0;
+  });
   Object.values(monthlyMap).forEach((m) => { m.grossProfit = m.sales - m.cogs; });
   expenses.forEach((e) => {
     const key = e.expenseDate?.toLocaleString('default', { month: 'short' }) || '';
@@ -183,7 +315,9 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     monthlyMap[key].expenses[cat] = (monthlyMap[key].expenses[cat] || 0) + e.amount;
   });
 
-  // Product-wise P&L (from order items)
+  // Product-wise P&L (from order items) — COGS uses the real average purchase cost for that
+  // item when we have purchase history for it, falling back to a flat 65%-of-sales estimate
+  // only for items with no PurchaseOrder/LocalPurchase record at all.
   const productMap = {};
   orders.forEach((o) => {
     const items = o.items?.length
@@ -198,7 +332,8 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     });
   });
   Object.values(productMap).forEach((p) => {
-    p.cogs = Math.round(p.sales * 0.65);
+    const rate = itemCostIndex[p.product.trim().toLowerCase()];
+    p.cogs = rate != null && rate > 0 ? Math.round(rate * p.soldQty) : Math.round(p.sales * 0.65);
     p.grossProfit = p.sales - p.cogs;
   });
 
@@ -212,14 +347,19 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     items.forEach((item) => {
       const name = item.itemName || 'Unknown';
       if (!productMonthlyData[name]) productMonthlyData[name] = {};
-      if (!productMonthlyData[name][month]) productMonthlyData[name][month] = { month, sales: 0, cogs: 0, grossProfit: 0 };
+      if (!productMonthlyData[name][month]) productMonthlyData[name][month] = { month, sales: 0, cogs: 0, grossProfit: 0, qty: 0 };
       const sales = Number(item.lineTotal) || (Number(item.price) * Number(item.qty)) || 0;
       productMonthlyData[name][month].sales += sales;
+      productMonthlyData[name][month].qty += Number(item.qty) || 0;
     });
   });
   Object.keys(productMonthlyData).forEach((prod) => {
+    const rate = itemCostIndex[prod.trim().toLowerCase()];
     const byMonth = Object.values(productMonthlyData[prod]);
-    byMonth.forEach((m) => { m.cogs = Math.round(m.sales * 0.65); m.grossProfit = m.sales - m.cogs; });
+    byMonth.forEach((m) => {
+      m.cogs = rate != null && rate > 0 ? Math.round(rate * m.qty) : Math.round(m.sales * 0.65);
+      m.grossProfit = m.sales - m.cogs;
+    });
     productMonthlyData[prod] = byMonth;
   });
 
@@ -237,12 +377,26 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
 
 // ─── BILL-WISE P&L ────────────────────────────────────────────────────────────
 exports.getBillPL = asyncHandler(async (req, res) => {
-  const invoices = await Invoice.find(buildDateFilter(req))
+  const invoices = await Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
     .populate('partyId', 'name')
     .sort('-invoiceDate');
+  const itemCostIndex = await buildItemCostIndex();
 
   const billPL = invoices.map((inv) => {
-    const cogs = inv.subtotal * 0.62; // Estimated COGS at 62% of revenue (configurable)
+    const items = inv.items || [];
+    // Real cost per line item where we have purchase history for it; only items with no
+    // matching PurchaseOrder/LocalPurchase record fall back to the 62%-of-line estimate.
+    let cogs = 0;
+    if (items.length) {
+      items.forEach((it) => {
+        const rate = itemCostIndex[(it.itemName || '').trim().toLowerCase()];
+        const qty = Number(it.qty) || 0;
+        const lineTotal = Number(it.lineTotal) || (Number(it.price) || 0) * qty;
+        cogs += rate != null && rate > 0 ? rate * qty : lineTotal * 0.62;
+      });
+    } else {
+      cogs = (inv.subtotal || 0) * 0.62;
+    }
     const grossProfit = inv.subtotal - cogs;
     const inputGst = cogs - cogs / 1.18;
     return {
@@ -268,8 +422,12 @@ exports.getBillPL = asyncHandler(async (req, res) => {
 const MONTH_ORDER = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 exports.getMonthlyGst = asyncHandler(async (req, res) => {
-  const invoices = await Invoice.find({ invoiceType: 'GST' });
-  const purchaseOrders = await PurchaseOrder.find().populate('itemId', 'gstPercent');
+  const invoices = await Invoice.find({ invoiceType: 'GST', ...buildDateFilterOn(req, 'invoiceDate') });
+  const poDateFilter = buildDateFilterOn(req, 'createdAt');
+  const purchaseOrders = await PurchaseOrder.find(poDateFilter)
+    .populate('itemId', 'gstPercent')
+    .populate('items.itemId', 'gstPercent');
+  const localPurchases = await LocalPurchase.find(poDateFilter);
 
   const monthlyMap = {};
   const ensureRow = (date) => {
@@ -297,14 +455,20 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
 
   purchaseOrders.forEach((po) => {
     const row = ensureRow(po.createdAt);
-    const amt = po.amount || 0;
-    const gstRate = po.itemId?.gstPercent ?? 18;
-    const taxable = gstRate > 0 ? amt / (1 + gstRate / 100) : amt;
-    const gstAmt = amt - taxable;
-    row.pur_taxable += taxable;
-    row.pur_cgst += gstAmt / 2;
-    row.pur_sgst += gstAmt / 2;
-    row.pur_total_gst += gstAmt;
+    explodePurchaseOrderItems(po).forEach((it) => {
+      const gstRate = it.gstPercent ?? 18;
+      const taxable = gstRate > 0 ? it.amount / (1 + gstRate / 100) : it.amount;
+      const gstAmt = it.amount - taxable;
+      row.pur_taxable += taxable;
+      row.pur_cgst += gstAmt / 2;
+      row.pur_sgst += gstAmt / 2;
+      row.pur_total_gst += gstAmt;
+    });
+  });
+  localPurchases.forEach((lp) => {
+    const row = ensureRow(lp.createdAt);
+    // No GST captured on local/informal purchases — taxable spend only, no input credit.
+    row.pur_taxable += Number(lp.totalAmount) || 0;
   });
 
   const data = Object.values(monthlyMap)
@@ -330,7 +494,7 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
 exports.getAuditorTax = asyncHandler(async (req, res) => {
   const type = req.query.type || 'sales';
   if (type === 'sales') {
-    const invoices = await Invoice.find({ invoiceType: 'GST' })
+    const invoices = await Invoice.find({ invoiceType: 'GST', ...buildDateFilterOn(req, 'invoiceDate') })
       .populate('partyId', 'name gstNumber state')
       .sort('-invoiceDate');
     const rows = invoices.map((inv) => ({
@@ -347,18 +511,23 @@ exports.getAuditorTax = asyncHandler(async (req, res) => {
     }));
     return res.status(200).json({ success: true, data: rows });
   }
-  const orders = await PurchaseOrder.find()
-    .populate('vendorId', 'name taxId')
-    .populate('itemId', 'itemName hsnCode')
-    .sort('-createdAt');
-  const rows = orders.map((o) => ({
-    vendorGst: o.vendorId?.taxId || '',
-    supplierName: o.vendorId?.name || '',
-    product: o.itemId?.itemName || o.itemName,
-    invoiceNo: o.invNo || o.billNo,
-    invoiceValue: o.amount || 0,
-    taxableValue: (o.amount || 0) / 1.18,
-    totalTax: (o.amount || 0) - (o.amount || 0) / 1.18,
+  // Purchase side — same PurchaseOrder + LocalPurchase merge, batched-item explosion, and
+  // date filter as the Purchase Report (this used to be PurchaseOrder-only, HSN-populated
+  // from the legacy single itemId, and ignored req.query.startDate/endDate entirely).
+  const { rows: purchaseRows } = await buildPurchaseRows(buildDateFilterOn(req, 'createdAt'));
+  const rows = purchaseRows.map((r) => ({
+    vendorGst: r.vendor_gst,
+    supplierName: r.supplier,
+    product: r.product,
+    hsn: r.hsn,
+    invoiceNo: r.inv_no,
+    invoiceDate: r.inv_date,
+    invoiceValue: r.inv_value,
+    taxableValue: r.taxable,
+    totalTax: r.total_tax,
+    cgst: r.cgst,
+    sgst: r.sgst,
+    igst: r.igst,
   }));
   res.status(200).json({ success: true, data: rows });
 });
@@ -466,11 +635,14 @@ exports.exportSalesReport = asyncHandler(async (req, res) => {
   res.send(csv);
 });
 
+// Shares buildPurchaseRows with getPurchaseReport so the CSV export always matches what the
+// Purchase Report tab shows — previously this dumped PurchaseOrder only (no LocalPurchase,
+// no batched-item breakdown), diverging from the on-screen report.
 exports.exportPurchaseReport = asyncHandler(async (req, res) => {
-  const orders = await PurchaseOrder.find().populate('vendorId', 'name').populate('itemId', 'itemName hsnCode').sort('-createdAt');
-  const csv = ['PO Code,Date,Vendor,Item,HSN,Qty,Amount,Status']
-    .concat(orders.map((o) =>
-      `${o.poCode},${o.createdAt?.toISOString().slice(0,10)},${o.vendorId?.name || ''},${o.itemId?.itemName || o.itemName},${o.itemId?.hsnCode || ''},${o.qty},${o.amount || ''},${o.paymentStatus}`
+  const { rows } = await buildPurchaseRows({});
+  const csv = ['Invoice No,Date,Vendor,Item,HSN,GST %,Qty,Taxable,Total Tax,Amount']
+    .concat(rows.map((r) =>
+      `${r.inv_no},${r.inv_date},${r.supplier},${r.product},${r.hsn},${r.gst_rate},${r.qty},${r.taxable},${r.total_tax},${r.inv_value}`
     ))
     .join('\n');
   res.setHeader('Content-Type', 'text/csv');
