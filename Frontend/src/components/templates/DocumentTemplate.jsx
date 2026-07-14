@@ -585,10 +585,10 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
       <td style="padding:4px 0;font-size:11px;color:#333;">COURIER CHARGE</td>
       <td style="padding:4px 0;font-size:11px;text-align:right;">&#x20B9;${courierCharge.toLocaleString()}</td>
     </tr>` : '';
-  const roundOffRow = roundOff > 0 ? `
+  const roundOffRow = roundOff !== 0 ? `
     <tr>
       <td style="padding:4px 0;font-size:11px;color:#333;">ROUND OFF</td>
-      <td style="padding:4px 0;font-size:11px;text-align:right;">&#x20B9;${roundOff.toLocaleString()}</td>
+      <td style="padding:4px 0;font-size:11px;text-align:right;">${roundOff < 0 ? '&minus; ' : ''}&#x20B9;${Math.abs(roundOff).toLocaleString()}</td>
     </tr>` : '';
 
   return `<!DOCTYPE html>
@@ -1067,10 +1067,10 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
                   <td style={{ padding: '4px 0', fontSize: 11, textAlign: 'right' }}>₹{courierCharge.toLocaleString()}</td>
                 </tr>
               )}
-              {roundOff > 0 && (
+              {roundOff !== 0 && (
                 <tr>
                   <td style={{ padding: '4px 0', fontSize: 11, color: '#333' }}>ROUND OFF</td>
-                  <td style={{ padding: '4px 0', fontSize: 11, textAlign: 'right' }}>₹{roundOff.toLocaleString()}</td>
+                  <td style={{ padding: '4px 0', fontSize: 11, textAlign: 'right' }}>{roundOff < 0 ? '− ' : ''}₹{Math.abs(roundOff).toLocaleString()}</td>
                 </tr>
               )}
               <tr>

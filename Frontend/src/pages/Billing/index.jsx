@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
-  Typography, Space, Divider, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, Checkbox,
+  Typography, Space, Divider, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, Checkbox, Radio,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -616,6 +616,11 @@ export default function Billing() {
   const [payCourierAmount, setPayCourierAmount] = useState(0);
   const [payRoundOffVisible, setPayRoundOffVisible] = useState(false);
   const [payRoundOffAmount, setPayRoundOffAmount] = useState(0);
+  const [payRoundOffType, setPayRoundOffType] = useState('addition'); // 'addition' | 'discount'
+  // Signed round-off value: Addition grows the payable total, Discount shrinks it.
+  // Kept signed so every downstream sum (net payable, invoice total, saved entry) can
+  // keep doing plain addition without knowing about the Addition/Discount choice.
+  const signedRoundOff = (payRoundOffType === 'discount' ? -1 : 1) * (Number(payRoundOffAmount) || 0);
   const [paymentRefNum] = useState('176');
   const [payLinkedInvoices, setPayLinkedInvoices] = useState([]);
 
@@ -689,6 +694,7 @@ export default function Billing() {
     setPayCourierAmount(0);
     setPayRoundOffVisible(false);
     setPayRoundOffAmount(0);
+    setPayRoundOffType('addition');
     setRecordPayOpen(true);
   };
 
@@ -699,7 +705,7 @@ export default function Billing() {
     r2(
       (Number(payAmount) || 0)
       + (payCourierVisible ? Number(payCourierAmount) || 0 : 0)
-      + (payRoundOffVisible ? Number(payRoundOffAmount) || 0 : 0)
+      + (payRoundOffVisible ? signedRoundOff : 0)
     );
 
   // Propagate a new paidAmount to every linked record in the lead→quotation→negotiation→order chain.
@@ -775,7 +781,7 @@ export default function Billing() {
   const handleSavePayment = async () => {
     if (!recordPayInv?.key) { enqueueSnackbar('No invoice selected', { variant: 'error' }); return; }
     const courierCharge = payCourierVisible ? Number(payCourierAmount) || 0 : 0;
-    const roundOff = payRoundOffVisible ? Number(payRoundOffAmount) || 0 : 0;
+    const roundOff = payRoundOffVisible ? signedRoundOff : 0;
     const newEntry = {
       paidAmount: computeNetPayable(),
       baseAmount: Number(payAmount) || 0,
@@ -1445,12 +1451,26 @@ export default function Billing() {
 
             {/* ── Round Off ── */}
             <div style={{ marginTop: 12 }}>
-              <Checkbox
-                checked={payRoundOffVisible}
-                onChange={(e) => { setPayRoundOffVisible(e.target.checked); if (!e.target.checked) setPayRoundOffAmount(0); }}
-              >
-                <Text style={{ fontSize: 13, fontWeight: 500 }}>Round Off</Text>
-              </Checkbox>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Checkbox
+                  checked={payRoundOffVisible}
+                  onChange={(e) => { setPayRoundOffVisible(e.target.checked); if (!e.target.checked) { setPayRoundOffAmount(0); setPayRoundOffType('addition'); } }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: 500 }}>Round Off</Text>
+                </Checkbox>
+                {payRoundOffVisible && (
+                  <Radio.Group
+                    value={payRoundOffType}
+                    onChange={(e) => setPayRoundOffType(e.target.value)}
+                    optionType="button"
+                    buttonStyle="solid"
+                    size="small"
+                  >
+                    <Radio.Button value="addition">Addition</Radio.Button>
+                    <Radio.Button value="discount">Discount</Radio.Button>
+                  </Radio.Group>
+                )}
+              </div>
               {payRoundOffVisible && (
                 <div style={{ marginTop: 8 }}>
                   <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>Round Off Amount</Text>
@@ -1460,9 +1480,15 @@ export default function Billing() {
                     onChange={(v) => setPayRoundOffAmount(v ?? 0)}
                     step={0.1}
                     precision={2}
+                    min={0}
                     style={{ width: '100%', borderRadius: 8 }}
                     controls={false}
                   />
+                  <Text style={{ fontSize: 12, color: payRoundOffType === 'discount' ? '#e53935' : '#16a34a', display: 'block', marginTop: 4 }}>
+                    {payRoundOffType === 'discount'
+                      ? `− ₹${(Number(payRoundOffAmount) || 0).toLocaleString()} will be subtracted from the total`
+                      : `+ ₹${(Number(payRoundOffAmount) || 0).toLocaleString()} will be added to the total`}
+                  </Text>
                 </div>
               )}
             </div>
@@ -1481,7 +1507,7 @@ export default function Billing() {
               // and it drifts from the New Party Balance total below (which already
               // includes both via computeNetPayable()).
               const courier = payCourierVisible ? Number(payCourierAmount) || 0 : 0;
-              const roundOffAmt = payRoundOffVisible ? Number(payRoundOffAmount) || 0 : 0;
+              const roundOffAmt = payRoundOffVisible ? signedRoundOff : 0;
               const invBalanceWithExtras = r2(inv.balance + courier + roundOffAmt);
               const settled = Math.min(computeNetPayable(), invBalanceWithExtras);
               return (
@@ -1706,7 +1732,7 @@ export default function Billing() {
                   { title: 'Mode', dataIndex: 'mode', width: 100 },
                   { title: 'Amount', dataIndex: 'amount', width: 100, render: (v) => v != null ? `₹${Number(v).toLocaleString()}` : '—' },
                   { title: 'Courier Charge', dataIndex: 'courierCharge', width: 120, render: (v) => v ? `₹${Number(v).toLocaleString()}` : '—' },
-                  { title: 'Round Off', dataIndex: 'roundOff', width: 100, render: (v) => v ? `₹${Number(v).toLocaleString()}` : '—' },
+                  { title: 'Round Off', dataIndex: 'roundOff', width: 100, render: (v) => v ? `${Number(v) < 0 ? '− ' : ''}₹${Math.abs(Number(v)).toLocaleString()}` : '—' },
                   { title: 'Net Paid', dataIndex: 'net', width: 110, render: (v) => <Text strong style={{ color: '#16a34a' }}>₹{Number(v || 0).toLocaleString()}</Text> },
                   { title: 'Recorded By', dataIndex: 'by', width: 150, render: (v) => <Space size={4}><UserOutlined style={{ color: '#aaa' }} />{v}</Space> },
                   { title: 'Note', dataIndex: 'note', width: 150, render: (v) => v || '—' },
