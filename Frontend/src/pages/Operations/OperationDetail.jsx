@@ -257,6 +257,9 @@ export default function OperationDetail() {
     splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
     // Fall back to o.products when items is empty (legacy / sample orders that only stored products)
     items: (() => {
+      // By-product-name fallback for printing status set on rows with no order.items entry
+      // (see updateItemPrintingStatus). Mongoose Map fields serialize as plain objects over JSON.
+      const printingStatusOverridesMap = o.printingStatusOverrides || {};
       // Per-kit display-unit map (by kitId) so each kit in a multi-kit order routes to its OWN tab.
       const kitOrdersList = ((o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || []).filter(Boolean);
       const kitCfgById = Object.fromEntries(kitOrdersList.filter((k) => k.kitId).map((k) => [k.kitId, k]));
@@ -330,7 +333,12 @@ export default function OperationDetail() {
         const requiredQty = isKitItem
           ? (kitOverallQty || Number(it.qty) || 0)
           : (Number(it.qty) || 0);
-        return { ...it, itemName: it.itemName || it.name, key: it._id ? String(it._id) : String(idx), sticker, logo, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitType, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory, isIncludedInPersonalized, requiredQty };
+        const itemName = it.itemName || it.name;
+        // Rows sourced from the Lead's product list (order.items empty) never carry a persisted
+        // printingStatus of their own — fall back to the by-name override map so a status set via
+        // updateItemPrintingStatus (which can't index into an empty order.items) still shows up.
+        const overridePrintingStatus = printingStatusOverridesMap[(it.product || itemName || '').toLowerCase()];
+        return { ...it, itemName, key: it._id ? String(it._id) : String(idx), sticker, logo, printing, packingMaterialTab, displayUnit: itemDisplayUnit, displayUnitType, displayUnitTab: itemDisplayUnitTab, logoType, category: itemCategory, isIncludedInPersonalized, requiredQty, printingStatus: it.printingStatus || overridePrintingStatus || '' };
       });
     })(),
     readiness: o.readiness || {},
@@ -1805,7 +1813,8 @@ export default function OperationDetail() {
             onChange={async (val) => {
               setPrintingStatusValues((prev) => ({ ...prev, [record.key]: val }));
               try {
-                await updateItemPrintingStatus({ orderId: order.key, itemKey: record.key, printingStatus: val }).unwrap();
+                const product = record.itemName || record.name || record.product || '';
+                await updateItemPrintingStatus({ orderId: order.key, itemKey: record.key, printingStatus: val, product }).unwrap();
               } catch {
                 enqueueSnackbar('Failed to save printing status', { variant: 'error' });
                 setPrintingStatusValues((prev) => ({ ...prev, [record.key]: record.printingStatus || undefined }));

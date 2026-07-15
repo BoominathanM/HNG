@@ -304,11 +304,25 @@ function computeDocSections(data) {
     sepKitCount  + sepProdRows.reduce((s, r) => s + r.qty, 0)
   );
 
+  // Sum the per-row taxAmt already computed on kit components & product rows so the
+  // CGST/SGST breakdown (computeTaxByRate / resolveTaxRows in computeModel) can walk this
+  // sections object directly instead of falling back to the disconnected flat items[]/
+  // SAMPLE_ITEMS — same shape buildDocComposition already returns for the composition path.
+  const kitsTax = (kits) => kits.reduce((s, ko) => s + (ko.components || []).reduce((cs, c) => cs + (c.taxAmt || 0), 0), 0);
+  const totalTax = r2d(
+    kitsTax(persKits) + kitsTax(sepKits) +
+    persProdRows.reduce((s, r) => s + (r.taxAmt || 0), 0) +
+    sepProdRows.reduce((s, r) => s + (r.taxAmt || 0), 0)
+  );
+
   return {
     persKits, persProdRows, persKitTotal, persProdTotal, persKitCount, personalized,
     sepKits, sepProdRows, separateKit, sepKitCount, separateProduct,
     totalSectionsAmt: r2d(personalized + separateKit + separateProduct),
     totalSectionsQty,
+    totalTax,
+    taxable: r2d(personalized + separateKit + separateProduct - totalTax),
+    gst: totalTax,
     isCategorized: true,
   };
 }

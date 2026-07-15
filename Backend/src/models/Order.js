@@ -144,6 +144,13 @@ const orderSchema = new mongoose.Schema({
   }],
   designStatus: { type: String, default: '' },
   printingStatus: { type: String, enum: ['Yet to Receive', 'Received', 'Closed', ''], default: '' },
+  // Per-product printing status, keyed by lowercase product name. Used as a fallback by
+  // updateItemPrintingStatus when `items` has no matching entry (e.g. legacy/sample orders whose
+  // product list only exists on the Lead, not on this order's own `items` array) — writing there
+  // instead of pushing a synthetic entry into `items` avoids making Operations' "items?.length ?
+  // items : leadProducts" fallback (Operations/data.js, OperationDetail.jsx) switch away from the
+  // Lead's full product list, which would hide the order's other products.
+  printingStatusOverrides: { type: Map, of: String, default: {} },
   stockStatus: { type: String, default: '' },
   operationStage: { type: String, default: '' },
   taskStatus: { type: String, default: '' },

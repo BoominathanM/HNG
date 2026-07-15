@@ -25,6 +25,30 @@ const reconcileTaxable = (subtotal, gstAmount, total) => {
   return { taxable: r2(Math.max(tot - gst, 0)), gstAmt: r2(Math.min(gst, tot)) };
 };
 
+// A kit's product rows (Order/Quotation/Invoice `items[]` with isKit:true) store `qty` as the
+// component quantity PER KIT (see Kit.products), not the order's total — the real quantity
+// consumed/sold is item.qty × (number of kits ordered), which lives separately on
+// order.kitOrders[].overallQty (per kitId) or the legacy order.kitOverallQty (mirrors the same
+// multiplier used by sales.controller's deductInventoryForOrder). Sample orders force every
+// row's qty to 1 real unit regardless of the source order's kit count, so no multiplier applies.
+const kitMultiplier = (item, kitOrders = [], legacyOverallQty, orderCategory) => {
+  if (!item?.isKit) return 1;
+  if (orderCategory === 'SAMPLE') return 1;
+  const match = (kitOrders || []).find((o) => o && o.kitId && o.kitId === item.kitId);
+  return Number(match?.overallQty) || Number(legacyOverallQty) || 1;
+};
+
+// Expand a doc's items[] to their real (kit-aware) qty/lineTotal, so per-product revenue/COGS
+// aggregation isn't silently under-counted for kit orders (see kitMultiplier above).
+const applyKitMultiplier = (items = [], kitOrders = [], legacyOverallQty, orderCategory) =>
+  items.map((i) => {
+    const it = i.toObject ? i.toObject() : { ...i };
+    const mult = kitMultiplier(it, kitOrders, legacyOverallQty, orderCategory);
+    const qty = (Number(it.qty) || 0) * mult;
+    const price = Number(it.price) || 0;
+    return { ...it, qty, lineTotal: r2(price * qty) };
+  });
+
 // Date filter on an arbitrary field (defaults to createdAt) — each model's report-relevant
 // date field differs (Invoice → invoiceDate, Expense → expenseDate, PO/LocalPurchase → createdAt).
 const buildDateFilterOn = (req, field = 'createdAt') => {
@@ -346,9 +370,10 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   // only for items with no PurchaseOrder/LocalPurchase record at all.
   const productMap = {};
   orders.forEach((o) => {
-    const items = o.items?.length
+    const rawItems = o.items?.length
       ? o.items
       : [{ itemName: o.product || 'Unknown', lineTotal: Number(o.amount) || 0, qty: Number(o.qty) || 0 }];
+    const items = applyKitMultiplier(rawItems, o.kitOrders, o.kitOverallQty, o.orderCategory);
     items.forEach((item) => {
       const name = item.itemName || 'Unknown';
       if (!productMap[name]) productMap[name] = { product: name, sales: 0, cogs: 0, grossProfit: 0, soldQty: 0, stockQty: 0 };
@@ -369,9 +394,10 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   const productMonthlyData = {};
   orders.forEach((o) => {
     const month = o.createdAt?.toLocaleString('default', { month: 'short' }) || '';
-    const items = o.items?.length
+    const rawItems = o.items?.length
       ? o.items
       : [{ itemName: o.product || 'Unknown', lineTotal: Number(o.amount) || 0, qty: Number(o.qty) || 0 }];
+    const items = applyKitMultiplier(rawItems, o.kitOrders, o.kitOverallQty, o.orderCategory);
     items.forEach((item) => {
       const name = item.itemName || 'Unknown';
       if (!productMonthlyData[name]) productMonthlyData[name] = {};
@@ -407,20 +433,45 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
 exports.getBillPL = asyncHandler(async (req, res) => {
   const invoices = await Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
     .populate('partyId', 'name')
+    .populate('orderId', 'kitOrders kitOverallQty orderCategory')
+    .populate('quotationId', 'kitOrders kitOverallQty')
     .sort('-invoiceDate');
   const itemCostIndex = await buildItemCostIndex();
 
   const billPL = invoices.map((inv) => {
-    const items = inv.items || [];
+    // Kit rows on the invoice store qty PER KIT — the linked order (or quotation, when the
+    // order was deleted/unlinked) carries the real kit count needed to multiply it up to the
+    // true quantity billed (see kitMultiplier above).
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const quotation = inv.quotationId && typeof inv.quotationId === 'object' ? inv.quotationId : null;
+    const kitOrders = order?.kitOrders?.length ? order.kitOrders : (quotation?.kitOrders || []);
+    const legacyOverallQty = order?.kitOverallQty ?? quotation?.kitOverallQty;
+    const items = applyKitMultiplier(inv.items || [], kitOrders, legacyOverallQty, order?.orderCategory);
+
     // Real cost per line item where we have purchase history for it; only items with no
     // matching PurchaseOrder/LocalPurchase record fall back to the 62%-of-line estimate.
+    // `breakdown` exposes each product's own sale price/qty and purchase cost — a kit's Brush
+    // and Paste are reported as separate rows (their real per-kit qty × kit count), not folded
+    // into one opaque "kit" line — so the report shows exactly what was billed vs. what it cost.
     let cogs = 0;
+    const breakdown = [];
     if (items.length) {
       items.forEach((it) => {
         const rate = itemCostIndex[(it.itemName || '').trim().toLowerCase()];
         const qty = Number(it.qty) || 0;
-        const lineTotal = Number(it.lineTotal) || (Number(it.price) || 0) * qty;
-        cogs += rate != null && rate > 0 ? rate * qty : lineTotal * 0.62;
+        const price = Number(it.price) || 0;
+        const lineTotal = Number(it.lineTotal) || price * qty;
+        const costRate = rate != null && rate > 0 ? rate : price * 0.62;
+        const costAmount = r2(costRate * qty);
+        cogs += costAmount;
+        breakdown.push({
+          name: it.itemName || 'Unknown',
+          qty,
+          price: r2(price),
+          lineTotal: r2(lineTotal),
+          costRate: r2(costRate),
+          costAmount,
+        });
       });
     } else {
       cogs = (inv.subtotal || 0) * 0.62;
@@ -434,6 +485,7 @@ exports.getBillPL = asyncHandler(async (req, res) => {
       date: inv.invoiceDate?.toISOString().slice(0, 10) || '',
       client: inv.partyId?.name || 'Unknown',
       product: items.map((it) => it.itemName).filter(Boolean).join(', ') || 'General',
+      breakdown,
       sell_taxable: taxable,
       gst_collected: gstAmt,
       cgst: r2(gstAmt / 2),

@@ -799,10 +799,10 @@ export const apiSlice = createApi({
       invalidatesTags: ['Operations'],
     }),
     updateItemPrintingStatus: builder.mutation({
-      query: ({ orderId, itemKey, printingStatus }) => ({
+      query: ({ orderId, itemKey, printingStatus, product }) => ({
         url: `/operations/orders/${orderId}/items/${itemKey}/printing-status`,
         method: 'patch',
-        data: { printingStatus },
+        data: { printingStatus, product },
       }),
       invalidatesTags: ['Operations'],
     }),

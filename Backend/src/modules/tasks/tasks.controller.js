@@ -2,6 +2,7 @@ const Task = require('../../models/Task');
 const Order = require('../../models/Order');
 const Lead = require('../../models/Lead');
 const DispatchRecord = require('../../models/DispatchRecord');
+const StickerRequest = require('../../models/StickerRequest');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -364,6 +365,23 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
     }
     if (req.body.feedback !== undefined) task.feedback = req.body.feedback;
     await task.save();
+  }
+
+  // Sync to Operations: the emergency-gate check (areAllEmergencyItemsDone in
+  // Frontend/Operations/data.js) reads StickerRequest.status, but staff mark work
+  // complete here via Task.status — without this sync that gate can never lift.
+  // Case-insensitive product match mirrors data.js's findSR(); skip requests already
+  // at 'Received' so we don't regress a further-along Operations step.
+  if (status === 'Done' && task.orderId && task.product) {
+    const escapedProduct = task.product.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await StickerRequest.updateMany(
+      {
+        orderId: task.orderId,
+        product: { $regex: `^${escapedProduct}$`, $options: 'i' },
+        status: { $ne: 'Received' },
+      },
+      { status: 'Done' },
+    ).catch(() => {});
   }
 
   // Automation: when ALL tasks under the same order are Done, forward the order to Dispatch.

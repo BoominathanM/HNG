@@ -241,13 +241,20 @@ exports.updateItemPrintingStatus = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
   if (!order) return next(new AppError('Order not found', 404));
   const { itemKey } = req.params;
+  const { printingStatus, product } = req.body;
   const byId = order.items.findIndex((it) => String(it._id) === String(itemKey));
   const targetIdx = byId !== -1 ? byId : Number(itemKey);
-  if (!Number.isInteger(targetIdx) || !order.items[targetIdx]) {
+  if (Number.isInteger(targetIdx) && order.items[targetIdx]) {
+    order.items[targetIdx].set('printingStatus', printingStatus);
+    order.markModified('items');
+  } else if (product) {
+    // No matching entry in order.items (legacy/sample orders whose product list lives on the
+    // Lead instead) — record it by product name rather than pushing a synthetic items entry,
+    // which would break the items?.length fallback used elsewhere to show the full product list.
+    order.printingStatusOverrides.set(String(product).trim().toLowerCase(), printingStatus);
+  } else {
     return next(new AppError('Order item not found', 404));
   }
-  order.items[targetIdx].set('printingStatus', req.body.printingStatus);
-  order.markModified('items');
   await order.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, data: order });
 });

@@ -155,14 +155,28 @@ const computeKitTaxable = (rec) => {
   const productTaxable = products.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0), 0);
   const productGst = products.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0) * ((Number(p.gst || p.taxRate) || 0) / 100), 0);
   if (!kitOrders.length) return { taxable: r2(productTaxable), gst: r2(productGst) };
-  const pricedKitTaxable = kitOrders.reduce((s, ko) => {
+  // For kits priced as a flat bundle (kitPrice set, no per-component pricing), the GST
+  // baked into that price must be split out here too — otherwise a kit-priced order with
+  // un-itemized components ends up with gst:0 (from productGst above) even though
+  // pricedKitTaxable below correctly strips tax out of kitPrice, so CGST/SGST silently
+  // don't show on the invoice despite the order being taxable.
+  let pricedKitTaxable = 0, pricedKitGst = 0;
+  kitOrders.forEach((ko) => {
     const price = Number(ko.kitPrice) || 0;
     const qty = Number(ko.overallQty || ko.qty) || 1;
-    if (price <= 0) return s;
+    if (price <= 0) return;
     const gstPct = Number(ko.gst || ko.gstPercent || ko.taxRate) || 0;
-    return s + (gstPct > 0 ? price / (1 + gstPct / 100) : price) * qty;
-  }, 0);
-  return { taxable: r2(Math.max(productTaxable, pricedKitTaxable)), gst: r2(productGst) };
+    const taxable = gstPct > 0 ? price / (1 + gstPct / 100) : price;
+    pricedKitTaxable += taxable * qty;
+    pricedKitGst += (price - taxable) * qty;
+  });
+  // taxable picks whichever base is larger (itemized components vs flat kit price) to avoid
+  // double-counting; gst must follow the SAME base so it stays consistent with taxable.
+  const useKitPricing = pricedKitTaxable > productTaxable;
+  return {
+    taxable: r2(useKitPricing ? pricedKitTaxable : productTaxable),
+    gst: r2(useKitPricing ? pricedKitGst : productGst),
+  };
 };
 
 const sumPaid = (...sources) => {

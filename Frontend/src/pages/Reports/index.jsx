@@ -1187,7 +1187,6 @@ export default function Reports() {
                         { title: 'GST Collected', dataIndex: 'gst_collected', key: 'gst_collected', width: 120, render: v => <Text style={{ fontSize: 12, color: '#fa8c16' }}>₹{(v ?? 0).toLocaleString()}</Text> },
                         { title: 'Total Bill', dataIndex: 'sell_total', key: 'sell_total', width: 110, render: v => <Text strong style={{ fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
                         { title: 'COGS (Purchase Cost)', dataIndex: 'cogs', key: 'cogs', width: 140, render: v => <Text style={{ fontSize: 12, color: '#8a1652' }}>₹{(v ?? 0).toLocaleString()}</Text> },
-                        { title: 'Input GST', dataIndex: 'input_gst', key: 'input_gst', width: 100, render: v => <Text style={{ fontSize: 12, color: '#52c41a' }}>₹{(v ?? 0).toLocaleString()}</Text> },
                         {
                           title: 'Gross Profit', dataIndex: 'gross_profit', key: 'gross_profit', width: 120, fixed: 'right',
                           render: v => <Text strong style={{ fontSize: 12, color: v >= 0 ? '#52c41a' : '#ff4d4f' }}>₹{(v ?? 0).toLocaleString()}</Text>,
@@ -1201,6 +1200,34 @@ export default function Reports() {
                         },
                         { title: 'Status', dataIndex: 'status', key: 'status', width: 120, render: v => <Tag style={{ borderRadius: 20, fontSize: 11, fontWeight: 600, background: `${statusColor[v] || '#888'}22`, color: statusColor[v] || '#888', border: `1px solid ${statusColor[v] || '#888'}44` }}>{v}</Tag> },
                       ]}
+                      expandable={{
+                        rowExpandable: (r) => Array.isArray(r.breakdown) && r.breakdown.length > 0,
+                        expandedRowRender: (r) => (
+                          <Table
+                            size="small"
+                            pagination={false}
+                            rowKey={(row, i) => `${r.key}-${i}`}
+                            dataSource={r.breakdown}
+                            columns={[
+                              { title: 'Product', dataIndex: 'name', key: 'name', render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>{v}</Text> },
+                              { title: 'Qty', dataIndex: 'qty', key: 'qty', render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                              { title: 'Sale Price', dataIndex: 'price', key: 'price', render: v => <Text style={{ fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                              { title: 'Sale Amount', dataIndex: 'lineTotal', key: 'lineTotal', render: v => <Text style={{ fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                              { title: 'Purchase Rate', dataIndex: 'costRate', key: 'costRate', render: v => <Text style={{ fontSize: 12, color: '#8a1652' }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                              { title: 'Purchase Cost', dataIndex: 'costAmount', key: 'costAmount', render: v => <Text strong style={{ fontSize: 12, color: '#8a1652' }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                            ]}
+                            summary={(rows) => {
+                              const tCost = rows.reduce((s, row) => s + (row.costAmount || 0), 0);
+                              return (
+                                <Table.Summary.Row>
+                                  <Table.Summary.Cell colSpan={5}><Text strong style={{ fontSize: 12 }}>Total Purchase Cost</Text></Table.Summary.Cell>
+                                  <Table.Summary.Cell><Text strong style={{ fontSize: 12, color: '#8a1652' }}>₹{tCost.toLocaleString()}</Text></Table.Summary.Cell>
+                                </Table.Summary.Row>
+                              );
+                            }}
+                          />
+                        ),
+                      }}
                       summary={(data) => {
                         const tS = data.reduce((s, r) => s + r.sell_taxable, 0);
                         const tCgst = data.reduce((s, r) => s + (r.cgst ?? 0), 0);
@@ -1217,7 +1244,6 @@ export default function Reports() {
                             <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tG ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>₹{(tS + tG).toLocaleString()}</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ color: '#8a1652', fontSize: 12 }}>₹{(tC ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
-                            <Table.Summary.Cell />
                             <Table.Summary.Cell><Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(tP ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                             <Table.Summary.Cell>
                               <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontWeight: 700, fontSize: 11 }}>

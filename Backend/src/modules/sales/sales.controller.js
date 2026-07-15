@@ -581,26 +581,43 @@ async function deductInventoryForOrder(order, userId) {
 
 // ─── MATERIAL STOCK DEDUCTION (packing materials tracked in Inventory > Material Stocks) ──
 // Resolve a packing-material string to a stock category by keyword match (mirrors
-// Frontend/src/pages/Operations/data.js packTabFromString, with an added 'bottle' category).
+// Frontend/src/pages/Operations/data.js packTabFromString). Only used to keep the
+// Box/Butter Paper category-fallback and the Ziplock exclusion working exactly as before —
+// everything else is matched generically by name+size (see below), not by keyword.
 function materialStockCategoryOf(pmRaw) {
   const p = (pmRaw || '').toLowerCase();
-  if (p.includes('bottle')) return 'bottle';
   if (p.includes('butter') || p.includes('paper')) return 'butterPaper';
   if (p.includes('ziplock') || p.includes('frosted') || p.includes('pouch')) return 'ziplock';
   if (p.includes('box')) return 'box';
   return '';
 }
-// Deduction only fires for Box/Bottle/Butter Paper + sticker=YES items (Printing alone and
-// Ziplock never deduct on their own — both fall out naturally from this gate).
-const MATERIAL_STOCK_DEDUCTIBLE_CATEGORIES = new Set(['box', 'bottle', 'butterPaper']);
+// Ziplock items never auto-deduct material stock (unchanged existing behavior).
+const KEYWORD_CATEGORY_EXCLUDED = new Set(['ziplock']);
+// Box/Butter Paper additionally get the legacy category-keyword fallback below (unchanged).
+const KEYWORD_CATEGORY_FALLBACK = new Set(['box', 'butterPaper']);
+
+// MaterialStock.size is free text (e.g. "15ml") while an item's size may just be the raw
+// number (e.g. "15"). Compare on the leading numeric value so unit-suffix differences don't
+// block an otherwise-correct match, for any material — not just one hardcoded category.
+function normalizeSize(v) {
+  const s = String(v || '').trim().toLowerCase();
+  const m = s.match(/^[\d.]+/);
+  return m ? m[0] : s;
+}
 
 async function deductMaterialStockForOrder(order) {
   const items = Array.isArray(order.items) ? order.items : [];
   const kitOrders = Array.isArray(order.kitOrders) ? order.kitOrders : [];
   for (const it of items) {
     if (String(it.sticker || '').trim().toUpperCase() !== 'YES') continue;
-    const category = materialStockCategoryOf([it.displayUnit, it.packingMaterial, it.material].filter(Boolean).join(' '));
-    if (!MATERIAL_STOCK_DEDUCTIBLE_CATEGORIES.has(category)) continue;
+    // Whichever field the chosen packing material/attribute actually lives in for this
+    // product type (Box/Butter Paper use packingMaterial; bottles use bottleType; other
+    // product types may use material/displayUnit) — try them all, no hardcoded material list.
+    const nameCandidates = [it.packingMaterial, it.bottleType, it.material, it.displayUnit]
+      .filter(Boolean)
+      .map((s) => String(s).trim().toLowerCase());
+    const category = materialStockCategoryOf(nameCandidates.join(' '));
+    if (KEYWORD_CATEGORY_EXCLUDED.has(category)) continue; // Ziplock: unchanged, never auto-deducts
 
     const perUnitQty = Number(it.qty) || 0;
     if (perUnitQty <= 0) continue;
@@ -615,24 +632,29 @@ async function deductMaterialStockForOrder(order) {
 
     try {
       const stocks = await MaterialStock.find().sort('purchaseDate');
-      const pmName = String(it.packingMaterial || '').trim().toLowerCase();
-      const itemSize = String(it.size || '').trim().toLowerCase();
+      const itemSize = normalizeSize(it.size);
 
-      // Prefer an exact packing-material-name + size match (oldest purchase first); fall
-      // back to the old category keyword match (preferring a size match) when no exact
-      // match exists in stock — so an item is deducted exactly once, from the best match.
-      let target = pmName
-        ? stocks.find((s) =>
-            String(s.packingMaterial || '').trim().toLowerCase() === pmName &&
-            String(s.size || '').trim().toLowerCase() === itemSize
-          )
-        : null;
-
-      if (!target) {
-        const matches = stocks.filter((s) => materialStockCategoryOf(s.packingMaterial) === category);
-        if (!matches.length) continue;
-        target = (itemSize && matches.find((s) => String(s.size || '').trim().toLowerCase() === itemSize)) || matches[0];
+      // Exact name + size match (oldest purchase first) — this is the general path that
+      // covers ANY material stocked in Inventory > Material Stocks (bottles, caps, or any
+      // future material), matched purely on what's actually in stock, no keyword needed.
+      let target = null;
+      for (const name of nameCandidates) {
+        target = stocks.find((s) =>
+          String(s.packingMaterial || '').trim().toLowerCase() === name &&
+          normalizeSize(s.size) === itemSize
+        );
+        if (target) break;
       }
+
+      // Box/Butter Paper only: legacy category-keyword fallback, unchanged from before.
+      if (!target && KEYWORD_CATEGORY_FALLBACK.has(category)) {
+        const matches = stocks.filter((s) => materialStockCategoryOf(s.packingMaterial) === category);
+        if (matches.length) {
+          target = (itemSize && matches.find((s) => normalizeSize(s.size) === itemSize)) || matches[0];
+        }
+      }
+
+      if (!target) continue; // no matching stock entry — skip rather than guess
 
       target.stockCount = Math.max(0, (target.stockCount || 0) - qty);
       await target.save();
