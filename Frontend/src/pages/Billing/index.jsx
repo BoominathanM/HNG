@@ -922,6 +922,11 @@ export default function Billing() {
           partyId: party.key,
           orderId: convertQuot.orderId,
           amount: amt,
+          // Kit-aware taxable/GST split (same values already shown on screen for this row) —
+          // without these the backend falls back to the quotation's raw, non-kit-aware
+          // amount/gstAmount, which under-counts taxable value for kit orders.
+          subtotal: convertQuot.amount || 0,
+          gstAmount: convertQuot.gst || 0,
           includePreviousDue: convertPreviousDue > 0,
         }).unwrap();
         enqueueSnackbar(`${convertQuot.quot} converted to invoice and moved to Invoices`, { variant: 'success' });

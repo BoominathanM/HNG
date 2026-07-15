@@ -202,14 +202,22 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
     };
   });
 
+  // Prefer the caller's kit-aware subtotal/gstAmount (Billing already recomputes these from
+  // the order/kit composition for display) over quotation.amount/gstAmount — those are set at
+  // quotation-save time from the raw product rows only and don't include kit-price buckets,
+  // so they routinely under-count taxable value and GST for kit orders and drift from
+  // `invoiceTotal` (e.g. amount was manually adjusted, or previous due was folded in).
+  const subtotal = req.body.subtotal !== undefined ? Number(req.body.subtotal) || 0 : Number(quotation.amount) || 0;
+  const gstAmount = req.body.gstAmount !== undefined ? Number(req.body.gstAmount) || 0 : Number(quotation.gstAmount) || 0;
+
   const invoice = await Invoice.create({
     invoiceNumber: invCode,
     partyId: req.body.partyId,
     orderId: req.body.orderId || linkedOrder?._id,
     quotationId: quotation._id,
     invoiceType: quotation.type || 'GST',
-    subtotal: Number(quotation.amount) || 0,
-    gstAmount: Number(quotation.gstAmount) || 0,
+    subtotal,
+    gstAmount,
     total: invoiceTotal,
     advanceAmount,
     balanceDue: Math.max(0, invoiceTotal - advanceAmount),

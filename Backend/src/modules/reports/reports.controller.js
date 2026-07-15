@@ -3,11 +3,27 @@ const PurchaseOrder = require('../../models/PurchaseOrder');
 const LocalPurchase = require('../../models/LocalPurchase');
 const Expense = require('../../models/Expense');
 const Order = require('../../models/Order');
+const InventoryItem = require('../../models/InventoryItem');
 const User = require('../../models/User');
 const Complaint = require('../../models/Complaint');
 const asyncHandler = require('../../utils/asyncHandler');
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Invoice.subtotal/gstAmount can go stale relative to Invoice.total for kit-priced orders
+// (the quotation the invoice was created from stores a non-kit-aware subtotal/gstAmount —
+// see billing.controller convertQuotationToInvoice) or when an invoice amount was edited
+// during conversion. `total` is always the real billed value, so when the stored split
+// doesn't add up to it, gstAmount (computed from real per-item GST rates) is trusted and
+// taxable is derived as total - gstAmount — guaranteeing every report row satisfies
+// taxable + CGST + SGST === invoice value exactly instead of silently under-reporting both.
+const reconcileTaxable = (subtotal, gstAmount, total) => {
+  const sub = Number(subtotal) || 0;
+  const gst = Number(gstAmount) || 0;
+  const tot = Number(total) || (sub + gst);
+  if (Math.abs((sub + gst) - tot) < 1) return { taxable: r2(sub), gstAmt: r2(gst) };
+  return { taxable: r2(Math.max(tot - gst, 0)), gstAmt: r2(Math.min(gst, tot)) };
+};
 
 // Date filter on an arbitrary field (defaults to createdAt) — each model's report-relevant
 // date field differs (Invoice → invoiceDate, Expense → expenseDate, PO/LocalPurchase → createdAt).
@@ -96,12 +112,12 @@ const buildPurchaseRows = async (dateFilter) => {
         inv_no: o.invNo || o.billNo || o.poCode || '',
         orig_inv_no: '',
         inv_date: o.createdAt?.toISOString().slice(0, 10) || '',
-        taxable: Math.round(taxable),
-        cgst: Math.round(totalTax / 2),
-        sgst: Math.round(totalTax / 2),
+        taxable: r2(taxable),
+        cgst: r2(totalTax / 2),
+        sgst: r2(totalTax / 2),
         igst: 0,
-        total_tax: Math.round(totalTax),
-        inv_value: Math.round(it.amount),
+        total_tax: r2(totalTax),
+        inv_value: r2(it.amount),
       });
     });
   });
@@ -121,12 +137,12 @@ const buildPurchaseRows = async (dateFilter) => {
         inv_no: l.invoiceNo || l.lpCode || '',
         orig_inv_no: '',
         inv_date: l.createdAt?.toISOString().slice(0, 10) || '',
-        taxable: Math.round(it.amount),
+        taxable: r2(it.amount),
         cgst: 0,
         sgst: 0,
         igst: 0,
         total_tax: 0,
-        inv_value: Math.round(it.amount),
+        inv_value: r2(it.amount),
       });
     });
   });
@@ -149,6 +165,16 @@ const buildItemCostIndex = async (dateFilter = {}) => {
   });
   const index = {};
   Object.entries(acc).forEach(([k, v]) => { index[k] = v.qty > 0 ? v.amount / v.qty : 0; });
+  return index;
+};
+
+// Current on-hand stock per item name, from InventoryItem.currentStock — the same running
+// total the Inventory page displays. Keyed by trimmed-lowercased item name, matching the
+// itemCostIndex convention above.
+const buildStockIndex = async () => {
+  const items = await InventoryItem.find({ deletedAt: null }, 'itemName currentStock');
+  const index = {};
+  items.forEach((it) => { index[(it.itemName || '').trim().toLowerCase()] = Number(it.currentStock) || 0; });
   return index;
 };
 
@@ -182,22 +208,17 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
     monthlyMap[key].amount += Number(inv.total) || 0;
   });
 
-  const totalGst = invoices.reduce((s, i) => s + (Number(i.gstAmount) || 0), 0);
-  const totalTaxable = invoices.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
-  const totalValue = invoices.reduce((s, i) => s + (Number(i.total) || 0), 0);
-
   const data = invoices.map((inv) => {
     const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
-    const gstAmt = Number(inv.gstAmount) || 0;
-    const taxable = Number(inv.subtotal) || 0;
-    const invValue = Number(inv.total) || (taxable + gstAmt);
-    const mainProduct = inv.items?.[0]?.itemName || '';
+    const invValue = Number(inv.total) || ((Number(inv.subtotal) || 0) + (Number(inv.gstAmount) || 0));
+    const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, invValue);
+    const allProducts = (inv.items || []).map((it) => it.itemName).filter(Boolean).join(', ');
 
     return {
       key: String(inv._id),
       gst_no: inv.partyId?.gstNumber || '',
       customer: inv.partyId?.name || '',
-      product: mainProduct,
+      product: allProducts,
       state_code: '',
       state_name: order?.state || inv.partyId?.state || '',
       inv_no: inv.invoiceNumber || '',
@@ -206,11 +227,15 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
       inv_value: invValue,
       total_tax: gstAmt,
       taxable,
-      cgst: Math.round(gstAmt / 2),
-      sgst: Math.round(gstAmt / 2),
+      cgst: r2(gstAmt / 2),
+      sgst: r2(gstAmt / 2),
       igst: 0,
     };
   });
+
+  const totalGst = data.reduce((s, r) => s + r.total_tax, 0);
+  const totalTaxable = data.reduce((s, r) => s + r.taxable, 0);
+  const totalValue = data.reduce((s, r) => s + r.inv_value, 0);
 
   res.status(200).json({
     success: true,
@@ -261,7 +286,7 @@ const emptyExpenses = () => ({ rent: 0, salary: 0, utilities: 0, transport: 0, m
 // ─── PROFIT & LOSS ─────────────────────────────────────────────────────────────
 exports.getProfitLoss = asyncHandler(async (req, res) => {
   const poDateFilter = buildDateFilterOn(req, 'createdAt');
-  const [orders, purchaseOrders, localPurchases, expenses, itemCostIndex] = await Promise.all([
+  const [orders, purchaseOrders, localPurchases, expenses, itemCostIndex, stockIndex] = await Promise.all([
     Order.find({ deletedAt: null, status: { $ne: 'Cancelled' }, ...poDateFilter }),
     PurchaseOrder.find(poDateFilter),
     LocalPurchase.find(poDateFilter),
@@ -269,6 +294,7 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     // exclude/include the wrong entries whenever an expense is backdated.
     Expense.find(buildDateFilterOn(req, 'expenseDate')),
     buildItemCostIndex(poDateFilter),
+    buildStockIndex(),
   ]);
 
   const totalSales = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
@@ -299,7 +325,7 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
     const amt = Number(po.amount) || 0;
     monthlyMap[key].cogs += amt;
-    monthlyMap[key].cogsGst += Math.round(amt - amt / 1.18);
+    monthlyMap[key].cogsGst += r2(amt - amt / 1.18);
   });
   localPurchases.forEach((lp) => {
     const key = lp.createdAt?.toLocaleString('default', { month: 'short' }) || '';
@@ -332,9 +358,11 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     });
   });
   Object.values(productMap).forEach((p) => {
-    const rate = itemCostIndex[p.product.trim().toLowerCase()];
-    p.cogs = rate != null && rate > 0 ? Math.round(rate * p.soldQty) : Math.round(p.sales * 0.65);
+    const key = p.product.trim().toLowerCase();
+    const rate = itemCostIndex[key];
+    p.cogs = rate != null && rate > 0 ? r2(rate * p.soldQty) : r2(p.sales * 0.65);
     p.grossProfit = p.sales - p.cogs;
+    p.stockQty = stockIndex[key] ?? 0;
   });
 
   // Per-product monthly breakdown
@@ -357,7 +385,7 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     const rate = itemCostIndex[prod.trim().toLowerCase()];
     const byMonth = Object.values(productMonthlyData[prod]);
     byMonth.forEach((m) => {
-      m.cogs = rate != null && rate > 0 ? Math.round(rate * m.qty) : Math.round(m.sales * 0.65);
+      m.cogs = rate != null && rate > 0 ? r2(rate * m.qty) : r2(m.sales * 0.65);
       m.grossProfit = m.sales - m.cogs;
     });
     productMonthlyData[prod] = byMonth;
@@ -397,20 +425,21 @@ exports.getBillPL = asyncHandler(async (req, res) => {
     } else {
       cogs = (inv.subtotal || 0) * 0.62;
     }
-    const grossProfit = inv.subtotal - cogs;
+    const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, inv.total);
+    const grossProfit = taxable - cogs;
     const inputGst = cogs - cogs / 1.18;
     return {
       key: String(inv._id),
       inv_no: inv.invoiceNumber,
       date: inv.invoiceDate?.toISOString().slice(0, 10) || '',
       client: inv.partyId?.name || 'Unknown',
-      product: inv.items?.[0]?.itemName || 'General',
-      sell_taxable: inv.subtotal,
-      gst_collected: inv.gstAmount,
+      product: items.map((it) => it.itemName).filter(Boolean).join(', ') || 'General',
+      sell_taxable: taxable,
+      gst_collected: gstAmt,
       sell_total: inv.total,
-      cogs: Math.round(cogs),
-      input_gst: Math.round(inputGst),
-      gross_profit: Math.round(grossProfit),
+      cogs: r2(cogs),
+      input_gst: r2(inputGst),
+      gross_profit: r2(grossProfit),
       status: inv.status,
     };
   });
@@ -446,8 +475,8 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
 
   invoices.forEach((inv) => {
     const row = ensureRow(inv.invoiceDate);
-    const gstAmt = inv.gstAmount || 0;
-    row.sales_taxable += inv.subtotal || 0;
+    const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, inv.total);
+    row.sales_taxable += taxable;
     row.sales_cgst += gstAmt / 2;
     row.sales_sgst += gstAmt / 2;
     row.sales_total_gst += gstAmt;
@@ -474,16 +503,16 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
   const data = Object.values(monthlyMap)
     .map((r) => ({
       ...r,
-      sales_taxable: Math.round(r.sales_taxable),
-      sales_cgst: Math.round(r.sales_cgst),
-      sales_sgst: Math.round(r.sales_sgst),
-      sales_igst: Math.round(r.sales_igst),
-      sales_total_gst: Math.round(r.sales_total_gst),
-      pur_taxable: Math.round(r.pur_taxable),
-      pur_cgst: Math.round(r.pur_cgst),
-      pur_sgst: Math.round(r.pur_sgst),
-      pur_igst: Math.round(r.pur_igst),
-      pur_total_gst: Math.round(r.pur_total_gst),
+      sales_taxable: r2(r.sales_taxable),
+      sales_cgst: r2(r.sales_cgst),
+      sales_sgst: r2(r.sales_sgst),
+      sales_igst: r2(r.sales_igst),
+      sales_total_gst: r2(r.sales_total_gst),
+      pur_taxable: r2(r.pur_taxable),
+      pur_cgst: r2(r.pur_cgst),
+      pur_sgst: r2(r.pur_sgst),
+      pur_igst: r2(r.pur_igst),
+      pur_total_gst: r2(r.pur_total_gst),
     }))
     .sort((a, b) => (a.year - b.year) || (MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month)));
 
@@ -497,18 +526,21 @@ exports.getAuditorTax = asyncHandler(async (req, res) => {
     const invoices = await Invoice.find({ invoiceType: 'GST', ...buildDateFilterOn(req, 'invoiceDate') })
       .populate('partyId', 'name gstNumber state')
       .sort('-invoiceDate');
-    const rows = invoices.map((inv) => ({
-      gstNo: inv.partyId?.gstNumber || '',
-      customerName: inv.partyId?.name || '',
-      invoiceNo: inv.invoiceNumber,
-      invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10),
-      invoiceValue: inv.total,
-      taxableValue: inv.subtotal,
-      totalTax: inv.gstAmount,
-      cgst: inv.gstAmount / 2,
-      sgst: inv.gstAmount / 2,
-      igst: 0,
-    }));
+    const rows = invoices.map((inv) => {
+      const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, inv.total);
+      return {
+        gstNo: inv.partyId?.gstNumber || '',
+        customerName: inv.partyId?.name || '',
+        invoiceNo: inv.invoiceNumber,
+        invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10),
+        invoiceValue: inv.total,
+        taxableValue: taxable,
+        totalTax: gstAmt,
+        cgst: r2(gstAmt / 2),
+        sgst: r2(gstAmt / 2),
+        igst: 0,
+      };
+    });
     return res.status(200).json({ success: true, data: rows });
   }
   // Purchase side — same PurchaseOrder + LocalPurchase merge, batched-item explosion, and
@@ -548,8 +580,8 @@ exports.getMyPerformance = asyncHandler(async (req, res) => {
   const tNew = user.targetNewHotel || 0;
   const tSales = tOld + tNew;
 
-  const oldAchieved = tSales > 0 ? Math.round(totalInvoiced * (tOld / tSales)) : 0;
-  const newAchieved = tSales > 0 ? Math.round(totalInvoiced * (tNew / tSales)) : 0;
+  const oldAchieved = tSales > 0 ? r2(totalInvoiced * (tOld / tSales)) : 0;
+  const newAchieved = tSales > 0 ? r2(totalInvoiced * (tNew / tSales)) : 0;
 
   const targets = [
     { key: 'old_hotel', label: 'Old Hotel Sales', target: tOld, achieved: oldAchieved, color: '#B11E6A' },
@@ -653,9 +685,10 @@ exports.exportPurchaseReport = asyncHandler(async (req, res) => {
 exports.exportGstReport = asyncHandler(async (req, res) => {
   const invoices = await Invoice.find({ invoiceType: 'GST' }).populate('partyId', 'name gstNumber state').sort('-invoiceDate');
   const csv = ['GST No,Customer,State,Invoice No,Invoice Date,Invoice Value,Taxable Value,CGST,SGST,IGST,Total Tax']
-    .concat(invoices.map((i) =>
-      `${i.partyId?.gstNumber || ''},${i.partyId?.name || ''},${i.partyId?.state || ''},${i.invoiceNumber},${i.invoiceDate?.toISOString().slice(0,10)},${i.total},${i.subtotal},${i.gstAmount/2},${i.gstAmount/2},0,${i.gstAmount}`
-    ))
+    .concat(invoices.map((i) => {
+      const { taxable, gstAmt } = reconcileTaxable(i.subtotal, i.gstAmount, i.total);
+      return `${i.partyId?.gstNumber || ''},${i.partyId?.name || ''},${i.partyId?.state || ''},${i.invoiceNumber},${i.invoiceDate?.toISOString().slice(0,10)},${i.total},${taxable},${r2(gstAmt/2)},${r2(gstAmt/2)},0,${gstAmt}`;
+    }))
     .join('\n');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename=gst-report.csv');
