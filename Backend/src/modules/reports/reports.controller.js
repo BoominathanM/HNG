@@ -174,11 +174,17 @@ const buildPurchaseRows = async (dateFilter) => {
   return { rows, orderCount: orders.length, localPurchaseCount: localPurchases.length, orders, localPurchases };
 };
 
-// Real average unit purchase cost per item name, from actual PurchaseOrder + LocalPurchase
-// records — replaces the flat 62%/65%-of-revenue COGS guesswork in Bill-wise/Product P&L
-// with real cost where purchase history exists for that item.
+// Real unit purchase cost per item name, keyed by lowercased item name. Prefers
+// InventoryItem.purchasePrice — the same value shown on the Inventory page, and the
+// currently-configured cost for that item — over the historical PurchaseOrder/LocalPurchase
+// average, so Purchase Rate in reports always matches Inventory instead of drifting from it.
+// Falls back to the purchase-history average (then to the 62%/65%-of-revenue guess at the
+// call site) only for items with no InventoryItem record or no purchasePrice set.
 const buildItemCostIndex = async (dateFilter = {}) => {
-  const { rows } = await buildPurchaseRows(dateFilter);
+  const [{ rows }, items] = await Promise.all([
+    buildPurchaseRows(dateFilter),
+    InventoryItem.find({ deletedAt: null }, 'itemName purchasePrice'),
+  ]);
   const acc = {};
   rows.forEach((r) => {
     if (!r.product || !r.qty) return;
@@ -189,6 +195,10 @@ const buildItemCostIndex = async (dateFilter = {}) => {
   });
   const index = {};
   Object.entries(acc).forEach(([k, v]) => { index[k] = v.qty > 0 ? v.amount / v.qty : 0; });
+  items.forEach((it) => {
+    const key = (it.itemName || '').trim().toLowerCase();
+    if (key && Number(it.purchasePrice) > 0) index[key] = Number(it.purchasePrice);
+  });
   return index;
 };
 

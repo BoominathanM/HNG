@@ -1538,6 +1538,23 @@ export default function OperationDetail() {
       },
     },
     {
+      // Actual emergency-requested quantity for this row. For a partial-emergency item
+      // (e.g. 30 total, 15 requested as emergency), normalizeOrderItems already splits
+      // the row into a qty:15 emergency row + qty:15 remaining row, so record.qty here
+      // is the correct emergency sub-quantity, not the kit's full configured qty.
+      title: 'Emergency Qty',
+      key: 'emergencyQty',
+      align: 'right',
+      render: (_, record) => {
+        if (!record.isEmergencyProduct) return <Text type="secondary">—</Text>;
+        return (
+          <Tag color="error" icon={<AlertFilled />} style={{ fontSize: 11, margin: 0, fontWeight: 600 }}>
+            {(record.qty || 0).toLocaleString()}
+          </Tag>
+        );
+      },
+    },
+    {
       // Shown only when this item's kit is packed inside an outer personalized container.
       // IMPORTANT: the outer container (BOX, Ziplock, etc.) is stored at ORDER LEVEL —
       //   order.kitDisplayUnit, order.kitSize, order.kitLogo, order.kitPrinting, etc.
