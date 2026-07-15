@@ -104,7 +104,74 @@ function resolveConfig(settings = {}, data = {}) {
   return { theme, font, show, gstMode, terms, footer, company, logoUrl, bank, signatureUrl };
 }
 
-function resolveTaxRows(gstMode, taxableAmount, data) {
+// Groups the taxable line items by their GST rate so CGST/SGST can be shown split per
+// rate (e.g. 5% items → 2.5% CGST + 2.5% SGST, 18% items → 9% CGST + 9% SGST) instead of
+// one flat half-of-aggregate number. Walks the same source `computeModel` already used
+// for `totalTax` (sections when it carries its own totalTax, otherwise the flat items[]),
+// so the sum of the returned groups' tax always equals the existing totalTax exactly.
+function computeTaxByRate(sections, items) {
+  const map = {};
+  const add = (rate, tax) => {
+    if (!rate || !tax) return;
+    const key = String(rate);
+    if (!map[key]) map[key] = { rate, tax: 0 };
+    map[key].tax += tax;
+  };
+  const rowTax = (row) => {
+    const rate = Number(row.gstRate ?? row.taxRate ?? row.gst) || 0;
+    if (!rate) return;
+    const qty = Number(row.qty) || 0;
+    const rate$ = Number(row.rate) || 0;
+    const taxAmt = row.taxAmt != null ? Number(row.taxAmt) : r2d(qty * rate$ * rate / 100);
+    add(rate, taxAmt);
+  };
+  if (sections) {
+    const walkKits = (kits) => (kits || []).forEach(ko => (ko.components || []).forEach(rowTax));
+    walkKits(sections.persKits);
+    walkKits(sections.sepKits);
+    (sections.persProdRows || []).forEach(rowTax);
+    (sections.sepProdRows || []).forEach(rowTax);
+  } else {
+    (items || []).forEach(rowTax);
+  }
+  return Object.values(map)
+    .map(g => ({ rate: g.rate, tax: r2d(g.tax) }))
+    .filter(g => g.tax > 0)
+    .sort((a, b) => a.rate - b.rate);
+}
+
+function resolveTaxRows(gstMode, taxableAmount, data, taxGroups) {
+  if (gstMode === 'none') return [];
+
+  // Preferred path: per-rate breakdown derived from the actual line items, so mixed-rate
+  // documents (e.g. 5% + 18% items) show each rate's CGST/SGST separately instead of one
+  // blended number. The grouped totals still sum to the same CGST/SGST/IGST as before.
+  if (taxGroups && taxGroups.length) {
+    const rows = [];
+    taxGroups.forEach(({ rate, tax }) => {
+      const half = r2d(tax / 2);
+      const halfRate = r2d(rate / 2);
+      switch (gstMode) {
+        case 'cgst': rows.push([`CGST @${halfRate}%`, half]); break;
+        case 'sgst': rows.push([`SGST @${halfRate}%`, half]); break;
+        case 'igst': rows.push([`IGST @${rate}%`, r2d(tax)]); break;
+        case 'all':
+          rows.push([`CGST @${halfRate}%`, half]);
+          rows.push([`SGST @${halfRate}%`, half]);
+          rows.push([`IGST @${rate}%`, r2d(tax)]);
+          break;
+        case 'cgst_sgst':
+        default:
+          rows.push([`CGST @${halfRate}%`, half]);
+          rows.push([`SGST @${halfRate}%`, half]);
+          break;
+      }
+    });
+    return rows;
+  }
+
+  // Fallback (no per-rate breakdown available, e.g. sample/legacy data): previous flat
+  // half-of-aggregate behaviour.
   const half = data.cgst !== undefined || data.sgst !== undefined
     ? null
     : Math.round(taxableAmount * 9) / 100;
@@ -112,7 +179,6 @@ function resolveTaxRows(gstMode, taxableAmount, data) {
   const sgstVal = data.sgst !== undefined ? data.sgst : (half ?? Math.round(taxableAmount * 9) / 100);
   const igstVal = data.igst !== undefined ? data.igst : Math.round(taxableAmount * 18) / 100;
   switch (gstMode) {
-    case 'none':      return [];
     case 'cgst':      return [['CGST', cgstVal]];
     case 'sgst':      return [['SGST', sgstVal]];
     case 'igst':      return [['IGST', igstVal]];
@@ -277,7 +343,11 @@ function computeModel(type, data, settings) {
   const courierCharge = r2d(Number(data.courierCharge) || 0);
   const roundOff = r2d(Number(data.roundOff) || 0);
 
-  const taxRows = resolveTaxRows(cfg.gstMode, taxableAmount, data);
+  // Mirror the same `sections` source used for totalTax above (only sections with their own
+  // totalTax carry rate-level detail worth walking — local computeDocSections falls back to
+  // flat items, same as totalTax does) so the per-rate groups always sum to totalTax exactly.
+  const taxGroups = computeTaxByRate(sections && sections.totalTax !== undefined ? sections : null, items);
+  const taxRows = resolveTaxRows(cfg.gstMode, taxableAmount, data, taxGroups);
   const taxRowsTotal = taxRows.reduce((s, [, v]) => s + (v || 0), 0);
   const totalAmount = data.total !== undefined
     ? data.total

@@ -21,6 +21,7 @@ import {
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
+import html2pdf from 'html2pdf.js';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition } from '../../utils/docComposition';
 import useTabAccess from '../../hooks/useTabAccess';
@@ -2009,6 +2010,7 @@ export default function Sales() {
   const [orderEditTarget, setOrderEditTarget] = useState(null);
   const [orderEditForm] = Form.useForm();
   const [orderEditPaymentProofs, setOrderEditPaymentProofs] = useState([]);
+  const [downloadingOrderKey, setDownloadingOrderKey] = useState(null);
 
   // Quick Add Payment Entry modal — shared across lead/quotation/negotiation/order detail views
   const [payEntryTarget, setPayEntryTarget] = useState(null); // { type, record }
@@ -2018,7 +2020,31 @@ export default function Sales() {
   const [payEntryProofUploading, setPayEntryProofUploading] = useState(false);
   const [leadPayEntryProofUploadingMap, setLeadPayEntryProofUploadingMap] = useState({});
 
-  const handleDownloadQuotation = (order) => {
+  // Renders the same invoice/quotation markup used for print/download and rasterizes it to a
+  // real PDF Blob (html2pdf = html2canvas + jsPDF under the hood), matching the Billing module's
+  // invoice download exactly.
+  const generateOrderDocPdfBlob = async (data) => {
+    const html = generatePrintHTML('quotation', data, invoiceSettings);
+    const docEl = new DOMParser().parseFromString(html, 'text/html').querySelector('.doc');
+    const container = document.createElement('div');
+    container.appendChild(docEl);
+    document.body.appendChild(container);
+    try {
+      return await html2pdf()
+        .from(container)
+        .set({
+          margin: 5,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .outputPdf('blob');
+    } finally {
+      document.body.removeChild(container);
+    }
+  };
+
+  const handleDownloadQuotation = async (order) => {
     // findLinkedQuotation handles both raw ObjectId and populated {_id, quotCode} objects
     const linkedQuot = findLinkedQuotation(order);
     const src = linkedQuot || order;
@@ -2079,20 +2105,23 @@ export default function Sales() {
         placeOfSupply: src.state || '',
       },
     };
-    const html = generatePrintHTML('quotation', data, invoiceSettings);
-    const blob = new Blob([html], { type: 'text/html' });
-    const blobUrl = URL.createObjectURL(blob);
-    const win = window.open(blobUrl, '_blank');
-    if (!win) {
-      enqueueSnackbar('Popup blocked — downloading as file instead.', { variant: 'info' });
+    const rowKey = order?.key || order?._id || data.quot;
+    setDownloadingOrderKey(rowKey);
+    try {
+      const pdfBlob = await generateOrderDocPdfBlob(data);
+      const blobUrl = URL.createObjectURL(pdfBlob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = `quotation-${data.quot || 'doc'}.html`;
+      a.download = `invoice-${data.quot || 'order'}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+    } catch (err) {
+      enqueueSnackbar(err?.message || 'Failed to generate PDF', { variant: 'error' });
+    } finally {
+      setDownloadingOrderKey(null);
     }
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
   };
 
   // Download any record (quotation / negotiation) directly — no linked-quotation lookup.
@@ -5505,8 +5534,8 @@ export default function Sales() {
           <Tooltip title="View">
             <Button size="small" icon={<EyeOutlined />} onClick={() => openOrderDetail(r)} />
           </Tooltip>
-          <Tooltip title="Download Quotation">
-            <Button size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); handleDownloadQuotation(r); }} />
+          <Tooltip title="Download Invoice">
+            <Button size="small" icon={<DownloadOutlined />} loading={downloadingOrderKey === (r.key || r._id)} onClick={(e) => { e.stopPropagation(); handleDownloadQuotation(r); }} />
           </Tooltip>
           <Tooltip title="Edit Delivery & Payment">
             <Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={(e) => { e.stopPropagation(); openOrderEditModal(r); }} />
@@ -7103,7 +7132,7 @@ export default function Sales() {
             ) : (
             <Space wrap>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(o)}>WhatsApp</Button>
-              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} onClick={() => handleDownloadQuotation(o)}>Download Quotation</Button>
+              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} loading={downloadingOrderKey === (o.key || o._id)} onClick={() => handleDownloadQuotation(o)}>Download Invoice</Button>
               <Button icon={<EditOutlined />} style={{ borderRadius: 8, color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={() => openOrderEditModal(o)}>{o.orderCategory !== 'SAMPLE' ? 'Edit Order' : 'Edit Order'}</Button>
               {o.orderCategory !== 'SAMPLE' && (
                 <Popconfirm

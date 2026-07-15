@@ -27,6 +27,18 @@ const dispatchRecordSchema = new mongoose.Schema({
   closeBoxPhotos: [String],
   status: { type: String, enum: ['Draft', 'Confirmed', 'Dispatched'], default: 'Draft' },
   dispatchedAt: Date,
+  // "Partial Dispatch" checkpoint — set when the emergency/first portion of the order has
+  // been confirmed as sent but the record is intentionally left open for the remaining
+  // items to go out later as "Full Dispatch" (which is what actually finalizes the order).
+  partialDispatchConfirmed: { type: Boolean, default: false },
+  partialDispatchAt: Date,
+  // Snapshot of transport/weight/boxes AT THE MOMENT the Partial Dispatch checkpoint was
+  // confirmed — the main transportName/weight/boxes fields get overwritten when the
+  // second Full Dispatch confirm happens, so without this snapshot the partial round's
+  // values would be lost and couldn't be shown back to the dispatcher.
+  partialTransportName: String,
+  partialWeight: String,
+  partialBoxes: Number,
   items: [{
     itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },
     itemName: String,

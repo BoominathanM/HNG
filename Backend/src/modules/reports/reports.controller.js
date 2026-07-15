@@ -436,6 +436,8 @@ exports.getBillPL = asyncHandler(async (req, res) => {
       product: items.map((it) => it.itemName).filter(Boolean).join(', ') || 'General',
       sell_taxable: taxable,
       gst_collected: gstAmt,
+      cgst: r2(gstAmt / 2),
+      sgst: r2(gstAmt / 2),
       sell_total: inv.total,
       cogs: r2(cogs),
       input_gst: r2(inputGst),

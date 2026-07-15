@@ -44,10 +44,12 @@ const statusColor = {
   'Packing': '#B11E6A',
 };
 
+// Takes the DispatchRecord's own status enum (Draft/Confirmed/Dispatched) — 'Confirmed'
+// covers both a Partial Dispatch checkpoint and the real Full Dispatch confirm, but either
+// way it means payment + verification already happened, so it maps to "Verified" (step 2).
 const stepIndex = (status) => {
   if (status === 'Dispatched') return 3;
-  if (status === 'Ready to Dispatch') return 2;
-  if (status === 'Payment Pending') return 1;
+  if (status === 'Confirmed') return 2;
   return 0;
 };
 
@@ -253,6 +255,19 @@ export default function DispatchDetail() {
       // kit fields were copied onto DispatchRecord.items.
       orderRawItems: o.items || [],
       kitOrders: o.kitOrders || [],
+      // Emergency split — same source Operations reads (splitDates), used here to badge
+      // which product/kit rows are emergency and to gate the Partial → Full dispatch flow.
+      isEmergency: !!(o.isEmergency || lead.isEmergency),
+      splitDates: o.splitDates || lead.splitDates || [],
+      // A personalized kit's own count (e.g. "25 kits") — the split-date option "Kit (All
+      // Products)" is stored as product '__kit__' and its qty is measured against THIS, not
+      // against the kit's individual component item quantities (those are per-kit amounts).
+      kitOverallQty: o.kitOverallQty || 0,
+      storedPartialDispatchConfirmed: !!d.partialDispatchConfirmed,
+      storedPartialDispatchAt: d.partialDispatchAt || null,
+      storedPartialTransportName: d.partialTransportName || '',
+      storedPartialWeight: d.partialWeight || '',
+      storedPartialBoxes: d.partialBoxes || 0,
       // Stored verification photos
       openBoxPhotos: d.openBoxPhotos || [],
       closeBoxPhotos: d.closeBoxPhotos || [],
@@ -261,6 +276,12 @@ export default function DispatchDetail() {
       storedWeight: d.weight || '',
       storedBoxes: d.boxes || 0,
       storedDispatchType: d.dispatchType || null,
+      // The backend only ever sets DispatchRecord.status to 'Confirmed' — both for the
+      // Partial Dispatch checkpoint AND the real Full Dispatch confirm — so `status` alone
+      // can't tell the two apart. `dispatchedAt` is only ever set on the real Full Dispatch
+      // path (never on the partial checkpoint's early-return), so it's the only reliable
+      // "actually fully dispatched" signal.
+      dispatchedAt: d.dispatchedAt || null,
       storedInvoiceNumber: d.invoiceNumber || '',
       storedInvoiceDate: d.invoiceDate || null,
       storedLrNumber: d.lrNumber || '',
@@ -274,6 +295,40 @@ export default function DispatchDetail() {
       storedLrFileUrl: d.lrFileUrl || '',
     };
   }, [dispatchData]);
+
+  // Emergency split, keyed per target (lowercase product name, or the literal '__kit__'
+  // Sales uses for its "Kit (All Products)" split-date option) → { emergencyQty, totalQty }.
+  // Summed directly from order.splitDates with no clamping, so it always matches exactly
+  // what's entered in the "Urgent / Emergency Deliveries (Partial)" card on the Order
+  // (Sales/index.jsx) — that card is the source of truth for these numbers, not the item
+  // verification table. '__kit__' is measured against the personalized kit's OWN overall
+  // qty (order.kitOverallQty, e.g. "25 kits"), never against its component items' qty —
+  // Paste/Brush carry a PER-KIT quantity (e.g. 1 each), not the kit's own count, so summing
+  // them instead of using kitOverallQty previously produced the wrong total.
+  const emergencyByTarget = useMemo(() => {
+    const map = new Map();
+    const itemQtyByName = new Map();
+    (order?.orderRawItems || []).forEach((it) => {
+      const key = (it.product || it.itemName || '').toLowerCase();
+      if (key) itemQtyByName.set(key, (itemQtyByName.get(key) || 0) + (Number(it.qty) || 0));
+    });
+    (order?.splitDates || []).forEach((sd) => {
+      const productList = (sd.products && sd.products.length > 0)
+        ? sd.products
+        : (sd.product ? [{ product: sd.product, qty: sd.qty }] : []);
+      productList.forEach((p) => {
+        if (!p.product) return;
+        const key = p.product.toLowerCase();
+        const existing = map.get(key) || {
+          emergencyQty: 0,
+          totalQty: key === '__kit__' ? (order?.kitOverallQty || 0) : (itemQtyByName.get(key) || 0),
+        };
+        existing.emergencyQty += Number(p.qty) || 0;
+        map.set(key, existing);
+      });
+    });
+    return map;
+  }, [order]);
 
   const [form] = Form.useForm();
   const [lrForm] = Form.useForm();
@@ -316,8 +371,19 @@ export default function DispatchDetail() {
       setDispatchType(order.storedDispatchType);
     }
 
-    // Dispatched status
-    if (order.status === 'Confirmed' || order.status === 'Dispatched') {
+    // A prior Partial Dispatch checkpoint was already confirmed — force the next round
+    // to Full Dispatch and keep the Confirm button active for it.
+    if (order.storedPartialDispatchConfirmed) {
+      setPartialConfirmed(true);
+      setDispatchType('Full Dispatch');
+      form.setFieldsValue({ dispatchType: 'Full Dispatch' });
+    }
+
+    // Dispatched status — `dispatchedAt` (not `status`) is the reliable signal: `status`
+    // reads 'Confirmed' for both the Partial Dispatch checkpoint and the real Full Dispatch
+    // confirm, so gating on it here previously locked the Confirm button forever right after
+    // a Partial Dispatch checkpoint, before the dispatcher ever got to do the Full round.
+    if (order.dispatchedAt || order.status === 'Dispatched') {
       setDispatched(true);
     }
 
@@ -388,6 +454,10 @@ export default function DispatchDetail() {
   // attached) is sent to both the order's sales person and the customer on confirm.
   const [notifyWhatsApp, setNotifyWhatsApp] = useState(true);
   const [dispatched, setDispatched] = useState(false);
+  // True once the emergency/first portion has been confirmed as Partial Dispatch — the
+  // Confirm button stays active (not `dispatched`) so the remaining items can go out as
+  // a second, final Full Dispatch confirm.
+  const [partialConfirmed, setPartialConfirmed] = useState(false);
 
   // Box photo upload tracking (uploaded immediately via handleBoxPhotoUpload)
   const [openBoxCount, setOpenBoxCount] = useState(0);
@@ -516,14 +586,23 @@ export default function DispatchDetail() {
       // Attach the invoice file if one was selected (confirm route accepts upload.single('invoice')).
       const invoiceFile = vals.invoiceFile?.[0]?.originFileObj || vals.invoiceFile?.file?.originFileObj;
       if (invoiceFile) formData.append('invoice', invoiceFile);
-      await confirmDispatch({ id, formData }).unwrap();
-      setDispatched(true);
-      enqueueSnackbar(
-        notifyWhatsApp && invoiceDocumentUrl
-          ? 'Dispatch confirmed! WhatsApp notification sent to Sales & Customer.'
-          : 'Dispatch confirmed! WhatsApp notification skipped.',
-        { variant: 'success' }
-      );
+      const result = await confirmDispatch({ id, formData }).unwrap();
+      if (result?.partial) {
+        // Emergency/first portion only — keep the button active and switch to Full
+        // Dispatch so the next confirm finalizes the remaining items.
+        setPartialConfirmed(true);
+        setDispatchType('Full Dispatch');
+        form.setFieldsValue({ dispatchType: 'Full Dispatch' });
+        enqueueSnackbar('Partial Dispatch confirmed for the emergency items. Confirm the remaining items as Full Dispatch once ready.', { variant: 'success' });
+      } else {
+        setDispatched(true);
+        enqueueSnackbar(
+          notifyWhatsApp && invoiceDocumentUrl
+            ? 'Dispatch confirmed! WhatsApp notification sent to Sales & Customer.'
+            : 'Dispatch confirmed! WhatsApp notification skipped.',
+          { variant: 'success' }
+        );
+      }
     } catch {
       enqueueSnackbar('Failed to confirm dispatch.', { variant: 'error' });
     }
@@ -640,9 +719,79 @@ export default function DispatchDetail() {
   });
   const verifySummary = summarizeDispatchVerification(products, isRowVerified);
 
+  // Per-item name/qty lookup used to badge each product/kit row with its emergency count.
+  // Dispatch items get a fresh _id at creation (not copied from the order item), so they
+  // can't be matched to order.orderRawItems by id — only by array position, same fallback
+  // pattern buildDispatchGroupedProducts already uses to recover kit metadata.
+  const itemNameById = new Map();
+  const itemQtyById = new Map();
+  (order?.items || []).forEach((it, i) => {
+    if (!it?._id) return;
+    const fallback = (order?.orderRawItems || [])[i] || {};
+    const key = String(it._id);
+    itemNameById.set(key, it.product || it.itemName || fallback.product || fallback.itemName || fallback.name || '');
+    itemQtyById.set(key, Number(it.qty ?? it.qtyOrdered ?? fallback.qty) || 0);
+  });
+
+  // Resolves a product/kit row's emergency qty against order.splitDates. A personalized
+  // kit header IS the '__kit__' target itself (matched directly, never by summing its
+  // Paste/Brush child items — those carry a per-kit qty, not the kit's own count). Any
+  // other row (separate kit/product) is matched by its own product name. Returns null
+  // when the row has no emergency portion.
+  const getRowEmergency = (row) => {
+    if (emergencyByTarget.size === 0) return null;
+    if (row.type === 'kit_header' && row.isPersonalized) {
+      const info = emergencyByTarget.get('__kit__');
+      return info && info.emergencyQty > 0 ? info : null;
+    }
+    const childIds = row.type === 'kit_header' ? (row.childItemIds || []) : (row.itemId ? [row.itemId] : []);
+    if (childIds.length === 0) return null;
+    let emergencyQty = 0;
+    let totalQty = 0;
+    let matched = false;
+    const seenNames = new Set();
+    childIds.forEach((itemId) => {
+      const name = (itemNameById.get(String(itemId)) || '').toLowerCase();
+      if (!name || seenNames.has(name)) return;
+      seenNames.add(name);
+      const info = emergencyByTarget.get(name);
+      if (info) { matched = true; emergencyQty += info.emergencyQty; totalQty += info.totalQty; }
+    });
+    return matched ? { emergencyQty, totalQty } : null;
+  };
+
   // Doc: every product must be verified before dispatch can be confirmed.
   const allProductsVerified = products.length > 0 && products.every((p) => verifiedProducts.has(p.key) || p.verified);
+
+  // Partial Dispatch only ships the emergency-flagged items, so it only needs those
+  // verified — not the whole order. Full Dispatch (first-time, or the second/final
+  // confirm after a partial round) still needs every product verified.
+  const emergencyProducts = products.filter((p) => !!getRowEmergency(p));
+  const allEmergencyVerified = emergencyProducts.length > 0
+    && emergencyProducts.every((p) => verifiedProducts.has(p.key) || p.verified);
+  const isPartialRound = dispatchType === 'Partial Dispatch' && !partialConfirmed;
+  const verificationGateSatisfied = (isPartialRound && emergencyProducts.length > 0)
+    ? allEmergencyVerified
+    : allProductsVerified;
+
+  // Exact emergency count for the page-level banner — summed directly from
+  // emergencyByTarget (i.e. straight from order.splitDates, each target's total already
+  // resolved to kitOverallQty for '__kit__' or the matching item's own qty otherwise) rather
+  // than reconstructed from matched rows, so it can never under/over-count relative to what
+  // the "Urgent / Emergency Deliveries (Partial)" card on the Order shows.
+  let emergencyTotals = { emergencyQty: 0, totalQty: 0 };
+  emergencyByTarget.forEach((v) => {
+    emergencyTotals.emergencyQty += v.emergencyQty;
+    emergencyTotals.totalQty += v.totalQty;
+  });
+
   const lrUploaded = lrFileList.length > 0;
+
+  // Transport / Weight / Boxes must be entered before dispatch can be confirmed — for
+  // both Partial and Full Dispatch — same as the open/close box photo requirement below.
+  const transportFilled = !!String(liveTransport ?? order.storedTransportName ?? '').trim();
+  const weightFilled = !!String(liveWeight ?? order.storedWeight ?? '').trim();
+  const boxesFilled = Number(liveBoxes ?? order.storedBoxes ?? order.boxes ?? 0) > 0;
 
   return (
     <div className="page-container fade-in">
@@ -660,6 +809,15 @@ export default function DispatchDetail() {
         )}
       </div>
 
+      {emergencyTotals.emergencyQty > 0 && (
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+          <Alert type="error" showIcon
+            message="Emergency Order"
+            description={`${emergencyTotals.emergencyQty} of ${emergencyTotals.totalQty} unit${emergencyTotals.totalQty !== 1 ? 's' : ''} in this order ${emergencyTotals.emergencyQty !== 1 ? 'are' : 'is'} emergency — dispatch ${emergencyTotals.emergencyQty !== 1 ? 'these' : 'this'} first as Partial Dispatch; the remaining ${emergencyTotals.totalQty - emergencyTotals.emergencyQty} unit${(emergencyTotals.totalQty - emergencyTotals.emergencyQty) !== 1 ? 's' : ''} go out later as Full Dispatch.`}
+            style={{ marginBottom: 16, borderRadius: 8 }}
+          />
+        </motion.div>
+      )}
       {order.isSample && (
         <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
           <Alert type="info" showIcon
@@ -778,24 +936,48 @@ export default function DispatchDetail() {
                 {/* Row 1: Transport, Weight, Boxes, Dispatch Type */}
                 <Row gutter={12}>
                   <Col xs={24} sm={12}>
-                    <Form.Item label="Transport Name" name="transport">
+                    <Form.Item
+                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Transport Name</span>}
+                      name="transport"
+                      validateStatus={transportFilled ? 'success' : 'error'}
+                      help={transportFilled ? undefined : 'Required before dispatch can be confirmed'}
+                    >
                       <Input placeholder="e.g. Fast Cargo" />
                     </Form.Item>
                   </Col>
                   <Col xs={12} sm={6}>
-                    <Form.Item label="Weight (Verify)" name="weight">
+                    <Form.Item
+                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Weight (Verify)</span>}
+                      name="weight"
+                      validateStatus={weightFilled ? 'success' : 'error'}
+                      help={weightFilled ? undefined : 'Required'}
+                    >
                       <Input placeholder="kg" suffix="kg" />
                     </Form.Item>
                   </Col>
                   <Col xs={12} sm={6}>
-                    <Form.Item label="Boxes" name="boxes">
+                    <Form.Item
+                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Boxes</span>}
+                      name="boxes"
+                      validateStatus={boxesFilled ? 'success' : 'error'}
+                      help={boxesFilled ? undefined : 'Required'}
+                    >
                       <InputNumber min={0} placeholder="0" style={{ width: '100%' }} prefix={<InboxOutlined style={{ color: '#B11E6A' }} />} />
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>
-                    <Form.Item label="Dispatch Type" name="dispatchType">
+                    <Form.Item
+                      label="Dispatch Type"
+                      name="dispatchType"
+                      extra={partialConfirmed && !dispatched
+                        ? <Text style={{ fontSize: 11, color: '#ff4d4f' }}>Partial Dispatch already confirmed — send the remaining items as Full Dispatch.</Text>
+                        : undefined}
+                    >
                       <Select
                         placeholder="Select dispatch type"
+                        // Locked to Full Dispatch once a Partial Dispatch checkpoint has been
+                        // confirmed — the only thing left to do is send the remaining items.
+                        disabled={partialConfirmed}
                         onChange={(v) => { setDispatchType(v); setVerifiedProducts(new Set()); }}
                       >
                         <Option value="Full Dispatch">Full Dispatch</Option>
@@ -888,6 +1070,12 @@ export default function DispatchDetail() {
                             return {};
                           },
                           render: (v, row) => {
+                            const emergencyInfo = getRowEmergency(row);
+                            const emergencyBadge = emergencyInfo && (
+                              <Tag color="red" style={{ borderRadius: 12, fontSize: 10 }}>
+                                Emergency: {emergencyInfo.emergencyQty}{emergencyInfo.totalQty ? `/${emergencyInfo.totalQty}` : ''}
+                              </Tag>
+                            );
                             if (row.type === 'kit_header') {
                               const catMeta = {
                                 personalized:     { icon: <GiftOutlined />, bg: '#ede9fe', color: '#5b21b6', label: 'Personalized Kit' },
@@ -896,7 +1084,7 @@ export default function DispatchDetail() {
                               };
                               const cm = catMeta[row.category] || catMeta.separate_kit;
                               return (
-                                <div style={{ background: cm.bg, padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 8, margin: '-1px -1px' }}>
+                                <div style={{ background: cm.bg, padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 8, margin: '-1px -1px', flexWrap: 'wrap' }}>
                                   <span style={{ color: cm.color }}>{cm.icon}</span>
                                   <Text strong style={{ color: cm.color, fontSize: 12 }}>{row.kitName}</Text>
                                   {row.qty != null && (
@@ -907,12 +1095,13 @@ export default function DispatchDetail() {
                                   <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: cm.color, border: `1px solid ${cm.color}33` }}>
                                     {cm.label}
                                   </Tag>
+                                  {emergencyBadge}
                                 </div>
                               );
                             }
                             // personalized_item or kit_item or product
                             return (
-                              <Space size={4}>
+                              <Space size={4} wrap>
                                 {(row.type === 'kit_item' || row.type === 'personalized_item') && (
                                   <span style={{ color: '#ccc', fontSize: 13, marginLeft: 8 }}>└</span>
                                 )}
@@ -920,6 +1109,7 @@ export default function DispatchDetail() {
                                 {row.perKitQty != null && (
                                   <Text style={{ fontSize: 10, color: '#bbb' }}>({row.perKitQty}/kit)</Text>
                                 )}
+                                {emergencyBadge}
                               </Space>
                             );
                           },
@@ -963,6 +1153,31 @@ export default function DispatchDetail() {
                         },
                       ]}
                     />
+                  </div>
+                )}
+
+                {/* Partial Dispatch — persisted snapshot, shown once confirmed so the
+                    transport/weight/boxes captured AT THAT CHECKPOINT stay visible even
+                    after a later Full Dispatch confirm overwrites the live fields above. */}
+                {(order.storedPartialDispatchConfirmed || partialConfirmed) && (
+                  <div style={{ background: '#fa8c1615', border: '1px solid #fa8c1644', borderRadius: 10, padding: 14, marginBottom: 16 }}>
+                    <Space size={8} style={{ marginBottom: 10 }}>
+                      <CheckCircleOutlined style={{ color: '#fa8c16' }} />
+                      <Text strong style={{ color: textColor, fontSize: 13 }}>Partial Dispatch — Confirmed</Text>
+                      {order.storedPartialDispatchAt && (
+                        <Text style={{ fontSize: 11, color: '#999' }}>
+                          on {new Date(order.storedPartialDispatchAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                        </Text>
+                      )}
+                    </Space>
+                    <Descriptions bordered size="small" column={3} style={{ borderRadius: 8 }}>
+                      <Descriptions.Item label="Transport">{order.storedPartialTransportName || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Weight">{order.storedPartialWeight || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Boxes">{order.storedPartialBoxes || 0}</Descriptions.Item>
+                    </Descriptions>
+                    <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block', marginTop: 8 }}>
+                      Open/Close box photos uploaded so far: {openBoxCount} open, {closeBoxCount} closed.
+                    </Text>
                   </div>
                 )}
 
@@ -1054,6 +1269,16 @@ export default function DispatchDetail() {
 
               {/* ── Action Buttons ── */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {isPartialRound && emergencyProducts.length > 0 && !allEmergencyVerified && (
+                  <Text style={{ fontSize: 12, color: '#ff4d4f', marginRight: 'auto' }}>
+                    Verify the emergency-flagged item(s) above to enable Confirm Partial Dispatch.
+                  </Text>
+                )}
+                {(!transportFilled || !weightFilled || !boxesFilled) && (
+                  <Text style={{ fontSize: 12, color: '#ff4d4f', marginRight: 'auto' }}>
+                    Enter Transport Name, Weight and Boxes above to enable dispatch confirmation.
+                  </Text>
+                )}
                 <Button icon={<PrinterOutlined />} onClick={handlePrintDispatchDetails}>
                   Print Dispatch Details
                 </Button>
@@ -1063,13 +1288,40 @@ export default function DispatchDetail() {
                 <Button
                   type="primary"
                   icon={<CarOutlined />}
-                  disabled={!paymentConfirmed || dispatched || !allProductsVerified || openBoxCount === 0 || closeBoxCount === 0}
-                  style={{ background: (paymentConfirmed && !dispatched && allProductsVerified && openBoxCount > 0 && closeBoxCount > 0) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
+                  disabled={!paymentConfirmed || dispatched || !verificationGateSatisfied || openBoxCount === 0 || closeBoxCount === 0 || !transportFilled || !weightFilled || !boxesFilled}
+                  style={{ background: (paymentConfirmed && !dispatched && verificationGateSatisfied && openBoxCount > 0 && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
                   onClick={handleConfirmDispatch}
                 >
-                  {dispatched ? 'Dispatched ✓' : 'Confirm Dispatch'}
+                  {dispatched
+                    ? 'Dispatched ✓'
+                    : partialConfirmed
+                    ? 'Confirm Full Dispatch'
+                    : dispatchType === 'Partial Dispatch'
+                    ? 'Confirm Partial Dispatch'
+                    : 'Confirm Dispatch'}
                 </Button>
               </div>
+
+              {/* Full Dispatch — persisted snapshot, shown once the order is fully
+                  dispatched so the final transport/weight/boxes + box-photo evidence
+                  stay visible on every later visit to this page, same as the Partial
+                  Dispatch summary above. */}
+              {dispatched && (
+                <div style={{ background: '#52c41a15', border: '1px solid #52c41a44', borderRadius: 10, padding: 14, marginTop: 16 }}>
+                  <Space size={8} style={{ marginBottom: 10 }}>
+                    <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                    <Text strong style={{ color: textColor, fontSize: 13 }}>Full Dispatch — Confirmed</Text>
+                  </Space>
+                  <Descriptions bordered size="small" column={3} style={{ borderRadius: 8 }}>
+                    <Descriptions.Item label="Transport">{order.storedTransportName || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Weight">{order.storedWeight || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Boxes">{order.storedBoxes || 0}</Descriptions.Item>
+                  </Descriptions>
+                  <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block', marginTop: 8 }}>
+                    Open/Close box photos on file: {openBoxCount} open, {closeBoxCount} closed.
+                  </Text>
+                </div>
+              )}
 
               {/* ════════════════════════════════════════════════════════════
                   POST-DISPATCH SECTION — Lorry Receipt + Tracking

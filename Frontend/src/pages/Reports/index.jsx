@@ -163,7 +163,7 @@ export default function Reports() {
         if (!allRow) return { ...pd, expenses: { rent: 0, salary: 0, utilities: 0, transport: 0, marketing: 0, other: 0 } };
         const ratio = allRow.sales > 0 ? pd.sales / allRow.sales : 0;
         const expenses = Object.fromEntries(
-          Object.entries(allRow.expenses || {}).map(([k, v]) => [k, Math.round(v * ratio)])
+          Object.entries(allRow.expenses || {}).map(([k, v]) => [k, Math.round(v * ratio * 100) / 100])
         );
         return { ...pd, expenses };
       });
@@ -305,7 +305,7 @@ export default function Reports() {
                         <BarChart data={salesChartData}>
                           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                           <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
-                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                           <Tooltip formatter={(v) => [`₹${(v ?? 0).toLocaleString()}`, 'Revenue']} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                           <Bar dataKey="amount" fill="#B11E6A" radius={[4, 4, 0, 0]} name="Sales Revenue" />
                         </BarChart>
@@ -423,7 +423,7 @@ export default function Reports() {
                         <BarChart data={purchaseChartData}>
                           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                           <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
-                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                           <Tooltip formatter={(v) => [`₹${(v ?? 0).toLocaleString()}`, 'Amount Spent']} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                           <Bar dataKey="amount" fill="#B11E6A" radius={[4, 4, 0, 0]} name="Purchase Amount" />
                         </BarChart>
@@ -761,7 +761,7 @@ export default function Reports() {
                         <BarChart data={plChartData} barGap={4}>
                           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                           <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
-                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
+                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                           <Tooltip formatter={(v, name) => [`₹${(v ?? 0).toLocaleString()}`, name]} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                           <Legend />
                           <Bar dataKey="grossProfit"   fill="#B11E6A" name="Gross Profit" radius={[4, 4, 0, 0]} />
@@ -921,7 +921,7 @@ export default function Reports() {
                         <LineChart data={plChartData}>
                           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                           <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
-                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
+                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                           <Tooltip formatter={(v, name) => [`₹${(v ?? 0).toLocaleString()}`, name]} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                           <Legend />
                           <Line type="monotone" dataKey="grossProfit"   stroke="#B11E6A" strokeWidth={2.5} dot={{ fill: '#B11E6A', r: 4 }} name="Gross Profit" />
@@ -957,7 +957,7 @@ export default function Reports() {
                           <BarChart data={selectedProductMonthly} barGap={4}>
                             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                             <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
-                            <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
+                            <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                             <Tooltip formatter={(v, n) => [`₹${(v ?? 0).toLocaleString()}`, n]} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                             <Legend />
                             <Bar dataKey="sales"       fill="#D85C9E" name="Sales"        radius={[4, 4, 0, 0]} />
@@ -975,9 +975,9 @@ export default function Reports() {
                           rowKey="month"
                           columns={[
                             { title: 'Month', dataIndex: 'month', key: 'month', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
-                            { title: 'Sales',    dataIndex: 'sales',       key: 'sales',       render: v => <Text style={{ fontSize: 12, color: '#D85C9E', fontWeight: 600 }}>₹{(v / 1000).toFixed(1)}K</Text> },
-                            { title: 'Gross P.', dataIndex: 'grossProfit', key: 'grossProfit', render: v => <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 700 }}>₹{(v / 1000).toFixed(1)}K</Text> },
-                            { title: 'Net P.',   dataIndex: 'netProfit',   key: 'netProfit',   render: v => <Text style={{ fontSize: 12, color: '#6b1240',  fontWeight: 700 }}>₹{(v / 1000).toFixed(1)}K</Text> },
+                            { title: 'Sales',    dataIndex: 'sales',       key: 'sales',       render: v => <Text style={{ fontSize: 12, color: '#D85C9E', fontWeight: 600 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                            { title: 'Gross P.', dataIndex: 'grossProfit', key: 'grossProfit', render: v => <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 700 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                            { title: 'Net P.',   dataIndex: 'netProfit',   key: 'netProfit',   render: v => <Text style={{ fontSize: 12, color: '#6b1240',  fontWeight: 700 }}>₹{(v ?? 0).toLocaleString()}</Text> },
                           ]}
                           summary={(data) => {
                             const tS = data.reduce((s, r) => s + r.sales, 0);
@@ -986,9 +986,9 @@ export default function Reports() {
                             return (
                               <Table.Summary.Row>
                                 <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell><Text strong style={{ color: '#D85C9E', fontSize: 12 }}>₹{(tS / 1000).toFixed(1)}K</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>₹{(tG / 1000).toFixed(1)}K</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell><Text strong style={{ color: '#6b1240',  fontSize: 12 }}>₹{(tN / 1000).toFixed(1)}K</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell><Text strong style={{ color: '#D85C9E', fontSize: 12 }}>₹{tS.toLocaleString()}</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>₹{tG.toLocaleString()}</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell><Text strong style={{ color: '#6b1240',  fontSize: 12 }}>₹{tN.toLocaleString()}</Text></Table.Summary.Cell>
                               </Table.Summary.Row>
                             );
                           }}
@@ -1002,7 +1002,7 @@ export default function Reports() {
                         <ResponsiveContainer width="100%" height={200}>
                           <BarChart data={activeProductPLData} layout="vertical" barGap={4}>
                             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} horizontal={false} />
-                            <XAxis type="number" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
+                            <XAxis type="number" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                             <YAxis type="category" dataKey="product" tick={{ fill: tickColor, fontSize: 11 }} width={90} />
                             <Tooltip formatter={(v) => `₹${(v ?? 0).toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                             <Legend />
@@ -1031,8 +1031,8 @@ export default function Reports() {
                             { title: 'Product', dataIndex: 'product', key: 'product', render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: r.product === plProductFilter ? '#B11E6A' : textColor }}>{v}</Text> },
                             { title: 'Sold Qty', dataIndex: 'soldQty', key: 'soldQty', align: 'center', render: v => <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{v?.toLocaleString()}</Tag> },
                             { title: 'Stock Qty', dataIndex: 'stockQty', key: 'stockQty', align: 'center', render: v => <Tag style={{ background: v < 200 ? '#ff4d4f15' : '#52c41a15', color: v < 200 ? '#ff4d4f' : '#52c41a', border: `1px solid ${v < 200 ? '#ff4d4f33' : '#52c41a33'}`, borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{v?.toLocaleString()}</Tag> },
-                            { title: 'Sales',    dataIndex: 'sales',       key: 'sales',       render: v => <Text style={{ fontSize: 12, color: '#D85C9E', fontWeight: 600 }}>₹{(v / 1000).toFixed(0)}K</Text> },
-                            { title: 'Gross P.', dataIndex: 'grossProfit', key: 'grossProfit', render: v => <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 700 }}>₹{(v / 1000).toFixed(0)}K</Text> },
+                            { title: 'Sales',    dataIndex: 'sales',       key: 'sales',       render: v => <Text style={{ fontSize: 12, color: '#D85C9E', fontWeight: 600 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                            { title: 'Gross P.', dataIndex: 'grossProfit', key: 'grossProfit', render: v => <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 700 }}>₹{(v ?? 0).toLocaleString()}</Text> },
                             {
                               title: 'Margin', key: 'margin',
                               render: (_, r) => {
@@ -1050,8 +1050,8 @@ export default function Reports() {
                                 <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
                                 <Table.Summary.Cell index={1}><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{(tSq ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                                 <Table.Summary.Cell index={2}><Text style={{ fontSize: 11, color: '#aaa' }}>—</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell index={3}><Text strong style={{ color: '#D85C9E', fontSize: 12 }}>₹{(tS / 1000).toFixed(0)}K</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell index={4}><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>₹{(tG / 1000).toFixed(0)}K</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={3}><Text strong style={{ color: '#D85C9E', fontSize: 12 }}>₹{(tS ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={4}><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>₹{(tG ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                                 <Table.Summary.Cell index={5}>
                                   <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontWeight: 700, fontSize: 11 }}>
                                     {((tG / tS) * 100).toFixed(1)}%
@@ -1131,7 +1131,7 @@ export default function Reports() {
                           <BarChart data={filtered} barGap={4}>
                             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                             <XAxis dataKey="inv_no" tick={{ fill: tickColor, fontSize: 11 }} />
-                            <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                            <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                             <Tooltip formatter={(v, n) => [`₹${(v ?? 0).toLocaleString()}`, n]} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                             <Legend />
                             <Bar dataKey="sell_taxable" name="Taxable Sales" fill="#D85C9E" radius={[4,4,0,0]} />
@@ -1158,7 +1158,7 @@ export default function Reports() {
                                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: CHART_COLORS[i % CHART_COLORS.length] }} />
                                 <Text style={{ fontSize: 11, color: textColor }} ellipsis>{r.client}</Text>
                               </Space>
-                              <Text style={{ fontSize: 11, fontWeight: 700, color: '#B11E6A' }}>₹{(r.gross_profit/1000).toFixed(1)}K</Text>
+                              <Text style={{ fontSize: 11, fontWeight: 700, color: '#B11E6A' }}>₹{(r.gross_profit ?? 0).toLocaleString()}</Text>
                             </div>
                           ))}
                         </div>
@@ -1182,9 +1182,11 @@ export default function Reports() {
                         { title: 'Client', dataIndex: 'client', key: 'client', width: 160, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>{v}</Text> },
                         { title: 'Product', dataIndex: 'product', key: 'product', width: 130, render: v => <Tag style={{ background: '#8a165215', color: '#8a1652', border: '1px solid #8a165233', borderRadius: 20 }}>{v}</Tag> },
                         { title: 'Taxable Sales', dataIndex: 'sell_taxable', key: 'sell_taxable', width: 120, render: v => <Text style={{ fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                        { title: 'CGST', dataIndex: 'cgst', key: 'cgst', width: 100, render: v => <Text style={{ fontSize: 12, color: '#fa8c16' }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                        { title: 'SGST', dataIndex: 'sgst', key: 'sgst', width: 100, render: v => <Text style={{ fontSize: 12, color: '#fa8c16' }}>₹{(v ?? 0).toLocaleString()}</Text> },
                         { title: 'GST Collected', dataIndex: 'gst_collected', key: 'gst_collected', width: 120, render: v => <Text style={{ fontSize: 12, color: '#fa8c16' }}>₹{(v ?? 0).toLocaleString()}</Text> },
                         { title: 'Total Bill', dataIndex: 'sell_total', key: 'sell_total', width: 110, render: v => <Text strong style={{ fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
-                        { title: 'COGS', dataIndex: 'cogs', key: 'cogs', width: 110, render: v => <Text style={{ fontSize: 12, color: '#8a1652' }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                        { title: 'COGS (Purchase Cost)', dataIndex: 'cogs', key: 'cogs', width: 140, render: v => <Text style={{ fontSize: 12, color: '#8a1652' }}>₹{(v ?? 0).toLocaleString()}</Text> },
                         { title: 'Input GST', dataIndex: 'input_gst', key: 'input_gst', width: 100, render: v => <Text style={{ fontSize: 12, color: '#52c41a' }}>₹{(v ?? 0).toLocaleString()}</Text> },
                         {
                           title: 'Gross Profit', dataIndex: 'gross_profit', key: 'gross_profit', width: 120, fixed: 'right',
@@ -1201,6 +1203,8 @@ export default function Reports() {
                       ]}
                       summary={(data) => {
                         const tS = data.reduce((s, r) => s + r.sell_taxable, 0);
+                        const tCgst = data.reduce((s, r) => s + (r.cgst ?? 0), 0);
+                        const tSgst = data.reduce((s, r) => s + (r.sgst ?? 0), 0);
                         const tG = data.reduce((s, r) => s + r.gst_collected, 0);
                         const tC = data.reduce((s, r) => s + r.cogs, 0);
                         const tP = data.reduce((s, r) => s + r.gross_profit, 0);
@@ -1208,6 +1212,8 @@ export default function Reports() {
                           <Table.Summary.Row style={{ fontWeight: 700 }}>
                             <Table.Summary.Cell colSpan={4}><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>₹{(tS ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tCgst ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tSgst ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tG ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>₹{(tS + tG).toLocaleString()}</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ color: '#8a1652', fontSize: 12 }}>₹{(tC ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
@@ -1250,8 +1256,8 @@ export default function Reports() {
                   {/* KPI summary row */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                     {[
-                      { label: 'Top Performer',      value: (topPerformer.name || '—').split(' ')[0], color: '#B11E6A', sub: `₹${((topPerformer.revenue || 0)/1000).toFixed(0)}K revenue` },
-                      { label: 'Team Revenue',        value: `₹${(teamRevenue/100000).toFixed(2)}L`, color: '#C94F8A', sub: `${teamOrders} total orders` },
+                      { label: 'Top Performer',      value: (topPerformer.name || '—').split(' ')[0], color: '#B11E6A', sub: `₹${(topPerformer.revenue || 0).toLocaleString()} revenue` },
+                      { label: 'Team Revenue',        value: `₹${teamRevenue.toLocaleString()}`, color: '#C94F8A', sub: `${teamOrders} total orders` },
                       { label: 'Avg Target Achieved', value: `${avgTarget.toFixed(0)}%`,      color: avgTarget >= 100 ? '#52c41a' : '#fa8c16', sub: 'Across all sales persons' },
                       { label: 'Total Complaints',    value: totalComplaints,                  color: totalComplaints > 5 ? '#ff4d4f' : '#52c41a', sub: 'Assigned to team' },
                     ].map((s, i) => (
@@ -1287,7 +1293,7 @@ export default function Reports() {
                           <ResponsiveContainer width="100%" height={270}>
                             <BarChart data={[...activeSalesPersonData].sort((a, b) => b.revenue - a.revenue)} layout="vertical" barGap={4}>
                               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} horizontal={false} />
-                              <XAxis type="number" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                              <XAxis type="number" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                               <YAxis type="category" dataKey="name" tick={{ fill: tickColor, fontSize: 11 }} width={100} />
                               <Tooltip formatter={v => `₹${(v ?? 0).toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                               <Bar dataKey="revenue" name="Revenue" radius={[0,4,4,0]}>
@@ -1315,7 +1321,7 @@ export default function Reports() {
                               },
                               { title: 'Name', dataIndex: 'name', key: 'name', render: (v, r) => <div><Text style={{ fontSize: 12, fontWeight: 700 }}>{v}</Text><br /><Text style={{ fontSize: 10, color: '#aaa' }}>{r.role}</Text></div> },
                               { title: 'Orders', dataIndex: 'orders', key: 'orders', align: 'center', width: 55, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>{v}</Text> },
-                              { title: 'Revenue', dataIndex: 'revenue', key: 'revenue', width: 85, render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: r.color }}>₹{(v/1000).toFixed(0)}K</Text> },
+                              { title: 'Revenue', dataIndex: 'revenue', key: 'revenue', width: 85, render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: r.color }}>₹{(v ?? 0).toLocaleString()}</Text> },
                               { title: 'Conv.', dataIndex: 'conversion', key: 'conversion', align: 'center', width: 55, render: v => <Tag style={{ background: v >= 70 ? '#52c41a15' : '#fa8c1615', color: v >= 70 ? '#52c41a' : '#fa8c16', border: `1px solid ${v >= 70 ? '#52c41a33' : '#fa8c1633'}`, borderRadius: 20, fontSize: 10, fontWeight: 700 }}>{v}%</Tag> },
                             ]}
                           />
@@ -1333,7 +1339,7 @@ export default function Reports() {
                             <BarChart data={activeSalesPersonData} barGap={6}>
                               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                               <XAxis dataKey="name" tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => v.split(' ')[0]} />
-                              <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                              <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                               <Tooltip formatter={v => `₹${(v ?? 0).toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                               <Legend />
                               <Bar dataKey="target"  name="Target"   fill={isDark ? '#444' : '#e0e0e0'} radius={[4,4,0,0]} />
@@ -1353,8 +1359,8 @@ export default function Reports() {
                             rowKey="key"
                             columns={[
                               { title: 'Sales Person', dataIndex: 'name', key: 'name', render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>{v.split(' ')[0]}</Text> },
-                              { title: 'Target', dataIndex: 'target', key: 'target', width: 80, render: v => <Text style={{ fontSize: 12, color: '#888' }}>₹{(v/1000).toFixed(0)}K</Text> },
-                              { title: 'Achieved', dataIndex: 'revenue', key: 'revenue', width: 85, render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: v >= r.target ? '#52c41a' : '#B11E6A' }}>₹{(v/1000).toFixed(0)}K</Text> },
+                              { title: 'Target', dataIndex: 'target', key: 'target', width: 80, render: v => <Text style={{ fontSize: 12, color: '#888' }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                              { title: 'Achieved', dataIndex: 'revenue', key: 'revenue', width: 85, render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: v >= r.target ? '#52c41a' : '#B11E6A' }}>₹{(v ?? 0).toLocaleString()}</Text> },
                               {
                                 title: '% Hit', key: 'hit', width: 65, align: 'center',
                                 render: (_, r) => {
@@ -1382,7 +1388,7 @@ export default function Reports() {
                             <LineChart data={activeSalesPersonMonthly}>
                               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                               <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
-                              <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+                              <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                               <Tooltip formatter={v => `₹${(v ?? 0).toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                               <Legend />
                               {activeSalesPersonData.map(p => (
@@ -1401,7 +1407,7 @@ export default function Reports() {
                             rowKey="key"
                             columns={[
                               { title: 'Name', dataIndex: 'name', key: 'name', render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 700, color: r.color }}>{v.split(' ')[0]}</Text> },
-                              { title: 'Latest Rev.', dataIndex: 'febRevenue', key: 'febRevenue', width: 85, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>₹{(v/1000).toFixed(0)}K</Text> },
+                              { title: 'Latest Rev.', dataIndex: 'febRevenue', key: 'febRevenue', width: 85, render: v => <Text style={{ fontSize: 12, fontWeight: 600 }}>₹{(v ?? 0).toLocaleString()}</Text> },
                               {
                                 title: 'vs Prev', key: 'mom', width: 70, align: 'center',
                                 render: (_, r) => {
@@ -1522,7 +1528,7 @@ export default function Reports() {
                       <BarChart data={chartData} barGap={4}>
                         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                         <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
-                        <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
+                        <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                         <Tooltip formatter={(v, n) => [`₹${(v ?? 0).toLocaleString()}`, n]} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                         <Legend />
                         {(gstViewMode === 'combined' || gstViewMode === 'sales') && (
@@ -1548,7 +1554,7 @@ export default function Reports() {
                       <LineChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                         <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
-                        <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
+                        <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                         <Tooltip formatter={(v, n) => [`₹${(v ?? 0).toLocaleString()}`, n]} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                         <Legend />
                         {(gstViewMode === 'combined' || gstViewMode === 'sales') && (
@@ -1854,7 +1860,7 @@ export default function Reports() {
                       }))}>
                         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                         <XAxis dataKey="name" tick={{ fill: tickColor, fontSize: 11 }} />
-                        <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
+                        <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                         <Tooltip formatter={v => `₹${(v ?? 0).toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                         <Legend />
                         <Bar dataKey="CGST" fill="#fa8c16" name="Central Tax (CGST)" radius={[4, 4, 0, 0]} />

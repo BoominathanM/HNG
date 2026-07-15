@@ -723,9 +723,14 @@ export default function Dispatch() {
     return s && p;
   });
 
-  const filteredOrders = applyFilters(dispatchOrders);
+  // Emergency orders surface first wherever dispatch orders are listed — sort is
+  // stable, so recency order (already newest-first from the backend) is preserved
+  // within the emergency and non-emergency buckets.
+  const sortEmergencyFirst = (arr) => [...arr].sort((a, b) => (b.isEmergency ? 1 : 0) - (a.isEmergency ? 1 : 0));
+
+  const filteredOrders = sortEmergencyFirst(applyFilters(dispatchOrders));
   // Today's Orders — sourced from the backend's dedicated /dispatch/today endpoint.
-  const todayOrders = applyFilters(todayDispatchOrders);
+  const todayOrders = sortEmergencyFirst(applyFilters(todayDispatchOrders));
 
   // Expandable config for all orders table
   const expandable = {
@@ -788,6 +793,9 @@ export default function Dispatch() {
       {/* Stats */}
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
         {[
+          // Counted across the whole dataset (backend `emergencyCount`), not just the
+          // current page, since the other page-local counts below don't need to be exact.
+          { label: 'Emergency Orders', count: dispatchData?.emergencyCount ?? dispatchOrders.filter(o => o.isEmergency).length, color: '#ff4d4f' },
           { label: 'Ready to Dispatch', count: dispatchOrders.filter(o => o.status === 'Ready to Dispatch').length, color: '#B11E6A' },
           { label: 'Packing in Progress', count: dispatchOrders.filter(o => o.status === 'Packing').length, color: '#8a1652' },
           { label: 'Dispatched Today', count: dispatchOrders.filter(o => o.status === 'Dispatched').length, color: '#C94F8A' },

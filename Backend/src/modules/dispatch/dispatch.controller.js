@@ -76,23 +76,38 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   if (req.query.status) filter.status = req.query.status;
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
-  const [dispatches, total] = await Promise.all([
-    DispatchRecord.find(filter)
-      .populate({
-        path: 'orderId',
-        select: 'orderCode clientName total orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo expectedDeliveryDate kitOrders items',
-        populate: [
-          { path: 'leadId', select: 'leadType' },
-          { path: 'assignedTo', select: 'fullName' },
-        ],
-      })
-      .populate('pickupEmpId', 'fullName')
-      .sort('-createdAt')
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean(),
-    DispatchRecord.countDocuments(filter),
-  ]);
+
+  // A dispatch's urgency lives on the populated Order, not on the DispatchRecord
+  // itself, so it can't be sorted with a plain `.sort()` on this collection. Pull
+  // just the id/isEmergency for every matching record (already sorted by recency),
+  // then stable-sort emergency-first — this keeps recency order within each bucket —
+  // and only paginate the ordered id list before running the full populate below.
+  const allMatching = await DispatchRecord.find(filter)
+    .select('orderId createdAt')
+    .populate({ path: 'orderId', select: 'isEmergency' })
+    .sort('-createdAt')
+    .lean();
+  const emergencyCount = allMatching.filter((d) => d.orderId?.isEmergency).length;
+  const sortedIds = [...allMatching]
+    .sort((a, b) => (b.orderId?.isEmergency ? 1 : 0) - (a.orderId?.isEmergency ? 1 : 0))
+    .map((d) => String(d._id));
+  const pageIds = sortedIds.slice((page - 1) * limit, (page - 1) * limit + limit);
+
+  const dispatchesRaw = await DispatchRecord.find({ _id: { $in: pageIds } })
+    .populate({
+      path: 'orderId',
+      select: 'orderCode clientName total orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo expectedDeliveryDate kitOrders items',
+      populate: [
+        { path: 'leadId', select: 'leadType' },
+        { path: 'assignedTo', select: 'fullName' },
+      ],
+    })
+    .populate('pickupEmpId', 'fullName')
+    .lean();
+  // $in doesn't preserve order, so re-order the fetched page to match sortedIds.
+  const byId = new Map(dispatchesRaw.map((d) => [String(d._id), d]));
+  const dispatches = pageIds.map((id) => byId.get(id)).filter(Boolean);
+
   // Resolve each order's live payment status (invoices → order collection) so the
   // Dispatch list reflects payments recorded in Billing or Sales, not a static term.
   await Promise.all(dispatches.map(async (d) => {
@@ -100,7 +115,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
       ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending')
       : 'Pending';
   }));
-  res.status(200).json({ success: true, total, page, data: dispatches });
+  res.status(200).json({ success: true, total: sortedIds.length, emergencyCount, page, data: dispatches });
 });
 
 // Today's dispatches — dispatch records whose linked order has expectedDeliveryDate = today.
@@ -194,6 +209,25 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   else if (req.body.invoiceDocumentUrl) dispatch.invoiceFileUrl = req.body.invoiceDocumentUrl;
   // Not a schema field — only needed transiently below to name the WhatsApp attachment.
   if (req.body.invoiceDocumentFilename) dispatch.invoiceDocumentFilename = req.body.invoiceDocumentFilename;
+
+  // "Partial Dispatch" is a checkpoint, not a completion: it records that the emergency/
+  // first portion has gone out and keeps the record open — no inventory decrement, no
+  // Order/Lead status change, no dispatch notification — so the dispatcher can come back
+  // and confirm the remaining items as "Full Dispatch" later, which is what actually
+  // finalizes the order. Without this branch, picking "Partial Dispatch" finalized the
+  // order immediately, indistinguishable from "Full Dispatch".
+  const isPartialCheckpoint = req.body.dispatchType === 'Partial Dispatch' && !dispatch.partialDispatchConfirmed;
+  if (isPartialCheckpoint) {
+    dispatch.partialDispatchConfirmed = true;
+    dispatch.partialDispatchAt = Date.now();
+    // Snapshot now, before a later Full Dispatch confirm overwrites transportName/weight/boxes.
+    dispatch.partialTransportName = dispatch.transportName;
+    dispatch.partialWeight = dispatch.weight;
+    dispatch.partialBoxes = dispatch.boxes;
+    await dispatch.save({ validateBeforeSave: false });
+    return res.status(200).json({ success: true, data: dispatch, partial: true });
+  }
+
   dispatch.dispatchedAt = Date.now();
   await dispatch.save({ validateBeforeSave: false });
 
