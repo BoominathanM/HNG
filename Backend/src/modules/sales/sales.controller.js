@@ -757,6 +757,8 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     kitDisplayUnitType: resolveField(negObj.kitDisplayUnitType, lead?.kitDisplayUnitType),
     kitSize: resolveField(negObj.kitSize, lead?.kitSize),
     selectedKit: resolveField(negObj.selectedKit, lead?.selectedKit),
+    logoUrl: resolveField(negObj.logoUrl, lead?.hotelLogoUrl),
+    logoRequired: resolveField(negObj.logoRequired, lead?.logoNeeded, false),
     orderCategory,
     assignedTo: req.user._id,
     createdBy: req.user._id,

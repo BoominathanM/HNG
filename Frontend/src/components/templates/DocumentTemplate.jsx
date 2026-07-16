@@ -651,7 +651,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
     <div style="padding:12px 16px;text-align:center;font-size:11px;color:#666;border-top:1px solid ${BORDER};">${cfg.footer}</div>` : '';
 
   const logoHtml = cfg.show.logo ? `
-      <div style="width:64px;height:64px;border:2px solid ${ACCENT};border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;">
+      <div style="width:80px;height:80px;border:2px solid ${ACCENT};border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;">
         <img src="${cfg.logoUrl}" alt="logo" style="width:100%;height:100%;object-fit:contain;" onerror="this.style.display='none';this.parentNode.innerHTML='<span style=font-size:18px;font-weight:900;color:${ACCENT}>HNG</span>'"/>
       </div>` : '';
 
@@ -1011,7 +1011,7 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
       {/* Header */}
       <div style={{ display: 'flex', padding: '16px 20px', borderBottom: `2px solid ${ACCENT}`, alignItems: 'flex-start', gap: 16 }}>
         {cfg.show.logo && (
-          <div style={{ width: 64, height: 64, border: `2px solid ${ACCENT}`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+          <div style={{ width: 80, height: 80, border: `2px solid ${ACCENT}`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
             <img
               src={cfg.logoUrl} alt="logo"
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}

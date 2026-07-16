@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const ctrl = require('./operations.controller');
+const invoiceCtrl = require('./packagingInvoices.controller');
 const { protect } = require('../../middleware/auth');
 const upload = require('../../config/multer');
 
@@ -27,5 +28,10 @@ router.post('/stickers/send-to-team', ctrl.sendToStickerTeam);
 // Approved designs per hotel (reuse in future orders)
 router.get('/hotel-designs', ctrl.getHotelDesigns);
 router.post('/hotel-designs', ctrl.saveHotelDesign);
+
+// Packaging tab invoices (Sticker/Box/Ziplock/Butter Paper) — each :type is backed by its
+// own model/collection (see packagingInvoices.controller.js MODELS map).
+router.get('/invoices/:type', invoiceCtrl.getPackagingInvoices);
+router.post('/invoices/:type', upload.single('invoice'), invoiceCtrl.uploadPackagingInvoice);
 
 module.exports = router;

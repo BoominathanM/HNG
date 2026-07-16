@@ -32,7 +32,7 @@ export const apiSlice = createApi({
     'Reminders', 'Transport', 'Pickups', 'HotelDesigns', 'SuggestedTasks',
     'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
     'GstConfig', 'TaskTimeConfig',
-    'MaterialStocks',
+    'MaterialStocks', 'PackagingInvoices',
   ],
   endpoints: (builder) => ({
 
@@ -863,6 +863,14 @@ export const apiSlice = createApi({
       },
       invalidatesTags: ['Stickers'],
     }),
+    getPackagingInvoices: builder.query({
+      query: (type) => ({ url: `/operations/invoices/${type}` }),
+      providesTags: (result, error, type) => [{ type: 'PackagingInvoices', id: type }],
+    }),
+    uploadPackagingInvoice: builder.mutation({
+      query: ({ type, formData }) => ({ url: `/operations/invoices/${type}`, method: 'post', data: formData }),
+      invalidatesTags: (result, error, { type }) => [{ type: 'PackagingInvoices', id: type }],
+    }),
 
     // ── Notifications ────────────────────────────────────────────────────────
     getNotifications: builder.query({
@@ -1306,6 +1314,8 @@ export const {
   useUpdateStickerStatusMutation,
   useUploadStickerInvoiceMutation,
   useSendToStickerTeamMutation,
+  useGetPackagingInvoicesQuery,
+  useUploadPackagingInvoiceMutation,
   // Notifications
   useGetNotificationsQuery,
   useMarkNotificationReadMutation,

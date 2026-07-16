@@ -1811,10 +1811,11 @@ export default function OperationDetail() {
       key: 'printingStatus',
       render: (_, record) => {
         // Persisted on the order item itself (survives reload regardless of whether a
-        // design/sticker request exists for this row yet) — 'Yet to Receive' is the
-        // initial value once the row has loaded. Local optimistic override fills the
+        // design/sticker request exists for this row yet). Blank/unset until the design
+        // team clicks Print (→ 'Printing') or Operations clicks Dispatch (→ 'Yet to
+        // Receive') — no pre-selected default. Local optimistic override fills the
         // gap between the change and the refetch.
-        const status = printingStatusValues[record.key] ?? (record.printingStatus || 'Yet to Receive');
+        const status = printingStatusValues[record.key] ?? (record.printingStatus || '');
         if (status === 'Closed') {
           return (
             <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 6, padding: '2px 10px' }}>
@@ -1824,7 +1825,7 @@ export default function OperationDetail() {
         }
         return (
           <Select
-            value={status}
+            value={status || undefined}
             placeholder="Select status"
             style={{ width: 140 }}
             onChange={async (val) => {
@@ -1842,6 +1843,7 @@ export default function OperationDetail() {
               }
             }}
           >
+            <Option value="Printing">Printing</Option>
             <Option value="Yet to Receive">Yet to Receive</Option>
             <Option value="Received">Received</Option>
             <Option value="Closed">Closed</Option>
@@ -2562,17 +2564,6 @@ export default function OperationDetail() {
                       </Text>
                     </div>
                   )}
-                  {!emergencyPhaseDone && visibleOrderItems.some(i => i.isEmergencyProduct) && (
-                    <div style={{ padding: '8px 16px', background: 'rgba(255,77,79,0.06)', borderBottom: '1px solid rgba(255,77,79,0.2)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <AlertFilled style={{ color: '#ff4d4f' }} />
-                      <Text style={{ fontSize: 12, color: '#ff4d4f', fontWeight: 600 }}>
-                        Process emergency products first.
-                      </Text>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        Remaining products are queued — they will be unlocked after emergency items are completed.
-                      </Text>
-                    </div>
-                  )}
                   <div className="table-responsive" style={{ padding: 4 }}>
                     <Table
                       dataSource={visibleOrderItems}
@@ -2584,9 +2575,6 @@ export default function OperationDetail() {
                       onRow={(record) => {
                         if (record.isEmergencyProduct) {
                           return { style: { background: 'rgba(255,77,79,0.07)', borderLeft: '3px solid #ff4d4f' } };
-                        }
-                        if (record.isEmergencyGated) {
-                          return { style: { opacity: 0.45, pointerEvents: 'none', background: 'rgba(0,0,0,0.02)', cursor: 'not-allowed' } };
                         }
                         return {};
                       }}

@@ -37,7 +37,6 @@ import {
   FileImageOutlined,
   InboxOutlined,
   KeyOutlined,
-  LockOutlined,
   MessageOutlined,
   PlusOutlined,
   PrinterOutlined,
@@ -59,6 +58,7 @@ import {
   useGetOperationOrdersQuery,
   useGetStickerRequestsQuery,
   useUpdateOperationOrderStatusMutation,
+  useUpdateItemPrintingStatusMutation,
   useCreateStickerRequestMutation,
   useUploadStickerDesignMutation,
   useUpdateStickerStatusMutation,
@@ -96,6 +96,15 @@ import {
 
 const { Text, Title } = Typography;
 const { Option } = Select;
+
+// Maps a queue tab's display label to the URL slug used by /operations/invoices/:type
+// (each slug is backed by its own model — StickerInvoice/BoxInvoice/ZiplockInvoice/ButterPaperInvoice).
+const INVOICE_TYPE_SLUG = {
+  Sticker: 'sticker',
+  Box: 'box',
+  'Frosted Ziplock': 'ziplock',
+  'Butter Paper': 'butter',
+};
 
 const queueStatuses = [
   'Sent',
@@ -142,6 +151,7 @@ export default function Operations() {
   const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery({ limit: 500 }, { refetchOnMountOrArgChange: true });
   const { data: stickerData } = useGetStickerRequestsQuery();
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
+  const [updateItemPrintingStatus] = useUpdateItemPrintingStatusMutation();
   const [createStickerRequest] = useCreateStickerRequestMutation();
   const [uploadStickerDesign] = useUploadStickerDesignMutation();
   const [uploadStickerInvoice] = useUploadStickerInvoiceMutation();
@@ -366,6 +376,7 @@ export default function Operations() {
         const logo = normYNOps(item.logo || (isKitItem ? kitCfg?.logo : ''));
         const printing = normYNOps(item.printing || (isKitItem ? kitCfg?.printing : ''));
         const displayUnitType = item.displayUnitType || (isKitItem ? kitCfg?.displayUnitType : '') || '';
+        const lamination = normYNOps(item.lamination || (isKitItem ? kitCfg?.lamination : ''));
         const pmRaw = item.packingMaterial || item.packaging || '';
         // Config lookup first; string-match fallback for items without a config entry
         // (e.g. orders from before packing config was set up, or unregistered material names).
@@ -409,6 +420,7 @@ export default function Operations() {
           displayUnit: itemDisplayUnit,
           displayUnitType,
           displayUnitTab: itemDisplayUnitTab,
+          lamination,
           logoType,
           category: itemCategory,
         };
@@ -450,9 +462,6 @@ export default function Operations() {
 
   const [queueSteps, setQueueSteps] = useState({});
   const [dispatchTimes, setDispatchTimes] = useState({}); // orderId → { date, time }
-  // Accordion expand state for the Box/Ziplock/Butter queue tables (per tab type).
-  // Holds at most one expanded kit-row key per tab → opening one closes the previous.
-  const [expandedQueueKey, setExpandedQueueKey] = useState({}); // { [type]: key | null }
 
   const checkStates = useMemo(() => getCheckStateMap(apiOrders), [apiOrders]);
   const productionQueues = useMemo(() => {
@@ -516,8 +525,6 @@ export default function Operations() {
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [dispatchForm] = Form.useForm();
   const [receiveForm] = Form.useForm();
-  const [teamSendOpen, setTeamSendOpen] = useState(false);
-  const [teamSendType, setTeamSendType] = useState('Sticker');
 
   // Map StickerRequest.status → queue step number
   const stickerStatusToStep = (status) => {
@@ -583,20 +590,6 @@ export default function Operations() {
       return 0;
     });
   }, [searchText, orderStatusFilter, apiOrders]);
-
-  const teamSendItems = useMemo(() => {
-    const queueMap = {
-      Sticker: productionQueues.sticker,
-      Box: productionQueues.box,
-      'Frosted Ziplock': productionQueues.frosted,
-      'Butter Paper': productionQueues.butter,
-    };
-    const items = (queueMap[teamSendType] || []).map((item) => ({
-      ...item,
-      isUrgent: apiOrders.find((o) => o.id === item.orderId)?.isUrgent || false,
-    }));
-    return items.sort((a, b) => (b.isUrgent ? 1 : 0) - (a.isUrgent ? 1 : 0));
-  }, [teamSendType, apiOrders, productionQueues]);
 
   const stats = [
     {
@@ -810,11 +803,46 @@ export default function Operations() {
         title: 'Logo',
         key: 'logo',
         width: 80,
-        render: (_, record) => record.logoUrl
-          ? <a href={record.logoUrl} target="_blank" rel="noreferrer"><img src={record.logoUrl} alt="logo" style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 6, border: '1px solid #eee' }} /></a>
-          : record.logoRequired
-            ? <Tag color="orange" style={{ fontSize: 10 }}>Logo Req.</Tag>
-            : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+        render: (_, record) => {
+          if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          const ord = apiOrders.find((o) => o.id === record.orderId);
+          const url = record.logoUrl || ord?.logoUrl;
+          if (!url) {
+            return record.logoRequired
+              ? <Tag color="orange" style={{ fontSize: 10 }}>Logo Req.</Tag>
+              : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+          }
+          const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+          if (isImage) {
+            return (
+              <Popover
+                content={
+                  <div style={{ textAlign: 'center' }}>
+                    <img src={url} alt="logo" style={{ maxWidth: 300, maxHeight: 300, borderRadius: 8, objectFit: 'contain' }} />
+                    <div style={{ marginTop: 8 }}>
+                      <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1890ff' }}>Open full size ↗</a>
+                    </div>
+                  </div>
+                }
+                title="Hotel Logo"
+                trigger="click"
+                placement="left"
+              >
+                <img
+                  src={url}
+                  alt="logo"
+                  style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 6, border: '1px solid #e0d0e8', cursor: 'pointer' }}
+                />
+              </Popover>
+            );
+          }
+          return (
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <EyeOutlined style={{ fontSize: 12 }} /> View
+            </a>
+          );
+        },
       },
       {
         title: 'Product',
@@ -860,17 +888,6 @@ export default function Operations() {
         },
       },
       {
-        title: 'Payment',
-        key: 'paymentStatus',
-        width: 90,
-        render: (_, record) => {
-          const ord = apiOrders.find((o) => o.id === record.orderId);
-          if (record.isKitChild || record.orderCategory === 'SAMPLE') return <Text type="secondary">—</Text>;
-          const status = ord?.paymentStatus || 'Pending';
-          return <Tag color={paymentStatusColor[status] || 'default'}>{status}</Tag>;
-        },
-      },
-      {
         title: label === 'Box' ? 'Size / PVK' : 'Size',
         dataIndex: 'size',
         render: (value, record) => {
@@ -878,79 +895,24 @@ export default function Operations() {
           return value ? <Tag color="geekblue">{value}</Tag> : '—';
         },
       },
-      {
-        title: 'Display Unit',
-        key: 'displayUnitCol',
-        width: 150,
+      ...(label !== 'Sticker' ? [{
+        title: label === 'Box' ? 'Box Type' : label === 'Butter Paper' ? 'Butter Paper Type' : 'Ziplock Type',
+        key: 'displayUnitType',
         render: (_, record) => {
           if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-          const du = record.displayUnit;
-          const dest = PACKAGING_TYPE_LABELS[record.packagingType] || '';
-          if (!du && !dest) return <Text type="secondary">—</Text>;
-          return (
-            <Space direction="vertical" size={0}>
-              {du
-                ? <Tag color="purple" style={{ margin: 0, borderRadius: 12 }}>{String(du).replace(/_/g, ' ')}</Tag>
-                : <Text type="secondary" style={{ fontSize: 11 }}>{record.packingMaterial || '—'}</Text>}
-              {dest && <Text type="secondary" style={{ fontSize: 10 }}>→ {dest} tab</Text>}
-            </Space>
-          );
+          return record.displayUnitType ? <Tag color="purple">{record.displayUnitType}</Tag> : <Text type="secondary">—</Text>;
         },
-      },
-      {
-        title: 'Product Spec',
-        key: 'productSpec',
+      }] : []),
+      ...(label === 'Box' ? [{
+        title: 'Lamination',
+        key: 'lamination',
         render: (_, record) => {
-          if (record.isKitParent || record.isKitChild) {
-            // Kit rows: show the kit-level sticker / printing carried on the row.
-            const st = (record.sticker || '').toUpperCase();
-            const pr = (record.printing || '').toUpperCase();
-            if (!st && !pr) return <Text type="secondary">—</Text>;
-            return (
-              <Space wrap size={3}>
-                {st && <Tag color={st === 'YES' ? 'green' : 'default'} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>Sticker: {st === 'YES' ? 'Yes' : 'No'}</Tag>}
-                {pr && <Tag color={pr === 'YES' ? 'purple' : 'default'} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>Print: {pr === 'YES' ? 'Yes' : 'No'}</Tag>}
-              </Space>
-            );
-          }
-          // Look up the full item from the normalized order to get all attributes
-          const ord = apiOrders.find((o) => o.id === record.orderId);
-          const productLower = (record.product || '').toLowerCase();
-          const item = (ord?.items || []).find(
-            (it) => (it.itemName || it.name || it.product || '').toLowerCase() === productLower,
-          );
-          if (!item) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-          const sticker = (item.sticker || '').toUpperCase();
-          const printing = (item.printing || '').toUpperCase();
-          const packing = item.packingMaterial || item.packaging || '';
-          const brand = item.brand || '';
-          const mat = item.materialCategory || item.material || '';
-          // Dynamic attrs not already shown
-          const SKIP = new Set(['itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total','printing','stickerPrinting','product']);
-          const dynAttrs = Object.entries(item).filter(([k, v]) => {
-            if (SKIP.has(k)) return false;
-            if (v == null || v === '') return false;
-            if (typeof v === 'object' && !Array.isArray(v)) return false;
-            if (Array.isArray(v) && v.length === 0) return false;
-            return true;
-          });
-          const hasAny = sticker || printing || packing || brand || mat || dynAttrs.length > 0;
-          if (!hasAny) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
-          const prettyK = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
-          return (
-            <Space wrap size={3} style={{ maxWidth: 200 }}>
-              {sticker && <Tag color={sticker === 'YES' ? 'green' : 'default'} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>Sticker: {sticker === 'YES' ? 'Yes' : 'No'}</Tag>}
-              {printing && <Tag color={printing === 'YES' ? 'purple' : 'default'} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>Print: {printing === 'YES' ? 'Yes' : 'No'}</Tag>}
-              {packing && <Tag color="orange" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{packing}</Tag>}
-              {brand && <Tag style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{brand}</Tag>}
-              {mat && <Tag color="cyan" style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{mat}</Tag>}
-              {dynAttrs.map(([k, v]) => (
-                <Tag key={k} style={{ fontSize: 10, borderRadius: 4, margin: 0 }}>{prettyK(k)}: {Array.isArray(v) ? v.join(', ') : String(v)}</Tag>
-              ))}
-            </Space>
-          );
+          if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          const val = (record.lamination || '').toUpperCase();
+          if (!val) return <Text type="secondary">—</Text>;
+          return <Tag color={val === 'YES' ? 'green' : 'default'}>{val === 'YES' ? 'Yes' : 'No'}</Tag>;
         },
-      },
+      }] : []),
       {
         title: 'Qty',
         dataIndex: 'qty',
@@ -990,7 +952,7 @@ export default function Operations() {
         render: (_, record) => {
           // Kit children (display-unit assembly) share the parent's single upload — show — here.
           // Individually-packed products are standalone rows (no isKitChild) and keep their own design.
-          if (record.isKitChild || record.isEmergencyGated) return <Text type="secondary">—</Text>;
+          if (record.isKitChild) return <Text type="secondary">—</Text>;
           const sr = findStickerReq(record);
           const url = sr?.designFileUrl || findHotelDesign(record)?.designFileUrl;
           const isExisting = !sr?.designFileUrl && !!findHotelDesign(record)?.designFileUrl;
@@ -1050,17 +1012,6 @@ export default function Operations() {
           // (no isKitChild flag) and render their own full upload/approval flow below.
           if (record.isKitChild) {
             return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
-          }
-          if (record.isEmergencyGated) {
-            return (
-              <Tag
-                icon={<LockOutlined />}
-                color="orange"
-                style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8 }}
-              >
-                Locked — complete emergency items first
-              </Tag>
-            );
           }
           const step = getQueueStep(record);
           const sr = findStickerReq(record);
@@ -1268,7 +1219,7 @@ export default function Operations() {
                     onClick={async () => {
                       const ord = apiOrders.find((o) => o.id === record.orderId);
                       try {
-                        await sendToStickerTeam({ id: sr?._id || record.key, orderId: record.orderId, type: teamSendType }).unwrap();
+                        await sendToStickerTeam({ id: sr?._id || record.key, orderId: record.orderId, type: label }).unwrap();
                         enqueueSnackbar(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`, { variant: 'success' });
                       } catch (err) {
                         enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send WhatsApp notification', { variant: 'error' });
@@ -1320,6 +1271,9 @@ export default function Operations() {
                           srId = created.data._id;
                         }
                         await updateStickerStatus({ id: srId, status: 'In Process' }).unwrap();
+                        if (ord?.key) {
+                          updateItemPrintingStatus({ orderId: ord.key, itemKey: record.key, printingStatus: 'Printing', product: record.product }).catch(() => {});
+                        }
                         advanceStep(record.key, 3);
                         const dest = record.packagingType;
                         if (dest === 'box') {
@@ -1561,6 +1515,8 @@ export default function Operations() {
             stickerPrinting: first.stickerPrinting,
             packagingType: first.packagingType,
             displayUnit: first.displayUnit || '',
+            displayUnitType: first.displayUnitType || '',
+            lamination: first.lamination || '',
             sticker: first.sticker || '',
             printing: first.printing || '',
             packingMaterial: first.packingMaterial || '',
@@ -1571,20 +1527,34 @@ export default function Operations() {
       });
     }
 
-    // Cluster rows by order-composition category (personalized → separate kit → separate product)
-    // so each category reads as a group within the queue, keeping emergency items first inside each.
-    // Recency (newest order first) is the primary key — same as the other tabs — so the category
-    // clustering only groups rows belonging to the SAME order, never pulls an older order ahead.
+    // Final display order:
+    //   1. Every row belonging to an EMERGENCY ORDER floats to the top TOGETHER (isUrgent is an
+    //      order-level flag carried by every row/kit of that order) — not just the one row/kit
+    //      that happens to carry the flagged emergency product. Box/Ziplock/Butter split a single
+    //      order into separate category groups (personalized / separate kit / separate product);
+    //      keying only off the per-item isEmergencyProduct flag left the order's OTHER groups
+    //      behind, so part of the order stayed below the fold. isUrgent fixes that.
+    //   2. Within an emergency order's own rows, the row/kit carrying the actual flagged
+    //      emergency product(s) still leads.
+    //   3. Then newest order first (descending by date — apiOrders is already sorted -createdAt
+    //      by the backend, so ascending orderRank = newest first).
+    //   4. Then order-composition category (personalized → separate kit → separate product), so
+    //      each category reads as a group within the same order.
     const CATEGORY_ORDER = { personalized: 0, separate_kit: 1, separate_product: 2 };
     const orderRank = new Map(apiOrders.map((o, idx) => [o.id, idx]));
     tableSource = [...tableSource].sort((a, b) => {
+      const aUrgent = a.isUrgent ? 1 : 0;
+      const bUrgent = b.isUrgent ? 1 : 0;
+      if (aUrgent !== bUrgent) return bUrgent - aUrgent;
+      const aEmg = a.isEmergencyProduct ? 1 : 0;
+      const bEmg = b.isEmergencyProduct ? 1 : 0;
+      if (aEmg !== bEmg) return bEmg - aEmg;
       const ra = orderRank.has(a.orderId) ? orderRank.get(a.orderId) : Number.MAX_SAFE_INTEGER;
       const rb = orderRank.has(b.orderId) ? orderRank.get(b.orderId) : Number.MAX_SAFE_INTEGER;
       if (ra !== rb) return ra - rb;
       const ca = CATEGORY_ORDER[a.category] ?? 3;
       const cb = CATEGORY_ORDER[b.category] ?? 3;
-      if (ca !== cb) return ca - cb;
-      return (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0);
+      return ca - cb;
     });
 
     return (
@@ -1595,12 +1565,12 @@ export default function Operations() {
           extra={
             <Space>
               <Button
-                icon={<AlertFilled />}
+                icon={<UploadOutlined />}
                 type="primary"
                 style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                onClick={() => { setTeamSendType(type); setTeamSendOpen(true); }}
+                onClick={() => navigate(`/operations/invoices/${INVOICE_TYPE_SLUG[type] || 'sticker'}`)}
               >
-                Send to {type} Team
+                Upload Invoice
               </Button>
               <Button icon={<PlusOutlined />} onClick={() => openRequestModal(type)}>
                 New {type} Request
@@ -1617,19 +1587,13 @@ export default function Operations() {
             <Table
               dataSource={tableSource}
               columns={queueColumns(type)}
-              expandable={type !== 'Sticker' ? {
-                // Initially collapsed; accordion — opening one kit row closes the previously open one.
-                expandedRowKeys: expandedQueueKey[type] ? [expandedQueueKey[type]] : [],
-                onExpand: (expanded, record) =>
-                  setExpandedQueueKey((prev) => ({ ...prev, [type]: expanded ? record.key : null })),
-              } : undefined}
+              // Kit parent rows carry a `children` array (used for the "Includes" summary tags
+              // and product count elsewhere) but that must never render as AntD's built-in nested
+              // rows — the kit parent row's Actions/Product columns already summarize the included
+              // products, so a per-product breakdown underneath is redundant clutter.
+              expandable={{ childrenColumnName: '__kitChildrenNotExpandable' }}
               pagination={type === 'Sticker' ? { showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' } : false}
               size="small"
-              onRow={(record) =>
-                record.isEmergencyGated
-                  ? { style: { opacity: 0.45, pointerEvents: 'none', background: 'rgba(0,0,0,0.02)' } }
-                  : {}
-              }
             />
           </div>
         </Card>
@@ -2136,6 +2100,9 @@ export default function Operations() {
                   await updateOrderStatus({ id: ord.key, operationStage: 'Dispatch', stockStatus: 'Dispatched', printingStatus: 'Yet to Receive' }).unwrap();
                   setPrintingStatuses((prev) => ({ ...prev, [ord.id]: 'Yet to Receive' }));
                   setDispatchTimes((prev) => ({ ...prev, [ord.id]: { date: vals.dispatchDate, time: vals.dispatchTime } }));
+                  if (selectedQueueItem) {
+                    updateItemPrintingStatus({ orderId: ord.key, itemKey: selectedQueueItem.key, printingStatus: 'Yet to Receive', product: selectedQueueItem.product }).catch(() => {});
+                  }
                 }
                 // Persist dispatch on the StickerRequest so the step survives page refresh.
                 // findStickerReq uses the key suffix (-box/-frosted/-butter) to find the right SR type.
@@ -2208,90 +2175,6 @@ export default function Operations() {
           </Form.Item>
           <Text type="secondary" style={{ fontSize: 12 }}>* Stock will be updated with "Received" status.</Text>
         </Form>
-      </Modal>
-
-      <Modal
-        title={
-          <Space>
-            <AlertFilled style={{ color: '#ff4d4f' }} />
-            <span>Send to {teamSendType} Team</span>
-            <Tag color="default">{teamSendItems.length} Total</Tag>
-            {teamSendItems.filter((i) => i.isUrgent).length > 0 && (
-              <Tag color="error">{teamSendItems.filter((i) => i.isUrgent).length} Urgent</Tag>
-            )}
-          </Space>
-        }
-        open={teamSendOpen}
-        onCancel={() => setTeamSendOpen(false)}
-        width={820}
-        footer={[
-          <Button key="cancel" onClick={() => setTeamSendOpen(false)}>Cancel</Button>,
-          <Button
-            key="send"
-            type="primary"
-            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-            onClick={async () => {
-              try {
-                await sendToStickerTeam({
-                  type: teamSendType,
-                  items: teamSendItems.map((i) => i.key),
-                }).unwrap();
-                enqueueSnackbar(`${teamSendItems.length} item(s) sent to ${teamSendType} Team`, { variant: 'success' });
-                setTeamSendOpen(false);
-              } catch (err) {
-                enqueueSnackbar(err?.data?.message || err?.data || `Failed to send to ${teamSendType} Team`, { variant: 'error' });
-              }
-            }}
-          >
-            Send All to {teamSendType} Team
-          </Button>,
-        ]}
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size={16}>
-          {teamSendItems.filter((i) => i.isUrgent).length > 0 && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '6px 12px', borderRadius: 8, background: '#fff2f0', border: '1px solid #ffccc7' }}>
-                <AlertFilled style={{ color: '#ff4d4f' }} />
-                <Text strong style={{ color: '#ff4d4f' }}>Urgent / Emergency Deliveries (Partial)</Text>
-                <Tag color="error">{teamSendItems.filter((i) => i.isUrgent).length}</Tag>
-              </div>
-              <Table
-                dataSource={teamSendItems.filter((i) => i.isUrgent)}
-                rowKey="key"
-                size="small"
-                pagination={false}
-                columns={[
-                  { title: 'Order', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                  { title: 'Hotel', dataIndex: 'hotelLogo' },
-                  { title: 'Product', dataIndex: 'product' },
-                  { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
-                  { title: 'Status', key: 'status', render: () => <Tag icon={<AlertFilled />} color="error">Emergency</Tag> },
-                ]}
-              />
-            </div>
-          )}
-          {teamSendItems.filter((i) => !i.isUrgent).length > 0 && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <Text strong>Pending Orders</Text>
-                <Tag>{teamSendItems.filter((i) => !i.isUrgent).length}</Tag>
-              </div>
-              <Table
-                dataSource={teamSendItems.filter((i) => !i.isUrgent)}
-                rowKey="key"
-                size="small"
-                pagination={false}
-                columns={[
-                  { title: 'Order', dataIndex: 'orderId', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                  { title: 'Hotel', dataIndex: 'hotelLogo' },
-                  { title: 'Product', dataIndex: 'product' },
-                  { title: 'Qty', dataIndex: 'qty', render: (v) => (v || 0).toLocaleString() },
-                  { title: 'Status', key: 'status', render: () => <Tag color="default">Pending</Tag> },
-                ]}
-              />
-            </div>
-          )}
-        </Space>
       </Modal>
 
       {/* ── Emergency Dispatch — Ops Head Approval Modal ──────────────────── */}

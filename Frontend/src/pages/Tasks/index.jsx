@@ -606,19 +606,6 @@ export default function Tasks() {
         : v ? <Tag color={paymentColor[v] || 'default'}>{v}</Tag> : <Text style={{ color: '#999', fontSize: 11 }}>N/A</Text>,
     },
     {
-      title: 'Follow-up', key: 'followup', responsive: ['md'],
-      render: (_, r) => r.salesFollowup
-        ? (
-          <Tooltip title={`${r.salesPerson} must follow up with ${r.client}`}>
-            <Tag color="red" icon={<BellOutlined />} style={{ cursor: 'pointer' }}
-              onClick={() => handleFollowupDone(r.id)}>
-              Required
-            </Tag>
-          </Tooltip>
-        )
-        : <Tag color="default" style={{ color: '#999' }}>Done</Tag>,
-    },
-    {
       title: 'Time / Rating', key: 'timeRating', responsive: ['lg'], width: 150,
       render: (_, r) => (
         <Space direction="vertical" size={2}>
