@@ -71,9 +71,14 @@ async function sendDispatchNotifyWhatsApp(orderDoc, dispatch) {
   }
 }
 
+// The Dispatch UI's Status filter shows display labels, but DispatchRecord.status only
+// ever stores 'Draft' | 'Confirmed' | 'Dispatched' — translate before querying so the
+// filter actually matches instead of silently returning zero results.
+const STATUS_LABEL_TO_DB = { 'Ready to Dispatch': 'Confirmed', 'Packing': 'Draft', 'Dispatched': 'Dispatched' };
+
 exports.getDispatches = asyncHandler(async (req, res) => {
   const filter = {};
-  if (req.query.status) filter.status = req.query.status;
+  if (req.query.status && STATUS_LABEL_TO_DB[req.query.status]) filter.status = STATUS_LABEL_TO_DB[req.query.status];
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
 
@@ -82,11 +87,23 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   // just the id/isEmergency for every matching record (already sorted by recency),
   // then stable-sort emergency-first — this keeps recency order within each bucket —
   // and only paginate the ordered id list before running the full populate below.
-  const allMatching = await DispatchRecord.find(filter)
+  let allMatching = await DispatchRecord.find(filter)
     .select('orderId createdAt')
     .populate({ path: 'orderId', select: 'isEmergency' })
     .sort('-createdAt')
     .lean();
+
+  // Payment status isn't stored on DispatchRecord — it's resolved live from the linked
+  // order/invoices — so it can't be part of the Mongo `filter` above. Only pay the extra
+  // resolve cost when this filter is actually requested.
+  if (req.query.paymentStatus) {
+    const withPayment = await Promise.all(allMatching.map(async (d) => ({
+      d,
+      paymentStatus: d.orderId?._id ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending') : 'Pending',
+    })));
+    allMatching = withPayment.filter((x) => x.paymentStatus === req.query.paymentStatus).map((x) => x.d);
+  }
+
   const emergencyCount = allMatching.filter((d) => d.orderId?.isEmergency).length;
   const sortedIds = [...allMatching]
     .sort((a, b) => (b.orderId?.isEmergency ? 1 : 0) - (a.orderId?.isEmergency ? 1 : 0))

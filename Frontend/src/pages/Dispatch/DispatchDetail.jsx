@@ -226,8 +226,15 @@ export default function DispatchDetail() {
     const isCredit = o.paymentTerms === 'CREDIT_10_30';
     // orderPaymentStatus resolved live from invoices (mirrors Dispatch list logic).
     const livePayStatus = d.orderPaymentStatus || 'Pending';
-    // Payment is "Confirmed" for dispatch purposes once the order balance is cleared, or credit terms apply.
-    const basePaymentConfirmed = isSample || isCredit || livePayStatus === 'Paid' || (o.balance != null && o.balance <= 0) || o.status === 'Completed';
+    // Set once both Sales Head and Ops Head approve the Emergency Dispatch request
+    // (Task/tasks.controller approveEmergencyOps) — an explicit dispatch-despite-pending-payment
+    // override, so it must unblock this gate the same as a cleared balance would.
+    const emergencyApproved = !!o.emergencyApproved;
+    // Whether the balance is actually cleared, independent of the emergency override below —
+    // used to tell the "really paid" case apart from "dispatch allowed despite pending payment".
+    const reallyPaymentConfirmed = isSample || isCredit || livePayStatus === 'Paid' || (o.balance != null && o.balance <= 0) || o.status === 'Completed';
+    // Payment is "Confirmed" for dispatch purposes once the order balance is cleared, credit terms apply, or Sales+Ops emergency-approved it.
+    const basePaymentConfirmed = reallyPaymentConfirmed || emergencyApproved;
     return {
       key: d._id, id: o.orderCode || d.orderCode || d._id,
       orderObjectId: o._id || d.orderId,
@@ -236,9 +243,11 @@ export default function DispatchDetail() {
       product: derivedProduct, qty: derivedQty,
       boxes: d.boxes || 0, weight: d.weight || '',
       basePaymentConfirmed,
+      emergencyApproved,
+      reallyPaymentConfirmed,
       isCredit,
       creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
-      payment: isCredit ? 'Credit' : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (basePaymentConfirmed ? 'Confirmed' : 'Pending'))),
+      payment: isCredit ? 'Credit' : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (emergencyApproved ? 'Emergency Approved' : (basePaymentConfirmed ? 'Confirmed' : 'Pending')))),
       destination: o.destination || lead.destination || '',
       detailedAddress: o.detailedAddress || lead.detailedAddress || lead.address || '',
       city: o.city || lead.city || '', state: o.state || lead.state || '', pincode: o.pincode || lead.pincode || '',
@@ -838,6 +847,15 @@ export default function DispatchDetail() {
           />
         </motion.div>
       )}
+      {!order.isSample && !order.isCredit && order.emergencyApproved && !order.reallyPaymentConfirmed && (
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+          <Alert type="warning" showIcon
+            message="Emergency-Approved — Dispatch Allowed With Payment Pending"
+            description="Sales Head and Ops Head both approved this emergency dispatch. Payment is not yet fully collected — follow up separately."
+            style={{ marginBottom: 16, borderRadius: 8 }}
+          />
+        </motion.div>
+      )}
       {!order.isSample && !order.isCredit && !paymentConfirmed && (
         <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
           <Alert type="error" showIcon
@@ -900,6 +918,8 @@ export default function DispatchDetail() {
                     ? <Tag color="default">N/A (Sample)</Tag>
                     : order.isCredit
                     ? <Tag color="blue">Credit{order.creditDueDate ? ` — Due ${new Date(order.creditDueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : ''}</Tag>
+                    : order.emergencyApproved && !order.reallyPaymentConfirmed
+                    ? <Tag color="warning">Emergency Approved</Tag>
                     : <Tag color={paymentConfirmed ? 'success' : 'error'}>{paymentConfirmed ? 'Confirmed' : 'Pending'}</Tag>}
                 </Descriptions.Item>
                 <Descriptions.Item label="Status">

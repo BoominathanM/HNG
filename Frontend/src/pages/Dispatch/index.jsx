@@ -118,7 +118,12 @@ export default function Dispatch() {
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
 
   // ── Dispatch orders — RTK Query ─────────────────────────────────────────
-  const { data: dispatchData } = useGetDispatchesQuery({ page: dispatchPage, limit: dispatchPageSize, ...(dispatchStatusFilter ? { status: dispatchStatusFilter } : {}) });
+  // "Payment Pending" isn't a DispatchRecord.status value (it's a resolved payment
+  // state), so it's sent as a separate param so the backend can filter on it correctly.
+  const dispatchStatusParams = dispatchStatusFilter === 'Payment Pending'
+    ? { paymentStatus: 'Pending' }
+    : (dispatchStatusFilter ? { status: dispatchStatusFilter } : {});
+  const { data: dispatchData } = useGetDispatchesQuery({ page: dispatchPage, limit: dispatchPageSize, ...dispatchStatusParams });
   const { data: todaysDispatchData } = useGetTodaysDispatchesQuery();
   const [uploadLR] = useUploadDispatchLRMutation();
   const [confirmDispatch] = useConfirmDispatchMutation();
