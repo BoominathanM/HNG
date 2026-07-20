@@ -1010,6 +1010,11 @@ export const apiSlice = createApi({
       query: () => ({ url: '/parties/vendors-ledger' }),
       providesTags: ['Parties'],
     }),
+    // Live "other pending dues" total for a hotel — used by invoice/quotation documents
+    // (Billing, Sales, Dispatch) to show a hotel's outstanding balance on new documents.
+    getHotelPendingDue: builder.query({
+      query: (params) => ({ url: '/parties/pending-due', params }),
+    }),
 
     // ── Reports ──────────────────────────────────────────────────────────────
     getSalesReport: builder.query({

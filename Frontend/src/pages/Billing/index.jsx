@@ -18,6 +18,7 @@ import dayjs from 'dayjs';
 import html2pdf from 'html2pdf.js';
 import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
+import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import {
@@ -970,8 +971,23 @@ export default function Billing() {
     }
   };
 
-  const handlePrintDocument = (docType, data) => {
-    const html = generatePrintHTML(docType, data, invoiceSettings);
+  // Enriches document data with the hotel's outstanding due from its OTHER unpaid invoices (if
+  // any) before rendering — shared by Print/Download/View so the "Pending Amount" line is
+  // consistent everywhere a document is generated from this page. `key` is the real Invoice
+  // document id only for invoiceList rows (no `docType`) — quotationList/salesOrdersList rows
+  // are Quotation/Order docs, not invoices, so nothing is excluded for those (there's no
+  // invoice of their own yet to exclude).
+  const withPendingDue = async (data) => {
+    const clientName = data?.customer?.name || data?.client;
+    if (!clientName || clientName === '—') return data;
+    const excludeInvoiceId = !data?.docType ? data?.key : undefined;
+    const pendingDue = await fetchHotelPendingDue({ clientName, excludeInvoiceId });
+    return pendingDue ? { ...data, pendingDue } : data;
+  };
+
+  const handlePrintDocument = async (docType, data) => {
+    const enriched = await withPendingDue(data);
+    const html = generatePrintHTML(docType, enriched, invoiceSettings);
     const win = window.open('', '_blank', 'width=900,height=700');
     win.document.write(html);
     win.document.close();
@@ -984,7 +1000,8 @@ export default function Billing() {
   // viewport position too and render as a blank page. Let html2pdf's own overlay do the hiding;
   // this node is only briefly present in the live DOM.
   const generateDocumentPdfBlob = async (docType, data) => {
-    const html = generatePrintHTML(docType, data, invoiceSettings);
+    const enrichedData = await withPendingDue(data);
+    const html = generatePrintHTML(docType, enrichedData, invoiceSettings);
     const docEl = new DOMParser().parseFromString(html, 'text/html').querySelector('.doc');
     const container = document.createElement('div');
     container.appendChild(docEl);
@@ -1130,7 +1147,7 @@ export default function Billing() {
       title: 'Actions', key: 'actions', width: 320, fixed: 'right',
       render: (_, r) => (
         <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
-          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); }} /></Tooltip>
+          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={async () => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); setSelectedInv(await withPendingDue(r)); }} /></Tooltip>
           <Tooltip title="Edit GST"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openGstEdit(r)} /></Tooltip>
           <Tooltip title="Send invoice on WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp('invoice', r)} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
@@ -1176,7 +1193,7 @@ export default function Billing() {
         const docType = isOrder ? 'invoice' : 'quotation';
         return (
           <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
-            <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedInv({ ...r, inv: r.quot }); setViewDocType(docType); setViewModal(true); }} /></Tooltip>
+            <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={async () => { const base = { ...r, inv: r.quot }; setSelectedInv(base); setViewDocType(docType); setViewModal(true); setSelectedInv(await withPendingDue(base)); }} /></Tooltip>
             <Tooltip title={isOrder ? 'Send invoice on WhatsApp' : 'Send quotation on WhatsApp'}><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp(docType, r)} /></Tooltip>
             <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
             <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument(docType, r)} /></Tooltip>

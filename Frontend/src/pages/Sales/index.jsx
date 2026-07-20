@@ -24,6 +24,7 @@ import { useSelector } from 'react-redux';
 import html2pdf from 'html2pdf.js';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition } from '../../utils/docComposition';
+import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import {
@@ -2108,7 +2109,11 @@ export default function Sales() {
     const rowKey = order?.key || order?._id || data.quot;
     setDownloadingOrderKey(rowKey);
     try {
-      const pdfBlob = await generateOrderDocPdfBlob(data);
+      const clientPartyId = order?.clientPartyId?._id || order?.clientPartyId || src?.clientPartyId?._id || src?.clientPartyId;
+      // Sales doesn't track a linked Invoice id on the order, so there's nothing reliable to
+      // exclude here — matches everywhere else the hotel has an unpaid invoice on file.
+      const pendingDue = await fetchHotelPendingDue({ clientPartyId, clientName: data.customer.name });
+      const pdfBlob = await generateOrderDocPdfBlob(pendingDue ? { ...data, pendingDue } : data);
       const blobUrl = URL.createObjectURL(pdfBlob);
       const a = document.createElement('a');
       a.href = blobUrl;
@@ -2126,7 +2131,7 @@ export default function Sales() {
 
   // Download any record (quotation / negotiation) directly — no linked-quotation lookup.
   // Uses the record's own products/kitOrders so negotiated prices are shown as-is.
-  const handleDownloadDirect = (rec, filename) => {
+  const handleDownloadDirect = async (rec, filename) => {
     const products = (rec.products || []).filter(Boolean);
     const kitOrders = (rec.kitOrders || []).filter(Boolean);
     const items = products.map(p => {
@@ -2176,7 +2181,11 @@ export default function Sales() {
         placeOfSupply: rec.state || '',
       },
     };
-    const html = generatePrintHTML('quotation', data, invoiceSettings);
+    const clientPartyId = rec?.clientPartyId?._id || rec?.clientPartyId;
+    // rec is a Quotation/Negotiation record, not an Invoice, so there's no invoice of its own
+    // to exclude — matches everywhere else the hotel has an unpaid invoice on file.
+    const pendingDue = await fetchHotelPendingDue({ clientPartyId, clientName: data.customer.name });
+    const html = generatePrintHTML('quotation', pendingDue ? { ...data, pendingDue } : data, invoiceSettings);
     const blob = new Blob([html], { type: 'text/html' });
     const blobUrl = URL.createObjectURL(blob);
     const win = window.open(blobUrl, '_blank');

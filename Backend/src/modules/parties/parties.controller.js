@@ -134,6 +134,73 @@ const computeOrderPaid = (o) => {
   return collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
 };
 
+// Total outstanding due for a hotel/party across its UNPAID INVOICES (Invoice.balanceDue,
+// kept authoritative by Invoice's own pre-save hook: total - advanceAmount). Deliberately
+// reads Invoice documents rather than Order documents — Order.total is not reliably kept in
+// sync with the final kit-aware total (a real case: an order's stored `total` was ₹60,030
+// while its actual Invoice.total was ₹78,930, because kit pricing was folded in at invoice
+// time but the Order.total field was never re-saved), so summing Order totals silently
+// undercounts. Invoice.total/balanceDue is always the correct, final figure.
+// Matches by partyId when given, else resolves the Party by case-insensitive exact name —
+// Invoice.partyId is a required reference (unlike Order.clientName, which is free text), so
+// once the party is resolved the match is a direct partyId lookup, no OR-matching needed.
+// excludeInvoiceId keeps the invoice currently being viewed/printed/downloaded out of its own
+// "other pending" total — excluding by INVOICE, not by order, matters when one order has more
+// than one invoice against it (e.g. a re-issued invoice): excluding the whole order would hide
+// a sibling invoice's genuine outstanding balance from the other.
+//
+// A payment recorded straight onto the linked Order does NOT always sync back onto the
+// Invoice — e.g. syncOrderPaymentCollection (fired from a Quotation-stage payment via
+// updateQuotation) writes only to Order.paymentCollection/paidAmount via findByIdAndUpdate,
+// bypassing the Invoice-sync block that only lives in Sales' own updateOrder handler. Left
+// unchecked, Invoice.advanceAmount can under-report a payment that Sales/Operations/Dispatch
+// already show as received, making an ALREADY-PAID invoice look pending here. So for every
+// invoice with a linked order, reconcile against that order the same way the codebase's own
+// resolveOrderPaymentStatus already does (utils/syncOrderPayment.js): take the larger of
+// Invoice vs Order paid, and the larger of Invoice vs Order total, before computing the due.
+exports.getHotelPendingDue = asyncHandler(async (req, res) => {
+  const { partyId: partyIdParam, clientName, excludeInvoiceId } = req.query;
+  let partyId = partyIdParam;
+  if (!partyId && clientName && clientName.trim()) {
+    const nameRe = new RegExp(`^${clientName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+    const party = await Party.findOne({ name: nameRe, deletedAt: null }).select('_id').lean();
+    partyId = party?._id;
+  }
+  if (!partyId) {
+    return res.status(200).json({ success: true, data: { pending: 0, hotelName: clientName || null, invoiceCount: 0 } });
+  }
+
+  const filter = { partyId };
+  if (excludeInvoiceId) filter._id = { $ne: excludeInvoiceId };
+
+  const invoices = await Invoice.find(filter).select('total advanceAmount balanceDue isComplementary orderId').lean();
+
+  const orderIds = invoices.map((inv) => inv.orderId).filter(Boolean);
+  const orders = orderIds.length
+    ? await Order.find({ _id: { $in: orderIds } })
+        .select('paymentCollection paidAmount advancePaidAmount advancePaid total amount')
+        .lean()
+    : [];
+  const orderById = new Map(orders.map((o) => [o._id.toString(), o]));
+
+  const pending = invoices.reduce((s, inv) => {
+    if (inv.isComplementary) return s;
+    let paid = Number(inv.advanceAmount) || 0;
+    let total = Number(inv.total) || 0;
+    const order = inv.orderId ? orderById.get(inv.orderId.toString()) : null;
+    if (order) {
+      paid = Math.max(paid, computeOrderPaid(order));
+      total = Math.max(total, Number(order.total) || Number(order.amount) || 0);
+    }
+    return s + Math.max(0, total - paid);
+  }, 0);
+
+  res.status(200).json({
+    success: true,
+    data: { pending: Math.round(pending * 100) / 100, hotelName: clientName || null, invoiceCount: invoices.length },
+  });
+});
+
 // Builds the full ledger for a party: real LedgerEntry rows (Invoice/Payment/
 // Credit/Debit Note/Opening Balance) PLUS a synthetic Bill/Payment row for every
 // order that isn't already backed by a real ledger entry — so "paid and unpaid

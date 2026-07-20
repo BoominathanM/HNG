@@ -32,6 +32,7 @@ import {
   useUploadFilesMutation,
 } from '../../store/api/apiSlice';
 import { buildDocComposition } from '../../utils/docComposition';
+import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDispatchGroupedProducts, summarizeDispatchVerification } from '../../utils/dispatchGrouping';
 
@@ -148,7 +149,7 @@ export default function DispatchDetail() {
   // filterVerified=true (the default — used everywhere except the explicit "Full Invoice"
   // button once fully dispatched) drops any product/kit line whose dispatch item isn't
   // verified, so the printed invoice only ever shows what's actually been checked and boxed.
-  const buildInvoiceData = (inv, filterVerified = true) => {
+  const buildInvoiceData = async (inv, filterVerified = true) => {
     const halfGst = Math.round((inv.gstAmount || 0) / 2 * 100) / 100;
 
     // Extract linked order (populated by API) for kit composition data
@@ -187,8 +188,16 @@ export default function DispatchDetail() {
     }, kits);
     const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+    const customerName = inv.partyId?.name || order?.client || '—';
+    const pendingDue = await fetchHotelPendingDue({
+      clientPartyId: inv.partyId?._id,
+      clientName: customerName,
+      excludeInvoiceId: inv._id,
+    });
+
     return {
       inv: inv.invoiceNumber,
+      pendingDue,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       type: inv.invoiceType || 'GST',
       total: inv.total || 0,
@@ -228,13 +237,13 @@ export default function DispatchDetail() {
   // filterVerified=true → "Print Invoice" / "Print Combined Invoice" (only verified
   // products so far). filterVerified=false → "Print Full Invoice" (every order item,
   // available once fully dispatched, regardless of verification).
-  const handlePrintInvoice = (filterVerified = true) => {
+  const handlePrintInvoice = async (filterVerified = true) => {
     const rawInvoices = orderInvoicesData?.data || [];
     if (rawInvoices.length === 0) {
       enqueueSnackbar('No invoice found for this order. Please create one from the Billing page.', { variant: 'warning' });
       return;
     }
-    const invoiceData = buildInvoiceData(rawInvoices[0], filterVerified);
+    const invoiceData = await buildInvoiceData(rawInvoices[0], filterVerified);
     const html = generatePrintHTML('invoice', invoiceData, invoiceSettings);
     const win = window.open('', '_blank', 'width=900,height=700');
     win.document.write(html);
@@ -626,7 +635,7 @@ export default function DispatchDetail() {
           enqueueSnackbar('No invoice found for this order — create one in Billing first, or uncheck the WhatsApp notify option.', { variant: 'warning' });
         } else {
           try {
-            const invoiceData = buildInvoiceData(rawInvoices[0]);
+            const invoiceData = await buildInvoiceData(rawInvoices[0]);
             const pdfBlob = await generateInvoicePdfBlob(invoiceData);
             invoiceDocumentFilename = `invoice-${rawInvoices[0].invoiceNumber || order.id}.pdf`;
             const fd = new FormData();

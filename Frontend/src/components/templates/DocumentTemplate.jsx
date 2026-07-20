@@ -382,9 +382,24 @@ function computeModel(type, data, settings) {
   // Expected Delivery Date is shown next to the Quotation Date only — invoices show no second date.
   const secondDate = isQuotation ? (data.expectedDeliveryDate || '') : '';
 
+  // Other outstanding dues for this same hotel (from its other unpaid invoices), pre-fetched
+  // by the caller (Billing/Sales/Dispatch) and attached as data.pendingDue = { amount, hotelName }.
+  // Paid-off invoices never reach here (their balanceDue is 0, so the backend excludes them) —
+  // this is genuinely only the hotel's OTHER still-unpaid balance.
+  const pendingDue = data.pendingDue && Number(data.pendingDue.amount) > 0
+    ? { amount: Number(data.pendingDue.amount), hotelName: data.pendingDue.hotelName || customer.name }
+    : null;
+  // Total Amount above stays this document's own legal/tax total (subtotal + tax + charges for
+  // THIS invoice's items only — must never be inflated with another invoice's dues). This is a
+  // separate, clearly-labelled combined figure — this invoice's total PLUS the hotel's other
+  // pending due — shown as its own line so both numbers are visible without corrupting the
+  // invoice's own GST total.
+  const grandTotalWithPending = pendingDue ? r2d(totalAmount + pendingDue.amount) : null;
+
   return {
     cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
     forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
+    pendingDue, grandTotalWithPending,
   };
 }
 
@@ -575,7 +590,8 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
 export function generatePrintHTML(type, data = {}, settings = {}) {
   const m = computeModel(type, data, settings);
   const { cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
-    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate } = m;
+    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
+    pendingDue, grandTotalWithPending } = m;
   const ACCENT = cfg.theme.accent;
   const LIGHT = cfg.theme.light;
   const BORDER = cfg.theme.border;
@@ -673,6 +689,19 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
     <tr>
       <td style="padding:4px 0;font-size:11px;color:#333;">ROUND OFF</td>
       <td style="padding:4px 0;font-size:11px;text-align:right;">${roundOff < 0 ? '&minus; ' : ''}&#x20B9;${Math.abs(roundOff).toLocaleString()}</td>
+    </tr>` : '';
+
+  // Outstanding dues from this hotel's OTHER unpaid invoices — shown alongside a combined
+  // Grand Total (this invoice's own Total Amount above stays untouched — it's the legal/tax
+  // total for THIS invoice's items only).
+  const pendingDueRow = pendingDue ? `
+    <tr>
+      <td style="padding:8px 0 4px;font-size:11px;font-weight:800;color:#b91c1c;border-top:1px dashed ${BORDER};">Pending Amount (${pendingDue.hotelName})</td>
+      <td style="padding:8px 0 4px;font-size:11px;font-weight:800;color:#b91c1c;text-align:right;border-top:1px dashed ${BORDER};">&#x20B9;${r2d(pendingDue.amount).toLocaleString()}</td>
+    </tr>
+    <tr>
+      <td style="padding:4px 0;font-size:12px;font-weight:800;color:#b91c1c;">Grand Total (Incl. Pending)</td>
+      <td style="padding:4px 0;font-size:12px;font-weight:800;color:#b91c1c;text-align:right;">&#x20B9;${r2d(grandTotalWithPending).toLocaleString()}</td>
     </tr>` : '';
 
   return `<!DOCTYPE html>
@@ -794,6 +823,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
             <td style="padding:7px 0 4px;font-size:12px;font-weight:800;color:${ACCENT};">Total Amount</td>
             <td style="padding:7px 0 4px;font-size:12px;font-weight:800;color:${ACCENT};text-align:right;">&#x20B9;${r2d(totalAmount).toLocaleString()}</td>
           </tr>
+          ${pendingDueRow}
         </table>
       </div>
     </div>
@@ -992,7 +1022,8 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
 export default function DocumentTemplate({ type = 'quotation', data = {}, settings = {} }) {
   const m = computeModel(type, data, settings);
   const { cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
-    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate } = m;
+    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
+    pendingDue, grandTotalWithPending } = m;
   const ACCENT = cfg.theme.accent;
   const LIGHT = cfg.theme.light;
   const BORDER = cfg.theme.border;
@@ -1171,6 +1202,18 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
                 <td style={{ padding: '7px 0 4px', fontSize: 12, fontWeight: 800, color: ACCENT }}>Total Amount</td>
                 <td style={{ padding: '7px 0 4px', fontSize: 12, fontWeight: 800, color: ACCENT, textAlign: 'right' }}>₹{r2d(totalAmount).toLocaleString()}</td>
               </tr>
+              {pendingDue && (
+                <>
+                  <tr>
+                    <td style={{ padding: '8px 0 4px', fontSize: 11, fontWeight: 800, color: '#b91c1c', borderTop: `1px dashed ${BORDER}` }}>Pending Amount ({pendingDue.hotelName})</td>
+                    <td style={{ padding: '8px 0 4px', fontSize: 11, fontWeight: 800, color: '#b91c1c', textAlign: 'right', borderTop: `1px dashed ${BORDER}` }}>₹{r2d(pendingDue.amount).toLocaleString()}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: '4px 0', fontSize: 12, fontWeight: 800, color: '#b91c1c' }}>Grand Total (Incl. Pending)</td>
+                    <td style={{ padding: '4px 0', fontSize: 12, fontWeight: 800, color: '#b91c1c', textAlign: 'right' }}>₹{r2d(grandTotalWithPending).toLocaleString()}</td>
+                  </tr>
+                </>
+              )}
             </tbody>
           </table>
         </div>
