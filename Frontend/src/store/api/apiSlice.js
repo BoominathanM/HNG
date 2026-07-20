@@ -280,6 +280,10 @@ export const apiSlice = createApi({
       query: ({ id, formData }) => ({ url: `/dispatch/${id}/box-photos`, method: 'post', data: formData }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
+    uploadItemBoxPhotos: builder.mutation({
+      query: ({ id, itemId, formData }) => ({ url: `/dispatch/${id}/items/${itemId}/box-photos`, method: 'post', data: formData }),
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
+    }),
     addBoxPhotoUrl: builder.mutation({
       query: ({ id, type, url }) => ({ url: `/dispatch/${id}/box-photo-url`, method: 'patch', data: { type, url } }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
@@ -1032,6 +1036,10 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/auditor-tax', params }),
       providesTags: ['Reports'],
     }),
+    getForwardingCourierReport: builder.query({
+      query: (params) => ({ url: '/reports/forwarding-courier', params }),
+      providesTags: ['Reports'],
+    }),
     getMyPerformance: builder.query({
       query: (params) => ({ url: '/reports/my-performance', params }),
       providesTags: ['Reports'],
@@ -1173,6 +1181,7 @@ export const {
   useConfirmDispatchMutation,
   useVerifyInvoiceMutation,
   useUploadBoxPhotosMutation,
+  useUploadItemBoxPhotosMutation,
   useAddBoxPhotoUrlMutation,
   useGetTodaysDispatchesQuery,
   useGetTransportsQuery,
@@ -1356,6 +1365,7 @@ export const {
   useGetBillPLQuery,
   useGetMonthlyGstQuery,
   useGetAuditorTaxQuery,
+  useGetForwardingCourierReportQuery,
   useGetMyPerformanceQuery,
   useGetPerformanceQuery,
   useUploadFilesMutation,

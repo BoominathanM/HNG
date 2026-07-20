@@ -46,6 +46,10 @@ const dispatchRecordSchema = new mongoose.Schema({
     qtyDispatched: Number,
     verified: { type: Boolean, default: false },
     boxPhotoUrl: String,
+    // Per-product open/closed box photos — required before this item can be
+    // verified (max 5 each, enforced in uploadItemBoxPhotos).
+    openBoxPhotos: { type: [String], default: [] },
+    closeBoxPhotos: { type: [String], default: [] },
     boxes: Number,
     // Kit identity — copied from the order item at dispatch creation so the
     // verification table can group Personalized Kit / Separate Kit / Separate

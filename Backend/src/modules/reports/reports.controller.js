@@ -337,6 +337,30 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     + localPurchases.reduce((s, l) => s + (Number(l.totalAmount) || 0), 0);
   const grossProfit = totalSales - totalCogs;
 
+  // Paid vs pending, mirroring the same paymentCollection-first fallback chain used by
+  // syncOrderPayment.resolveOrderPaymentStatus and sales.controller's reminder computation —
+  // keeps this report's paid/pending in agreement with what Sales/Billing show for an order.
+  //
+  // orderPaid()/orderTotalValue() are against the order's real (GST-inclusive) total, since
+  // that's what a payment is actually collected against. But `sales`/`salesGst` above are
+  // reported excl-GST vs GST-collected separately (so the Excl./Incl. GST toggle can show
+  // either). To keep "Paid + Pending" always reconciling to whichever Total Sales figure is
+  // on screen, we derive a paid RATIO per order and apply it to sales/salesGst individually,
+  // rather than comparing the GST-inclusive paid/total against the excl-GST sales figure.
+  const orderPaid = (o) => {
+    const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+    return collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
+  };
+  const orderTotalValue = (o) => Number(o.total) || (Number(o.amount) || 0) + (Number(o.gstAmount) || 0);
+  const paidRatio = (o) => {
+    const total = orderTotalValue(o);
+    return total > 0 ? Math.min(1, orderPaid(o) / total) : 0;
+  };
+  // Excl-GST paid/pending, applying each order's own paid ratio to its excl-GST sales
+  // figure so these reconcile exactly with `totalSales` above (also excl-GST).
+  const totalPaid = orders.reduce((s, o) => s + r2((Number(o.amount) || 0) * paidRatio(o)), 0);
+  const totalPending = orders.reduce((s, o) => s + r2((Number(o.amount) || 0) * (1 - paidRatio(o))), 0);
+
   const expenseBreakdown = emptyExpenses();
   expenses.forEach((e) => {
     const cat = EXPENSE_CAT_MAP[e.category] || 'other';
@@ -350,27 +374,37 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   const monthlyMap = {};
   orders.forEach((o) => {
     const key = o.createdAt?.toLocaleString('default', { month: 'short' }) || '';
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
-    monthlyMap[key].sales += Number(o.amount) || 0;
-    monthlyMap[key].salesGst += Number(o.gstAmount) || 0;
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
+    const sales = Number(o.amount) || 0;
+    const salesGst = Number(o.gstAmount) || 0;
+    const ratio = paidRatio(o);
+    monthlyMap[key].sales += sales;
+    monthlyMap[key].salesGst += salesGst;
+    // Split each order's excl-GST sales and its GST by the SAME paid ratio, so
+    // paid+pending always reconciles exactly to sales (Excl. GST) or sales+salesGst
+    // (Incl. GST) — whichever Total Sales figure the GST-mode toggle is showing.
+    monthlyMap[key].paid += r2(sales * ratio);
+    monthlyMap[key].pending += r2(sales * (1 - ratio));
+    monthlyMap[key].paidGst += r2(salesGst * ratio);
+    monthlyMap[key].pendingGst += r2(salesGst * (1 - ratio));
   });
   purchaseOrders.forEach((po) => {
     const key = po.createdAt?.toLocaleString('default', { month: 'short' }) || '';
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
     const amt = Number(po.amount) || 0;
     monthlyMap[key].cogs += amt;
     monthlyMap[key].cogsGst += r2(amt - amt / 1.18);
   });
   localPurchases.forEach((lp) => {
     const key = lp.createdAt?.toLocaleString('default', { month: 'short' }) || '';
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
     // No GST captured on local purchases — counts toward COGS but not input-GST credit.
     monthlyMap[key].cogs += Number(lp.totalAmount) || 0;
   });
   Object.values(monthlyMap).forEach((m) => { m.grossProfit = m.sales - m.cogs; });
   expenses.forEach((e) => {
     const key = e.expenseDate?.toLocaleString('default', { month: 'short' }) || '';
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, expenses: emptyExpenses() };
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
     const cat = EXPENSE_CAT_MAP[e.category] || 'other';
     monthlyMap[key].expenses[cat] = (monthlyMap[key].expenses[cat] || 0) + e.amount;
   });
@@ -430,7 +464,7 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     data: {
-      summary: { totalSales, totalSalesGst, totalCogs, grossProfit, totalExpenses, netProfit, netGstPayable },
+      summary: { totalSales, totalSalesGst, totalCogs, grossProfit, totalExpenses, netProfit, netGstPayable, totalPaid, totalPending },
       expenseBreakdown,
       monthlyData: Object.values(monthlyMap),
       productData: Object.values(productMap),
@@ -626,6 +660,84 @@ exports.getAuditorTax = asyncHandler(async (req, res) => {
     igst: r.igst,
   }));
   res.status(200).json({ success: true, data: rows });
+});
+
+// ─── FORWARDING & COURIER CHARGES REPORT ──────────────────────────────────────
+// Forwarding charge is billed at the Order level (Order.forwardingChargeAmount); courier
+// charge is captured per Payment (Payment.courierCharge) when recording an invoice payment
+// in Billing. Both are joined back onto their Invoice so the report can group them
+// month-wise and hotel-wise (hotel = the invoice's Party, matching every other report's
+// customer grouping — see getSalesReport/getAuditorTax).
+exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
+  const Payment = require('../../models/Payment');
+  const invoices = await Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
+    .populate('partyId', 'name')
+    .populate('orderId', 'forwardingChargeAmount')
+    .sort('-invoiceDate');
+
+  const payments = await Payment.find(
+    { invoiceId: { $in: invoices.map((inv) => inv._id) } },
+    'invoiceId courierCharge'
+  );
+  const courierByInvoice = {};
+  payments.forEach((p) => {
+    const key = String(p.invoiceId);
+    courierByInvoice[key] = (courierByInvoice[key] || 0) + (Number(p.courierCharge) || 0);
+  });
+
+  const data = [];
+  const monthlyHotelMap = {};
+
+  invoices.forEach((inv) => {
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const forwardingCharge = Number(order?.forwardingChargeAmount) || 0;
+    const courierCharge = r2(courierByInvoice[String(inv._id)] || 0);
+    if (!forwardingCharge && !courierCharge) return;
+
+    const hotel = inv.partyId?.name || 'Unknown';
+    const month = inv.invoiceDate?.toLocaleString('default', { month: 'short' }) || '';
+    const year = inv.invoiceDate?.getFullYear() || '';
+
+    data.push({
+      key: String(inv._id),
+      hotel,
+      month,
+      year,
+      invoiceNo: inv.invoiceNumber || '',
+      invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10) || '',
+      forwardingCharge: r2(forwardingCharge),
+      courierCharge,
+      totalCharge: r2(forwardingCharge + courierCharge),
+    });
+
+    const groupKey = `${month}-${year}|${hotel}`;
+    if (!monthlyHotelMap[groupKey]) {
+      monthlyHotelMap[groupKey] = { key: groupKey, month, year, hotel, forwardingCharge: 0, courierCharge: 0, totalCharge: 0, invoiceCount: 0 };
+    }
+    monthlyHotelMap[groupKey].forwardingCharge += forwardingCharge;
+    monthlyHotelMap[groupKey].courierCharge += courierCharge;
+    monthlyHotelMap[groupKey].totalCharge += forwardingCharge + courierCharge;
+    monthlyHotelMap[groupKey].invoiceCount += 1;
+  });
+
+  const monthlyHotelData = Object.values(monthlyHotelMap)
+    .map((r) => ({ ...r, forwardingCharge: r2(r.forwardingCharge), courierCharge: r2(r.courierCharge), totalCharge: r2(r.totalCharge) }))
+    .sort((a, b) => (a.year - b.year) || (MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month)) || a.hotel.localeCompare(b.hotel));
+
+  const totalForwarding = data.reduce((s, r) => s + r.forwardingCharge, 0);
+  const totalCourier = data.reduce((s, r) => s + r.courierCharge, 0);
+
+  res.status(200).json({
+    success: true,
+    data,
+    monthlyHotelData,
+    summary: {
+      totalForwarding: r2(totalForwarding),
+      totalCourier: r2(totalCourier),
+      totalCharges: r2(totalForwarding + totalCourier),
+      count: data.length,
+    },
+  });
 });
 
 // ─── MY PERFORMANCE (individual current user) ────────────────────────────────

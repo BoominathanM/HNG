@@ -24,5 +24,6 @@ router.patch('/:id/box-photo-url', ctrl.addBoxPhotoUrl);
 router.post('/:id/confirm', upload.single('invoice'), ctrl.confirmDispatch);
 router.patch('/:id/lr', upload.single('lr'), ctrl.uploadLR);
 router.patch('/:id/items/:itemId/verify', upload.single('photo'), ctrl.verifyItem);
+router.post('/:id/items/:itemId/box-photos', upload.array('photos', 5), ctrl.uploadItemBoxPhotos);
 
 module.exports = router;

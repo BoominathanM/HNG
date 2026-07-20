@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, InputNumber, Upload, Typography, Space,
   Steps, Descriptions, Alert, Tag, Checkbox,
-  Select, Table, Divider, Spin,
+  Select, Table, Divider, Spin, Image,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import html2pdf from 'html2pdf.js';
@@ -13,7 +13,7 @@ import {
   ArrowLeftOutlined, PrinterOutlined, SaveOutlined, ThunderboltOutlined,
   InboxOutlined, CheckCircleOutlined, FileDoneOutlined, CheckSquareOutlined,
   LinkOutlined, BellOutlined, CarOutlined, WhatsAppOutlined, EditOutlined,
-  LoadingOutlined, GiftOutlined, AppstoreOutlined,
+  LoadingOutlined, GiftOutlined, AppstoreOutlined, CheckCircleFilled,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -25,6 +25,7 @@ import {
   useVerifyItemMutation,
   useSaveAsDraftMutation,
   useUploadBoxPhotosMutation,
+  useUploadItemBoxPhotosMutation,
   useGetInvoicesQuery,
   useGetCompanySettingsQuery,
   useGetKitsQuery,
@@ -66,6 +67,7 @@ export default function DispatchDetail() {
   const [verifyItem] = useVerifyItemMutation();
   const [saveAsDraft] = useSaveAsDraftMutation();
   const [uploadBoxPhotos] = useUploadBoxPhotosMutation();
+  const [uploadItemBoxPhotos] = useUploadItemBoxPhotosMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
 
   // Derive orderId from raw dispatch data (before `order` useMemo is computed)
@@ -83,45 +85,100 @@ export default function DispatchDetail() {
   const kits = kitsRaw?.data || [];
   const invoiceSettings = companySettingsData?.data || {};
 
-  // customRequest for box photo Upload components.
+  // Tracks which upload buttons are mid-request (keyed by "order-open" / "order-close"
+  // for the common section, "<itemId>-open" / "<itemId>-close" for per-item rows) so
+  // the button icon can swap to a spinner while uploading.
+  const [uploadingKeys, setUploadingKeys] = useState(() => new Set());
+  const startUploading = (key) => setUploadingKeys((prev) => new Set(prev).add(key));
+  const stopUploading = (key) => setUploadingKeys((prev) => {
+    const next = new Set(prev);
+    next.delete(key);
+    return next;
+  });
+
+  // customRequest for the order-level "All Closed Box Photos" Upload component.
   // Uploads directly to POST /dispatch/:id/box-photos (Cloudinary + DB save in one step).
-  const makeBoxUpload = (type) => async ({ file, onSuccess, onError }) => {
+  const makeBoxUpload = () => async ({ file, onSuccess, onError }) => {
+    const key = 'order-close';
+    startUploading(key);
     const fd = new FormData();
     fd.append('photos', file);
-    fd.append('type', type);
+    fd.append('type', 'close');
     try {
       const result = await uploadBoxPhotos({ id, formData: fd }).unwrap();
-      const photos = type === 'close' ? result.data?.closeBoxPhotos : result.data?.openBoxPhotos;
+      const photos = result.data?.closeBoxPhotos;
       const url = (photos || []).slice(-1)[0] || '';
       file.url = url;
       file.thumbUrl = url;
       onSuccess(result.data, file);
-      if (type === 'open') setOpenBoxCount(result.data?.openBoxPhotos?.length || 0);
-      else setCloseBoxCount(result.data?.closeBoxPhotos?.length || 0);
+      setCloseBoxCount(photos?.length || 0);
+      enqueueSnackbar('Closed box photo saved', { variant: 'success' });
+    } catch {
+      onError(new Error('Upload failed'));
+      enqueueSnackbar('Closed box photo upload failed', { variant: 'error' });
+    } finally {
+      stopUploading(key);
+    }
+  };
+
+  // Per-product open/closed box photo upload — required before that product can be
+  // verified. Relies on the Dispatch cache invalidation to refetch, so the row's
+  // openBoxPhotos/closeBoxPhotos (threaded through dispatchGrouping's toRow) update
+  // reactively — no local counter state needed.
+  const makeItemBoxUpload = (itemId, type) => async ({ file, onSuccess, onError }) => {
+    const key = `${itemId}-${type}`;
+    startUploading(key);
+    const fd = new FormData();
+    fd.append('photos', file);
+    fd.append('type', type);
+    try {
+      const result = await uploadItemBoxPhotos({ id, itemId, formData: fd }).unwrap();
+      onSuccess(result.data, file);
       enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo saved`, { variant: 'success' });
     } catch {
       onError(new Error('Upload failed'));
       enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo upload failed`, { variant: 'error' });
+    } finally {
+      stopUploading(key);
     }
   };
 
   // Shared by Print Invoice and the WhatsApp "Dispatch Notify" send — builds the same
   // invoice data shape DocumentTemplate expects from the Billing invoice linked to this order.
-  const buildInvoiceData = (inv) => {
+  // filterVerified=true (the default — used everywhere except the explicit "Full Invoice"
+  // button once fully dispatched) drops any product/kit line whose dispatch item isn't
+  // verified, so the printed invoice only ever shows what's actually been checked and boxed.
+  const buildInvoiceData = (inv, filterVerified = true) => {
     const halfGst = Math.round((inv.gstAmount || 0) / 2 * 100) / 100;
 
     // Extract linked order (populated by API) for kit composition data
     const linkedOrder = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
-    const srcProds = linkedOrder?.products?.length
+    let srcProds = linkedOrder?.products?.length
       ? linkedOrder.products
       : (linkedOrder?.items?.length ? linkedOrder.items : []);
-    const srcKitOrders = linkedOrder?.kitOrders || [];
+    let srcKitOrders = linkedOrder?.kitOrders || [];
+
+    if (filterVerified) {
+      // dispatch items (order.items) line up positionally with the order's own
+      // products/items array — same fallback convention dispatchGrouping.js and the
+      // emergency-badge lookup below already rely on — so verified state at index i
+      // applies to srcProds[i].
+      const dispatchItemsList = order?.items || [];
+      const verifiedIndexSet = new Set(
+        dispatchItemsList
+          .map((it, i) => (it?._id && (verifiedProducts.has(it._id) || it.verified) ? i : -1))
+          .filter((i) => i >= 0)
+      );
+      const filteredProds = srcProds.filter((_, i) => verifiedIndexSet.has(i));
+      srcKitOrders = srcKitOrders.filter((ko) => !ko.kitId || filteredProds.some((p) => String(p.kitId) === String(ko.kitId)));
+      srcProds = filteredProds;
+    }
 
     // Pre-built personalized composition (outer packaging folded into Section A's total,
     // included kits/products broken out, remaining in B/C) so the printed invoice matches the
     // Billing invoice exactly. Null when there is no personalized packaging → flat fallback.
     const composition = buildDocComposition({
-      products: linkedOrder?.products || [],
+      products: srcProds,
       kitOrders: srcKitOrders,
       kitPrice: linkedOrder?.kitPrice,
       kitOverallQty: linkedOrder?.kitOverallQty,
@@ -168,13 +225,16 @@ export default function DispatchDetail() {
     };
   };
 
-  const handlePrintInvoice = () => {
+  // filterVerified=true → "Print Invoice" / "Print Combined Invoice" (only verified
+  // products so far). filterVerified=false → "Print Full Invoice" (every order item,
+  // available once fully dispatched, regardless of verification).
+  const handlePrintInvoice = (filterVerified = true) => {
     const rawInvoices = orderInvoicesData?.data || [];
     if (rawInvoices.length === 0) {
       enqueueSnackbar('No invoice found for this order. Please create one from the Billing page.', { variant: 'warning' });
       return;
     }
-    const invoiceData = buildInvoiceData(rawInvoices[0]);
+    const invoiceData = buildInvoiceData(rawInvoices[0], filterVerified);
     const html = generatePrintHTML('invoice', invoiceData, invoiceSettings);
     const win = window.open('', '_blank', 'width=900,height=700');
     win.document.write(html);
@@ -397,7 +457,6 @@ export default function DispatchDetail() {
     }
 
     // Box photo counts from stored arrays
-    if (order.openBoxPhotos.length > 0) setOpenBoxCount(order.openBoxPhotos.length);
     if (order.closeBoxPhotos.length > 0) setCloseBoxCount(order.closeBoxPhotos.length);
 
     // Pre-populate LR/tracking forms from stored data
@@ -468,8 +527,9 @@ export default function DispatchDetail() {
   // a second, final Full Dispatch confirm.
   const [partialConfirmed, setPartialConfirmed] = useState(false);
 
-  // Box photo upload tracking (uploaded immediately via handleBoxPhotoUpload)
-  const [openBoxCount, setOpenBoxCount] = useState(0);
+  // Box photo upload tracking (uploaded immediately via handleBoxPhotoUpload).
+  // Only closed-box photos are collected at the order level (see "All Closed Box
+  // Photos" below) — open-box evidence is captured per-item in the table above.
   const [closeBoxCount, setCloseBoxCount] = useState(0);
 
   // Post-dispatch state (lorry receipt section)
@@ -490,15 +550,21 @@ export default function DispatchDetail() {
   // though the DB still has them marked verified.
   const isRowVerified = (row) => verifiedProducts.has(row.key) || !!row.verified;
 
-  // A personalized kit header has no itemId of its own (it represents the whole kit, not
-  // a single DispatchRecord line item) — it carries `childItemIds` instead, the ids of
-  // every component item (Paste/Brush/Shampoo…) that make up that kit. Verifying the kit
-  // must persist verification for all of them, or the click never reaches the backend and
-  // "Verify Kit" silently resets on the next reload.
+  // Every verifiable row (Personalized Kit component, Separate Kit component, or
+  // Separate Product) must have at least one open-box and one closed-box photo on
+  // file before it can be verified — unverifying is always allowed, no photo needed.
   const toggleVerify = async (row) => {
     const productKey = row.key;
     const alreadyVerified = isRowVerified(row);
     const willVerify = !alreadyVerified;
+    if (willVerify) {
+      const hasOpen = (row.openBoxPhotos?.length || 0) > 0;
+      const hasClose = (row.closeBoxPhotos?.length || 0) > 0;
+      if (!hasOpen || !hasClose) {
+        enqueueSnackbar('Upload at least one open-box and one closed-box photo for this product before verifying.', { variant: 'warning' });
+        return;
+      }
+    }
     setVerifiedProducts(prev => {
       const next = new Set(prev);
       if (alreadyVerified) next.delete(productKey); else next.add(productKey);
@@ -1080,15 +1146,10 @@ export default function DispatchDetail() {
                         {
                           title: 'Product / Kit',
                           dataIndex: 'name',
-                          // Only non-personalized dividers (Separate Kit/Products headers) and
-                          // read-only personalized sub-items span all 3 columns — a personalized
-                          // kit header itself keeps real Status/Action cells (below) so it aligns
-                          // and shows "Verified" the same as every other row.
-                          onCell: (row) => {
-                            if (row.type === 'personalized_item') return { colSpan: 3 };
-                            if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 3 };
-                            return {};
-                          },
+                          // Every kit header (Personalized or Separate) is a divider row only —
+                          // each component item underneath (personalized_item / kit_item) is
+                          // individually verified and gets its own Status/Photos/Action cells.
+                          onCell: (row) => (row.type === 'kit_header' ? { colSpan: 4 } : {}),
                           render: (v, row) => {
                             const emergencyInfo = getRowEmergency(row);
                             const emergencyBadge = emergencyInfo && (
@@ -1125,7 +1186,7 @@ export default function DispatchDetail() {
                                 {(row.type === 'kit_item' || row.type === 'personalized_item') && (
                                   <span style={{ color: '#ccc', fontSize: 13, marginLeft: 8 }}>└</span>
                                 )}
-                                <Text style={{ fontSize: 12, color: row.type === 'personalized_item' ? '#888' : 'inherit' }}>{v}</Text>
+                                <Text style={{ fontSize: 12 }}>{v}</Text>
                                 {row.perKitQty != null && (
                                   <Text style={{ fontSize: 10, color: '#bbb' }}>({row.perKitQty}/kit)</Text>
                                 )}
@@ -1136,37 +1197,89 @@ export default function DispatchDetail() {
                         },
                         {
                           title: 'Status', key: 'status',
-                          onCell: (row) => {
-                            if (row.type === 'personalized_item') return { colSpan: 0 };
-                            if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 0 };
-                            return {};
-                          },
+                          onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
                           render: (_, row) => {
-                            if (row.type === 'personalized_item') return null;
-                            if (row.type === 'kit_header' && !row.isPersonalized) return null;
+                            if (row.type === 'kit_header') return null;
                             return isRowVerified(row)
                               ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
                               : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>;
                           },
                         },
                         {
-                          title: 'Action', key: 'action',
-                          onCell: (row) => {
-                            if (row.type === 'personalized_item') return { colSpan: 0 };
-                            if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 0 };
-                            return {};
-                          },
+                          title: 'Open / Closed Box Photos', key: 'photos',
+                          onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
                           render: (_, row) => {
-                            if (row.type === 'personalized_item') return null;
-                            if (row.type === 'kit_header' && !row.isPersonalized) return null;
+                            if (row.type === 'kit_header') return null;
+                            const openPhotos = row.openBoxPhotos || [];
+                            const closePhotos = row.closeBoxPhotos || [];
+                            const openCount = openPhotos.length;
+                            const closeCount = closePhotos.length;
+                            const thumb = (photos, color) => photos.length > 0 && (
+                              <span style={{ position: 'relative', display: 'inline-flex', width: 28, height: 28 }}>
+                                <Image
+                                  src={photos[photos.length - 1]}
+                                  width={28}
+                                  height={28}
+                                  style={{ objectFit: 'cover', borderRadius: 4, border: `1px solid ${color}` }}
+                                  preview={{ src: photos[photos.length - 1] }}
+                                />
+                                <CheckCircleFilled
+                                  style={{
+                                    position: 'absolute', bottom: -4, right: -4,
+                                    color, background: '#fff', borderRadius: '50%', fontSize: 12,
+                                  }}
+                                />
+                              </span>
+                            );
+                            const openUploading = uploadingKeys.has(`${row.itemId}-open`);
+                            const closeUploading = uploadingKeys.has(`${row.itemId}-close`);
+                            return (
+                              <Space size={4}>
+                                <Upload
+                                  showUploadList={false}
+                                  accept="image/*"
+                                  disabled={openCount >= 1 || openUploading}
+                                  customRequest={makeItemBoxUpload(row.itemId, 'open')}
+                                >
+                                  <Button size="small" icon={openUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
+                                    style={openCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
+                                  >
+                                    Open
+                                  </Button>
+                                </Upload>
+                                {thumb(openPhotos, '#52c41a')}
+                                <Upload
+                                  showUploadList={false}
+                                  accept="image/*"
+                                  disabled={closeCount >= 1 || closeUploading}
+                                  customRequest={makeItemBoxUpload(row.itemId, 'close')}
+                                >
+                                  <Button size="small" icon={closeUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
+                                    style={closeCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
+                                  >
+                                    Closed
+                                  </Button>
+                                </Upload>
+                                {thumb(closePhotos, '#1677ff')}
+                              </Space>
+                            );
+                          },
+                        },
+                        {
+                          title: 'Action', key: 'action',
+                          onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
+                          render: (_, row) => {
+                            if (row.type === 'kit_header') return null;
                             const verified = isRowVerified(row);
-                            const label = row.type === 'kit_header' ? (verified ? 'Unverify' : 'Verify Kit') : (verified ? 'Unverify' : 'Verify');
+                            const hasPhotos = (row.openBoxPhotos?.length || 0) > 0 && (row.closeBoxPhotos?.length || 0) > 0;
                             return (
                               <Button size="small" icon={<CheckSquareOutlined />}
+                                disabled={!verified && !hasPhotos}
+                                title={!verified && !hasPhotos ? 'Upload open & closed box photos first' : undefined}
                                 style={verified ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
                                 onClick={() => toggleVerify(row)}
                               >
-                                {label}
+                                {verified ? 'Unverify' : 'Verify'}
                               </Button>
                             );
                           },
@@ -1196,58 +1309,52 @@ export default function DispatchDetail() {
                       <Descriptions.Item label="Boxes">{order.storedPartialBoxes || 0}</Descriptions.Item>
                     </Descriptions>
                     <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block', marginTop: 8 }}>
-                      Open/Close box photos uploaded so far: {openBoxCount} open, {closeBoxCount} closed.
+                      Closed box photos uploaded so far: {closeBoxCount}.
                     </Text>
                   </div>
                 )}
 
-                {/* Box Photos (multiple, uploaded immediately — both are mandatory) */}
-                <Row gutter={12}>
-                  <Col xs={24} sm={12}>
-                    <Form.Item
-                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Open Box Photos</span>}
-                      validateStatus={openBoxCount === 0 ? 'error' : 'success'}
-                      help={openBoxCount === 0 ? 'At least one open-box photo is required' : `${openBoxCount} photo(s) uploaded`}
-                    >
-                      <Upload
-                        listType="picture"
-                        multiple
-                        customRequest={makeBoxUpload('open')}
-                        accept="image/*"
-                        defaultFileList={(order?.openBoxPhotos || []).map((url, i) => ({
-                          uid: `open-stored-${i}`,
-                          name: `Open photo ${i + 1}`,
-                          status: 'done',
-                          url,
-                        }))}
-                      >
-                        <Button icon={<CameraOutlined />} block>Open Box</Button>
-                      </Upload>
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Form.Item
-                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Closed Box Photos</span>}
-                      validateStatus={closeBoxCount === 0 ? 'error' : 'success'}
-                      help={closeBoxCount === 0 ? 'At least one closed-box photo is required' : `${closeBoxCount} photo(s) uploaded`}
-                    >
-                      <Upload
-                        listType="picture"
-                        multiple
-                        customRequest={makeBoxUpload('close')}
-                        accept="image/*"
-                        defaultFileList={(order?.closeBoxPhotos || []).map((url, i) => ({
-                          uid: `close-stored-${i}`,
-                          name: `Closed photo ${i + 1}`,
-                          status: 'done',
-                          url,
-                        }))}
-                      >
-                        <Button icon={<CameraOutlined />} block>Close Box</Button>
-                      </Upload>
-                    </Form.Item>
-                  </Col>
-                </Row>
+                {/* All Closed Box Photos — order-level closed-box evidence, up to 5,
+                    uploaded immediately. Open box photos are no longer collected here
+                    (only via the per-item Open/Closed buttons in the table above), so
+                    only closeBoxCount gates Confirm Dispatch below. */}
+                <Form.Item
+                  label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>All Closed Box Photos</span>}
+                  validateStatus={closeBoxCount === 0 ? 'error' : 'success'}
+                  help={closeBoxCount === 0 ? 'At least one closed-box photo is required' : `${closeBoxCount} photo(s) uploaded`}
+                >
+                  <Upload
+                    showUploadList={false}
+                    accept="image/*"
+                    disabled={closeBoxCount >= 5 || uploadingKeys.has('order-close')}
+                    customRequest={makeBoxUpload()}
+                  >
+                    <Button icon={uploadingKeys.has('order-close') ? <LoadingOutlined spin /> : <CameraOutlined />}>
+                      Upload Closed Box Photo ({closeBoxCount}/5)
+                    </Button>
+                  </Upload>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                    {(order?.closeBoxPhotos || []).map((url, i) => (
+                      <span key={`close-${i}`} style={{ position: 'relative', display: 'inline-flex' }}>
+                        <Image
+                          src={url}
+                          width={64}
+                          height={64}
+                          style={{ objectFit: 'cover', borderRadius: 6, border: '1px solid #1677ff' }}
+                        />
+                        <CheckCircleFilled
+                          style={{
+                            position: 'absolute', bottom: -4, right: -4,
+                            color: '#1677ff', background: '#fff', borderRadius: '50%', fontSize: 16,
+                          }}
+                        />
+                      </span>
+                    ))}
+                    {closeBoxCount === 0 && (
+                      <Text style={{ fontSize: 12, color: '#999' }}>No closed box photos uploaded yet.</Text>
+                    )}
+                  </div>
+                </Form.Item>
 
                 {/* Print Invoice */}
                 <div style={{ background: sectionBg, border: `1px solid #B11E6A22`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
@@ -1260,14 +1367,35 @@ export default function DispatchDetail() {
                       </Tag>
                     )}
                   </div>
-                  <Button
-                    icon={<PrinterOutlined />}
-                    block
-                    onClick={handlePrintInvoice}
-                    style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontWeight: 600 }}
-                  >
-                    Print Invoice
-                  </Button>
+                  {dispatched ? (
+                    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                      <Button
+                        icon={<PrinterOutlined />}
+                        block
+                        onClick={() => handlePrintInvoice(true)}
+                        style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontWeight: 600 }}
+                      >
+                        Print Combined Invoice (Verified Only)
+                      </Button>
+                      <Button
+                        icon={<PrinterOutlined />}
+                        block
+                        onClick={() => handlePrintInvoice(false)}
+                        style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontWeight: 600 }}
+                      >
+                        Print Full Invoice (All Items)
+                      </Button>
+                    </Space>
+                  ) : (
+                    <Button
+                      icon={<PrinterOutlined />}
+                      block
+                      onClick={() => handlePrintInvoice(true)}
+                      style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontWeight: 600 }}
+                    >
+                      Print Invoice (Verified Only)
+                    </Button>
+                  )}
                   {!orderInvoicesData?.data?.length && (
                     <Text style={{ fontSize: 11, color: '#aaa', display: 'block', marginTop: 6 }}>
                       No invoice linked yet — create one from the Billing page first.
@@ -1308,8 +1436,8 @@ export default function DispatchDetail() {
                 <Button
                   type="primary"
                   icon={<CarOutlined />}
-                  disabled={!paymentConfirmed || dispatched || !verificationGateSatisfied || openBoxCount === 0 || closeBoxCount === 0 || !transportFilled || !weightFilled || !boxesFilled}
-                  style={{ background: (paymentConfirmed && !dispatched && verificationGateSatisfied && openBoxCount > 0 && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
+                  disabled={!paymentConfirmed || dispatched || !verificationGateSatisfied || closeBoxCount === 0 || !transportFilled || !weightFilled || !boxesFilled}
+                  style={{ background: (paymentConfirmed && !dispatched && verificationGateSatisfied && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
                   onClick={handleConfirmDispatch}
                 >
                   {dispatched
@@ -1338,7 +1466,7 @@ export default function DispatchDetail() {
                     <Descriptions.Item label="Boxes">{order.storedBoxes || 0}</Descriptions.Item>
                   </Descriptions>
                   <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block', marginTop: 8 }}>
-                    Open/Close box photos on file: {openBoxCount} open, {closeBoxCount} closed.
+                    Closed box photos on file: {closeBoxCount}.
                   </Text>
                 </div>
               )}

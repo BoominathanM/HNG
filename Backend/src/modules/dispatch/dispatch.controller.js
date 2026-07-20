@@ -463,6 +463,24 @@ exports.updatePickupOrder = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: pickup });
 });
 
+// Upload open/close box photos for a single dispatch line item (field 'photos',
+// body/query ?type=open|close). Capped at 5 photos per field per item — only the
+// first N files that fit under the remaining slots are accepted.
+exports.uploadItemBoxPhotos = asyncHandler(async (req, res, next) => {
+  const dispatch = await DispatchRecord.findById(req.params.id);
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  const item = dispatch.items.id(req.params.itemId);
+  if (!item) return next(new AppError('Dispatch item not found', 404));
+  const type = req.body.type || req.query.type;
+  const field = type === 'close' ? 'closeBoxPhotos' : 'openBoxPhotos';
+  const existing = item[field] || [];
+  const remaining = Math.max(0, 5 - existing.length);
+  const urls = (req.files || []).slice(0, remaining).map((f) => f.path);
+  item[field] = [...existing, ...urls];
+  await dispatch.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, data: dispatch });
+});
+
 exports.verifyItem = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id);
   if (!dispatch) return next(new AppError('Dispatch not found', 404));

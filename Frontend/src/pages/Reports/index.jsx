@@ -16,6 +16,7 @@ import {
   useGetBillPLQuery,
   useGetMonthlyGstQuery,
   useGetAuditorTaxQuery,
+  useGetForwardingCourierReportQuery,
   useGetPerformanceQuery,
 } from '../../store/api/apiSlice';
 
@@ -72,6 +73,10 @@ export default function Reports() {
   const [auditorGstFilter, setAuditorGstFilter] = useState('all');
   const [auditorSearch, setAuditorSearch] = useState('');
 
+  // Forwarding & Courier Charges Report state
+  const [fcSearch, setFcSearch] = useState('');
+  const [fcMonthFilter, setFcMonthFilter] = useState('all');
+
   // Monthly GST Report state
   const [gstMonthFilter, setGstMonthFilter] = useState('all');
   const [gstViewMode, setGstViewMode] = useState('combined');
@@ -98,6 +103,7 @@ export default function Reports() {
   const { data: monthlyGstRaw } = useGetMonthlyGstQuery();
   const { data: performanceRaw } = useGetPerformanceQuery();
   const { data: auditorTaxRaw } = useGetAuditorTaxQuery({ type: 'sales' });
+  const { data: forwardingCourierRaw } = useGetForwardingCourierReportQuery();
 
   const apiSalesData = useMemo(() => salesReportRaw || { data: [], summary: {}, chartData: [] }, [salesReportRaw]);
   const apiPurchaseData = useMemo(() => purchaseReportRaw || { data: [], summary: {}, chartData: [] }, [purchaseReportRaw]);
@@ -106,6 +112,10 @@ export default function Reports() {
   const apiGstData = useMemo(() => monthlyGstRaw?.data || [], [monthlyGstRaw]);
   const apiPerformance = useMemo(() => performanceRaw?.data || { leaderboard: [] }, [performanceRaw]);
   const apiAuditorTax = useMemo(() => auditorTaxRaw?.data || [], [auditorTaxRaw]);
+  const apiForwardingCourier = useMemo(
+    () => forwardingCourierRaw || { data: [], monthlyHotelData: [], summary: {} },
+    [forwardingCourierRaw]
+  );
 
   const handleExport = async (type) => {
     try {
@@ -165,7 +175,11 @@ export default function Reports() {
         const expenses = Object.fromEntries(
           Object.entries(allRow.expenses || {}).map(([k, v]) => [k, Math.round(v * ratio * 100) / 100])
         );
-        return { ...pd, expenses };
+        const paid = Math.round((allRow.paid || 0) * ratio * 100) / 100;
+        const pending = Math.round((allRow.pending || 0) * ratio * 100) / 100;
+        const paidGst = Math.round((allRow.paidGst || 0) * ratio * 100) / 100;
+        const pendingGst = Math.round((allRow.pendingGst || 0) * ratio * 100) / 100;
+        return { ...pd, expenses, paid, pending, paidGst, pendingGst };
       });
     }
     return plMonthlyDataActive;
@@ -178,10 +192,18 @@ export default function Reports() {
   const totalCogsExcl  = plFilteredData.reduce((s, d) => s + d.cogs, 0);
   const totalCogsGst   = plFilteredData.reduce((s, d) => s + (d.cogsGst || 0), 0);
   const totalGrossProfitExcl = plFilteredData.reduce((s, d) => s + d.grossProfit, 0);
+  const totalPaidExcl    = plFilteredData.reduce((s, d) => s + (d.paid || 0), 0);
+  const totalPendingExcl = plFilteredData.reduce((s, d) => s + (d.pending || 0), 0);
+  const totalPaidGst     = plFilteredData.reduce((s, d) => s + (d.paidGst || 0), 0);
+  const totalPendingGst  = plFilteredData.reduce((s, d) => s + (d.pendingGst || 0), 0);
 
   const totalSales      = plGstMode === 'incl' ? totalSalesExcl + totalSalesGst : totalSalesExcl;
   const totalCogs       = plGstMode === 'incl' ? totalCogsExcl + totalCogsGst   : totalCogsExcl;
   const totalGrossProfit = plGstMode === 'incl' ? totalSales - totalCogs         : totalGrossProfitExcl;
+  // Reconciles exactly with totalSales in both GST modes: excl-mode uses just the
+  // excl-GST paid/pending split, incl-mode adds each order's GST portion on top.
+  const totalPaid    = plGstMode === 'incl' ? totalPaidExcl + totalPaidGst       : totalPaidExcl;
+  const totalPending = plGstMode === 'incl' ? totalPendingExcl + totalPendingGst : totalPendingExcl;
   const totalExpenses = plFilteredData.reduce((s, d) =>
     s + plSelectedExpenses.reduce((sum, cat) => sum + (d.expenses[cat] || 0), 0), 0
   );
@@ -738,6 +760,12 @@ export default function Reports() {
                           <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 4 }}>{s.label}</Text>
                           <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>₹{(s.value ?? 0).toLocaleString()}</div>
                           <Text style={{ fontSize: 11, color: '#aaa' }}>{s.sub}</Text>
+                          {s.label === 'Total Sales' && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${s.color}33` }}>
+                              <Text style={{ fontSize: 11, color: '#52c41a', fontWeight: 600 }}>Paid: ₹{(totalPaid ?? 0).toLocaleString()}</Text>
+                              <Text style={{ fontSize: 11, color: '#fa8c16', fontWeight: 600 }}>Pending: ₹{(totalPending ?? 0).toLocaleString()}</Text>
+                            </div>
+                          )}
                         </Card>
                       </motion.div>
                     </Col>
@@ -866,6 +894,14 @@ export default function Reports() {
                             </div>
                           </>
                         )}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: '#52c41a10', borderRadius: 8, border: '1px solid #52c41a22' }}>
+                          <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>Paid Amount</Text>
+                          <Text style={{ fontSize: 13, color: '#52c41a', fontWeight: 700 }}>₹{(totalPaid ?? 0).toLocaleString()}</Text>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: '#fa8c1610', borderRadius: 8, border: '1px solid #fa8c1622' }}>
+                          <Text style={{ fontSize: 12, color: '#fa8c16', fontWeight: 600 }}>Pending Amount</Text>
+                          <Text style={{ fontSize: 13, color: '#fa8c16', fontWeight: 700 }}>₹{(totalPending ?? 0).toLocaleString()}</Text>
+                        </div>
                         <Divider style={{ margin: '2px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: '#B11E6A10', borderRadius: 8, border: '1px solid #B11E6A33' }}>
                           <Text strong style={{ fontSize: 14 }}>Gross Profit</Text>
@@ -1510,27 +1546,45 @@ export default function Reports() {
                         icon={<FileExcelOutlined />}
                         style={{ color: '#52c41a', borderColor: '#52c41a44' }}
                         onClick={() => {
-                          const headers = ['Month', 'Year', 'Sales Taxable (₹)', 'Sales CGST (₹)', 'Sales SGST (₹)', 'Sales IGST (₹)', 'Total Output GST (₹)', 'Purchase Taxable (₹)', 'Purchase CGST (₹)', 'Purchase SGST (₹)', 'Purchase IGST (₹)', 'Total Input GST/ITC (₹)', 'Net GST Payable (₹)'];
-                          const rows = filteredGst.map(r => [
-                            r.month, r.year,
-                            r.sales_taxable, r.sales_cgst, r.sales_sgst, r.sales_igst, r.sales_total_gst,
-                            r.pur_taxable, r.pur_cgst, r.pur_sgst, r.pur_igst, r.pur_total_gst,
-                            r.sales_total_gst - r.pur_total_gst,
-                          ]);
-                          exportToExcel(headers, rows, 'Monthly_GST_Report.csv');
+                          // Export matches the selected view — Sales Only / Purchase Only download their
+                          // own standalone GST report instead of always dumping the combined columns.
+                          if (gstViewMode === 'sales') {
+                            const headers = ['Month', 'Year', 'Sales Taxable (₹)', 'Sales CGST (₹)', 'Sales SGST (₹)', 'Sales IGST (₹)', 'Total Output GST (₹)'];
+                            const rows = filteredGst.map(r => [r.month, r.year, r.sales_taxable, r.sales_cgst, r.sales_sgst, r.sales_igst, r.sales_total_gst]);
+                            exportToExcel(headers, rows, 'Monthly_Sales_GST_Report.csv');
+                          } else if (gstViewMode === 'purchase') {
+                            const headers = ['Month', 'Year', 'Purchase Taxable (₹)', 'Purchase CGST (₹)', 'Purchase SGST (₹)', 'Purchase IGST (₹)', 'Total Input GST/ITC (₹)'];
+                            const rows = filteredGst.map(r => [r.month, r.year, r.pur_taxable, r.pur_cgst, r.pur_sgst, r.pur_igst, r.pur_total_gst]);
+                            exportToExcel(headers, rows, 'Monthly_Purchase_GST_Report.csv');
+                          } else {
+                            const headers = ['Month', 'Year', 'Sales Taxable (₹)', 'Sales CGST (₹)', 'Sales SGST (₹)', 'Sales IGST (₹)', 'Total Output GST (₹)', 'Purchase Taxable (₹)', 'Purchase CGST (₹)', 'Purchase SGST (₹)', 'Purchase IGST (₹)', 'Total Input GST/ITC (₹)', 'Net GST Payable (₹)'];
+                            const rows = filteredGst.map(r => [
+                              r.month, r.year,
+                              r.sales_taxable, r.sales_cgst, r.sales_sgst, r.sales_igst, r.sales_total_gst,
+                              r.pur_taxable, r.pur_cgst, r.pur_sgst, r.pur_igst, r.pur_total_gst,
+                              r.sales_total_gst - r.pur_total_gst,
+                            ]);
+                            exportToExcel(headers, rows, 'Monthly_GST_Report.csv');
+                          }
                         }}
                       >Excel</Button>
                     </div>
                   </Card>
 
-                  {/* KPI cards */}
+                  {/* KPI cards — scoped to the selected view so Sales Only / Purchase Only read as their own separate report */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                     {[
-                      { label: 'Total Sales Taxable Value', value: totSalesTaxable, color: '#B11E6A', sub: 'Output base' },
-                      { label: 'Total Output GST (Sales)', value: totOutputGst, color: '#fa8c16', sub: `CGST ₹${(totSalesCgst ?? 0).toLocaleString()} + SGST ₹${(totSalesSgst ?? 0).toLocaleString()} + IGST ₹${(totSalesIgst ?? 0).toLocaleString()}` },
-                      { label: 'Total Purchase Taxable Value', value: totPurTaxable, color: '#8a1652', sub: 'Input base' },
-                      { label: 'Total Input GST / ITC (Purchase)', value: totInputGst, color: '#7c3aed', sub: `CGST ₹${(totPurCgst ?? 0).toLocaleString()} + SGST ₹${(totPurSgst ?? 0).toLocaleString()} + IGST ₹${(totPurIgst ?? 0).toLocaleString()}` },
-                      { label: 'Net GST Payable', value: netGstPayable, color: netGstPayable > 0 ? '#ff4d4f' : '#52c41a', sub: netGstPayable > 0 ? 'Amount due to govt.' : 'Credit / No liability' },
+                      ...(gstViewMode !== 'purchase' ? [
+                        { label: 'Total Sales Taxable Value', value: totSalesTaxable, color: '#B11E6A', sub: 'Output base' },
+                        { label: 'Total Output GST (Sales)', value: totOutputGst, color: '#fa8c16', sub: `CGST ₹${(totSalesCgst ?? 0).toLocaleString()} + SGST ₹${(totSalesSgst ?? 0).toLocaleString()} + IGST ₹${(totSalesIgst ?? 0).toLocaleString()}` },
+                      ] : []),
+                      ...(gstViewMode !== 'sales' ? [
+                        { label: 'Total Purchase Taxable Value', value: totPurTaxable, color: '#8a1652', sub: 'Input base' },
+                        { label: 'Total Input GST / ITC (Purchase)', value: totInputGst, color: '#7c3aed', sub: `CGST ₹${(totPurCgst ?? 0).toLocaleString()} + SGST ₹${(totPurSgst ?? 0).toLocaleString()} + IGST ₹${(totPurIgst ?? 0).toLocaleString()}` },
+                      ] : []),
+                      ...(gstViewMode === 'combined' ? [
+                        { label: 'Net GST Payable', value: netGstPayable, color: netGstPayable > 0 ? '#ff4d4f' : '#52c41a', sub: netGstPayable > 0 ? 'Amount due to govt.' : 'Credit / No liability' },
+                      ] : []),
                     ].map((s, i) => (
                       <Col xs={12} sm={8} lg={24 / 5} key={s.label}>
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}>
@@ -1673,6 +1727,151 @@ export default function Reports() {
                                 <Text strong style={{ color: net > 0 ? '#ff4d4f' : '#52c41a', fontSize: 12 }}>₹{(net ?? 0).toLocaleString()}</Text>
                               </Table.Summary.Cell>
                             )}
+                          </Table.Summary.Row>
+                        );
+                      }}
+                    />
+                  </Card>
+                </div>
+              );
+            })(),
+          },
+
+          /* ─────────── FORWARDING & COURIER CHARGES REPORT ─────────── */
+          {
+            key: 'forwarding_courier',
+            label: 'Forwarding & Courier Charges',
+            children: (() => {
+              const monthlyHotelRows = apiForwardingCourier.monthlyHotelData || [];
+              const monthOptions = Array.from(new Set(monthlyHotelRows.map(r => `${r.month}-${r.year}`)));
+
+              const filteredFcRows = monthlyHotelRows.filter(r => {
+                const q = fcSearch.toLowerCase();
+                const matchSearch = !q || (r.hotel || '').toLowerCase().includes(q);
+                const matchMonth = fcMonthFilter === 'all' || `${r.month}-${r.year}` === fcMonthFilter;
+                return matchSearch && matchMonth;
+              });
+
+              const totalForwarding = filteredFcRows.reduce((s, r) => s + r.forwardingCharge, 0);
+              const totalCourier = filteredFcRows.reduce((s, r) => s + r.courierCharge, 0);
+              const totalCharges = filteredFcRows.reduce((s, r) => s + r.totalCharge, 0);
+
+              const fcColumns = [
+                { title: 'S.No', key: 'sno', width: 55, align: 'center', fixed: 'left', render: (_, __, i) => <Text style={{ fontSize: 12 }}>{i + 1}</Text> },
+                { title: 'Month', key: 'month', width: 110, render: (_, r) => <Text style={{ fontSize: 12 }}>{r.month} {r.year}</Text> },
+                { title: 'Hotel', dataIndex: 'hotel', key: 'hotel', width: 180, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                { title: 'Invoices', dataIndex: 'invoiceCount', key: 'invoiceCount', width: 90, align: 'center', render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                { title: 'Forwarding Charge', dataIndex: 'forwardingCharge', key: 'forwardingCharge', width: 150, render: v => <Text style={{ color: '#fa8c16', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                { title: 'Courier Charge', dataIndex: 'courierCharge', key: 'courierCharge', width: 150, render: v => <Text style={{ color: '#1890ff', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                { title: 'Total Charge', dataIndex: 'totalCharge', key: 'totalCharge', width: 150, fixed: 'right', render: v => <Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+              ];
+
+              return (
+                <div>
+                  {/* Filter & Search bar */}
+                  <Card style={{ borderRadius: 12, border: 'none', background: cardBg, marginBottom: 14, boxShadow: '0 2px 12px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px' } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                      <Space wrap>
+                        <FilterOutlined style={{ color: '#B11E6A' }} />
+                        <Text strong style={{ color: textColor, fontSize: 13 }}>Month:</Text>
+                        <Select value={fcMonthFilter} onChange={setFcMonthFilter} style={{ width: 140 }}>
+                          <Option value="all">All Months</Option>
+                          {monthOptions.map(m => <Option key={m} value={m}>{m}</Option>)}
+                        </Select>
+                        <Input
+                          prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                          placeholder="Search hotel…"
+                          allowClear
+                          value={fcSearch}
+                          onChange={e => setFcSearch(e.target.value)}
+                          style={{ width: 220, borderRadius: 8 }}
+                        />
+                      </Space>
+                      <Space>
+                        <Button
+                          icon={<FileExcelOutlined />}
+                          style={{ color: '#52c41a', borderColor: '#52c41a44' }}
+                          onClick={() => {
+                            const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Forwarding Charge', 'Courier Charge', 'Total Charge'];
+                            const rows = filteredFcRows.map((r, i) => [
+                              i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.forwardingCharge, r.courierCharge, r.totalCharge,
+                            ]);
+                            exportToExcel(headers, rows, 'Forwarding_Courier_Charges_Report.csv');
+                          }}
+                        >Excel</Button>
+                      </Space>
+                    </div>
+                  </Card>
+
+                  {/* Summary KPI cards */}
+                  <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                    {[
+                      { label: 'Total Forwarding Charges', value: `₹${(totalForwarding ?? 0).toLocaleString()}`, color: '#fa8c16', sub: `${filteredFcRows.length} groups` },
+                      { label: 'Total Courier Charges', value: `₹${(totalCourier ?? 0).toLocaleString()}`, color: '#1890ff', sub: 'From invoice payments' },
+                      { label: 'Total Charges', value: `₹${(totalCharges ?? 0).toLocaleString()}`, color: '#52c41a', sub: 'Forwarding + Courier' },
+                    ].map((s, i) => (
+                      <Col xs={24} sm={8} key={s.label}>
+                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
+                          <Card style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: `linear-gradient(135deg,${s.color}22,${s.color}08)` }} styles={{ body: { padding: '12px 14px' } }}>
+                            <Text style={{ fontSize: 10, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 3 }}>{s.label}</Text>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: s.color }}>{s.value}</div>
+                            <Text style={{ fontSize: 10, color: '#aaa' }}>{s.sub}</Text>
+                          </Card>
+                        </motion.div>
+                      </Col>
+                    ))}
+                  </Row>
+
+                  {/* Month-wise chart */}
+                  <Card
+                    title={<Text strong style={{ color: textColor }}>Forwarding vs Courier Charges (Month &amp; Hotel wise)</Text>}
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginBottom: 14 }}
+                    styles={{ body: { padding: '12px 16px 16px' } }}
+                  >
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={filteredFcRows.map(r => ({
+                        name: `${r.hotel} (${r.month} ${r.year})`,
+                        Forwarding: r.forwardingCharge,
+                        Courier: r.courierCharge,
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                        <XAxis dataKey="name" tick={{ fill: tickColor, fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={70} />
+                        <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
+                        <Tooltip formatter={v => `₹${(v ?? 0).toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
+                        <Legend />
+                        <Bar dataKey="Forwarding" fill="#fa8c16" name="Forwarding Charge" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="Courier" fill="#1890ff" name="Courier Charge" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </Card>
+
+                  {/* Month-wise, hotel-wise table */}
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                      <Title level={5} style={{ color: textColor, margin: 0 }}>Forwarding &amp; Courier Charges — Month wise, Hotel wise</Title>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{filteredFcRows.length} records</Text>
+                    </div>
+                    <Table
+                      size="small"
+                      bordered
+                      scroll={{ x: 'max-content' }}
+                      dataSource={filteredFcRows}
+                      columns={fcColumns}
+                      rowKey="key"
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                      locale={{ emptyText: <Empty description="No forwarding or courier charges found" /> }}
+                      summary={(data) => {
+                        const tFwd = data.reduce((s, r) => s + r.forwardingCharge, 0);
+                        const tCour = data.reduce((s, r) => s + r.courierCharge, 0);
+                        const tTot = data.reduce((s, r) => s + r.totalCharge, 0);
+                        return (
+                          <Table.Summary.Row style={{ fontWeight: 700, background: isDark ? '#2a1a2e' : '#fdf5fa' }}>
+                            <Table.Summary.Cell colSpan={4}>
+                              <Text strong style={{ fontSize: 12 }}>Grand Total</Text>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tFwd ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#1890ff', fontSize: 12 }}>₹{(tCour ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(tTot ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                           </Table.Summary.Row>
                         );
                       }}

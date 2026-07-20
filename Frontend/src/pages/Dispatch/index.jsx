@@ -60,10 +60,22 @@ const isToday = (dateStr) => {
   return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
 };
 
+// Escapes a value for CSV — wraps in quotes (and doubles any inner quotes) whenever
+// the field itself could contain a comma, e.g. the combined address string below.
+const csvCell = (v) => {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
 const exportCSV = (data, filename) => {
-  const headers = ['Order ID', 'Client', 'Destination', 'Product', 'Boxes', 'Weight', 'Payment', 'Status'];
-  const rows = data.map(o => [o.id, o.client, o.destination || '', o.product, o.boxes, o.weight, o.payment, o.status]);
-  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+  const headers = ['S.No', 'Hotel Name', 'Box Count', 'Transport', 'Address', 'Phone Number', 'I STAY', 'After Dispatch'];
+  const rows = data.map((o, i) => {
+    const address = [o.detailedAddress, o.city, o.state, o.pincode]
+      .filter((p) => p && p !== '—')
+      .join(', ') || o.destination || '';
+    return [i + 1, o.client, o.boxes, o.transport, address, o.phone, '', ''];
+  });
+  const csv = [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -383,9 +395,20 @@ export default function Dispatch() {
 
   // `itemIds` may be a single id (plain product/kit-item row) or an array (a
   // personalized kit header, which must persist verification for every component item).
-  const toggleVerifyProduct = async (orderId, productKey, itemIds) => {
+  // `row` (when passed) carries openBoxPhotos/closeBoxPhotos so verify can be gated on
+  // per-product photos already uploaded from the Dispatch Detail page — mirrors the same
+  // gate in DispatchDetail.jsx's toggleVerify, so it can't be bypassed from this list panel.
+  const toggleVerifyProduct = async (orderId, productKey, itemIds, row) => {
     const ids = Array.isArray(itemIds) ? itemIds.filter(Boolean) : (itemIds ? [itemIds] : []);
     const willVerify = !productVerify[orderId]?.verifiedProducts?.has(productKey);
+    if (willVerify && row) {
+      const hasOpen = (row.openBoxPhotos?.length || 0) > 0;
+      const hasClose = (row.closeBoxPhotos?.length || 0) > 0;
+      if (!hasOpen || !hasClose) {
+        enqueueSnackbar('Upload open & closed box photos on the Dispatch Detail page before verifying.', { variant: 'warning' });
+        return;
+      }
+    }
     setProductVerify(prev => {
       const existing = prev[orderId] || { verifiedProducts: new Set() };
       const next = new Set(existing.verifiedProducts);
@@ -461,15 +484,10 @@ export default function Dispatch() {
             {
               title: 'Product / Kit',
               dataIndex: 'name',
-              // Only non-personalized dividers (Separate Kit/Products headers) and read-only
-              // personalized sub-items span all 3 columns — a personalized kit header itself
-              // keeps real Status/Action cells (below) so it aligns and shows "Verified" the
-              // same as every other row.
-              onCell: (row) => {
-                if (row.type === 'personalized_item') return { colSpan: 3 };
-                if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 3 };
-                return {};
-              },
+              // Every kit header (Personalized or Separate) is a divider row only — each
+              // component item underneath (personalized_item / kit_item) is individually
+              // verified and gets its own Status/Action cells.
+              onCell: (row) => (row.type === 'kit_header' ? { colSpan: 3 } : {}),
               render: (v, row) => {
                 if (row.type === 'kit_header') {
                   const cm = catMeta[row.category] || catMeta.separate_kit;
@@ -493,7 +511,7 @@ export default function Dispatch() {
                     {(row.type === 'kit_item' || row.type === 'personalized_item') && (
                       <span style={{ color: '#ccc', fontSize: 13, marginLeft: 8 }}>└</span>
                     )}
-                    <Text style={{ fontSize: 12, color: row.type === 'personalized_item' ? '#888' : 'inherit' }}>{v}</Text>
+                    <Text style={{ fontSize: 12 }}>{v}</Text>
                     {row.perKitQty != null && <Text style={{ fontSize: 10, color: '#bbb' }}>({row.perKitQty}/kit)</Text>}
                   </Space>
                 );
@@ -501,14 +519,9 @@ export default function Dispatch() {
             },
             {
               title: 'Status', key: 'status',
-              onCell: (row) => {
-                if (row.type === 'personalized_item') return { colSpan: 0 };
-                if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 0 };
-                return {};
-              },
+              onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
               render: (_, row) => {
-                if (row.type === 'personalized_item') return null;
-                if (row.type === 'kit_header' && !row.isPersonalized) return null;
+                if (row.type === 'kit_header') return null;
                 return isRowVerified(row)
                   ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
                   : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>;
@@ -516,25 +529,21 @@ export default function Dispatch() {
             },
             {
               title: 'Action', key: 'action',
-              onCell: (row) => {
-                if (row.type === 'personalized_item') return { colSpan: 0 };
-                if (row.type === 'kit_header' && !row.isPersonalized) return { colSpan: 0 };
-                return {};
-              },
+              onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
               render: (_, row) => {
-                if (row.type === 'personalized_item') return null;
-                if (row.type === 'kit_header' && !row.isPersonalized) return null;
+                if (row.type === 'kit_header') return null;
                 const verified = isRowVerified(row);
-                const label = row.type === 'kit_header' ? (verified ? 'Unverify' : 'Verify Kit') : (verified ? 'Unverify' : 'Verify');
-                const ids = row.type === 'kit_header' ? row.childItemIds : row.itemId;
+                const hasPhotos = (row.openBoxPhotos?.length || 0) > 0 && (row.closeBoxPhotos?.length || 0) > 0;
                 return (
                   <Button
                     size="small"
                     icon={<CheckSquareOutlined />}
+                    disabled={!verified && !hasPhotos}
+                    title={!verified && !hasPhotos ? 'Upload open & closed box photos on the Dispatch Detail page first' : undefined}
                     style={verified ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                    onClick={() => toggleVerifyProduct(record.key, row.key, ids)}
+                    onClick={() => toggleVerifyProduct(record.key, row.key, row.itemId, row)}
                   >
-                    {label}
+                    {verified ? 'Unverify' : 'Verify'}
                   </Button>
                 );
               },

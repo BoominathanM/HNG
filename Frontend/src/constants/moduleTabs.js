@@ -82,6 +82,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'bill_pl', label: 'Bill-wise P&L' },
     { key: 'performance', label: 'Performance' },
     { key: 'monthly_gst', label: 'Monthly GST' },
+    { key: 'forwarding_courier', label: 'Forwarding & Courier Charges' },
     { key: 'auditor_tax', label: 'Auditor Tax Report' },
   ],
   Settings: [

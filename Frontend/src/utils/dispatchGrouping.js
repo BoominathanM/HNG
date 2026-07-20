@@ -39,6 +39,8 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
     name: item.product || item.name || item.itemName,
     boxes: item.boxes || 0,
     verified: item.verified,
+    openBoxPhotos: item.openBoxPhotos || [],
+    closeBoxPhotos: item.closeBoxPhotos || [],
     type,
     ...extra,
   });
@@ -83,18 +85,19 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
         isPersonalized,
         verified: kitItems.length > 0 && kitItems.every((it) => it.verified),
         childItemIds: kitItemIds,
-        bucket: isPersonalized ? 'personalizedKit' : null,
+        // Header is a divider only — Personalized Kit components are verified
+        // individually below, same as Separate Kit components.
+        bucket: null,
       };
       rows.push(headerRow);
-      if (isPersonalized) verifiable.push(headerRow);
 
       kitItems.forEach((item, ii) => {
         const totalQty = Number(item.qty || item.qtyOrdered) || 0;
         const perKitQty = overallQty > 0 ? Math.round(totalQty / overallQty) : null;
         const itemType = isPersonalized ? 'personalized_item' : 'kit_item';
-        const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0, bucket: isPersonalized ? null : 'separateKit' });
+        const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0, bucket: isPersonalized ? 'personalizedKit' : 'separateKit' });
         rows.push(row);
-        if (!isPersonalized) verifiable.push(row);
+        verifiable.push(row);
       });
     });
 
