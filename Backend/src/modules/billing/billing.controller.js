@@ -306,7 +306,13 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
       note: req.body.note || '',
       notes: req.body.note || '',
       paymentDate: new Date().toISOString(),
-      recordedAt: new Date().toISOString(),
+      // Reuse the client-generated recordedAt (if supplied) instead of minting a new one.
+      // Billing's frontend also appends this same payment onto the linked Lead's own
+      // paymentCollection (for the Leads tab's courier-charge sum) using its own client-side
+      // timestamp. Sales' Orders tab merges Order + Lead paymentCollection and dedupes by
+      // exact recordedAt+paidAmount match — a fresh server timestamp here would never match
+      // that client one, so the same payment gets counted twice (once per side).
+      recordedAt: req.body.recordedAt || new Date().toISOString(),
       recordedBy: req.user._id,
       recordedByName: req.user.fullName || req.user.name || req.user.email,
       source: 'Billing Invoice',

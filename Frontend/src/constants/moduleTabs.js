@@ -91,6 +91,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'notifications', label: 'Notifications' },
     { key: 'gst', label: 'GST & Tax' },
     { key: 'invoice_settings', label: 'Invoice Settings' },
+    { key: 'alert_configuration', label: 'Alert Configuration' },
     { key: 'deleted_records', label: 'Deleted Records' },
   ],
 };

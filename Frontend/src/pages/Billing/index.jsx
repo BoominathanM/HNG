@@ -7,7 +7,7 @@ import { enqueueSnackbar } from 'notistack';
 import {
   PrinterOutlined, DownloadOutlined, EyeOutlined,
   CheckCircleOutlined, LeftOutlined, UserOutlined,
-  SearchOutlined, CalendarOutlined, WhatsAppOutlined,
+  SearchOutlined, WhatsAppOutlined,
   FileDoneOutlined, EditOutlined, BellOutlined, SafetyCertificateOutlined,
   AlertFilled, ExperimentOutlined, HistoryOutlined,
 } from '@ant-design/icons';
@@ -397,6 +397,16 @@ export default function Billing() {
               ? lead.products
               : itemsToProducts(lead?.items?.length ? lead.items : (q.items || []))));
     const lKitOrders = linkedOrder?.kitOrders?.length ? linkedOrder.kitOrders : (lead?.kitOrders || q.kitOrders || []);
+    // Authoritative payment collection — pick the source whose recorded payments are most
+    // complete (matches `paid = sumPaid(...)`) so a manually-recorded payment ACCUMULATES on
+    // top of prior ones instead of overwriting them when saved back to the quotation/order, and
+    // so courier/round-off (which live only inside paymentCollection entries) aren't silently
+    // dropped from the total when one linked record falls behind another (e.g. a sync gap).
+    const collSum = (c) => (c || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+    const paymentCollection = [linkedOrder, lead, q]
+      .filter(Boolean)
+      .map((src) => src.paymentCollection || [])
+      .reduce((best, c) => (collSum(c) > collSum(best) ? c : best), []);
     const sourceRec = {
       products: lProds,
       kitOrders: lKitOrders,
@@ -407,7 +417,7 @@ export default function Billing() {
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
       // Courier charges recorded via Record Payment In live wherever the payment was saved.
-      paymentCollection: linkedOrder?.paymentCollection || lead?.paymentCollection || q.paymentCollection || [],
+      paymentCollection,
     };
     const kitTotal = computeCompositionGrandTotal(sourceRec, kits);
     const composition = buildDocComposition(sourceRec, kits);
@@ -417,14 +427,6 @@ export default function Billing() {
     // paymentCollection from lead is authoritative (Sales reads the same source)
     const paid = sumPaid(linkedOrder, lead, q);
     const balance = r2(Math.max(0, total - paid));
-    // Authoritative payment collection — pick the source whose recorded payments are most
-    // complete (matches `paid = sumPaid(...)`) so a manually-recorded payment ACCUMULATES on
-    // top of prior ones instead of overwriting them when saved back to the quotation/order.
-    const collSum = (c) => (c || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
-    const paymentCollection = [linkedOrder, lead, q]
-      .filter(Boolean)
-      .map((src) => src.paymentCollection || [])
-      .reduce((best, c) => (collSum(c) > collSum(best) ? c : best), []);
     // Shown below Forwarding Charge on the quotation document (DocumentTemplate) when > 0
     const courierChargeTotal = r2(paymentCollection.reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const roundOffTotal = r2(paymentCollection.reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
@@ -753,25 +755,36 @@ export default function Billing() {
       }
     };
 
-    // Sync scalar paidAmount to lead
+    // Sync scalar paidAmount to lead — also append the paymentCollection entry (courier
+    // charge/round off included) so the Leads tab's kit-aware total, which sums courier
+    // charges off the lead's OWN paymentCollection, picks it up immediately.
     const chainLead = leadId
       ? allLeads.find(l => String(l._id || l.key) === leadId)
       : leadCode ? allLeads.find(l => l.leadCode === leadCode) : null;
-    await syncIfHigher(chainLead, updateLeadMutation);
+    const leadExtraPatch = paymentEntry && chainLead
+      ? { paymentCollection: [...(chainLead.paymentCollection || []), paymentEntry] }
+      : {};
+    await syncIfHigher(chainLead, updateLeadMutation, leadExtraPatch);
 
-    // Sync scalar paidAmount to quotation
+    // Sync scalar paidAmount to quotation (same paymentCollection append as above)
     const chainQuot = quotId
       ? allQuots.find(q => String(q._id || q.key) === quotId)
       : leadId ? allQuots.find(q => String(q.leadId?._id || q.leadId) === leadId)
         : leadCode ? allQuots.find(q => q.leadCode === leadCode) : null;
-    await syncIfHigher(chainQuot, updateSalesQuotationMutation);
+    const quotExtraPatch = paymentEntry && chainQuot
+      ? { paymentCollection: [...(chainQuot.paymentCollection || []), paymentEntry] }
+      : {};
+    await syncIfHigher(chainQuot, updateSalesQuotationMutation, quotExtraPatch);
 
-    // Sync scalar paidAmount to negotiation
+    // Sync scalar paidAmount to negotiation (same paymentCollection append as above)
     const chainNeg = negId
       ? allNegs.find(n => String(n._id || n.key) === negId)
       : quotId ? allNegs.find(n => String(n.quotationId?._id || n.quotationId) === quotId)
         : leadId ? allNegs.find(n => String(n.leadId?._id || n.leadId) === leadId) : null;
-    await syncIfHigher(chainNeg, updateNegotiationMutation);
+    const negExtraPatch = paymentEntry && chainNeg
+      ? { paymentCollection: [...(chainNeg.paymentCollection || []), paymentEntry] }
+      : {};
+    await syncIfHigher(chainNeg, updateNegotiationMutation, negExtraPatch);
 
     // Sync to order (only when source is quotation/invoice, not order itself, and the
     // backend hasn't already written this payment onto the order)
@@ -867,6 +880,11 @@ export default function Billing() {
           roundOff,
           paymentMode: payMode === 'Net Banking' ? 'Bank Transfer' : (payMode || 'Cash'),
           note: payNote || '',
+          // Shared with the paymentCollection entry syncBillingChain appends to the linked
+          // Lead below — so both sides carry the same recordedAt and Sales' Orders tab dedup
+          // (which matches on recordedAt+paidAmount) recognizes them as the same payment
+          // instead of double-counting it.
+          recordedAt: newEntry.recordedAt,
           ...(payBankAccount ? { bankAccount: payBankAccount } : {}),
           ...(payUpiRef ? { upiReference: payUpiRef } : {}),
           ...(payCardLast4 ? { cardLast4: payCardLast4 } : {}),
@@ -898,7 +916,7 @@ export default function Billing() {
     const prevDue = prevInvs.reduce((sum, inv) => sum + inv.balance, 0);
     setConvertDocType(docType);
     setConvertQuot(doc);
-    setConvertAmt(doc.total);
+    setConvertAmt(doc.balance != null && doc.balance > 0 ? doc.balance : doc.total);
     setConvertPreviousDue(prevDue);
     setConvertPrevInvoices(prevInvs);
     setConvertOpen(true);
@@ -1153,10 +1171,7 @@ export default function Billing() {
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument('invoice', r)} /></Tooltip>
           {r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
-            <>
-              <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
-              <Button size="small" icon={<CalendarOutlined />} onClick={() => enqueueSnackbar('Reminder sent to client', { variant: 'success' })} style={{ color: '#fa8c16', fontSize: 12 }}>Reminder</Button>
-            </>
+            <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
           )}
         </Space>
       ),

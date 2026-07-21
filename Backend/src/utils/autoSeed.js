@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const AlertConfig = require('../models/AlertConfig');
 
 const MODULES = [
   'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
@@ -63,4 +64,26 @@ const seedAdminIfEmpty = async () => {
   }
 };
 
-module.exports = { seedAdminIfEmpty, ADMIN_DATA, adminPermissions, adminTabAccess, MODULES };
+// Alert Configuration always edits 6 fixed rows (4 design roles + sales +
+// operations approval) — seed them idempotently so the Settings tab never has
+// to handle a create/delete flow, only edit.
+const ALERT_CONFIG_ROWS = [
+  { group: 'design', role: 'Sticker' },
+  { group: 'design', role: 'Box' },
+  { group: 'design', role: 'Ziplock' },
+  { group: 'design', role: 'Butter Paper' },
+  { group: 'sales_approval', role: null },
+  { group: 'operations_approval', role: null },
+];
+
+const seedAlertConfigsIfMissing = async () => {
+  for (const row of ALERT_CONFIG_ROWS) {
+    await AlertConfig.findOneAndUpdate(
+      { group: row.group, role: row.role },
+      { $setOnInsert: row },
+      { upsert: true }
+    );
+  }
+};
+
+module.exports = { seedAdminIfEmpty, seedAlertConfigsIfMissing, ADMIN_DATA, adminPermissions, adminTabAccess, MODULES };

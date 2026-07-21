@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs, Divider, DatePicker, Tag, Empty } from 'antd';
 import { DownloadOutlined, FileExcelOutlined, FilePdfOutlined, SearchOutlined, FilterOutlined } from '@ant-design/icons';
 import {
@@ -7,6 +7,8 @@ import {
 } from 'recharts';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
+import dayjs from 'dayjs';
+import html2pdf from 'html2pdf.js';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import {
@@ -15,7 +17,6 @@ import {
   useGetProfitLossQuery,
   useGetBillPLQuery,
   useGetMonthlyGstQuery,
-  useGetAuditorTaxQuery,
   useGetForwardingCourierReportQuery,
   useGetPerformanceQuery,
 } from '../../store/api/apiSlice';
@@ -23,12 +24,12 @@ import {
 const { Title, Text } = Typography;
 const { Option } = Select;
 
+// Buckets match EXPENSE_CAT_MAP in reports.controller.js, which in turn matches the real
+// Expense.category enum (Backend/src/models/Expense.js) — Rent/Salary/Marketing chips were
+// removed because no expense category maps to them, so they always showed a permanent ₹0.
 const expenseCategoryConfig = [
-  { key: 'rent',      label: 'Rent',           color: '#B11E6A' },
-  { key: 'salary',    label: 'Salary & Wages', color: '#8a1652' },
-  { key: 'utilities', label: 'Utilities',      color: '#C94F8A' },
+  { key: 'utilities', label: 'Utilities',      color: '#B11E6A' },
   { key: 'transport', label: 'Transport',      color: '#D85C9E' },
-  { key: 'marketing', label: 'Marketing',      color: '#e8739e' },
   { key: 'other',     label: 'Other',          color: '#6b1240' },
 ];
 
@@ -48,6 +49,42 @@ const exportToExcel = (headers, rows, filename) => {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+};
+
+// Rasterizes a tab's KPI+table content (not the filter bar/buttons above it) to a PDF via
+// html2pdf (html2canvas + jsPDF under the hood — same library used for invoice/quotation
+// PDFs in Billing). Table pagination/scroll chrome is captured as-is; this is an internal
+// report export, not a branded document, so pixel-perfect layout isn't the goal.
+const exportRefToPdf = async (ref, filename) => {
+  if (!ref?.current) return;
+  await html2pdf()
+    .from(ref.current)
+    .set({
+      margin: 6,
+      filename,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a3', orientation: 'landscape' },
+      pagebreak: { mode: ['css', 'legacy'] },
+    })
+    .save();
+};
+
+const periodToRange = (period) => {
+  const now = dayjs();
+  switch (period) {
+    case 'week': return [now.startOf('week'), now.endOf('week')];
+    case 'month': return [now.startOf('month'), now.endOf('month')];
+    // dayjs core has no 'quarter' unit (that needs the quarterOfYear plugin, not loaded
+    // here) — compute the quarter's start month manually instead.
+    case 'quarter': {
+      const qStartMonth = Math.floor(now.month() / 3) * 3;
+      const start = now.month(qStartMonth).startOf('month');
+      return [start, start.add(2, 'month').endOf('month')];
+    }
+    case 'year': return [now.startOf('year'), now.endOf('year')];
+    default: return null;
+  }
 };
 
 export default function Reports() {
@@ -84,7 +121,7 @@ export default function Reports() {
   // P&L state
   const [plSelectedMonth, setPlSelectedMonth] = useState('all');
   const [plDateRange, setPlDateRange] = useState(null);
-  const [plSelectedExpenses, setPlSelectedExpenses] = useState(['rent', 'salary', 'utilities', 'transport', 'marketing', 'other']);
+  const [plSelectedExpenses, setPlSelectedExpenses] = useState(['utilities', 'transport', 'other']);
   const [plProductFilter, setPlProductFilter] = useState(null);
   const [plGstMode, setPlGstMode] = useState('excl');
 
@@ -95,15 +132,63 @@ export default function Reports() {
   // Performance state
   const [perfTab, setPerfTab] = useState('leaderboard');
 
+  // Header-level global date filter — applies to every tab. Tabs with their own date
+  // picker (Sales/Purchase/P&L) let that picker override this default; tabs with no picker
+  // of their own (Bill-wise P&L/Monthly GST/Forwarding & Courier/Performance) use this
+  // directly, since previously they had no date filtering UI at all.
+  const [headerDateRange, setHeaderDateRange] = useState(null);
+  const [headerPeriod, setHeaderPeriod] = useState('month');
+  const [activeTabKey, setActiveTabKey] = useState('sales_report');
+  // DOM refs wrapping each tab's KPI+table content (excluding its filter bar) — targeted by
+  // that tab's PDF export button, and by the header's PDF button via activeTabExportMap below.
+  const salesRef = useRef(null);
+  const purchaseRef = useRef(null);
+  const plRef = useRef(null);
+  const billPlRef = useRef(null);
+  const performanceRef = useRef(null);
+  const monthlyGstRef = useRef(null);
+  const forwardingCourierRef = useRef(null);
+  const auditorTaxRef = useRef(null);
+
+  const handlePeriodChange = (period) => {
+    setHeaderPeriod(period);
+    setHeaderDateRange(periodToRange(period));
+  };
+  const handleHeaderRangeChange = (range) => {
+    setHeaderDateRange(range);
+    setHeaderPeriod(null); // custom range no longer matches a quick-select bucket
+  };
+
   // ── API-backed report data — RTK Query ──
-  const { data: salesReportRaw } = useGetSalesReportQuery();
-  const { data: purchaseReportRaw } = useGetPurchaseReportQuery();
-  const { data: profitLossRaw } = useGetProfitLossQuery();
-  const { data: billPLRaw } = useGetBillPLQuery();
-  const { data: monthlyGstRaw } = useGetMonthlyGstQuery();
-  const { data: performanceRaw } = useGetPerformanceQuery();
-  const { data: auditorTaxRaw } = useGetAuditorTaxQuery({ type: 'sales' });
-  const { data: forwardingCourierRaw } = useGetForwardingCourierReportQuery();
+  // Date-range pickers below feed these as query params, so the backend does the actual
+  // filtering (buildDateFilterOn in reports.controller) rather than the UI silently ignoring
+  // the selected range. Tab-specific pickers (when set) override the header's global range.
+  const toDateParams = (range) => (
+    range?.[0] && range?.[1]
+      ? { startDate: range[0].toISOString(), endDate: range[1].toISOString() }
+      : undefined
+  );
+  const headerDateParams = useMemo(() => toDateParams(headerDateRange), [headerDateRange]);
+  const salesDateParams = useMemo(
+    () => toDateParams(salesDateRange) || headerDateParams,
+    [salesDateRange, headerDateParams]
+  );
+  const purchaseDateParams = useMemo(
+    () => toDateParams(purchaseDateRange) || headerDateParams,
+    [purchaseDateRange, headerDateParams]
+  );
+  const plDateParams = useMemo(
+    () => toDateParams(plDateRange) || headerDateParams,
+    [plDateRange, headerDateParams]
+  );
+
+  const { data: salesReportRaw } = useGetSalesReportQuery(salesDateParams);
+  const { data: purchaseReportRaw } = useGetPurchaseReportQuery(purchaseDateParams);
+  const { data: profitLossRaw } = useGetProfitLossQuery(plDateParams);
+  const { data: billPLRaw } = useGetBillPLQuery(headerDateParams);
+  const { data: monthlyGstRaw } = useGetMonthlyGstQuery(headerDateParams);
+  const { data: performanceRaw } = useGetPerformanceQuery(headerDateParams);
+  const { data: forwardingCourierRaw } = useGetForwardingCourierReportQuery(headerDateParams);
 
   const apiSalesData = useMemo(() => salesReportRaw || { data: [], summary: {}, chartData: [] }, [salesReportRaw]);
   const apiPurchaseData = useMemo(() => purchaseReportRaw || { data: [], summary: {}, chartData: [] }, [purchaseReportRaw]);
@@ -111,7 +196,6 @@ export default function Reports() {
   const apiBillPL = useMemo(() => billPLRaw?.data || [], [billPLRaw]);
   const apiGstData = useMemo(() => monthlyGstRaw?.data || [], [monthlyGstRaw]);
   const apiPerformance = useMemo(() => performanceRaw?.data || { leaderboard: [] }, [performanceRaw]);
-  const apiAuditorTax = useMemo(() => auditorTaxRaw?.data || [], [auditorTaxRaw]);
   const apiForwardingCourier = useMemo(
     () => forwardingCourierRaw || { data: [], monthlyHotelData: [], summary: {} },
     [forwardingCourierRaw]
@@ -170,7 +254,7 @@ export default function Reports() {
     if (plProductFilter && plProductMonthlyDataActive[plProductFilter]) {
       return plProductMonthlyDataActive[plProductFilter].map(pd => {
         const allRow = plMonthlyDataActive.find(d => d.month === pd.month);
-        if (!allRow) return { ...pd, expenses: { rent: 0, salary: 0, utilities: 0, transport: 0, marketing: 0, other: 0 } };
+        if (!allRow) return { ...pd, expenses: { utilities: 0, transport: 0, other: 0 } };
         const ratio = allRow.sales > 0 ? pd.sales / allRow.sales : 0;
         const expenses = Object.fromEntries(
           Object.entries(allRow.expenses || {}).map(([k, v]) => [k, Math.round(v * ratio * 100) / 100])
@@ -234,6 +318,7 @@ export default function Reports() {
 
   // Dynamic filter options from real data
   const salesProductOptions = useMemo(() => [...new Set(salesRawData.map(r => r.product).filter(Boolean))], [salesRawData]);
+  const purchaseProductOptions = useMemo(() => [...new Set(purchaseRawData.map(r => r.product).filter(Boolean))], [purchaseRawData]);
   const plProductOptions = useMemo(() => activeProductPLData.map(p => p.product).filter(Boolean), [activeProductPLData]);
   const plMonthOptions = useMemo(() => plMonthlyDataActive.map(d => d.month), [plMonthlyDataActive]);
   const billPlProductOptions = useMemo(() => [...new Set(apiBillPL.map(r => r.product).filter(Boolean))], [apiBillPL]);
@@ -254,27 +339,210 @@ export default function Reports() {
     }, {})
   ).map(([name, value], i) => ({ name, value, color: CHART_COLORS[i % CHART_COLORS.length] }));
 
+  // Export handlers for tabs whose data is computed at component scope (not inside a
+  // per-tab IIFE) — registered here so both the tab's own button and the header's
+  // Excel/PDF buttons (which fire whichever tab is active) call the exact same logic.
+  const exportSalesExcel = () => {
+    const headers = ['GSTIN/UIN', 'Customer Name', 'State Code', 'Place of Supply', 'Invoice No', 'Original Invoice No', 'Invoice Date', 'Invoice Value', 'Taxable Value', 'Total Tax (%)', 'Total Tax Amount', 'Central Tax (CGST)', 'State/UT Tax (SGST)', 'Integrated Tax (IGST)', 'Cess'];
+    const rows = filteredSalesData.map(r => [
+      r.gst_no, r.customer, r.state_code, r.state_name,
+      r.inv_no, r.orig_inv_no, r.inv_date, r.inv_value,
+      r.taxable, r.total_tax > 0 ? ((r.total_tax / r.taxable) * 100).toFixed(0) + '%' : '0%',
+      r.total_tax, r.cgst, r.sgst, r.igst, 0,
+    ]);
+    exportToExcel(headers, rows, 'Sales_Report.csv');
+  };
+  const exportSalesPdf = () => exportRefToPdf(salesRef, 'Sales_Report.pdf');
+
+  const exportPurchaseExcel = () => {
+    const headers = ['Vendor GSTIN', 'Supplier Name', 'Product', 'HSN Code', 'GST Rate (%)', 'Qty', 'Unit Price', 'State Code', 'Place of Supply', 'Invoice No', 'Original Invoice No', 'Invoice Date', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total Tax', 'Invoice Value'];
+    const rows = filteredPurchaseData.map(r => [
+      r.vendor_gst, r.supplier, r.product, r.hsn, r.gst_rate,
+      r.qty, r.unit_price, r.state_code, r.state_name,
+      r.inv_no, r.orig_inv_no, r.inv_date,
+      r.taxable, r.cgst, r.sgst, r.igst, r.total_tax, r.inv_value,
+    ]);
+    exportToExcel(headers, rows, 'Purchase_Report.csv');
+  };
+  const exportPurchasePdf = () => exportRefToPdf(purchaseRef, 'Purchase_Report.pdf');
+
+  const exportPlExcel = () => {
+    const headers = ['Month', 'Sales (Excl. GST)', 'Sales GST', 'COGS', 'Gross Profit', 'Paid', 'Pending', 'Utilities', 'Transport', 'Other Expenses'];
+    const rows = plFilteredData.map(d => [
+      d.month, d.sales, d.salesGst || 0, d.cogs, d.grossProfit, d.paid || 0, d.pending || 0,
+      d.expenses?.utilities || 0, d.expenses?.transport || 0, d.expenses?.other || 0,
+    ]);
+    rows.push(['TOTAL', totalSales, totalSalesGst, totalCogs, totalGrossProfit, totalPaid, totalPending, '', '', totalExpenses]);
+    exportToExcel(headers, rows, 'Profit_Loss_Report.csv');
+  };
+  const exportPlPdf = () => exportRefToPdf(plRef, 'Profit_Loss_Report.pdf');
+  const exportPlDownload = () => { exportPlExcel(); exportPlPdf(); };
+
+  // Bill-wise P&L, Monthly GST, Forwarding & Courier, and Auditor Tax re-derive their
+  // filtered rows here too (duplicating the same small filter, mirrored inside each tab's
+  // own render body below) purely so their export functions can live at component scope —
+  // refs must never be mutated during render (React Compiler rule), so the export-handler
+  // lookup below can only be built from functions that already exist outside any per-tab
+  // render closure.
+  const billPlFilteredForExport = activeBillPLData.filter(r => {
+    const q = billPlSearch.toLowerCase();
+    const matchSearch = !q || r.inv_no.toLowerCase().includes(q) || r.client.toLowerCase().includes(q) || r.product.toLowerCase().includes(q);
+    const matchProd = !billPlProductFilter || r.product === billPlProductFilter;
+    return matchSearch && matchProd;
+  });
+  const exportBillPlExcel = () => {
+    const headers = ['Invoice #', 'Date', 'Client', 'Product', 'Taxable Sales', 'CGST', 'SGST', 'GST Collected', 'Total Bill', 'COGS', 'Gross Profit', 'Margin %', 'Status'];
+    const rows = billPlFilteredForExport.map(r => [
+      r.inv_no, r.date, r.client, r.product, r.sell_taxable, r.cgst, r.sgst,
+      r.gst_collected, r.sell_total, r.cogs, r.gross_profit,
+      r.sell_taxable > 0 ? ((r.gross_profit / r.sell_taxable) * 100).toFixed(1) + '%' : '0%',
+      r.status,
+    ]);
+    exportToExcel(headers, rows, 'Bill_wise_PL_Report.csv');
+  };
+  const exportBillPlPdf = () => exportRefToPdf(billPlRef, 'Bill_wise_PL_Report.pdf');
+
+  const gstFilteredForExport = gstMonthFilter === 'all' ? activeGstData : activeGstData.filter(r => r.month === gstMonthFilter);
+  const exportGstExcel = () => {
+    // Export matches the selected view — Sales Only / Purchase Only download their own
+    // standalone GST report instead of always dumping the combined columns.
+    if (gstViewMode === 'sales') {
+      const headers = ['Month', 'Year', 'Sales Taxable (₹)', 'Sales CGST (₹)', 'Sales SGST (₹)', 'Sales IGST (₹)', 'Total Output GST (₹)'];
+      const rows = gstFilteredForExport.map(r => [r.month, r.year, r.sales_taxable, r.sales_cgst, r.sales_sgst, r.sales_igst, r.sales_total_gst]);
+      exportToExcel(headers, rows, 'Monthly_Sales_GST_Report.csv');
+    } else if (gstViewMode === 'purchase') {
+      const headers = ['Month', 'Year', 'Purchase Taxable (₹)', 'Purchase CGST (₹)', 'Purchase SGST (₹)', 'Purchase IGST (₹)', 'Total Input GST/ITC (₹)'];
+      const rows = gstFilteredForExport.map(r => [r.month, r.year, r.pur_taxable, r.pur_cgst, r.pur_sgst, r.pur_igst, r.pur_total_gst]);
+      exportToExcel(headers, rows, 'Monthly_Purchase_GST_Report.csv');
+    } else {
+      const headers = ['Month', 'Year', 'Sales Taxable (₹)', 'Sales CGST (₹)', 'Sales SGST (₹)', 'Sales IGST (₹)', 'Total Output GST (₹)', 'Purchase Taxable (₹)', 'Purchase CGST (₹)', 'Purchase SGST (₹)', 'Purchase IGST (₹)', 'Total Input GST/ITC (₹)', 'Net GST Payable (₹)'];
+      const rows = gstFilteredForExport.map(r => [
+        r.month, r.year,
+        r.sales_taxable, r.sales_cgst, r.sales_sgst, r.sales_igst, r.sales_total_gst,
+        r.pur_taxable, r.pur_cgst, r.pur_sgst, r.pur_igst, r.pur_total_gst,
+        r.sales_total_gst - r.pur_total_gst,
+      ]);
+      exportToExcel(headers, rows, 'Monthly_GST_Report.csv');
+    }
+  };
+  const exportGstPdf = () => exportRefToPdf(monthlyGstRef, 'Monthly_GST_Report.pdf');
+
+  const fcFilteredForExport = (apiForwardingCourier.monthlyHotelData || []).filter(r => {
+    const q = fcSearch.toLowerCase();
+    const matchSearch = !q || (r.hotel || '').toLowerCase().includes(q);
+    const matchMonth = fcMonthFilter === 'all' || `${r.month}-${r.year}` === fcMonthFilter;
+    return matchSearch && matchMonth;
+  });
+  const exportFcExcel = () => {
+    const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Forwarding Charge', 'Courier Charge', 'Total Charge'];
+    const rows = fcFilteredForExport.map((r, i) => [
+      i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.forwardingCharge, r.courierCharge, r.totalCharge,
+    ]);
+    exportToExcel(headers, rows, 'Forwarding_Courier_Charges_Report.csv');
+  };
+  const exportFcPdf = () => exportRefToPdf(forwardingCourierRef, 'Forwarding_Courier_Charges_Report.pdf');
+
+  // GST/Non-GST bucket keys off Invoice.invoiceType (the statutory distinction — same field
+  // the backend's dedicated /reports/auditor-tax endpoint filters on), not the computed tax
+  // amount — a GST-type invoice with a 0%-rated line item would otherwise be miscategorized
+  // as "without GST" by amount alone.
+  const auditorSalesGstForExport = salesRawData.filter(r => {
+    const matchGst = auditorGstFilter === 'all' ? true : auditorGstFilter === 'with_gst' ? r.invoiceType === 'GST' : r.invoiceType !== 'GST';
+    const q = auditorSearch.toLowerCase();
+    const matchSearch = !q || r.customer.toLowerCase().includes(q) || r.inv_no.toLowerCase().includes(q) || r.gst_no.toLowerCase().includes(q);
+    return matchGst && matchSearch;
+  });
+  const auditorPurchaseGstForExport = purchaseRawData.filter(r => {
+    const matchGst = auditorGstFilter === 'all' ? true : auditorGstFilter === 'with_gst' ? r.total_tax > 0 : r.total_tax === 0;
+    const q = auditorSearch.toLowerCase();
+    const matchSearch = !q || r.supplier.toLowerCase().includes(q) || r.inv_no.toLowerCase().includes(q) || r.vendor_gst.toLowerCase().includes(q);
+    return matchGst && matchSearch;
+  });
+  const exportAuditorExcel = () => {
+    if (auditorSubTab === 'sales') {
+      const headers = ['S.No', 'GSTIN/UIN', 'Receiver Name', 'Invoice No', 'Invoice Date', 'Invoice Value', 'Place of Supply', 'Taxable Value', 'Central Tax Rate (%)', 'Central Tax (₹)', 'State/UT Tax Rate (%)', 'State/UT Tax (₹)', 'Integrated Tax Rate (%)', 'Integrated Tax (₹)', 'Cess (₹)', 'Total Tax (₹)'];
+      const rows = auditorSalesGstForExport.map((r, i) => [
+        i + 1, r.gst_no, r.customer, r.inv_no, r.inv_date, r.inv_value,
+        `${r.state_code} - ${r.state_name}`, r.taxable,
+        r.cgst > 0 ? ((r.cgst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.cgst,
+        r.sgst > 0 ? ((r.sgst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.sgst,
+        r.igst > 0 ? ((r.igst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.igst,
+        0, r.total_tax,
+      ]);
+      exportToExcel(headers, rows, 'Auditor_Sales_Tax_Report.csv');
+    } else {
+      const headers = ['S.No', 'Vendor GSTIN', 'Supplier Name', 'Product', 'HSN Code', 'Invoice No', 'Invoice Date', 'Invoice Value', 'Place of Supply', 'Taxable Value', 'Central Tax Rate (%)', 'Central Tax (₹)', 'State/UT Tax Rate (%)', 'State/UT Tax (₹)', 'Integrated Tax Rate (%)', 'Integrated Tax (₹)', 'Cess (₹)', 'Total Tax (₹)'];
+      const rows = auditorPurchaseGstForExport.map((r, i) => [
+        i + 1, r.vendor_gst, r.supplier, r.product, r.hsn, r.inv_no, r.inv_date, r.inv_value,
+        `${r.state_code} - ${r.state_name}`, r.taxable,
+        r.cgst > 0 ? ((r.cgst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.cgst,
+        r.sgst > 0 ? ((r.sgst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.sgst,
+        r.igst > 0 ? ((r.igst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.igst,
+        0, r.total_tax,
+      ]);
+      exportToExcel(headers, rows, 'Auditor_Purchase_Tax_Report.csv');
+    }
+  };
+  const exportAuditorPdf = () => exportRefToPdf(auditorTaxRef, 'Auditor_Tax_Report.pdf');
+
+  const exportPerformanceExcel = () => {
+    const headers = ['Rank', 'Name', 'Role', 'Orders', 'Revenue', 'Target', 'Conversion %', 'Complaints'];
+    const sorted = [...activeSalesPersonData].sort((a, b) => b.revenue - a.revenue);
+    const rows = sorted.map((p, i) => [i + 1, p.name, p.role, p.orders, p.revenue, p.target, p.conversion, p.complaints]);
+    exportToExcel(headers, rows, 'Performance_Report.csv');
+  };
+  const exportPerformancePdf = () => exportRefToPdf(performanceRef, 'Performance_Report.pdf');
+
+  // Freshly built every render from the functions above (not persisted via ref — mutating a
+  // ref during render is unsafe/disallowed) so the header's Excel/PDF buttons can dispatch
+  // to whichever tab is currently active.
+  const activeTabExportMap = {
+    sales_report: { excel: exportSalesExcel, pdf: exportSalesPdf },
+    purchase_report: { excel: exportPurchaseExcel, pdf: exportPurchasePdf },
+    pl: { excel: exportPlExcel, pdf: exportPlPdf },
+    bill_pl: { excel: exportBillPlExcel, pdf: exportBillPlPdf },
+    performance: { excel: exportPerformanceExcel, pdf: exportPerformancePdf },
+    monthly_gst: { excel: exportGstExcel, pdf: exportGstPdf },
+    forwarding_courier: { excel: exportFcExcel, pdf: exportFcPdf },
+    auditor_tax: { excel: exportAuditorExcel, pdf: exportAuditorPdf },
+  };
+
   return (
     <div className="page-container fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Reports & Analytics" items={[{ label: 'Reports & Analytics' }]} style={{ marginBottom: 0 }} />
         <Space wrap>
           <div style={{ display: 'flex', alignItems: 'center', background: isDark ? 'rgba(255,255,255,0.05)' : '#f5f5f5', padding: '4px 8px', borderRadius: 8, border: `1px solid ${isDark ? '#333' : '#f0f0f0'}` }}>
-            <DatePicker.RangePicker bordered={false} style={{ width: 260, background: 'transparent' }} />
+            <DatePicker.RangePicker
+              bordered={false}
+              style={{ width: 260, background: 'transparent' }}
+              value={headerDateRange}
+              onChange={handleHeaderRangeChange}
+              allowClear
+            />
           </div>
-          <Select defaultValue="month" style={{ width: 120, borderRadius: 8 }}>
+          <Select value={headerPeriod ?? undefined} placeholder="Custom range" allowClear style={{ width: 120, borderRadius: 8 }} onChange={handlePeriodChange} onClear={() => { setHeaderPeriod(null); setHeaderDateRange(null); }}>
             <Option value="week">This Week</Option>
             <Option value="month">This Month</Option>
             <Option value="quarter">Quarter</Option>
             <Option value="year">Year</Option>
           </Select>
-          <Button icon={<FileExcelOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>Excel</Button>
-          <Button icon={<FilePdfOutlined />} style={{ color: '#8a1652', borderColor: '#8a165244' }}>PDF</Button>
+          <Button
+            icon={<FileExcelOutlined />}
+            style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}
+            onClick={() => activeTabExportMap[activeTabKey]?.excel?.()}
+          >Excel</Button>
+          <Button
+            icon={<FilePdfOutlined />}
+            style={{ color: '#8a1652', borderColor: '#8a165244' }}
+            onClick={() => activeTabExportMap[activeTabKey]?.pdf?.()}
+          >PDF</Button>
         </Space>
       </div>
 
       <Tabs
         defaultActiveKey="sales_report"
+        onChange={setActiveTabKey}
         items={filterTabs([
           /* ─────────── SALES REPORT ─────────── */
           {
@@ -293,24 +561,12 @@ export default function Reports() {
                     </Select>
                     <DatePicker.RangePicker style={{ width: 260 }} onChange={setSalesDateRange} />
                     <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search customer, invoice..." allowClear value={salesReportSearch} onChange={(e) => setSalesReportSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
-                    <Button
-                      icon={<FileExcelOutlined />}
-                      style={{ color: '#52c41a', borderColor: '#52c41a44' }}
-                      onClick={() => {
-                        const headers = ['GSTIN/UIN', 'Customer Name', 'State Code', 'Place of Supply', 'Invoice No', 'Original Invoice No', 'Invoice Date', 'Invoice Value', 'Taxable Value', 'Total Tax (%)', 'Total Tax Amount', 'Central Tax (CGST)', 'State/UT Tax (SGST)', 'Integrated Tax (IGST)', 'Cess'];
-                        const rows = filteredSalesData.map(r => [
-                          r.gst_no, r.customer, r.state_code, r.state_name,
-                          r.inv_no, r.orig_inv_no, r.inv_date, r.inv_value,
-                          r.taxable, r.total_tax > 0 ? ((r.total_tax / r.taxable) * 100).toFixed(0) + '%' : '0%',
-                          r.total_tax, r.cgst, r.sgst, r.igst, 0,
-                        ]);
-                        exportToExcel(headers, rows, 'Auditor_Tax_Report.csv');
-                      }}
-                    >Excel</Button>
-                    <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>PDF</Button>
+                    <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportSalesExcel}>Excel</Button>
+                    <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportSalesPdf}>PDF</Button>
                   </Space>
                 </Card>
 
+                <div ref={salesRef}>
                 <Row gutter={[14, 14]} style={{ marginBottom: 14 }}>
                   <Col xs={24} lg={16}>
                     <Card
@@ -390,6 +646,7 @@ export default function Reports() {
                     pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
                   />
                 </Card>
+                </div>
               </div>
             ),
           },
@@ -405,30 +662,18 @@ export default function Reports() {
                     <FilterOutlined style={{ color: '#B11E6A' }} />
                     <Text strong style={{ color: textColor, fontSize: 13 }}>Filter by:</Text>
                     <Select allowClear placeholder="Select Product" value={purchaseProductFilter} onChange={setPurchaseProductFilter} style={{ width: 200 }}>
-                      {['Soap Base (White)', 'Soap Base (Transparent)', 'Shampoo Concentrate'].map(p => (
+                      {purchaseProductOptions.map(p => (
                         <Option key={p} value={p}>{p}</Option>
                       ))}
                     </Select>
                     <DatePicker.RangePicker style={{ width: 260 }} onChange={setPurchaseDateRange} />
                     <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search supplier, invoice..." allowClear value={purchaseReportSearch} onChange={(e) => setPurchaseReportSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
-                    <Button
-                      icon={<FileExcelOutlined />}
-                      style={{ color: '#52c41a', borderColor: '#52c41a44' }}
-                      onClick={() => {
-                        const headers = ['Vendor GSTIN', 'Supplier Name', 'Product', 'HSN Code', 'GST Rate (%)', 'Qty', 'Unit Price', 'State Code', 'Place of Supply', 'Invoice No', 'Original Invoice No', 'Invoice Date', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total Tax', 'Invoice Value'];
-                        const rows = filteredPurchaseData.map(r => [
-                          r.vendor_gst, r.supplier, r.product, r.hsn, r.gst_rate,
-                          r.qty, r.unit_price, r.state_code, r.state_name,
-                          r.inv_no, r.orig_inv_no, r.inv_date,
-                          r.taxable, r.cgst, r.sgst, r.igst, r.total_tax, r.inv_value,
-                        ]);
-                        exportToExcel(headers, rows, 'Purchase_GST_Report.csv');
-                      }}
-                    >Excel</Button>
-                    <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>PDF</Button>
+                    <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportPurchaseExcel}>Excel</Button>
+                    <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportPurchasePdf}>PDF</Button>
                   </Space>
                 </Card>
 
+                <div ref={purchaseRef}>
                 <Row gutter={[14, 14]} style={{ marginBottom: 14 }}>
                   <Col xs={24} lg={16}>
                     <Card
@@ -643,6 +888,7 @@ export default function Reports() {
                     </>
                   );
                 })()}
+                </div>
               </div>
             ),
           },
@@ -685,9 +931,9 @@ export default function Reports() {
                       )}
                     </Space>
                     <Space>
-                      <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }}>Excel</Button>
-                      <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>PDF</Button>
-                      <Button icon={<DownloadOutlined />} type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Download Report</Button>
+                      <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportPlExcel}>Excel</Button>
+                      <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportPlPdf}>PDF</Button>
+                      <Button icon={<DownloadOutlined />} type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }} onClick={exportPlDownload}>Download Report</Button>
                     </Space>
                   </div>
                   {(plProductFilter || plSelectedMonth !== 'all') && (
@@ -746,6 +992,7 @@ export default function Reports() {
                   </div>
                 </Card>
 
+                <div ref={plRef}>
                 {/* Summary Cards */}
                 <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                   {[
@@ -1104,6 +1351,7 @@ export default function Reports() {
                     </Row>
                   )}
                 </Card>
+                </div>
               </div>
             ),
           },
@@ -1124,6 +1372,7 @@ export default function Reports() {
               const totCogs = filtered.reduce((s, r) => s + r.cogs, 0);
               const totGP   = filtered.reduce((s, r) => s + r.gross_profit, 0);
               const avgMargin = totSell > 0 ? ((totGP / totSell) * 100).toFixed(1) : 0;
+
               return (
                 <div>
                   {/* Summary cards */}
@@ -1154,12 +1403,14 @@ export default function Reports() {
                         {billPlProductOptions.map(p => <Option key={p} value={p}>{p}</Option>)}
                       </Select>
                       <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client..." allowClear value={billPlSearch} onChange={e => setBillPlSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
-                      <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }}>Excel</Button>
-                      <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>PDF</Button>
+                      <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportBillPlExcel}>Excel</Button>
+                      <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportBillPlPdf}>PDF</Button>
                     </Space>
                   </Card>
 
-                  {/* Bill-wise P&L chart */}
+                  {/* Bill-wise P&L chart + table — wrapped in a ref for the PDF export button below,
+                      deliberately excluding the filter bar above it. */}
+                  <div ref={billPlRef}>
                   <Row gutter={[14, 14]} style={{ marginBottom: 14 }}>
                     <Col xs={24} lg={16}>
                       <Card title={<Text strong style={{ color: textColor }}>Bill-wise Gross Profit</Text>} style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px 16px' } }}>
@@ -1293,6 +1544,7 @@ export default function Reports() {
                       pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
                     />
                   </Card>
+                  </div>
                 </div>
               );
             })(),
@@ -1312,9 +1564,19 @@ export default function Reports() {
               const totalComplaints = activeSalesPersonData.reduce((s, p) => s + (p.complaints || 0), 0);
               const latestMonthRow = activeSalesPersonMonthly[activeSalesPersonMonthly.length - 1] || null;
               const prevMonthRow = activeSalesPersonMonthly[activeSalesPersonMonthly.length - 2] || null;
+
               if (!topPerformer) return <Empty description="No performance data available" style={{ padding: 40 }} />;
               return (
                 <div>
+                  {/* Export bar */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+                    <Space>
+                      <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportPerformanceExcel}>Excel</Button>
+                      <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportPerformancePdf}>PDF</Button>
+                    </Space>
+                  </div>
+
+                  <div ref={performanceRef}>
                   {/* KPI summary row */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                     {[
@@ -1486,6 +1748,7 @@ export default function Reports() {
                     </Row>
                     )
                   )}
+                  </div>
                 </div>
               );
             })(),
@@ -1542,35 +1805,12 @@ export default function Reports() {
                           }}>{lbl}</div>
                         ))}
                       </Space>
-                      <Button
-                        icon={<FileExcelOutlined />}
-                        style={{ color: '#52c41a', borderColor: '#52c41a44' }}
-                        onClick={() => {
-                          // Export matches the selected view — Sales Only / Purchase Only download their
-                          // own standalone GST report instead of always dumping the combined columns.
-                          if (gstViewMode === 'sales') {
-                            const headers = ['Month', 'Year', 'Sales Taxable (₹)', 'Sales CGST (₹)', 'Sales SGST (₹)', 'Sales IGST (₹)', 'Total Output GST (₹)'];
-                            const rows = filteredGst.map(r => [r.month, r.year, r.sales_taxable, r.sales_cgst, r.sales_sgst, r.sales_igst, r.sales_total_gst]);
-                            exportToExcel(headers, rows, 'Monthly_Sales_GST_Report.csv');
-                          } else if (gstViewMode === 'purchase') {
-                            const headers = ['Month', 'Year', 'Purchase Taxable (₹)', 'Purchase CGST (₹)', 'Purchase SGST (₹)', 'Purchase IGST (₹)', 'Total Input GST/ITC (₹)'];
-                            const rows = filteredGst.map(r => [r.month, r.year, r.pur_taxable, r.pur_cgst, r.pur_sgst, r.pur_igst, r.pur_total_gst]);
-                            exportToExcel(headers, rows, 'Monthly_Purchase_GST_Report.csv');
-                          } else {
-                            const headers = ['Month', 'Year', 'Sales Taxable (₹)', 'Sales CGST (₹)', 'Sales SGST (₹)', 'Sales IGST (₹)', 'Total Output GST (₹)', 'Purchase Taxable (₹)', 'Purchase CGST (₹)', 'Purchase SGST (₹)', 'Purchase IGST (₹)', 'Total Input GST/ITC (₹)', 'Net GST Payable (₹)'];
-                            const rows = filteredGst.map(r => [
-                              r.month, r.year,
-                              r.sales_taxable, r.sales_cgst, r.sales_sgst, r.sales_igst, r.sales_total_gst,
-                              r.pur_taxable, r.pur_cgst, r.pur_sgst, r.pur_igst, r.pur_total_gst,
-                              r.sales_total_gst - r.pur_total_gst,
-                            ]);
-                            exportToExcel(headers, rows, 'Monthly_GST_Report.csv');
-                          }
-                        }}
-                      >Excel</Button>
+                      <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportGstExcel}>Excel</Button>
+                      <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportGstPdf}>PDF</Button>
                     </div>
                   </Card>
 
+                  <div ref={monthlyGstRef}>
                   {/* KPI cards — scoped to the selected view so Sales Only / Purchase Only read as their own separate report */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                     {[
@@ -1732,6 +1972,7 @@ export default function Reports() {
                       }}
                     />
                   </Card>
+                  </div>
                 </div>
               );
             })(),
@@ -1788,21 +2029,13 @@ export default function Reports() {
                         />
                       </Space>
                       <Space>
-                        <Button
-                          icon={<FileExcelOutlined />}
-                          style={{ color: '#52c41a', borderColor: '#52c41a44' }}
-                          onClick={() => {
-                            const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Forwarding Charge', 'Courier Charge', 'Total Charge'];
-                            const rows = filteredFcRows.map((r, i) => [
-                              i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.forwardingCharge, r.courierCharge, r.totalCharge,
-                            ]);
-                            exportToExcel(headers, rows, 'Forwarding_Courier_Charges_Report.csv');
-                          }}
-                        >Excel</Button>
+                        <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportFcExcel}>Excel</Button>
+                        <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportFcPdf}>PDF</Button>
                       </Space>
                     </div>
                   </Card>
 
+                  <div ref={forwardingCourierRef}>
                   {/* Summary KPI cards */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                     {[
@@ -1877,6 +2110,7 @@ export default function Reports() {
                       }}
                     />
                   </Card>
+                  </div>
                 </div>
               );
             })(),
@@ -1887,8 +2121,12 @@ export default function Reports() {
             key: 'auditor_tax',
             label: 'Auditor Tax Report',
             children: (() => {
+              // GST/Non-GST bucket keys off Invoice.invoiceType (the statutory distinction —
+              // same field the backend's dedicated /reports/auditor-tax endpoint filters on),
+              // not the computed tax amount — a GST-type invoice with a 0%-rated line item
+              // would otherwise be miscategorized as "without GST" by amount alone.
               const salesGstData = salesRawData.filter(r => {
-                const matchGst = auditorGstFilter === 'all' ? true : auditorGstFilter === 'with_gst' ? r.total_tax > 0 : r.total_tax === 0;
+                const matchGst = auditorGstFilter === 'all' ? true : auditorGstFilter === 'with_gst' ? r.invoiceType === 'GST' : r.invoiceType !== 'GST';
                 const q = auditorSearch.toLowerCase();
                 const matchSearch = !q || r.customer.toLowerCase().includes(q) || r.inv_no.toLowerCase().includes(q) || r.gst_no.toLowerCase().includes(q);
                 return matchGst && matchSearch;
@@ -2016,40 +2254,13 @@ export default function Reports() {
                         />
                       </Space>
                       <Space>
-                        <Button
-                          icon={<FileExcelOutlined />}
-                          style={{ color: '#52c41a', borderColor: '#52c41a44' }}
-                          onClick={() => {
-                            if (auditorSubTab === 'sales') {
-                              const headers = ['S.No', 'GSTIN/UIN', 'Receiver Name', 'Invoice No', 'Invoice Date', 'Invoice Value', 'Place of Supply', 'Taxable Value', 'Central Tax Rate (%)', 'Central Tax (₹)', 'State/UT Tax Rate (%)', 'State/UT Tax (₹)', 'Integrated Tax Rate (%)', 'Integrated Tax (₹)', 'Cess (₹)', 'Total Tax (₹)'];
-                              const rows = salesGstData.map((r, i) => [
-                                i + 1, r.gst_no, r.customer, r.inv_no, r.inv_date, r.inv_value,
-                                `${r.state_code} - ${r.state_name}`, r.taxable,
-                                r.cgst > 0 ? ((r.cgst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.cgst,
-                                r.sgst > 0 ? ((r.sgst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.sgst,
-                                r.igst > 0 ? ((r.igst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.igst,
-                                0, r.total_tax,
-                              ]);
-                              exportToExcel(headers, rows, 'Auditor_Sales_Tax_Report.csv');
-                            } else {
-                              const headers = ['S.No', 'Vendor GSTIN', 'Supplier Name', 'Product', 'HSN Code', 'Invoice No', 'Invoice Date', 'Invoice Value', 'Place of Supply', 'Taxable Value', 'Central Tax Rate (%)', 'Central Tax (₹)', 'State/UT Tax Rate (%)', 'State/UT Tax (₹)', 'Integrated Tax Rate (%)', 'Integrated Tax (₹)', 'Cess (₹)', 'Total Tax (₹)'];
-                              const rows = purchaseGstData.map((r, i) => [
-                                i + 1, r.vendor_gst, r.supplier, r.product, r.hsn, r.inv_no, r.inv_date, r.inv_value,
-                                `${r.state_code} - ${r.state_name}`, r.taxable,
-                                r.cgst > 0 ? ((r.cgst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.cgst,
-                                r.sgst > 0 ? ((r.sgst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.sgst,
-                                r.igst > 0 ? ((r.igst / r.taxable) * 100).toFixed(0) + '%' : '0%', r.igst,
-                                0, r.total_tax,
-                              ]);
-                              exportToExcel(headers, rows, 'Auditor_Purchase_Tax_Report.csv');
-                            }
-                          }}
-                        >Excel</Button>
-                        <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>PDF</Button>
+                        <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportAuditorExcel}>Excel</Button>
+                        <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportAuditorPdf}>PDF</Button>
                       </Space>
                     </div>
                   </Card>
 
+                  <div ref={auditorTaxRef}>
                   {/* Summary KPI cards */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                     {[
@@ -2141,6 +2352,7 @@ export default function Reports() {
                       }}
                     />
                   </Card>
+                  </div>
                 </div>
               );
             })(),

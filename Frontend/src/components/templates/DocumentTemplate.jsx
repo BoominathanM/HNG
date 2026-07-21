@@ -389,17 +389,22 @@ function computeModel(type, data, settings) {
   const pendingDue = data.pendingDue && Number(data.pendingDue.amount) > 0
     ? { amount: Number(data.pendingDue.amount), hotelName: data.pendingDue.hotelName || customer.name }
     : null;
+  // What's already been paid on THIS invoice — Billing/Sales pass this as `advance`
+  // (invoiceList's resolved paid figure); fall back to other field names other callers use.
+  const paidAmount = r2d(Number(data.advance ?? data.paidAmount ?? data.advancePaid ?? data.advanceAmount ?? 0) || 0);
+  // This invoice's own remaining balance (never negative even if overpaid).
+  const balanceAmount = r2d(Math.max(0, totalAmount - paidAmount));
   // Total Amount above stays this document's own legal/tax total (subtotal + tax + charges for
-  // THIS invoice's items only — must never be inflated with another invoice's dues). This is a
-  // separate, clearly-labelled combined figure — this invoice's total PLUS the hotel's other
-  // pending due — shown as its own line so both numbers are visible without corrupting the
-  // invoice's own GST total.
-  const grandTotalWithPending = pendingDue ? r2d(totalAmount + pendingDue.amount) : null;
+  // THIS invoice's items only — must never be inflated with another invoice's dues). Grand Total
+  // is a separate, clearly-labelled combined figure — THIS invoice's own remaining balance
+  // (total minus what's already been paid on it) PLUS the hotel's other pending due — so paying
+  // off part of this invoice correctly reduces the combined figure instead of double-counting it.
+  const grandTotalWithPending = pendingDue ? r2d(balanceAmount + pendingDue.amount) : null;
 
   return {
     cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
     forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
-    pendingDue, grandTotalWithPending,
+    pendingDue, grandTotalWithPending, paidAmount, balanceAmount,
   };
 }
 
@@ -591,7 +596,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
   const m = computeModel(type, data, settings);
   const { cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
     forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
-    pendingDue, grandTotalWithPending } = m;
+    pendingDue, grandTotalWithPending, paidAmount, balanceAmount } = m;
   const ACCENT = cfg.theme.accent;
   const LIGHT = cfg.theme.light;
   const BORDER = cfg.theme.border;
@@ -691,9 +696,13 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
       <td style="padding:4px 0;font-size:11px;text-align:right;">${roundOff < 0 ? '&minus; ' : ''}&#x20B9;${Math.abs(roundOff).toLocaleString()}</td>
     </tr>` : '';
 
-  // Outstanding dues from this hotel's OTHER unpaid invoices — shown alongside a combined
-  // Grand Total (this invoice's own Total Amount above stays untouched — it's the legal/tax
-  // total for THIS invoice's items only).
+  // Paid Amount — shown right below Total Amount whenever this invoice has a recorded
+  // payment, regardless of whether the hotel has other pending dues.
+  const paidAmountRow = paidAmount > 0 ? `
+    <tr>
+      <td style="padding:4px 0;font-size:11px;color:#059669;font-weight:700;">Paid Amount</td>
+      <td style="padding:4px 0;font-size:11px;color:#059669;font-weight:700;text-align:right;">&#x20B9;${r2d(paidAmount).toLocaleString()}</td>
+    </tr>` : '';
   const pendingDueRow = pendingDue ? `
     <tr>
       <td style="padding:8px 0 4px;font-size:11px;font-weight:800;color:#b91c1c;border-top:1px dashed ${BORDER};">Pending Amount (${pendingDue.hotelName})</td>
@@ -823,6 +832,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
             <td style="padding:7px 0 4px;font-size:12px;font-weight:800;color:${ACCENT};">Total Amount</td>
             <td style="padding:7px 0 4px;font-size:12px;font-weight:800;color:${ACCENT};text-align:right;">&#x20B9;${r2d(totalAmount).toLocaleString()}</td>
           </tr>
+          ${paidAmountRow}
           ${pendingDueRow}
         </table>
       </div>
@@ -1023,7 +1033,7 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
   const m = computeModel(type, data, settings);
   const { cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
     forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
-    pendingDue, grandTotalWithPending } = m;
+    pendingDue, grandTotalWithPending, paidAmount, balanceAmount } = m;
   const ACCENT = cfg.theme.accent;
   const LIGHT = cfg.theme.light;
   const BORDER = cfg.theme.border;
@@ -1202,6 +1212,12 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
                 <td style={{ padding: '7px 0 4px', fontSize: 12, fontWeight: 800, color: ACCENT }}>Total Amount</td>
                 <td style={{ padding: '7px 0 4px', fontSize: 12, fontWeight: 800, color: ACCENT, textAlign: 'right' }}>₹{r2d(totalAmount).toLocaleString()}</td>
               </tr>
+              {paidAmount > 0 && (
+                <tr>
+                  <td style={{ padding: '4px 0', fontSize: 11, color: '#059669', fontWeight: 700 }}>Paid Amount</td>
+                  <td style={{ padding: '4px 0', fontSize: 11, color: '#059669', fontWeight: 700, textAlign: 'right' }}>₹{r2d(paidAmount).toLocaleString()}</td>
+                </tr>
+              )}
               {pendingDue && (
                 <>
                   <tr>

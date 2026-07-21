@@ -8,7 +8,7 @@ import { enqueueSnackbar } from 'notistack';
 import {
   SaveOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   UserOutlined, UploadOutlined, CheckOutlined, CloseOutlined,
-  FileTextOutlined, BgColorsOutlined, FontColorsOutlined,
+  FileTextOutlined, BgColorsOutlined, FontColorsOutlined, NotificationOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -17,6 +17,7 @@ import PhoneInput from '../../components/common/PhoneInput';
 import { emailRules, phoneValidator } from '../../utils/validation';
 import useTabAccess from '../../hooks/useTabAccess';
 import { MODULE_TAB_DEFS } from '../../constants/moduleTabs';
+import AlertConfigurationTab from './AlertConfigurationTab';
 import {
   useGetUsersQuery,
   useCreateUserMutation,
@@ -1446,6 +1447,11 @@ export default function Settings() {
                 </div>
               </div>
             ),
+          },
+          {
+            key: 'alert_configuration',
+            label: <Space><NotificationOutlined />Alert Configuration</Space>,
+            children: <AlertConfigurationTab />,
           },
           {
             key: 'deleted_records',

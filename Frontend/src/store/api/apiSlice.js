@@ -33,6 +33,7 @@ export const apiSlice = createApi({
     'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
     'GstConfig', 'TaskTimeConfig',
     'MaterialStocks', 'PackagingInvoices',
+    'AlertConfigs',
   ],
   endpoints: (builder) => ({
 
@@ -186,11 +187,11 @@ export const apiSlice = createApi({
     }),
     createBulkRequest: builder.mutation({
       query: (data) => ({ url: '/purchase/requests/bulk', method: 'post', data }),
-      invalidatesTags: ['Purchase', 'Financial'],
+      invalidatesTags: ['Purchase', 'Financial', 'Reports'],
     }),
     raiseRequest: builder.mutation({
       query: (data) => ({ url: '/purchase/requests', method: 'post', data }),
-      invalidatesTags: ['Purchase', 'Financial'],
+      invalidatesTags: ['Purchase', 'Financial', 'Reports'],
     }),
     uploadQuotationFile: builder.mutation({
       query: ({ id, formData }) => ({ url: `/purchase/requests/${id}/upload-quotation`, method: 'post', data: formData }),
@@ -198,7 +199,7 @@ export const apiSlice = createApi({
     }),
     updatePurchaseRequestDetails: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/purchase/requests/${id}/update-details`, method: 'patch', data }),
-      invalidatesTags: ['Purchase', 'Financial', 'PurchaseOrders'],
+      invalidatesTags: ['Purchase', 'Financial', 'PurchaseOrders', 'Reports'],
     }),
     addPurchaseNote: builder.mutation({
       query: ({ id, text }) => ({ url: `/purchase/requests/${id}/notes`, method: 'patch', data: { text } }),
@@ -210,11 +211,11 @@ export const apiSlice = createApi({
     }),
     receiveOrder: builder.mutation({
       query: ({ id, formData }) => ({ url: `/purchase/orders/${id}/receive`, method: 'post', data: formData }),
-      invalidatesTags: ['PurchaseOrders', 'Inventory'],
+      invalidatesTags: ['PurchaseOrders', 'Inventory', 'Reports'],
     }),
     uploadPurchaseLR: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/purchase/orders/${id}/lr`, method: 'patch', data }),
-      invalidatesTags: ['PurchaseOrders'],
+      invalidatesTags: ['PurchaseOrders', 'Reports'],
     }),
     getLocalPurchases: builder.query({
       query: () => ({ url: '/purchase/local' }),
@@ -222,7 +223,7 @@ export const apiSlice = createApi({
     }),
     createLocalPurchase: builder.mutation({
       query: (formData) => ({ url: '/purchase/local', method: 'post', data: formData }),
-      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses', 'Inventory'],
+      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses', 'Inventory', 'Reports'],
     }),
     getLocalPurchase: builder.query({
       query: (id) => ({ url: `/purchase/local/${id}` }),
@@ -430,11 +431,11 @@ export const apiSlice = createApi({
     }),
     approveFinancialRequest: builder.mutation({
       query: (id) => ({ url: `/financial/requests/${id}/approve`, method: 'patch' }),
-      invalidatesTags: ['Financial', 'Purchase', 'PurchaseOrders'],
+      invalidatesTags: ['Financial', 'Purchase', 'PurchaseOrders', 'Reports'],
     }),
     batchApproveRequests: builder.mutation({
       query: (batchId) => ({ url: `/financial/requests/batch/${batchId}/approve`, method: 'patch' }),
-      invalidatesTags: ['Financial', 'Purchase', 'PurchaseOrders'],
+      invalidatesTags: ['Financial', 'Purchase', 'PurchaseOrders', 'Reports'],
     }),
     rejectFinancialRequest: builder.mutation({
       query: ({ id, reason }) => ({ url: `/financial/requests/${id}/reject`, method: 'patch', data: { reason } }),
@@ -450,11 +451,11 @@ export const apiSlice = createApi({
     }),
     payPurchaseOrder: builder.mutation({
       query: ({ id, formData }) => ({ url: `/financial/pay/${id}`, method: 'post', data: formData }),
-      invalidatesTags: ['Financial', 'PurchaseOrders'],
+      invalidatesTags: ['Financial', 'PurchaseOrders', 'Reports'],
     }),
     updateOrderAmount: builder.mutation({
       query: ({ id, amount }) => ({ url: `/financial/orders/${id}/amount`, method: 'patch', data: { amount } }),
-      invalidatesTags: ['Financial', 'PurchaseOrders'],
+      invalidatesTags: ['Financial', 'PurchaseOrders', 'Reports'],
     }),
     getExpensePayments: builder.query({
       query: (params) => ({ url: '/financial/expense-payments', params }),
@@ -558,15 +559,15 @@ export const apiSlice = createApi({
     }),
     createSalesOrder: builder.mutation({
       query: (data) => ({ url: '/sales/orders', method: 'post', data }),
-      invalidatesTags: ['Orders', 'Leads', 'Quotations', 'Negotiations'],
+      invalidatesTags: ['Orders', 'Leads', 'Quotations', 'Negotiations', 'Reports'],
     }),
     updateSalesOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/orders/${id}`, method: 'put', data }),
-      invalidatesTags: ['Orders', 'Operations'],
+      invalidatesTags: ['Orders', 'Operations', 'Reports'],
     }),
     updateSalesOrderStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/sales/orders/${id}/status`, method: 'patch', data: { status } }),
-      invalidatesTags: ['Orders', 'Leads'],
+      invalidatesTags: ['Orders', 'Leads', 'Reports'],
     }),
     getComplaints: builder.query({
       query: (params) => ({ url: '/sales/complaints', params }),
@@ -639,17 +640,17 @@ export const apiSlice = createApi({
       query: (data) => ({ url: '/billing/invoices', method: 'post', data }),
       // Can carry an orderId that this recalculates payment status for (see billing.controller
       // createInvoice) — invalidate Orders/Operations so Sales/Operations refetch too.
-      invalidatesTags: ['Invoices', 'BillingParties', 'Orders', 'Operations'],
+      invalidatesTags: ['Invoices', 'BillingParties', 'Orders', 'Operations', 'Reports'],
     }),
     updateInvoiceGst: builder.mutation({
       query: ({ id, gstAmount }) => ({ url: `/billing/invoices/${id}/gst`, method: 'patch', data: { gstAmount } }),
-      invalidatesTags: ['Invoices'],
+      invalidatesTags: ['Invoices', 'Reports'],
     }),
     recordPayment: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/billing/invoices/${id}/payment`, method: 'post', data }),
       // Backend also writes this payment onto the linked Order (see billing.controller
       // recordPayment) — invalidate Orders/Operations so Sales/Operations refetch too.
-      invalidatesTags: ['Invoices', 'BillingParties', 'Orders', 'Operations'],
+      invalidatesTags: ['Invoices', 'BillingParties', 'Orders', 'Operations', 'Reports'],
     }),
     getInvoicePayments: builder.query({
       query: (id) => ({ url: `/billing/invoices/${id}/payments` }),
@@ -661,7 +662,7 @@ export const apiSlice = createApi({
       // status (see billing.controller convertQuotationToInvoice → syncOrderTasksPayment) —
       // invalidate Orders/Operations so Sales/Operations refetch instead of showing the
       // payment status cached from before this invoice existed.
-      invalidatesTags: ['Invoices', 'BillingParties', 'Quotations', 'Orders', 'Operations'],
+      invalidatesTags: ['Invoices', 'BillingParties', 'Quotations', 'Orders', 'Operations', 'Reports'],
     }),
     getQuotationsInProcess: builder.query({
       query: () => ({ url: '/billing/quotations-in-process' }),
@@ -675,15 +676,15 @@ export const apiSlice = createApi({
     }),
     createExpense: builder.mutation({
       query: (formData) => ({ url: '/expenses', method: 'post', data: formData }),
-      invalidatesTags: ['Expenses'],
+      invalidatesTags: ['Expenses', 'Reports'],
     }),
     updateExpense: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/expenses/${id}`, method: 'put', data }),
-      invalidatesTags: ['Expenses'],
+      invalidatesTags: ['Expenses', 'Reports'],
     }),
     deleteExpense: builder.mutation({
       query: (id) => ({ url: `/expenses/${id}`, method: 'delete' }),
-      invalidatesTags: ['Expenses'],
+      invalidatesTags: ['Expenses', 'Reports'],
     }),
     getExpenseHistory: builder.query({
       query: (params) => ({ url: '/expenses/history', params }),
@@ -695,7 +696,7 @@ export const apiSlice = createApi({
     }),
     recordExpensePayment: builder.mutation({
       query: ({ id, formData }) => ({ url: `/expenses/${id}/pay`, method: 'post', data: formData }),
-      invalidatesTags: (result, error, { id }) => ['Expenses', { type: 'Expenses', id }],
+      invalidatesTags: (result, error, { id }) => ['Expenses', 'Reports', { type: 'Expenses', id }],
     }),
 
     // ── Tasks ────────────────────────────────────────────────────────────────
@@ -1103,6 +1104,22 @@ export const apiSlice = createApi({
       query: (data) => ({ url: '/whatsapp/send', method: 'post', data }),
     }),
 
+    // ── Alert Configuration ──────────────────────────────────────────────────
+    getAlertConfigs: builder.query({
+      query: () => ({ url: '/alert-config' }),
+      providesTags: ['AlertConfigs'],
+    }),
+    saveAlertConfig: builder.mutation({
+      query: (data) => ({ url: '/alert-config', method: 'post', data }),
+      invalidatesTags: ['AlertConfigs'],
+    }),
+    uploadAlertAudio: builder.mutation({
+      query: (formData) => ({ url: '/alert-config/upload-audio', method: 'post', data: formData }),
+    }),
+    getActiveAlerts: builder.query({
+      query: () => ({ url: '/alerts/active' }),
+    }),
+
     // ── GST Integration ──────────────────────────────────────────────────────
     getGstConfig: builder.query({
       query: () => ({ url: '/settings/gst-config' }),
@@ -1388,6 +1405,11 @@ export const {
   useSaveWhatsAppEventMappingMutation,
   useDeleteWhatsAppEventMappingMutation,
   useSendWhatsAppMessageMutation,
+  // Alert Configuration
+  useGetAlertConfigsQuery,
+  useSaveAlertConfigMutation,
+  useUploadAlertAudioMutation,
+  useGetActiveAlertsQuery,
   // GST Integration
   useGetGstConfigQuery,
   useGetGstCredentialsQuery,

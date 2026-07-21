@@ -2246,7 +2246,12 @@ export default function Sales() {
       advance: order.advance || 0,
       paymentTerms: order.paymentTerms,
       paymentReminderDate: (order.paymentReminderDate || order.creditDueDate) ? dayjs(order.paymentReminderDate || order.creditDueDate) : null,
-      paymentCollection: order.paymentCollection || [],
+      // Deliberately NOT pre-filled with order.paymentCollection — this Form.List is for
+      // NEW entries only (mirrors the Lead/Quotation/Negotiation forms). Pre-filling it used to
+      // round-trip existing entries through fields with no Form.Item binding for recordedAt/proof,
+      // silently wiping those on every save and breaking the recordedAt+paidAmount dedup key used
+      // to merge lead/quotation-only advances elsewhere — inflating "Collected" after any edit.
+      paymentCollection: [],
       // Preserve EVERY product field (specs, kit flags, dynamic inventory attributes) so they
       // survive the edit round-trip and can be displayed — only the editable numerics are coerced.
       // Fall back to the linked lead's products when the order itself stored none.
@@ -2347,7 +2352,11 @@ export default function Sales() {
       // form (including those resolved from the linked lead) are persisted, not dropped.
       const editStore = orderEditForm.getFieldsValue(true);
       const newAdvance = vals.advance ?? orderEditTarget.advance ?? 0;
-      const newCollection = (vals.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }));
+      // The form's paymentCollection field holds only entries added THIS session (see
+      // openOrderEditModal) — append them to the untouched original array rather than replacing
+      // it, so previously recorded entries keep their original recordedAt/proof intact.
+      const newEntries = (vals.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }));
+      const newCollection = [...(orderEditTarget.paymentCollection || []), ...newEntries];
       const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
 
       // Any amount already in paidAmount that wasn't backed by collection entries
@@ -5171,6 +5180,19 @@ export default function Sales() {
   };
 
   // ─── Table columns ────────────────────────────────────────────────
+  // Leads, their linked Order, and their linked Quotation each keep their OWN copy of
+  // paymentCollection. A sync gap (e.g. a payment recorded before a chain-propagation fix landed,
+  // or a silently-failed background sync) can leave one behind the others — pick whichever copy
+  // has the highest recorded-payments sum so courier/round-off entries aren't silently dropped
+  // from the Leads tab total. Mirrors the same reconciliation Billing uses for its own totals.
+  const leadCollSum = (c) => (c || []).reduce((s, e) => s + (Number(e?.paidAmount) || 0), 0);
+  const bestLeadPaymentCollection = (...sources) =>
+    sources.filter(Boolean).map(src => src.paymentCollection || [])
+      .reduce((best, c) => (leadCollSum(c) > leadCollSum(best) ? c : best), []);
+  const findLinkedLeadQuotation = (r) => quotationsData.find(q =>
+    (q.leadId && String(q.leadId._id || q.leadId) === String(r.key)) || (q.leadCode && q.leadCode === r.leadId)
+  );
+
   const leadColumns = [
     {
       title: 'Lead ID', dataIndex: 'leadId', width: 105,
@@ -5198,7 +5220,9 @@ export default function Sales() {
           (o.leadCode && o.leadCode === r.leadId) ||
           (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
         );
-        const compTotal = r2(computeCompositionGrandTotal(r, kits));
+        const linkedQuot = findLinkedLeadQuotation(r);
+        const bestPC = bestLeadPaymentCollection(linkedOrder, r, linkedQuot);
+        const compTotal = r2(computeCompositionGrandTotal({ ...r, paymentCollection: bestPC }, kits));
         const displayAmount = compTotal || linkedOrder?.totalAmount || v;
         return displayAmount > 0
           ? <Text strong style={{ fontSize: 13 }}>₹{displayAmount.toLocaleString()}</Text>
@@ -5212,7 +5236,8 @@ export default function Sales() {
           (o.leadCode && o.leadCode === r.leadId) ||
           (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
         );
-        const paid = linkedOrder?.paidAmount ?? r.paidAmount;
+        const linkedQuot = findLinkedLeadQuotation(r);
+        const paid = Math.max(Number(linkedOrder?.paidAmount) || 0, Number(r.paidAmount) || 0, Number(linkedQuot?.paidAmount) || 0);
         return (
           <Text strong style={{ fontSize: 13, color: paid > 0 ? '#52c41a' : textColor }}>
             {paid > 0 ? `₹${paid.toLocaleString()}` : '—'}
@@ -5227,9 +5252,11 @@ export default function Sales() {
           (o.leadCode && o.leadCode === r.leadId) ||
           (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
         );
-        const compTotal = r2(computeCompositionGrandTotal(r, kits));
+        const linkedQuot = findLinkedLeadQuotation(r);
+        const bestPC = bestLeadPaymentCollection(linkedOrder, r, linkedQuot);
+        const compTotal = r2(computeCompositionGrandTotal({ ...r, paymentCollection: bestPC }, kits));
         const totalAmt = compTotal || linkedOrder?.totalAmount || r.totalAmount;
-        const paidAmt = linkedOrder?.paidAmount ?? r.paidAmount;
+        const paidAmt = Math.max(Number(linkedOrder?.paidAmount) || 0, Number(r.paidAmount) || 0, Number(linkedQuot?.paidAmount) || 0);
         const balanceAmt = totalAmt > 0 ? Math.max(0, totalAmt - paidAmt) : (linkedOrder?.balance ?? r.balance);
         const payStatus = totalAmt > 0 && paidAmt >= totalAmt ? 'Paid' : paidAmt > 0 ? 'Partially Paid' : (linkedOrder?.paymentStatus || r.paymentStatus);
         if (!totalAmt) return <Tag color="default" style={{ borderRadius: 20, fontSize: 12, fontWeight: 600 }}>No Amount</Tag>;
@@ -5481,7 +5508,9 @@ export default function Sales() {
         const oLinkedLead = r.leadCode
           ? leadsData.find(l => l.leadCode === r.leadCode || l.leadId === r.leadCode)
           : leadsData.find(l => String(l.key) === String(r.leadId?._id || r.leadId));
-        const compTotal = r2(computeCompositionGrandTotal(oLinkedLead || r, kits));
+        const linkedQuot = findLinkedQuotation(r);
+        const bestPC = bestLeadPaymentCollection(r, oLinkedLead, linkedQuot);
+        const compTotal = r2(computeCompositionGrandTotal({ ...(oLinkedLead || r), paymentCollection: bestPC }, kits));
         return <Text strong style={{ fontSize: 13 }}>₹{(compTotal || v || 0).toLocaleString()}</Text>;
       },
     },
@@ -5490,7 +5519,10 @@ export default function Sales() {
       render: (_, r) => {
         const linkedNeg = negotiationsData.find(n => String(n.key) === String(r.negotiationId));
         const linkedQuot = findLinkedQuotation(r);
-        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || linkedQuot?.paidAmount || 0);
+        const oLinkedLead = r.leadCode
+          ? leadsData.find(l => l.leadCode === r.leadCode || l.leadId === r.leadCode)
+          : leadsData.find(l => String(l.key) === String(r.leadId?._id || r.leadId));
+        const effectivePaid = Math.max(Number(r.paidAmount) || 0, Number(linkedNeg?.paidAmount) || 0, Number(linkedQuot?.paidAmount) || 0, Number(oLinkedLead?.paidAmount) || 0);
         return (
           <div>
             <Text strong style={{ fontSize: 13, color: effectivePaid > 0 ? '#52c41a' : textColor }}>₹{effectivePaid.toLocaleString()}</Text>
@@ -5507,11 +5539,12 @@ export default function Sales() {
         if (r.orderCategory === 'SAMPLE') return <Tag color="default" style={{ borderRadius: 20, fontSize: 12, fontWeight: 600 }}>N/A</Tag>;
         const linkedNeg = negotiationsData.find(n => String(n.key) === String(r.negotiationId));
         const linkedQuot = findLinkedQuotation(r);
-        const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedNeg?.paidAmount || linkedQuot?.paidAmount || 0);
         const oLinkedLead = r.leadCode
           ? leadsData.find(l => l.leadCode === r.leadCode || l.leadId === r.leadCode)
           : leadsData.find(l => String(l.key) === String(r.leadId?._id || r.leadId));
-        const compTotal = r2(computeCompositionGrandTotal(oLinkedLead || r, kits));
+        const effectivePaid = Math.max(Number(r.paidAmount) || 0, Number(linkedNeg?.paidAmount) || 0, Number(linkedQuot?.paidAmount) || 0, Number(oLinkedLead?.paidAmount) || 0);
+        const bestPC = bestLeadPaymentCollection(r, oLinkedLead, linkedQuot);
+        const compTotal = r2(computeCompositionGrandTotal({ ...(oLinkedLead || r), paymentCollection: bestPC }, kits));
         const effectiveTotal = compTotal || r.totalAmount || 0;
         const effectiveStatus = effectiveTotal > 0 && effectivePaid >= effectiveTotal ? 'Paid'
           : effectivePaid > 0 ? 'Partially Paid'
@@ -8744,9 +8777,28 @@ export default function Sales() {
               {orderEditTarget?.orderCategory !== 'SAMPLE' && (
                 <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                   title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><DollarOutlined style={{ color: '#52c41a' }} /><span>Payment Collection</span></Space>}>
+                  {(orderEditTarget?.paymentCollection || []).length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>Previously Recorded (read-only)</Text>
+                      {(orderEditTarget.paymentCollection || []).map((e, i) => (
+                        <div key={e.recordedAt || i} style={{ background: 'rgba(0,0,0,0.02)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: '8px 12px', marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                          <Space size={16}>
+                            <Text style={{ fontSize: 12 }}>{COLLECTION_METHODS.find(m => m.value === e.paymentMethod)?.label || e.paymentMethod}</Text>
+                            <Text strong style={{ fontSize: 13 }}>₹{Number(e.paidAmount || 0).toLocaleString()}</Text>
+                            {e.notes && <Text type="secondary" style={{ fontSize: 12 }}>{e.notes}</Text>}
+                          </Space>
+                          <Space size={12}>
+                            {e.recordedAt && <Text type="secondary" style={{ fontSize: 11 }}>{dayjs(e.recordedAt).format('DD MMM YYYY')}</Text>}
+                            {e.proof?.url && <a href={e.proof.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#1890ff' }}><FileTextOutlined /> Proof ↗</a>}
+                          </Space>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <Form.List name="paymentCollection">
                     {(fields, { add, remove }) => (
                       <>
+                        {fields.length > 0 && <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>New Payment Entries</Text>}
                         {fields.map(({ key, name, ...rest }) => (
                           <div key={key} style={{ background: 'rgba(177,30,106,0.03)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
                             <Row gutter={[8, 0]} align="middle">
@@ -8775,9 +8827,11 @@ export default function Sales() {
                   </Form.List>
                   <Form.Item noStyle shouldUpdate>
                     {({ getFieldValue }) => {
+                      // Form value now holds only entries added THIS session (see openOrderEditModal) —
+                      // the previously recorded total must be added back in explicitly.
                       const rawColl = getFieldValue('paymentCollection');
                       const collection = Array.isArray(rawColl) ? rawColl : [];
-                      const collTotal = collection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+                      const newCollTotal = collection.reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                       const existingCollTotal = (orderEditTarget?.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                       // Also consider the linked lead / quotation / negotiation paidAmount —
                       // the order may not have carried it over if created before the carry-over fix.
@@ -8788,7 +8842,7 @@ export default function Sales() {
                       const linkedPaid = Number(oLinkedLead?.paidAmount) || Number(oLinkedQuot?.paidAmount) || Number(oLinkedNeg?.paidAmount) || 0;
                       const basePaid = Math.max(Number(orderEditTarget?.paidAmount || 0), linkedPaid);
                       const uncapturedPaid = Math.max(0, basePaid - existingCollTotal);
-                      const effectivePaid = collTotal + uncapturedPaid;
+                      const effectivePaid = existingCollTotal + newCollTotal + uncapturedPaid;
                       const prods = getFieldValue('editProducts') || [];
                       const editRec = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [], packagingIncludesQty: getFieldValue('packagingIncludesQty') || orderEditTarget?.packagingIncludesQty || {} };
                       const computedTot = r2(computeCompositionGrandTotal(editRec, kits)) || r2(computeRecordGrandTotal(editRec));

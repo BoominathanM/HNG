@@ -25,6 +25,39 @@ const reconcileTaxable = (subtotal, gstAmount, total) => {
   return { taxable: r2(Math.max(tot - gst, 0)), gstAmt: r2(Math.min(gst, tot)) };
 };
 
+// Invoice.total itself can go stale relative to the linked Order's real billed total —
+// Order.paymentCollection entries carrying a courierCharge/roundOff (pushed by Sales' own
+// payment-entry flow via syncOrderPaymentCollection, e.g. from a Quotation-stage payment)
+// only raise the ORDER's total; only a payment recorded through Billing's own recordPayment
+// bumps Invoice.total (`invoice.total += courierCharge/roundOff`, billing.controller.js).
+// So an invoice paid partly via Billing and partly via Sales/Negotiation ends up with
+// Invoice.total under-reporting real Order.total by whatever courier/round-off went through
+// the non-Billing path — same reconciliation gap already fixed for pending-due in
+// parties.controller's getHotelPendingDue (paid = max(Invoice, Order), total = max(Invoice,
+// Order)), applied here to "Invoice Value" too.
+//
+// Forwarding charge + courier charge + round-off are real money billed on the invoice but
+// are NOT part of the taxable supply (DocumentTemplate.jsx's computeModel keeps them as
+// separate rows outside taxable/tax, and toWords/GST filing shouldn't count them as taxable
+// turnover) — so they're subtracted back out before handing the "core" total to
+// reconcileTaxable, otherwise a courier charge added after the sale would silently inflate
+// the reported Taxable Value for GST purposes.
+const resolveInvoiceMoney = (inv, order) => {
+  const invValue = Math.max(Number(inv.total) || 0, Number(order?.total) || Number(order?.amount) || 0);
+  let extras = 0;
+  if (order) {
+    const fwd = order.forwardingCharge ? (Number(order.forwardingChargeAmount) || 0) : 0;
+    const courierRoundOff = (order.paymentCollection || []).reduce(
+      (s, e) => s + (Number(e?.courierCharge) || 0) + (Number(e?.roundOff) || 0), 0
+    );
+    extras = r2(fwd + courierRoundOff);
+  }
+  const coreTotal = Math.max(0, invValue - extras);
+  const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, coreTotal);
+  return { invValue: r2(invValue), taxable, gstAmt, extras };
+};
+const ORDER_MONEY_FIELDS = 'total amount gstAmount forwardingCharge forwardingChargeAmount paymentCollection';
+
 // A kit's product rows (Order/Quotation/Invoice `items[]` with isKit:true) store `qty` as the
 // component quantity PER KIT (see Kit.products), not the order's total — the real quantity
 // consumed/sold is item.qty × (number of kits ordered), which lives separately on
@@ -232,20 +265,20 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
 
   const invoices = await Invoice.find(filter)
     .populate('partyId', 'name gstNumber state')
-    .populate('orderId', 'orderCode state')
+    .populate('orderId', `orderCode state ${ORDER_MONEY_FIELDS}`)
     .sort('-invoiceDate');
 
   const monthlyMap = {};
   invoices.forEach((inv) => {
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
     const key = inv.invoiceDate?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
     if (!monthlyMap[key]) monthlyMap[key] = { month: key, amount: 0 };
-    monthlyMap[key].amount += Number(inv.total) || 0;
+    monthlyMap[key].amount += resolveInvoiceMoney(inv, order).invValue;
   });
 
   const data = invoices.map((inv) => {
     const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
-    const invValue = Number(inv.total) || ((Number(inv.subtotal) || 0) + (Number(inv.gstAmount) || 0));
-    const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, invValue);
+    const { invValue, taxable, gstAmt } = resolveInvoiceMoney(inv, order);
     const allProducts = (inv.items || []).map((it) => it.itemName).filter(Boolean).join(', ');
 
     return {
@@ -264,6 +297,7 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
       cgst: r2(gstAmt / 2),
       sgst: r2(gstAmt / 2),
       igst: 0,
+      invoiceType: inv.invoiceType || 'GST',
     };
   });
 
@@ -315,13 +349,21 @@ const EXPENSE_CAT_MAP = {
   'Other': 'other',
   'Purchase': 'other',
 };
-const emptyExpenses = () => ({ rent: 0, salary: 0, utilities: 0, transport: 0, marketing: 0, other: 0 });
+const emptyExpenses = () => ({ utilities: 0, transport: 0, other: 0 });
 
 // ─── PROFIT & LOSS ─────────────────────────────────────────────────────────────
 exports.getProfitLoss = asyncHandler(async (req, res) => {
   const poDateFilter = buildDateFilterOn(req, 'createdAt');
-  const [orders, purchaseOrders, localPurchases, expenses, itemCostIndex, stockIndex] = await Promise.all([
-    Order.find({ deletedAt: null, status: { $ne: 'Cancelled' }, ...poDateFilter }),
+  // Sales come from Invoice, same as Sales Report / Bill-wise P&L / Monthly GST (see
+  // getSalesReport comment) — an order isn't revenue until it's been billed in Billing.
+  // Previously this sourced totalSales/paid/pending from Order.amount/paymentCollection
+  // directly, which double-counted un-invoiced orders as revenue and could disagree with
+  // every other report tab whenever an invoice's amount was manually adjusted during
+  // quotation→invoice conversion (billing.controller convertQuotationToInvoice).
+  const [invoices, purchaseOrders, localPurchases, expenses, itemCostIndex, stockIndex] = await Promise.all([
+    Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
+      .populate('orderId', `kitOrders kitOverallQty orderCategory ${ORDER_MONEY_FIELDS}`)
+      .populate('quotationId', 'kitOrders kitOverallQty'),
     PurchaseOrder.find(poDateFilter),
     LocalPurchase.find(poDateFilter),
     // Expenses are dated by expenseDate, not createdAt — filtering by createdAt would
@@ -331,35 +373,29 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     buildStockIndex(),
   ]);
 
-  const totalSales = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
-  const totalSalesGst = orders.reduce((s, o) => s + (Number(o.gstAmount) || 0), 0);
+  // Excl-GST taxable value and GST split per invoice, reconciled the same way as every
+  // other Invoice-sourced report tab (see reconcileTaxable above).
+  const invRows = invoices.map((inv) => {
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const { taxable, gstAmt } = resolveInvoiceMoney(inv, order);
+    return { inv, taxable, gstAmt };
+  });
+
+  const totalSales = invRows.reduce((s, r) => s + r.taxable, 0);
+  const totalSalesGst = invRows.reduce((s, r) => s + r.gstAmt, 0);
   const totalCogs = purchaseOrders.reduce((s, o) => s + (Number(o.amount) || 0), 0)
     + localPurchases.reduce((s, l) => s + (Number(l.totalAmount) || 0), 0);
   const grossProfit = totalSales - totalCogs;
 
-  // Paid vs pending, mirroring the same paymentCollection-first fallback chain used by
-  // syncOrderPayment.resolveOrderPaymentStatus and sales.controller's reminder computation —
-  // keeps this report's paid/pending in agreement with what Sales/Billing show for an order.
-  //
-  // orderPaid()/orderTotalValue() are against the order's real (GST-inclusive) total, since
-  // that's what a payment is actually collected against. But `sales`/`salesGst` above are
-  // reported excl-GST vs GST-collected separately (so the Excl./Incl. GST toggle can show
-  // either). To keep "Paid + Pending" always reconciling to whichever Total Sales figure is
-  // on screen, we derive a paid RATIO per order and apply it to sales/salesGst individually,
-  // rather than comparing the GST-inclusive paid/total against the excl-GST sales figure.
-  const orderPaid = (o) => {
-    const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
-    return collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
-  };
-  const orderTotalValue = (o) => Number(o.total) || (Number(o.amount) || 0) + (Number(o.gstAmount) || 0);
-  const paidRatio = (o) => {
-    const total = orderTotalValue(o);
-    return total > 0 ? Math.min(1, orderPaid(o) / total) : 0;
-  };
-  // Excl-GST paid/pending, applying each order's own paid ratio to its excl-GST sales
+  // Paid vs pending straight off Invoice.advanceAmount/balanceDue — the exact fields
+  // Billing itself writes on every recordPayment/convertQuotationToInvoice (see
+  // billing.controller) — instead of re-deriving from Order.paymentCollection, so this
+  // always agrees with what the Billing module shows for that invoice.
+  const paidRatio = (r) => (r.inv.total > 0 ? Math.min(1, (Number(r.inv.advanceAmount) || 0) / r.inv.total) : 0);
+  // Excl-GST paid/pending, applying each invoice's own paid ratio to its excl-GST taxable
   // figure so these reconcile exactly with `totalSales` above (also excl-GST).
-  const totalPaid = orders.reduce((s, o) => s + r2((Number(o.amount) || 0) * paidRatio(o)), 0);
-  const totalPending = orders.reduce((s, o) => s + r2((Number(o.amount) || 0) * (1 - paidRatio(o))), 0);
+  const totalPaid = invRows.reduce((s, r) => s + r2(r.taxable * paidRatio(r)), 0);
+  const totalPending = invRows.reduce((s, r) => s + r2(r.taxable * (1 - paidRatio(r))), 0);
 
   const expenseBreakdown = emptyExpenses();
   expenses.forEach((e) => {
@@ -372,21 +408,19 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
 
   // Monthly P&L with per-category expense breakdown
   const monthlyMap = {};
-  orders.forEach((o) => {
-    const key = o.createdAt?.toLocaleString('default', { month: 'short' }) || '';
+  invRows.forEach((r) => {
+    const key = r.inv.invoiceDate?.toLocaleString('default', { month: 'short' }) || '';
     if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
-    const sales = Number(o.amount) || 0;
-    const salesGst = Number(o.gstAmount) || 0;
-    const ratio = paidRatio(o);
-    monthlyMap[key].sales += sales;
-    monthlyMap[key].salesGst += salesGst;
-    // Split each order's excl-GST sales and its GST by the SAME paid ratio, so
+    const ratio = paidRatio(r);
+    monthlyMap[key].sales += r.taxable;
+    monthlyMap[key].salesGst += r.gstAmt;
+    // Split each invoice's excl-GST sales and its GST by the SAME paid ratio, so
     // paid+pending always reconciles exactly to sales (Excl. GST) or sales+salesGst
     // (Incl. GST) — whichever Total Sales figure the GST-mode toggle is showing.
-    monthlyMap[key].paid += r2(sales * ratio);
-    monthlyMap[key].pending += r2(sales * (1 - ratio));
-    monthlyMap[key].paidGst += r2(salesGst * ratio);
-    monthlyMap[key].pendingGst += r2(salesGst * (1 - ratio));
+    monthlyMap[key].paid += r2(r.taxable * ratio);
+    monthlyMap[key].pending += r2(r.taxable * (1 - ratio));
+    monthlyMap[key].paidGst += r2(r.gstAmt * ratio);
+    monthlyMap[key].pendingGst += r2(r.gstAmt * (1 - ratio));
   });
   purchaseOrders.forEach((po) => {
     const key = po.createdAt?.toLocaleString('default', { month: 'short' }) || '';
@@ -409,16 +443,24 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     monthlyMap[key].expenses[cat] = (monthlyMap[key].expenses[cat] || 0) + e.amount;
   });
 
-  // Product-wise P&L (from order items) — COGS uses the real average purchase cost for that
-  // item when we have purchase history for it, falling back to a flat 65%-of-sales estimate
-  // only for items with no PurchaseOrder/LocalPurchase record at all.
+  // Product-wise P&L (from invoice items, kit-multiplied via the linked order/quotation —
+  // see kitMultiplier above) — COGS uses the real average purchase cost for that item when
+  // we have purchase history for it, falling back to a flat 65%-of-sales estimate only for
+  // items with no PurchaseOrder/LocalPurchase record at all.
+  const invoiceItemRows = (inv) => {
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const quotation = inv.quotationId && typeof inv.quotationId === 'object' ? inv.quotationId : null;
+    const kitOrders = order?.kitOrders?.length ? order.kitOrders : (quotation?.kitOrders || []);
+    const legacyOverallQty = order?.kitOverallQty ?? quotation?.kitOverallQty;
+    const rawItems = inv.items?.length
+      ? inv.items
+      : [{ itemName: 'Unknown', lineTotal: Number(inv.subtotal) || 0, qty: 1 }];
+    return applyKitMultiplier(rawItems, kitOrders, legacyOverallQty, order?.orderCategory);
+  };
+
   const productMap = {};
-  orders.forEach((o) => {
-    const rawItems = o.items?.length
-      ? o.items
-      : [{ itemName: o.product || 'Unknown', lineTotal: Number(o.amount) || 0, qty: Number(o.qty) || 0 }];
-    const items = applyKitMultiplier(rawItems, o.kitOrders, o.kitOverallQty, o.orderCategory);
-    items.forEach((item) => {
+  invoices.forEach((inv) => {
+    invoiceItemRows(inv).forEach((item) => {
       const name = item.itemName || 'Unknown';
       if (!productMap[name]) productMap[name] = { product: name, sales: 0, cogs: 0, grossProfit: 0, soldQty: 0, stockQty: 0 };
       const itemSales = Number(item.lineTotal) || (Number(item.price) * Number(item.qty)) || 0;
@@ -436,13 +478,9 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
 
   // Per-product monthly breakdown
   const productMonthlyData = {};
-  orders.forEach((o) => {
-    const month = o.createdAt?.toLocaleString('default', { month: 'short' }) || '';
-    const rawItems = o.items?.length
-      ? o.items
-      : [{ itemName: o.product || 'Unknown', lineTotal: Number(o.amount) || 0, qty: Number(o.qty) || 0 }];
-    const items = applyKitMultiplier(rawItems, o.kitOrders, o.kitOverallQty, o.orderCategory);
-    items.forEach((item) => {
+  invoices.forEach((inv) => {
+    const month = inv.invoiceDate?.toLocaleString('default', { month: 'short' }) || '';
+    invoiceItemRows(inv).forEach((item) => {
       const name = item.itemName || 'Unknown';
       if (!productMonthlyData[name]) productMonthlyData[name] = {};
       if (!productMonthlyData[name][month]) productMonthlyData[name][month] = { month, sales: 0, cogs: 0, grossProfit: 0, qty: 0 };
@@ -477,7 +515,7 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
 exports.getBillPL = asyncHandler(async (req, res) => {
   const invoices = await Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
     .populate('partyId', 'name')
-    .populate('orderId', 'kitOrders kitOverallQty orderCategory')
+    .populate('orderId', `kitOrders kitOverallQty orderCategory ${ORDER_MONEY_FIELDS}`)
     .populate('quotationId', 'kitOrders kitOverallQty')
     .sort('-invoiceDate');
   const itemCostIndex = await buildItemCostIndex();
@@ -520,7 +558,7 @@ exports.getBillPL = asyncHandler(async (req, res) => {
     } else {
       cogs = (inv.subtotal || 0) * 0.62;
     }
-    const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, inv.total);
+    const { invValue, taxable, gstAmt } = resolveInvoiceMoney(inv, order);
     const grossProfit = taxable - cogs;
     const inputGst = cogs - cogs / 1.18;
     return {
@@ -534,7 +572,7 @@ exports.getBillPL = asyncHandler(async (req, res) => {
       gst_collected: gstAmt,
       cgst: r2(gstAmt / 2),
       sgst: r2(gstAmt / 2),
-      sell_total: inv.total,
+      sell_total: invValue,
       cogs: r2(cogs),
       input_gst: r2(inputGst),
       gross_profit: r2(grossProfit),
@@ -549,7 +587,8 @@ exports.getBillPL = asyncHandler(async (req, res) => {
 const MONTH_ORDER = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 exports.getMonthlyGst = asyncHandler(async (req, res) => {
-  const invoices = await Invoice.find({ invoiceType: 'GST', ...buildDateFilterOn(req, 'invoiceDate') });
+  const invoices = await Invoice.find({ invoiceType: 'GST', ...buildDateFilterOn(req, 'invoiceDate') })
+    .populate('orderId', ORDER_MONEY_FIELDS);
   const poDateFilter = buildDateFilterOn(req, 'createdAt');
   const purchaseOrders = await PurchaseOrder.find(poDateFilter)
     .populate('itemId', 'gstPercent')
@@ -573,7 +612,8 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
 
   invoices.forEach((inv) => {
     const row = ensureRow(inv.invoiceDate);
-    const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, inv.total);
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const { taxable, gstAmt } = resolveInvoiceMoney(inv, order);
     row.sales_taxable += taxable;
     row.sales_cgst += gstAmt / 2;
     row.sales_sgst += gstAmt / 2;
@@ -623,15 +663,17 @@ exports.getAuditorTax = asyncHandler(async (req, res) => {
   if (type === 'sales') {
     const invoices = await Invoice.find({ invoiceType: 'GST', ...buildDateFilterOn(req, 'invoiceDate') })
       .populate('partyId', 'name gstNumber state')
+      .populate('orderId', ORDER_MONEY_FIELDS)
       .sort('-invoiceDate');
     const rows = invoices.map((inv) => {
-      const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, inv.total);
+      const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+      const { invValue, taxable, gstAmt } = resolveInvoiceMoney(inv, order);
       return {
         gstNo: inv.partyId?.gstNumber || '',
         customerName: inv.partyId?.name || '',
         invoiceNo: inv.invoiceNumber,
         invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10),
-        invoiceValue: inv.total,
+        invoiceValue: invValue,
         taxableValue: taxable,
         totalTax: gstAmt,
         cgst: r2(gstAmt / 2),
@@ -663,27 +705,25 @@ exports.getAuditorTax = asyncHandler(async (req, res) => {
 });
 
 // ─── FORWARDING & COURIER CHARGES REPORT ──────────────────────────────────────
-// Forwarding charge is billed at the Order level (Order.forwardingChargeAmount); courier
-// charge is captured per Payment (Payment.courierCharge) when recording an invoice payment
-// in Billing. Both are joined back onto their Invoice so the report can group them
-// month-wise and hotel-wise (hotel = the invoice's Party, matching every other report's
-// customer grouping — see getSalesReport/getAuditorTax).
+// Forwarding charge is billed at the Order level (Order.forwardingChargeAmount). Courier
+// charge used to be read from Payment.courierCharge alone — but Payment documents are only
+// created by Billing's own recordPayment; a payment recorded through Sales/Negotiation's own
+// flow (syncOrderPaymentCollection, e.g. a Quotation-stage payment) writes courierCharge
+// straight onto Order.paymentCollection and never creates a Payment doc at all, so that
+// courier charge was silently invisible here (same reconciliation gap as Invoice.total in
+// resolveInvoiceMoney above — real live case: INV-260001 had zero Payment docs but ₹1,250 of
+// courier charge sitting on its Order.paymentCollection). Order.paymentCollection is written
+// by BOTH paths (Billing's recordPayment syncs onto it too, see billing.controller.js), so
+// summing courierCharge from there alone captures every payment without double-counting.
+// NOTE: paymentCollection lives on the Order, not per-invoice — if one order ever has two
+// invoices against it (a documented edge case, see parties.controller's getHotelPendingDue),
+// each invoice's row here would show that order's FULL courier total, not a per-invoice
+// split; no per-invoice courier data exists on Order.paymentCollection to split it by.
 exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
-  const Payment = require('../../models/Payment');
   const invoices = await Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
     .populate('partyId', 'name')
-    .populate('orderId', 'forwardingChargeAmount')
+    .populate('orderId', 'forwardingChargeAmount paymentCollection')
     .sort('-invoiceDate');
-
-  const payments = await Payment.find(
-    { invoiceId: { $in: invoices.map((inv) => inv._id) } },
-    'invoiceId courierCharge'
-  );
-  const courierByInvoice = {};
-  payments.forEach((p) => {
-    const key = String(p.invoiceId);
-    courierByInvoice[key] = (courierByInvoice[key] || 0) + (Number(p.courierCharge) || 0);
-  });
 
   const data = [];
   const monthlyHotelMap = {};
@@ -691,7 +731,9 @@ exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
   invoices.forEach((inv) => {
     const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
     const forwardingCharge = Number(order?.forwardingChargeAmount) || 0;
-    const courierCharge = r2(courierByInvoice[String(inv._id)] || 0);
+    const courierCharge = r2((order?.paymentCollection || []).reduce(
+      (s, e) => s + (Number(e?.courierCharge) || 0), 0
+    ));
     if (!forwardingCharge && !courierCharge) return;
 
     const hotel = inv.partyId?.name || 'Unknown';
@@ -786,6 +828,11 @@ exports.getMyPerformance = asyncHandler(async (req, res) => {
 const PERFORMANCE_PALETTE = ['#B11E6A', '#1890ff', '#52c41a', '#fa8c16', '#7c3aed', '#eb2f96', '#13c2c2', '#faad14'];
 
 exports.getPerformance = asyncHandler(async (req, res) => {
+  // Previously ignored req.query.startDate/endDate entirely, unlike every other report tab
+  // (Sales/Purchase/P&L/Bill-wise P&L/Monthly GST/Forwarding & Courier all respect a date
+  // range) — leaderboard revenue was always all-time regardless of the page's date filter.
+  const dateFilter = buildDateFilterOn(req, 'invoiceDate');
+  const orderDateFilter = buildDateFilterOn(req, 'createdAt');
   const salesUsers = await User.find({ role: { $in: ['Sales Manager', 'Sales Executive'] }, deletedAt: null });
 
   const complaints = await Complaint.find().populate('orderId', 'createdBy');
@@ -798,9 +845,9 @@ exports.getPerformance = asyncHandler(async (req, res) => {
   const monthlyByUser = {};
 
   const leaderboard = await Promise.all(salesUsers.map(async (u, idx) => {
-    const invoices = await Invoice.find({ createdBy: u._id });
+    const invoices = await Invoice.find({ createdBy: u._id, ...dateFilter });
     const revenue = invoices.reduce((s, i) => s + i.total, 0);
-    const orders = await Order.countDocuments({ createdBy: u._id });
+    const orders = await Order.countDocuments({ createdBy: u._id, ...orderDateFilter });
 
     invoices.forEach((inv) => {
       const month = inv.invoiceDate?.toLocaleString('default', { month: 'short' });
