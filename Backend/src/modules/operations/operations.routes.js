@@ -24,6 +24,7 @@ router.post('/stickers/:id/upload-invoice', upload.single('invoice'), ctrl.uploa
 router.patch('/stickers/:id/status', ctrl.updateStickerStatus);
 router.patch('/stickers/:id/approve', ctrl.approveStickerRequest);
 router.post('/stickers/send-to-team', ctrl.sendToStickerTeam);
+router.post('/stickers/:id/send-design-confirmation', ctrl.sendDesignConfirmationWhatsApp);
 
 // Approved designs per hotel (reuse in future orders)
 router.get('/hotel-designs', ctrl.getHotelDesigns);

@@ -52,7 +52,9 @@ const TEXT_ONLY_TEMPLATE_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'ord
 // Billing Invoice attaches the invoice/quotation PDF as a WhatsApp document header,
 // so only templates built with a DOCUMENT header are valid choices for it. Bulk Purchase
 // Request and the per-item Ask Quotation flow attach a Product/Required-Quantity PDF the same way.
-const DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS = ['billing-invoice', 'bulk-purchase-request', 'purchase-ask-quotation'];
+// Design Confirmation attaches the uploaded Sticker/Box/Frosted Ziplock/Butter Paper design
+// PDF the same way.
+const DOCUMENT_ONLY_TEMPLATE_EVENT_KEYS = ['billing-invoice', 'bulk-purchase-request', 'purchase-ask-quotation', 'design-confirmation'];
 
 // These events escalate to a fixed list of internal recipients, repeating every
 // `delayMinutes` inside a start/end time window on the configured days — instead

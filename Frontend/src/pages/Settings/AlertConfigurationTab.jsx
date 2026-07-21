@@ -27,7 +27,7 @@ const DESIGN_ROLES = [
   { role: 'Butter Paper', label: 'Butter Paper' },
 ];
 
-function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel }) {
+function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel, dynamicRecipient }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -64,7 +64,7 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
   };
 
   const handleSave = async () => {
-    if (isEnabled && !recipients.length) {
+    if (isEnabled && !dynamicRecipient && !recipients.length) {
       enqueueSnackbar('Select at least one recipient before enabling this alert', { variant: 'warning' });
       return;
     }
@@ -107,31 +107,35 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
 
       <Divider style={{ margin: '12px 0' }} />
 
-      <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>Recipients ({deptLabel})</Text>
-      <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: 8, maxHeight: 160, overflowY: 'auto', marginTop: 6, marginBottom: 12 }}>
-        {recipientPool.length === 0 ? (
-          <Text style={{ color: subText, fontSize: 12 }}>No active {deptLabel} users found. Add one in the Users tab first.</Text>
-        ) : (
-          <Checkbox.Group style={{ width: '100%' }} value={recipients} onChange={setRecipients}>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              {recipientPool.map((u) => (
-                <div
-                  key={u._id}
-                  style={{
-                    padding: '6px 8px', borderRadius: 6,
-                    background: recipients.includes(u._id) ? PRIMARY_ALPHA(0.08) : 'transparent',
-                  }}
-                >
-                  <Checkbox value={u._id}>
-                    <Text style={{ color: textColor, fontSize: 13 }}>{u.fullName}</Text>
-                    <Text style={{ color: subText, fontSize: 12 }}> — {u.role}</Text>
-                  </Checkbox>
-                </div>
-              ))}
-            </Space>
-          </Checkbox.Group>
-        )}
-      </div>
+      {!dynamicRecipient && (
+        <>
+          <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>Recipients ({deptLabel})</Text>
+          <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: 8, maxHeight: 160, overflowY: 'auto', marginTop: 6, marginBottom: 12 }}>
+            {recipientPool.length === 0 ? (
+              <Text style={{ color: subText, fontSize: 12 }}>No active {deptLabel} users found. Add one in the Users tab first.</Text>
+            ) : (
+              <Checkbox.Group style={{ width: '100%' }} value={recipients} onChange={setRecipients}>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  {recipientPool.map((u) => (
+                    <div
+                      key={u._id}
+                      style={{
+                        padding: '6px 8px', borderRadius: 6,
+                        background: recipients.includes(u._id) ? PRIMARY_ALPHA(0.08) : 'transparent',
+                      }}
+                    >
+                      <Checkbox value={u._id}>
+                        <Text style={{ color: textColor, fontSize: 13 }}>{u.fullName}</Text>
+                        <Text style={{ color: subText, fontSize: 12 }}> — {u.role}</Text>
+                      </Checkbox>
+                    </div>
+                  ))}
+                </Space>
+              </Checkbox.Group>
+            )}
+          </div>
+        </>
+      )}
 
       <Row gutter={12}>
         <Col span={12}>
@@ -315,6 +319,28 @@ export default function AlertConfigurationTab() {
             config={findConfig('operations_approval', null)}
             recipientPool={opsUsers}
             deptLabel="Operations"
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Task Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          Rings the assigned staff member's browser from the moment a task is assigned, repeating on the schedule below, until it's marked Done.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('task', null)?._id || 'task'}
+            title="Task Alert"
+            description="Notifies whichever staff member a task is assigned to, until it's marked Done."
+            group="task"
+            role={null}
+            config={findConfig('task', null)}
+            dynamicRecipient
           />
         </Col>
       </Row>

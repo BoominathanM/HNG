@@ -192,7 +192,7 @@ exports.getTemplates = async (req, res, next) => {
 // future placeholder event added there without a real trigger can't silently appear
 // in the mapping UI and let users create mappings that never fire. account-verification
 // is intentionally excluded — it has no live trigger yet.
-const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify', 'order-delivery-reminder', 'local-purchase-credit-due', 'stock-checking', 'bulk-purchase-request', 'purchase-ask-quotation', 'purchase-payment-reminder', 'separate-purchase-payment-reminder'];
+const ENABLED_EVENT_KEYS = ['follow-up-reminder', 'payment-due', 'billing-invoice', 'dispatch-notify', 'design-confirmation', 'order-delivery-reminder', 'local-purchase-credit-due', 'stock-checking', 'bulk-purchase-request', 'purchase-ask-quotation', 'purchase-payment-reminder', 'separate-purchase-payment-reminder'];
 
 // These events escalate on a start/end time window + delay (see
 // localPurchaseCreditDueScheduler.js) instead of the once-a-day `sendTime` used by

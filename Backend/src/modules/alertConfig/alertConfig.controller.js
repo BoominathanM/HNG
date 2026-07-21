@@ -13,7 +13,7 @@ exports.getAlertConfigs = asyncHandler(async (req, res) => {
 exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
   const { group, role, recipientUserIds, startTime, endTime, days, durationMinutes, audioUrl, audioPublicId, audioName, isEnabled } = req.body;
 
-  if (!['design', 'sales_approval', 'operations_approval'].includes(group)) {
+  if (!['design', 'sales_approval', 'operations_approval', 'task'].includes(group)) {
     return next(new AppError('Invalid alert group', 400));
   }
   if (group === 'design' && !['Sticker', 'Box', 'Ziplock', 'Butter Paper'].includes(role)) {

@@ -3,6 +3,7 @@
 // (modules/alerts/alerts.controller.js) so the two never drift out of sync.
 const StickerRequest = require('../models/StickerRequest');
 const Order = require('../models/Order');
+const Task = require('../models/Task');
 
 // AlertConfig.role matches User.role ('Ziplock'), but StickerRequest.stickerType
 // uses the longer label ('Frosted Ziplock') — translate before querying the queue.
@@ -21,6 +22,9 @@ function titleFor(config, recordType, record) {
   if (config.group === 'design') {
     return `New ${config.role === 'Ziplock' ? 'Frosted Ziplock' : config.role} order pending — ${record.hotelName || record.product || 'item'}`;
   }
+  if (config.group === 'task') {
+    return `Task pending — ${record.taskName || record.product || 'Task'} (${record.taskCode || record._id})`;
+  }
   const who = config.group === 'sales_approval' ? 'Sales' : 'Operations';
   if (recordType === 'Order') {
     return `${who} approval pending — emergency dispatch (${record.orderCode || record._id})`;
@@ -29,6 +33,9 @@ function titleFor(config, recordType, record) {
 }
 
 function linkFor(recordType, record) {
+  if (recordType === 'Task') {
+    return `/tasks/${record._id}`;
+  }
   if (recordType === 'Order') {
     // Emergency-dispatch approval is actioned from the Task, not a dedicated order page.
     return record.emergencyTaskId ? `/tasks/${record.emergencyTaskId}` : '/tasks';
@@ -52,6 +59,25 @@ async function getPendingRecordsForConfig(config) {
       record: r,
       title: titleFor(config, 'StickerRequest', r),
       link: linkFor('StickerRequest', r),
+    }));
+  }
+
+  if (config.group === 'task') {
+    // Unlike the other groups (fixed recipientUserIds picked by an admin), a
+    // task's recipient is whoever it's assigned to — carried per-item as
+    // `recipientUserId` and matched against the logged-in user in
+    // modules/alerts/alerts.controller.js instead of against config.recipientUserIds.
+    const items = await Task.find({
+      assignedTo: { $ne: null },
+      status: { $ne: 'Done' },
+    }).lean();
+    return items.map((r) => ({
+      recordType: 'Task',
+      recordId: r._id,
+      record: r,
+      recipientUserId: r.assignedTo,
+      title: titleFor(config, 'Task', r),
+      link: linkFor('Task', r),
     }));
   }
 

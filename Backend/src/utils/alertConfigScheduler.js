@@ -24,7 +24,10 @@ function isWithinWindow(config, now) {
 
 async function processConfig(config) {
   const now = new Date();
-  if (!config.recipientUserIds?.length || !config.audioUrl) return;
+  if (!config.audioUrl) return;
+  // 'task' has no fixed recipientUserIds — its recipient is each task's own
+  // assignedTo, resolved per-record in alertConfigQueries/alerts.controller.js.
+  if (config.group !== 'task' && !config.recipientUserIds?.length) return;
   if (!isWithinWindow(config, now)) return;
 
   const pending = await getPendingRecordsForConfig(config);

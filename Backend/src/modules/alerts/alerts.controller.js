@@ -27,7 +27,12 @@ function isWithinWindow(config, now) {
 // cron tick has evaluated it — same latency as the scheduler's own cadence.
 exports.getActiveAlerts = asyncHandler(async (req, res) => {
   const now = new Date();
-  const configs = await AlertConfig.find({ isEnabled: true, recipientUserIds: req.user._id });
+  // 'task' configs apply to whichever task's assignedTo matches this user
+  // (checked per-item below), not to a fixed recipientUserIds list.
+  const configs = await AlertConfig.find({
+    isEnabled: true,
+    $or: [{ recipientUserIds: req.user._id }, { group: 'task' }],
+  });
 
   const results = [];
   for (const config of configs) {
@@ -43,6 +48,7 @@ exports.getActiveAlerts = asyncHandler(async (req, res) => {
     const logByRecord = new Map(logs.map((l) => [String(l.recordId), l]));
 
     for (const item of pending) {
+      if (config.group === 'task' && String(item.recipientUserId || '') !== String(req.user._id)) continue;
       const log = logByRecord.get(String(item.recordId));
       if (!log) continue; // not yet evaluated by the scheduler
       results.push({

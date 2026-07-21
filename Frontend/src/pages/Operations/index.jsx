@@ -63,6 +63,7 @@ import {
   useUploadStickerDesignMutation,
   useUpdateStickerStatusMutation,
   useSendToStickerTeamMutation,
+  useSendDesignConfirmationWhatsAppMutation,
   useAssignTaskMutation,
   useSetOrderEmergencyMutation,
   useApproveStickerRequestMutation,
@@ -157,6 +158,7 @@ export default function Operations() {
   const [uploadStickerInvoice] = useUploadStickerInvoiceMutation();
   const [updateStickerStatus] = useUpdateStickerStatusMutation();
   const [sendToStickerTeam] = useSendToStickerTeamMutation();
+  const [sendDesignConfirmationWhatsApp] = useSendDesignConfirmationWhatsAppMutation();
   const [assignTask] = useAssignTaskMutation();
   const [setOrderEmergency] = useSetOrderEmergencyMutation();
   const [approveStickerRequest] = useApproveStickerRequestMutation();
@@ -565,9 +567,23 @@ export default function Operations() {
 
   const [uploadedFiles, setUploadedFiles] = useState({});
   const [invoiceFiles, setInvoiceFiles] = useState({});
+  const [sendingDesignConfirmation, setSendingDesignConfirmation] = useState({});
   const [invoiceUploading, setInvoiceUploading] = useState({});
 
+  // Design uploads (Sticker/Box/Frosted Ziplock/Butter Paper) must be PDF only — the
+  // WhatsApp "Design Confirmation" send attaches this file as a document, which the
+  // Design Confirmation template is configured to expect as a PDF.
   const handleUpload = (itemKey, fileList) => {
+    const invalid = fileList.some((f) => {
+      const file = f.originFileObj || f;
+      const isPdfType = file?.type ? file.type === 'application/pdf' : true;
+      const isPdfName = /\.pdf$/i.test(f.name || '');
+      return !(isPdfType && isPdfName);
+    });
+    if (invalid) {
+      enqueueSnackbar('Only PDF files are allowed for the design upload', { variant: 'error' });
+      return;
+    }
     setUploadedFiles((prev) => ({ ...prev, [itemKey]: fileList }));
   };
 
@@ -1093,7 +1109,7 @@ export default function Operations() {
                     fileList={uploadedFiles[record.key] || []}
                     onChange={({ fileList }) => handleUpload(record.key, fileList)}
                     maxCount={1}
-                    accept="image/*,.pdf"
+                    accept=".pdf"
                     showUploadList={false}
                   >
                     <Button
@@ -1191,7 +1207,7 @@ export default function Operations() {
                       fileList={[]}
                       onChange={({ fileList }) => handleUpload(record.key, fileList)}
                       maxCount={1}
-                      accept="image/*,.pdf"
+                      accept=".pdf"
                       showUploadList={false}
                     >
                       <Button size="small" icon={<UploadOutlined />} danger>Upload Design *</Button>
@@ -1216,11 +1232,26 @@ export default function Operations() {
                     size="small"
                     icon={<MessageOutlined />}
                     style={{ background: '#25D366', borderColor: '#25D366', color: '#fff' }}
+                    loading={!!sendingDesignConfirmation[record.key]}
                     onClick={async () => {
                       const ord = apiOrders.find((o) => o.id === record.orderId);
                       try {
+                        // Existing internal "sent to team" bookkeeping (dispatchedToOps flag) — unchanged.
                         await sendToStickerTeam({ id: sr?._id || record.key, orderId: record.orderId, type: label }).unwrap();
-                        enqueueSnackbar(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`, { variant: 'success' });
+                        // Real customer/sales-person WhatsApp send via the "Design Confirmation" event.
+                        if (sr?._id) {
+                          setSendingDesignConfirmation((prev) => ({ ...prev, [record.key]: true }));
+                          try {
+                            const res = await sendDesignConfirmationWhatsApp({ id: sr._id }).unwrap();
+                            enqueueSnackbar(res?.message || `WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Customer`, { variant: 'success' });
+                          } catch (waErr) {
+                            enqueueSnackbar(waErr?.data?.message || waErr?.data || 'Failed to send WhatsApp message', { variant: 'error' });
+                          } finally {
+                            setSendingDesignConfirmation((prev) => ({ ...prev, [record.key]: false }));
+                          }
+                        } else {
+                          enqueueSnackbar(`WhatsApp sent to ${ord?.salesPerson || 'Sales'} & Operations team`, { variant: 'success' });
+                        }
                       } catch (err) {
                         enqueueSnackbar(err?.data?.message || err?.data || 'Failed to send WhatsApp notification', { variant: 'error' });
                       }

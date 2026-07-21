@@ -868,6 +868,9 @@ export const apiSlice = createApi({
       },
       invalidatesTags: ['Stickers'],
     }),
+    sendDesignConfirmationWhatsApp: builder.mutation({
+      query: ({ id }) => ({ url: `/operations/stickers/${id}/send-design-confirmation`, method: 'post' }),
+    }),
     getPackagingInvoices: builder.query({
       query: (type) => ({ url: `/operations/invoices/${type}` }),
       providesTags: (result, error, type) => [{ type: 'PackagingInvoices', id: type }],
@@ -1345,6 +1348,7 @@ export const {
   useUpdateStickerStatusMutation,
   useUploadStickerInvoiceMutation,
   useSendToStickerTeamMutation,
+  useSendDesignConfirmationWhatsAppMutation,
   useGetPackagingInvoicesQuery,
   useUploadPackagingInvoiceMutation,
   // Notifications

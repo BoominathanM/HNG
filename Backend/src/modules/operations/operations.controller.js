@@ -1,10 +1,14 @@
 const Order = require('../../models/Order');
 const StickerRequest = require('../../models/StickerRequest');
 const Task = require('../../models/Task');
+const User = require('../../models/User');
+const WhatsAppEvent = require('../../models/WhatsAppEvent');
+const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
+const { sendMessage } = require('../../services/whatsAppService');
 const { computeTaskEstimate } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
@@ -351,6 +355,77 @@ exports.sendToStickerTeam = asyncHandler(async (req, res) => {
     { dispatchedToOps: true }
   );
   res.status(200).json({ success: true, message: 'Sent to sticker team' });
+});
+
+// Sends the "Design Confirmation" WhatsApp template (configured in Integrations →
+// WhatsApp → Event Mapping) to both the order's sales person and the customer, with the
+// uploaded design PDF attached — fired from the WhatsApp button shown after a Sticker/Box/
+// Frosted Ziplock/Butter Paper design has been sent for approval. Same recipient-resolution
+// pattern as dispatch.controller.js's sendDispatchNotifyWhatsApp.
+exports.sendDesignConfirmationWhatsApp = asyncHandler(async (req, res, next) => {
+  const sticker = await StickerRequest.findById(req.params.id).populate('orderId');
+  if (!sticker) return next(new AppError('Sticker request not found', 404));
+
+  const order = sticker.orderId;
+  if (!order) return next(new AppError('Order not found for this design', 404));
+
+  if (!sticker.designFileUrl) {
+    return next(new AppError('Upload a design (PDF) before sending the confirmation', 400));
+  }
+
+  const event = await WhatsAppEvent.findOne({ key: 'design-confirmation' }).lean();
+  const mapping = event
+    ? await WhatsAppEventMapping.findOne({ eventId: event._id, isEnabled: true })
+        .populate('templateId', 'name language')
+        .lean()
+    : null;
+  if (!mapping?.templateId) {
+    return next(new AppError('Set up the "Design Confirmation" WhatsApp template first (Integrations → WhatsApp → Event Mapping)', 400));
+  }
+
+  const { name: templateName, language = 'en' } = mapping.templateId;
+  const fieldValues = {
+    orderCode: order.orderCode || '',
+    customerName: order.clientName || '',
+    salesPersonName: order.salesPerson || '',
+    productName: sticker.product || '',
+    packagingType: sticker.stickerType || '',
+    companyName: process.env.COMPANY_NAME || 'HNG',
+  };
+  const parameters = {};
+  (mapping.variables || []).forEach((v) => {
+    if (v.templateVariable && v.eventField) parameters[v.templateVariable] = fieldValues[v.eventField] ?? '';
+  });
+
+  const documentUrl = sticker.designFileUrl;
+  const documentFilename = `design-${order.orderCode || sticker._id}.pdf`;
+
+  const recipients = [];
+  if (order.clientPhone) recipients.push({ label: order.clientName || 'Customer', phone: order.clientPhone });
+  if (order.salesPerson) {
+    const salesUser = await User.findOne({ fullName: order.salesPerson }).select('mobile').lean();
+    if (salesUser?.mobile) recipients.push({ label: order.salesPerson, phone: salesUser.mobile });
+  }
+  if (!recipients.length) {
+    return next(new AppError('No phone number found for the sales person or customer on this order', 400));
+  }
+
+  const results = [];
+  for (const r of recipients) {
+    const result = await sendMessage({ to: r.phone, templateName, language, parameters, documentUrl, documentFilename });
+    results.push({ label: r.label, phone: r.phone, success: result.success, error: result.error });
+  }
+
+  const sent = results.filter((r) => r.success);
+  if (!sent.length) {
+    return next(new AppError(results[0]?.error || 'Failed to send WhatsApp message', 502));
+  }
+
+  res.status(200).json({
+    success: true,
+    message: `Design confirmation sent to ${sent.map((r) => r.label).join(' & ')}`,
+    data: results,
+  });
 });
 
 // Dual approval: sales person and operations head must both approve before printing.
