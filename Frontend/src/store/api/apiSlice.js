@@ -34,6 +34,7 @@ export const apiSlice = createApi({
     'GstConfig', 'TaskTimeConfig',
     'MaterialStocks', 'PackagingInvoices',
     'AlertConfigs',
+    'AiConfig', 'QuotationComparisons',
   ],
   endpoints: (builder) => ({
 
@@ -1146,6 +1147,46 @@ export const apiSlice = createApi({
     verifyGstin: builder.query({
       query: (gstin) => ({ url: `/settings/gst/verify/${encodeURIComponent(gstin)}` }),
     }),
+
+    // ── AI Integration (OpenAI) ──────────────────────────────────────────────
+    getAiConfig: builder.query({
+      query: () => ({ url: '/settings/ai-config' }),
+      providesTags: ['AiConfig'],
+    }),
+    getAiCredentials: builder.query({
+      query: () => ({ url: '/settings/ai-config/credentials' }),
+      providesTags: ['AiConfig'],
+    }),
+    updateAiConfig: builder.mutation({
+      query: (data) => ({ url: '/settings/ai-config', method: 'put', data }),
+      invalidatesTags: ['AiConfig'],
+    }),
+    deleteAiConfig: builder.mutation({
+      query: () => ({ url: '/settings/ai-config', method: 'delete' }),
+      invalidatesTags: ['AiConfig'],
+    }),
+    testAiConnection: builder.mutation({
+      query: (data) => ({ url: '/settings/ai-config/test', method: 'post', data }),
+      invalidatesTags: ['AiConfig'],
+    }),
+
+    // ── Purchase: AI Quotation Comparison ────────────────────────────────────
+    compareQuotations: builder.mutation({
+      query: (formData) => ({ url: '/purchase/quotation-comparison', method: 'post', data: formData }),
+      invalidatesTags: ['QuotationComparisons'],
+    }),
+    getQuotationComparisons: builder.query({
+      query: (params) => ({ url: '/purchase/quotation-comparison', params }),
+      providesTags: ['QuotationComparisons'],
+    }),
+    getQuotationComparison: builder.query({
+      query: (id) => ({ url: `/purchase/quotation-comparison/${id}` }),
+      providesTags: ['QuotationComparisons'],
+    }),
+    selectBestQuotation: builder.mutation({
+      query: ({ id, selectedIndex }) => ({ url: `/purchase/quotation-comparison/${id}/select`, method: 'post', data: { selectedIndex } }),
+      invalidatesTags: ['QuotationComparisons', 'Purchase', 'Financial'],
+    }),
   }),
 });
 
@@ -1423,4 +1464,18 @@ export const {
   useTestGstConnectionMutation,
   useVerifyGstinQuery,
   useLazyVerifyGstinQuery,
+
+  // AI Integration
+  useGetAiConfigQuery,
+  useGetAiCredentialsQuery,
+  useLazyGetAiCredentialsQuery,
+  useUpdateAiConfigMutation,
+  useDeleteAiConfigMutation,
+  useTestAiConnectionMutation,
+
+  // AI Quotation Comparison
+  useCompareQuotationsMutation,
+  useGetQuotationComparisonsQuery,
+  useGetQuotationComparisonQuery,
+  useSelectBestQuotationMutation,
 } = apiSlice;

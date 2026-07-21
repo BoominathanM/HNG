@@ -5,11 +5,13 @@ const Vendor = require('../../models/Vendor');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const PickupOrder = require('../../models/PickupOrder');
+const QuotationComparison = require('../../models/QuotationComparison');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const upload = require('../../config/multer');
 const { notifyRoles } = require('../../utils/notify');
+const aiService = require('../../services/aiService');
 
 // ─── PURCHASE REQUESTS ────────────────────────────────────────────────────────
 exports.getRequests = asyncHandler(async (req, res) => {
@@ -382,4 +384,185 @@ exports.getPurchaseHistory = asyncHandler(async (req, res) => {
     PurchaseOrder.find().populate('vendorId', 'name').populate('itemId', 'itemName').sort('-createdAt').limit(50),
   ]);
   res.status(200).json({ success: true, data: { requests, orders } });
+});
+
+// ─── AI QUOTATION COMPARISON ───────────────────────────────────────────────────
+// POST /api/purchase/quotation-comparison — upload 2-5 supplier quotation files
+// (PDF/image), run them through OpenAI, persist + return a ranked comparison.
+exports.compareQuotations = asyncHandler(async (req, res, next) => {
+  const files = req.files || [];
+  if (files.length < 2) return next(new AppError('Upload at least 2 quotation files to compare', 400));
+  if (files.length > 5) return next(new AppError('You can compare up to 5 quotation files at a time', 400));
+
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) {
+    return next(new AppError('AI is not configured yet. Add your OpenAI API key under Integration → AI Integration.', 503));
+  }
+
+  if (req.body.linkedRequestId) {
+    const exists = await PurchaseRequest.findById(req.body.linkedRequestId);
+    if (!exists) return next(new AppError('Linked purchase request not found', 404));
+  }
+
+  const fileDocs = files.map((f) => ({ url: f.path, originalName: f.originalname, mimetype: f.mimetype }));
+
+  const comparison = await QuotationComparison.create({
+    title: req.body.title || '',
+    linkedRequestId: req.body.linkedRequestId || null,
+    files: fileDocs,
+    status: 'Analyzing',
+    createdBy: req.user._id,
+  });
+
+  try {
+    const { parsed, usableFiles, skipped } = await aiService.compareQuotationFiles({ apiKey, model: config.model, files: fileDocs });
+
+    // Match AI response entries back to the ORIGINAL upload order positionally
+    // (usableFiles[i] <-> parsed.suppliers[i]) rather than trusting the model's
+    // self-reported fileIndex, which drifts as soon as any file gets skipped —
+    // then resolve each to its true index in `fileDocs` via URL match so
+    // `results[i].fileIndex` reliably points back into `comparison.files`.
+    const n = Math.min(usableFiles.length, parsed.suppliers.length);
+    const results = [];
+    for (let i = 0; i < n; i++) {
+      const s = parsed.suppliers[i] || {};
+      const originalIndex = fileDocs.findIndex((f) => f.url === usableFiles[i].url);
+      results.push({
+        fileIndex: originalIndex >= 0 ? originalIndex : i,
+        name: s.name || usableFiles[i].originalName || `Quotation ${i + 1}`,
+        price: Number(s.price) || 0,
+        currency: s.currency || 'INR',
+        delivery: s.delivery || '-',
+        quality: ['Premium', 'Standard', 'Basic'].includes(s.quality) ? s.quality : 'Standard',
+        terms: s.terms || '-',
+        score: Math.max(0, Math.min(100, Math.round(Number(s.score)) || 0)),
+        pros: Array.isArray(s.pros) ? s.pros.slice(0, 5) : [],
+        cons: Array.isArray(s.cons) ? s.cons.slice(0, 5) : [],
+      });
+    }
+
+    if (!results.length) throw new Error('AI did not return any usable comparison results');
+
+    const bestIndex = Number.isInteger(parsed.bestIndex) && parsed.bestIndex >= 0 && parsed.bestIndex < n
+      ? parsed.bestIndex
+      : results.reduce((bestI, r, i, arr) => (r.score > arr[bestI].score ? i : bestI), 0);
+
+    comparison.results = results;
+    comparison.recommendation = { bestIndex, summary: parsed.summary || '' };
+    comparison.status = 'Completed';
+    if (skipped?.length) {
+      comparison.error = `${skipped.length} file(s) skipped (unsupported type — only PDF/JPG/PNG/WEBP are analyzed): ${skipped.map((f) => f.originalName).join(', ')}`;
+    }
+    await comparison.save();
+
+    // Shaped to match the existing Quotation Comparison tab's result table:
+    // { best: {name, score}, suppliers: [{name, price, delivery, quality, terms, score}] }
+    res.status(201).json({
+      success: true,
+      data: {
+        id: comparison._id,
+        best: { name: results[bestIndex]?.name, score: results[bestIndex]?.score },
+        bestIndex,
+        suppliers: results,
+        summary: comparison.recommendation.summary,
+        warning: comparison.error || null,
+      },
+    });
+  } catch (err) {
+    comparison.status = 'Failed';
+    comparison.error = err.message;
+    await comparison.save();
+    return next(new AppError(`AI comparison failed: ${err.message}`, err.statusCode || 502));
+  }
+});
+
+// GET /api/purchase/quotation-comparison — history list
+exports.getQuotationComparisons = asyncHandler(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const [items, total] = await Promise.all([
+    QuotationComparison.find()
+      .populate('linkedRequestId', 'requestCode itemName')
+      .populate('createdBy', 'fullName')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    QuotationComparison.countDocuments(),
+  ]);
+  res.status(200).json({ success: true, total, page, data: items });
+});
+
+// GET /api/purchase/quotation-comparison/:id
+exports.getQuotationComparison = asyncHandler(async (req, res, next) => {
+  const item = await QuotationComparison.findById(req.params.id).populate('linkedRequestId');
+  if (!item) return next(new AppError('Comparison not found', 404));
+  res.status(200).json({ success: true, data: item });
+});
+
+// POST /api/purchase/quotation-comparison/:id/select — lock in the chosen quotation.
+// If the comparison was started against a specific Purchase Request, that request
+// is what actually gets "updated": vendor (matched by name if an existing Vendor
+// record matches), amount, payment terms, and the winning quotation file are
+// carried onto it, same as a normal quotation upload — so it flows straight into
+// Finance's existing approval pipeline instead of being a dead-end record.
+exports.selectBestQuotation = asyncHandler(async (req, res, next) => {
+  const { selectedIndex } = req.body;
+  const comparison = await QuotationComparison.findById(req.params.id);
+  if (!comparison) return next(new AppError('Comparison not found', 404));
+
+  const idx = Number(selectedIndex);
+  const chosen = comparison.results[idx];
+  if (!chosen) return next(new AppError('Invalid selection', 400));
+
+  comparison.selectedIndex = idx;
+  comparison.selectedAt = new Date();
+  comparison.selectedBy = req.user._id;
+  comparison.status = 'Selected';
+  await comparison.save();
+
+  let updatedRequest = null;
+  if (comparison.linkedRequestId) {
+    const request = await PurchaseRequest.findById(comparison.linkedRequestId);
+    if (request) {
+      const escaped = (chosen.name || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const vendorMatch = escaped
+        ? await Vendor.findOne({ deletedAt: null, name: new RegExp(`^${escaped}$`, 'i') })
+        : null;
+
+      if (vendorMatch) request.vendorId = vendorMatch._id;
+      if (chosen.price) request.amount = chosen.price;
+      if (chosen.terms && chosen.terms !== '-') request.paymentTerms = chosen.terms;
+
+      const sourceFile = comparison.files[chosen.fileIndex];
+      if (sourceFile) {
+        request.quotationFileUrl = sourceFile.url;
+        request.quotationFiles = request.quotationFiles || [];
+        request.quotationFiles.push({ url: sourceFile.url, uploadedAt: new Date() });
+      }
+
+      request.notes.push({
+        text: `AI quotation comparison selected "${chosen.name}" as best (score ${chosen.score}/100)${vendorMatch ? '' : ' — vendor not matched to an existing record, please verify'}.`,
+        createdBy: req.user._id,
+      });
+      if (request.status === 'Modification' || request.status === 'Rejected') request.status = 'Pending';
+      await request.save({ validateBeforeSave: false });
+      updatedRequest = request;
+
+      notifyRoles({
+        modules: ['Financial'],
+        userIds: [request.createdBy],
+        type: 'purchase',
+        title: 'Quotation Selected via AI',
+        message: `AI comparison selected "${chosen.name}" for PR ${request.requestCode} (${request.itemName})`,
+        link: '/purchase',
+      }).catch(() => {});
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: updatedRequest ? `${chosen.name} selected — linked purchase request updated` : `${chosen.name} selected as the preferred quotation`,
+    data: { comparison, updatedRequest },
+  });
 });

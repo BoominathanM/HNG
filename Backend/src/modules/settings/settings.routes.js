@@ -37,4 +37,11 @@ router.delete('/gst-config', ctrl.deleteGstConfig);
 router.post('/gst-config/test', ctrl.testGstConnection);
 router.get('/gst/verify/:gstin', ctrl.verifyGstin);
 
+// AI Integration (OpenAI)
+router.get('/ai-config', ctrl.getAiConfig);
+router.get('/ai-config/credentials', ctrl.getAiCredentials);   // returns actual key for edit flow
+router.put('/ai-config', ctrl.updateAiConfig);
+router.delete('/ai-config', ctrl.deleteAiConfig);
+router.post('/ai-config/test', ctrl.testAiConnection);
+
 module.exports = router;

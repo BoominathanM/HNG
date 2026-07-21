@@ -36,6 +36,8 @@ import {
   useUploadFilesMutation,
   useSendWhatsAppMessageMutation,
   useAddPurchaseNoteMutation,
+  useCompareQuotationsMutation,
+  useSelectBestQuotationMutation,
 } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
 import html2pdf from 'html2pdf.js';
@@ -425,6 +427,33 @@ export default function Purchase() {
   const [quotCompareFiles, setQuotCompareFiles] = useState([]);
   const [quotCompareLoading, setQuotCompareLoading] = useState(false);
   const [quotCompareResult, setQuotCompareResult] = useState(null);
+  const [quotCompareId, setQuotCompareId] = useState(null);
+  const [quotCompareSelectedIndex, setQuotCompareSelectedIndex] = useState(null);
+  const [quotSelectedDoc, setQuotSelectedDoc] = useState(null);
+  const [quotPreviewOpen, setQuotPreviewOpen] = useState(false);
+  const [compareQuotations] = useCompareQuotationsMutation();
+  const [selectBestQuotation, { isLoading: quotSelecting }] = useSelectBestQuotationMutation();
+  const handleSelectQuotation = async (index) => {
+    if (quotCompareSelectedIndex !== null || !quotCompareId || index == null || index < 0) return;
+    try {
+      const res = await selectBestQuotation({ id: quotCompareId, selectedIndex: index }).unwrap();
+      setQuotCompareSelectedIndex(index);
+      // Resolve the actual uploaded file behind this result (comparison.files[] is
+      // indexed by fileIndex, not by the results/selectedIndex position) so we can
+      // show the real document, not just the AI-extracted summary row.
+      const comparison = res?.data?.comparison;
+      const resultRow = comparison?.results?.[index];
+      const file = resultRow ? comparison.files?.[resultRow.fileIndex] : null;
+      if (file) {
+        setQuotSelectedDoc({ ...resultRow, url: file.url, originalName: file.originalName, mimetype: file.mimetype });
+        setQuotPreviewOpen(true);
+      }
+      enqueueSnackbar(res?.message || 'Quotation selected', { variant: 'success' });
+    } catch (err) {
+      const msg = err?.data?.error || err?.data || 'Failed to select quotation.';
+      enqueueSnackbar(typeof msg === 'string' ? msg : 'Failed to select quotation.', { variant: 'error' });
+    }
+  };
 
   /* ── Dispatch Order Tracking tab state — from RTK Query ── */
   const { data: dispatchTrackingData } = useGetPurchaseOrdersQuery({ dispatchStatus: 'In Transit' });
@@ -3097,13 +3126,18 @@ export default function Purchase() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
                         <div>
                           <Title level={5} style={{ margin: 0, color: isDark ? '#e0e0e0' : '#1a1a2e' }}>AI Quotation Comparison</Title>
-                          <Text type="secondary" style={{ fontSize: 12 }}>Upload multiple supplier quotation files and let AI suggest the best option</Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>Upload 2-5 supplier quotation files and let AI suggest the best option</Text>
                         </div>
                         {quotCompareFiles.length > 0 && (
                           <Button
                             danger
                             size="small"
-                            onClick={() => { setQuotCompareFiles([]); setQuotCompareResult(null); }}
+                            onClick={() => {
+                              setQuotCompareFiles([]);
+                              setQuotCompareResult(null);
+                              setQuotCompareId(null);
+                              setQuotCompareSelectedIndex(null);
+                            }}
                           >
                             Clear All
                           </Button>
@@ -3114,16 +3148,25 @@ export default function Purchase() {
                       <Upload.Dragger
                         multiple
                         beforeUpload={(file) => {
+                          if (quotCompareFiles.length >= 5) {
+                            enqueueSnackbar('You can compare up to 5 quotation files at a time', { variant: 'warning' });
+                            return Upload.LIST_IGNORE;
+                          }
                           setQuotCompareFiles(prev => [...prev, file]);
                           setQuotCompareResult(null);
+                          setQuotCompareId(null);
+                          setQuotCompareSelectedIndex(null);
                           return false;
                         }}
                         onRemove={(file) => {
                           setQuotCompareFiles(prev => prev.filter(f => f.uid !== file.uid));
                           setQuotCompareResult(null);
+                          setQuotCompareId(null);
+                          setQuotCompareSelectedIndex(null);
                         }}
                         fileList={quotCompareFiles}
-                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls"
+                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                        disabled={quotCompareLoading}
                         style={{ borderRadius: 12, marginBottom: 16, background: isDark ? '#1a1a2a' : '#fafcff', borderColor: '#B11E6A66' }}
                       >
                         <div style={{ padding: '24px 16px', textAlign: 'center' }}>
@@ -3132,7 +3175,7 @@ export default function Purchase() {
                             Click or drag quotation files here
                           </Text>
                           <Text type="secondary" style={{ fontSize: 12 }}>
-                            Supports PDF, JPG, PNG, DOC, XLSX — upload 2 or more quotations to compare
+                            Supports PDF, JPG, PNG, WEBP — upload 2 to 5 quotations to compare
                           </Text>
                         </div>
                       </Upload.Dragger>
@@ -3155,8 +3198,25 @@ export default function Purchase() {
                             disabled={quotCompareFiles.length < 2}
                             loading={quotCompareLoading}
                             style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
-                            onClick={() => {
-                              enqueueSnackbar('AI quotation comparison will be available once the backend endpoint is ready', { variant: 'info' });
+                            onClick={async () => {
+                              setQuotCompareLoading(true);
+                              setQuotCompareResult(null);
+                              setQuotCompareId(null);
+                              setQuotCompareSelectedIndex(null);
+                              try {
+                                const formData = new FormData();
+                                quotCompareFiles.forEach((f) => formData.append('files', f, f.name));
+                                const res = await compareQuotations(formData).unwrap();
+                                setQuotCompareId(res.data.id);
+                                setQuotCompareResult(res.data);
+                                if (res.data.warning) enqueueSnackbar(res.data.warning, { variant: 'warning' });
+                                else enqueueSnackbar('AI comparison complete', { variant: 'success' });
+                              } catch (err) {
+                                const msg = err?.data?.error || err?.data || 'AI comparison failed.';
+                                enqueueSnackbar(typeof msg === 'string' ? msg : 'AI comparison failed.', { variant: 'error' });
+                              } finally {
+                                setQuotCompareLoading(false);
+                              }
                             }}
                           >
                             {quotCompareLoading ? 'Analysing...' : 'Compare with AI'}
@@ -3178,7 +3238,9 @@ export default function Purchase() {
                                   AI Recommendation
                                 </Text>
                                 <Text style={{ fontSize: 13, color: isDark ? '#e0e0e0' : '#333', lineHeight: 1.6 }}>
-                                  Based on price, delivery time, quality, and payment terms, <Text strong style={{ color: '#B11E6A' }}>{quotCompareResult.best.name}</Text> is the best quotation with an overall score of <Text strong style={{ color: '#B11E6A' }}>{quotCompareResult.best.score}/100</Text>. It offers the optimal balance of cost-efficiency and reliability.
+                                  {quotCompareResult.summary || (
+                                    <>Based on price, delivery time, quality, and payment terms, <Text strong style={{ color: '#B11E6A' }}>{quotCompareResult.best.name}</Text> is the best quotation with an overall score of <Text strong style={{ color: '#B11E6A' }}>{quotCompareResult.best.score}/100</Text>.</>
+                                  )}
                                 </Text>
                               </div>
                             </div>
@@ -3187,7 +3249,7 @@ export default function Purchase() {
                           {/* Comparison Table */}
                           <Table
                             size="small"
-                            rowKey="name"
+                            rowKey="fileIndex"
                             dataSource={quotCompareResult.suppliers}
                             scroll={{ x: 'max-content' }}
                             pagination={false}
@@ -3204,9 +3266,9 @@ export default function Purchase() {
                               },
                               {
                                 title: 'Price', dataIndex: 'price', width: 110,
-                                render: (v, r) => {
+                                render: (v) => {
                                   const min = Math.min(...quotCompareResult.suppliers.map(s => s.price));
-                                  return <Text strong style={{ color: v === min ? '#52c41a' : isDark ? '#e0e0e0' : '#333' }}>₹{v.toLocaleString()}</Text>;
+                                  return <Text strong style={{ color: v === min ? '#52c41a' : isDark ? '#e0e0e0' : '#333' }}>₹{(v || 0).toLocaleString()}</Text>;
                                 },
                                 sorter: (a, b) => a.price - b.price,
                               },
@@ -3235,6 +3297,28 @@ export default function Purchase() {
                                 sorter: (a, b) => a.score - b.score,
                                 defaultSortOrder: 'descend',
                               },
+                              {
+                                title: 'Action', key: 'action', width: 110, fixed: 'right',
+                                render: (_, r) => {
+                                  // Resolve position by object reference, not the render index — the
+                                  // Score column sorter reorders displayed rows, so a raw row index
+                                  // here would send the wrong item to the backend once sorted.
+                                  const i = quotCompareResult.suppliers.indexOf(r);
+                                  const isSelected = quotCompareSelectedIndex === i;
+                                  return (
+                                    <Button
+                                      size="small"
+                                      type={isSelected ? 'default' : 'primary'}
+                                      loading={quotSelecting && quotCompareSelectedIndex === null}
+                                      disabled={quotCompareSelectedIndex !== null}
+                                      style={isSelected ? {} : { background: '#B11E6A', border: 'none' }}
+                                      onClick={() => handleSelectQuotation(i)}
+                                    >
+                                      {isSelected ? '✓ Selected' : 'Select'}
+                                    </Button>
+                                  );
+                                },
+                              },
                             ]}
                           />
 
@@ -3243,23 +3327,12 @@ export default function Purchase() {
                             <Button
                               type="primary"
                               icon={<CheckCircleOutlined />}
+                              loading={quotSelecting}
+                              disabled={quotCompareSelectedIndex !== null}
                               style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}
-                              onClick={() => enqueueSnackbar(`${quotCompareResult.best.name} selected as the preferred quotation`, { variant: 'success' })}
+                              onClick={() => handleSelectQuotation(quotCompareResult.bestIndex)}
                             >
-                              Select Best Quotation
-                            </Button>
-                            <Button
-                              icon={<WhatsAppOutlined />}
-                              style={{ color: '#25D366', borderColor: '#25D36644', fontWeight: 600 }}
-                              onClick={() => enqueueSnackbar('Comparison report shared via WhatsApp', { variant: 'success' })}
-                            >
-                              Share Report
-                            </Button>
-                            <Button
-                              icon={<DownloadOutlined />}
-                              onClick={() => enqueueSnackbar('Downloading comparison report...', { variant: 'info' })}
-                            >
-                              Download Report
+                              {quotCompareSelectedIndex !== null ? 'Selection Confirmed' : `Select ${quotCompareResult.best.name} (AI's Pick)`}
                             </Button>
                           </div>
                         </div>
@@ -3272,6 +3345,64 @@ export default function Purchase() {
                           <Text type="secondary" style={{ fontSize: 14 }}>Upload 2 or more quotation files to start AI comparison</Text>
                         </div>
                       )}
+
+                      {/* Selected document preview — opens automatically once a quotation is chosen */}
+                      <Modal
+                        open={quotPreviewOpen}
+                        onCancel={() => setQuotPreviewOpen(false)}
+                        title={<Space><CheckCircleOutlined style={{ color: '#52c41a' }} />Selected Quotation</Space>}
+                        width={680}
+                        footer={[
+                          <Button
+                            key="open"
+                            icon={<EyeOutlined />}
+                            onClick={() => window.open(quotSelectedDoc?.url, '_blank', 'noopener,noreferrer')}
+                          >
+                            Open Original
+                          </Button>,
+                          <Button
+                            key="close"
+                            type="primary"
+                            onClick={() => setQuotPreviewOpen(false)}
+                            style={{ background: '#B11E6A', border: 'none' }}
+                          >
+                            Done
+                          </Button>,
+                        ]}
+                      >
+                        {quotSelectedDoc && (
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                              <div>
+                                <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>{quotSelectedDoc.name}</Text>
+                                <br />
+                                <Text type="secondary" style={{ fontSize: 12 }}>{quotSelectedDoc.originalName}</Text>
+                              </div>
+                              <Tag color="#B11E6A" style={{ borderRadius: 10, height: 'fit-content' }}>{quotSelectedDoc.score}/100</Tag>
+                            </div>
+
+                            <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
+                              <Descriptions.Item label="Price">₹{(quotSelectedDoc.price || 0).toLocaleString()}</Descriptions.Item>
+                              <Descriptions.Item label="Delivery">{quotSelectedDoc.delivery}</Descriptions.Item>
+                              <Descriptions.Item label="Quality">{quotSelectedDoc.quality}</Descriptions.Item>
+                              <Descriptions.Item label="Payment Terms" span={2}>{quotSelectedDoc.terms}</Descriptions.Item>
+                            </Descriptions>
+
+                            <div style={{ border: `1px solid ${isDark ? '#2a2a3a' : '#f0f0f0'}`, borderRadius: 8, overflow: 'hidden', background: isDark ? '#111' : '#fafafa' }}>
+                              {quotSelectedDoc.mimetype?.startsWith('image/') ? (
+                                <img src={quotSelectedDoc.url} alt={quotSelectedDoc.originalName} style={{ width: '100%', display: 'block' }} />
+                              ) : quotSelectedDoc.mimetype === 'application/pdf' ? (
+                                <iframe title="Selected quotation document" src={quotSelectedDoc.url} style={{ width: '100%', height: 480, border: 'none' }} />
+                              ) : (
+                                <div style={{ padding: 40, textAlign: 'center' }}>
+                                  <FileTextOutlined style={{ fontSize: 32, color: '#B11E6A', marginBottom: 8, display: 'block' }} />
+                                  <Text type="secondary">Preview not available for this file type — use "Open Original" above.</Text>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </Modal>
                     </div>
                   ),
                 },

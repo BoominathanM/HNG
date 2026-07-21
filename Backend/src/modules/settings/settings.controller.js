@@ -3,10 +3,13 @@ const CompanySettings = require('../../models/CompanySettings');
 const Party = require('../../models/Party');
 const DropdownOption = require('../../models/DropdownOption');
 const DeletedRecord = require('../../models/DeletedRecord');
+const AiConfig = require('../../models/AiConfig');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const bcrypt = require('bcryptjs');
 const COUNTRY_CODES = require('./countrycodes');
+const aiService = require('../../services/aiService');
+const { encrypt, decrypt } = require('../../utils/encryption');
 
 // ─── GST API helper (uses native fetch — Node 18+) ───────────────────────────
 const callGstApi = async (gstin, apiKey) => {
@@ -467,5 +470,103 @@ exports.verifyGstin = asyncHandler(async (req, res, next) => {
     res.status(200).json({ success: true, data: normalized, raw: result.body });
   } catch (err) {
     return next(new AppError(`GST lookup failed: ${err.message}`, 502));
+  }
+});
+
+// ─── AI Integration (OpenAI) ─────────────────────────────────────────────────
+// Same shape as GST above (configured/keyPreview/source), but the key itself is
+// AES-256-GCM encrypted at rest and select:false on the model — the WhatsApp
+// integration's (stronger) pattern, since this key has real spend attached to it.
+
+// GET /api/settings/ai-config — connection status only (never the full key).
+exports.getAiConfig = asyncHandler(async (req, res) => {
+  const config = await AiConfig.findOne().select('+apiKey');
+  const dbKey = config?.apiKey ? decrypt(config.apiKey) : '';
+  const envKey = process.env.OPENAI_API_KEY || '';
+  res.status(200).json({
+    success: true,
+    data: {
+      configured:      !!dbKey,
+      keyPreview:      dbKey ? `${dbKey.slice(0, 7)}...${dbKey.slice(-4)}` : null,
+      source:          dbKey ? 'database' : (envKey ? 'env' : 'none'),
+      hasEnvKey:       !!envKey,
+      provider:        config?.provider || 'openai',
+      model:           config?.model || aiService.DEFAULT_MODEL,
+      isEnabled:       config?.isEnabled || false,
+      isConnected:     config?.isConnected || false,
+      connectionError: config?.connectionError || '',
+      lastVerifiedAt:  config?.lastVerifiedAt || null,
+    },
+  });
+});
+
+// GET /api/settings/ai-config/credentials — actual stored key, for the edit-prefill flow only.
+exports.getAiCredentials = asyncHandler(async (req, res) => {
+  const config = await AiConfig.findOne().select('+apiKey');
+  const apiKey = config?.apiKey ? decrypt(config.apiKey) : '';
+  res.status(200).json({ success: true, data: { apiKey, model: config?.model || aiService.DEFAULT_MODEL } });
+});
+
+// PUT /api/settings/ai-config — save key (encrypted) + model
+exports.updateAiConfig = asyncHandler(async (req, res, next) => {
+  const { apiKey, model } = req.body;
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
+    return next(new AppError('A valid API key is required', 400));
+  }
+  const trimmed = apiKey.trim();
+  const update = {
+    apiKey: encrypt(trimmed),
+    updatedBy: req.user._id,
+    isEnabled: true,
+    // A newly saved/changed key hasn't been verified yet — Test Connection is
+    // what flips isConnected back to true.
+    isConnected: false,
+    connectionError: '',
+  };
+  if (model && typeof model === 'string' && model.trim()) update.model = model.trim();
+  await AiConfig.findOneAndUpdate({}, update, { upsert: true });
+  res.status(200).json({
+    success: true,
+    message: 'AI configuration saved successfully',
+    data: { configured: true, keyPreview: `${trimmed.slice(0, 7)}...${trimmed.slice(-4)}`, source: 'database' },
+  });
+});
+
+// DELETE /api/settings/ai-config — disconnect
+exports.deleteAiConfig = asyncHandler(async (req, res) => {
+  await AiConfig.findOneAndUpdate({}, {
+    $unset: { apiKey: '' },
+    isEnabled: false,
+    isConnected: false,
+    connectionError: '',
+  });
+  res.status(200).json({
+    success: true,
+    message: 'AI integration disconnected',
+    data: { configured: false, keyPreview: null, source: 'none' },
+  });
+});
+
+// POST /api/settings/ai-config/test — validate a key (body key if provided, else the saved one)
+exports.testAiConnection = asyncHandler(async (req, res, next) => {
+  const { apiKey: bodyKey, model: bodyModel } = req.body;
+  const config = await AiConfig.findOne().select('+apiKey');
+  const apiKey = bodyKey?.trim() || (config?.apiKey ? decrypt(config.apiKey) : '') || process.env.OPENAI_API_KEY;
+  const model = bodyModel?.trim() || config?.model || aiService.DEFAULT_MODEL;
+  if (!apiKey) return next(new AppError('No OpenAI API key provided or configured', 400));
+
+  try {
+    const { modelAvailable, modelIds } = await aiService.testConnection(apiKey, model);
+    await AiConfig.findOneAndUpdate({}, { isConnected: true, connectionError: '', lastVerifiedAt: new Date() }, { upsert: true });
+    res.status(200).json({
+      success: true,
+      message: modelAvailable
+        ? 'OpenAI connection successful!'
+        : `Key is valid, but model "${model}" wasn't found in your account's available models — double-check the model name.`,
+      data: { modelAvailable, availableModelCount: modelIds.length },
+    });
+  } catch (err) {
+    await AiConfig.findOneAndUpdate({}, { isConnected: false, connectionError: err.message }, { upsert: true });
+    return next(new AppError(`Unable to connect to OpenAI: ${err.message}`, err.statusCode || 502));
   }
 });
