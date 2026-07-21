@@ -164,6 +164,7 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
         <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>Working Days</Text>
         <div style={{ marginTop: 6 }}>
           <Space wrap style={{ marginBottom: 6 }}>
+            <Button size="small" onClick={() => setDays(ALL_DAYS)} style={{ borderRadius: 6 }}>Sun–Sat (All Days)</Button>
             <Button size="small" onClick={() => setDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'])} style={{ borderRadius: 6 }}>Mon–Sat</Button>
             <Button size="small" onClick={() => setDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri'])} style={{ borderRadius: 6 }}>Mon–Fri</Button>
           </Space>
