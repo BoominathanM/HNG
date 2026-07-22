@@ -31,6 +31,7 @@ import {
   useUpdatePurchaseRequestDetailsMutation,
   useReceiveOrderMutation,
   useUploadPurchaseLRMutation,
+  useScanLocalPurchaseInvoiceMutation,
   useCreateLocalPurchaseMutation,
   useGetWhatsAppEventMappingsQuery,
   useUploadFilesMutation,
@@ -141,6 +142,7 @@ export default function Purchase() {
   const [receiveOrderMutation] = useReceiveOrderMutation();
   const [uploadPurchaseLR] = useUploadPurchaseLRMutation();
   const [createLocalPurchaseMutation] = useCreateLocalPurchaseMutation();
+  const [scanLocalPurchaseInvoice] = useScanLocalPurchaseInvoiceMutation();
   const [createVendorMutation] = useCreateVendorMutation();
   const { data: allVendorData } = useGetVendorsQuery();
 
@@ -1040,41 +1042,55 @@ export default function Purchase() {
   };
 
   /* ── Local Purchase handlers ── */
-  const handleLocalPurchaseInvoiceScan = () => {
+  const handleLocalPurchaseInvoiceScan = async () => {
     if (!localPurchaseInvoiceFile) { enqueueSnackbar('Please upload an invoice first', { variant: 'warning' }); return; }
     setLocalPurchaseScanLoading(true);
-    setTimeout(() => {
-      const vendorNames = vendors.map(v => v.name).filter(Boolean);
-      const isKnownVendor = vendorNames.length > 0 && Math.random() > 0.3;
-      const vendorName = isKnownVendor ? vendorNames[Math.floor(Math.random() * vendorNames.length)] : 'New Vendor Pvt. Ltd.';
-      const knownVendor = vendors.find(v => v.name === vendorName);
+    try {
+      const formData = new FormData();
+      formData.append('invoice', localPurchaseInvoiceFile);
+      const res = await scanLocalPurchaseInvoice(formData).unwrap();
+      const extracted = res?.data || {};
+
+      const vendorNameLc = (extracted.vendorName || '').trim().toLowerCase();
+      const knownVendor = vendors.find(v =>
+        (vendorNameLc && (v.name || '').trim().toLowerCase() === vendorNameLc) ||
+        (extracted.vendorPhone && v.phone === extracted.vendorPhone)
+      );
+
+      const items = (extracted.items || []).map(it => ({ name: it.name, qty: it.qty, unit: it.unit, amount: it.amount }));
       const scanned = {
-        invoiceNo: 'INV-' + Math.floor(Math.random() * 90000 + 10000),
-        vendorName,
-        vendorPhone: knownVendor?.phone || '+91 99000 ' + Math.floor(Math.random() * 89999 + 10000),
-        vendorAddress: knownVendor?.address || 'New City, India',
-        vendorGST: '27AAB' + Math.random().toString(36).substring(2, 7).toUpperCase() + '1Z5',
-        items: [
-          { name: 'Office Supplies', qty: 20, unit: 'Pcs', amount: 3000 },
-          { name: 'Cleaning Materials', qty: 10, unit: 'Kg', amount: 2500 },
-        ],
-        totalAmount: 5500,
-        isNewVendor: !knownVendor,
+        invoiceNo: extracted.invoiceNo || 'INV-' + Date.now(),
+        vendorName: extracted.vendorName || '',
+        vendorPhone: knownVendor?.phone || extracted.vendorPhone || '',
+        vendorAddress: knownVendor?.address || extracted.vendorAddress || '',
+        vendorGST: extracted.vendorGST || '',
+        items,
+        totalAmount: extracted.totalAmount || items.reduce((s, it) => s + (Number(it.amount) || 0), 0),
+        isNewVendor: !knownVendor && !!extracted.vendorName,
       };
+
       setLocalPurchaseScannedDetails(scanned);
-      setLocalPurchaseNewVendorDetected(!knownVendor);
-      localPurchaseForm.setFieldsValue({
-        invoiceNo: scanned.invoiceNo,
-        vendorName: scanned.vendorName,
-        vendorPhone: scanned.vendorPhone,
-        totalAmount: scanned.totalAmount,
-        items: scanned.items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount })),
-      });
+      setLocalPurchaseNewVendorDetected(scanned.isNewVendor);
+      const fieldValues = { invoiceNo: scanned.invoiceNo };
+      if (scanned.vendorName) fieldValues.vendorName = scanned.vendorName;
+      if (scanned.vendorPhone) fieldValues.vendorPhone = scanned.vendorPhone;
+      if (scanned.totalAmount) fieldValues.totalAmount = scanned.totalAmount;
+      if (items.length) fieldValues.items = items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount }));
+      localPurchaseForm.setFieldsValue(fieldValues);
+
+      enqueueSnackbar(
+        items.length === 0
+          ? 'AI scanned the invoice but could not read any line items — please add them manually'
+          : (scanned.isNewVendor
+            ? 'AI scanned invoice — new vendor detected! Review and add to vendors list.'
+            : 'AI scanned invoice — vendor matched in existing vendors list.'),
+        { variant: items.length === 0 ? 'warning' : 'success' }
+      );
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'AI scan failed — please fill the details manually', { variant: 'error' });
+    } finally {
       setLocalPurchaseScanLoading(false);
-      enqueueSnackbar(!knownVendor
-        ? 'AI scanned invoice — New vendor detected! Review and add to vendors list.'
-        : 'AI scanned invoice — vendor matched in existing vendors list.', { variant: 'success' });
-    }, 2000);
+    }
   };
 
   const handleAddLocalPurchase = async (values) => {

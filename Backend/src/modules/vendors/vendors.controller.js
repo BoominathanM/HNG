@@ -4,6 +4,7 @@ const LocalPurchase = require('../../models/LocalPurchase');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const aiService = require('../../services/aiService');
 
 exports.getVendors = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
@@ -176,6 +177,27 @@ exports.updateVendorStatus = asyncHandler(async (req, res, next) => {
   );
   if (!vendor) return next(new AppError('Vendor not found', 404));
   res.status(200).json({ success: true, data: vendor });
+});
+
+// POST /api/vendors/scan-document — upload an invoice/document, run it through
+// OpenAI, and return extracted contact + bank fields to auto-fill the Add
+// Vendor form (mirrors the AI Quotation Comparison wiring in purchase.controller.js).
+exports.scanDocument = asyncHandler(async (req, res, next) => {
+  if (!req.file) return next(new AppError('Please upload a file', 400));
+
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) {
+    return next(new AppError('AI is not configured yet. Add your OpenAI API key under Integration → AI Integration.', 503));
+  }
+
+  const file = { url: req.file.path, originalName: req.file.originalname, mimetype: req.file.mimetype };
+  try {
+    const extracted = await aiService.extractVendorFields({ apiKey, model: config.model, file });
+    res.status(200).json({ success: true, data: extracted });
+  } catch (err) {
+    return next(new AppError(`AI extraction failed: ${err.message}`, err.statusCode || 502));
+  }
 });
 
 exports.generateAiSummary = asyncHandler(async (req, res, next) => {

@@ -182,11 +182,161 @@ async function compareQuotationFiles({ apiKey, model, files }) {
   return { parsed, usableFiles, skipped };
 }
 
+// ─── Vendor/supplier document field extraction ─────────────────────────────
+
+const VENDOR_EXTRACTION_PROMPT = `You are a data-entry assistant extracting vendor/supplier onboarding details from an uploaded document (invoice, letterhead, business card, GST certificate, cancelled cheque, or bank passbook page). Extract:
+- name: the vendor/company name printed on the document
+- phone: contact phone number (include country code if printed)
+- email: contact email address
+- taxId: GST number or PAN, whichever is printed
+- address: postal address (include city/state/pincode if available)
+- bankDetails: { accountHolderName, accountNo, ifsc, bankName } — bank account details if this document shows any (cheque, passbook, invoice footer, etc.)
+- notes: one short sentence of useful context about this vendor from the document (e.g. what they supply, payment terms mentioned), or "" if nothing relevant
+
+Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
+{ "name": "", "phone": "", "email": "", "taxId": "", "address": "", "bankDetails": { "accountHolderName": "", "accountNo": "", "ifsc": "", "bankName": "" }, "notes": "" }
+If a field cannot be determined from the document, use an empty string for it — do not guess or invent data.`;
+
+// file: { url, originalName, mimetype } — Cloudinary-hosted, already uploaded by multer.
+async function extractVendorFields({ apiKey, model, file }) {
+  const isSupported = SUPPORTED_IMAGE_MIMES.includes(file.mimetype) || SUPPORTED_PDF_MIMES.includes(file.mimetype);
+  if (!isSupported) {
+    throw Object.assign(new Error('Unsupported file type — upload a PDF or image (JPG/PNG/WEBP).'), { statusCode: 400 });
+  }
+
+  const base64 = await fetchAsBase64(file.url);
+  const part = buildFileContentPart(file, base64);
+  if (!part) throw Object.assign(new Error('Could not process this file type'), { statusCode: 400 });
+
+  const result = await openAiRequest('/chat/completions', {
+    apiKey,
+    method: 'POST',
+    timeoutMs: 60000,
+    body: {
+      model: model || DEFAULT_MODEL,
+      messages: [
+        { role: 'system', content: VENDOR_EXTRACTION_PROMPT },
+        { role: 'user', content: [{ type: 'text', text: 'Extract the vendor/supplier onboarding details from this document.' }, part] },
+      ],
+      response_format: { type: 'json_object' },
+    },
+  });
+
+  if (result.statusCode !== 200) {
+    const msg = result.body?.error?.message || `OpenAI API returned status ${result.statusCode}`;
+    throw Object.assign(new Error(msg), { statusCode: result.statusCode === 401 ? 401 : 502 });
+  }
+
+  const raw = result.body?.choices?.[0]?.message?.content;
+  if (!raw) throw new Error('OpenAI returned an empty response');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Failed to parse the AI response as JSON');
+  }
+
+  return {
+    name: parsed.name || '',
+    phone: parsed.phone || '',
+    email: parsed.email || '',
+    taxId: parsed.taxId || '',
+    address: parsed.address || '',
+    bankDetails: {
+      accountHolderName: parsed.bankDetails?.accountHolderName || '',
+      accountNo: parsed.bankDetails?.accountNo || '',
+      ifsc: parsed.bankDetails?.ifsc || '',
+      bankName: parsed.bankDetails?.bankName || '',
+    },
+    notes: parsed.notes || '',
+  };
+}
+
+// ─── Local purchase invoice field + line-item extraction ───────────────────
+
+const INVOICE_EXTRACTION_PROMPT = `You are a data-entry assistant extracting details from a local purchase invoice/bill (image or PDF). Extract:
+- invoiceNo: the invoice/bill number printed on the document
+- vendorName: the seller/vendor/shop name printed on the document
+- vendorPhone: the vendor's contact phone number, if printed
+- vendorAddress: the vendor's postal address, if printed
+- vendorGST: the vendor's GST number or PAN, if printed
+- items: an array of every line item on the invoice, each as { name, qty, unit, amount } — name is the item/product description, qty is the quantity as a plain number, unit is the unit of measure (e.g. "Pcs", "Kg", "Box"), defaulting to "Pcs" if not stated, amount is the line total for that item as a plain number (no currency symbols/commas)
+- totalAmount: the grand total amount of the invoice as a plain number (no currency symbols/commas)
+
+Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
+{ "invoiceNo": "", "vendorName": "", "vendorPhone": "", "vendorAddress": "", "vendorGST": "", "items": [ { "name": "", "qty": 0, "unit": "Pcs", "amount": 0 } ], "totalAmount": 0 }
+If a field cannot be determined from the document, use an empty string ("" ), 0 for numeric fields, or [] for items — do not guess or invent data.`;
+
+// file: { url, originalName, mimetype } — Cloudinary-hosted, already uploaded by multer.
+async function extractInvoiceFields({ apiKey, model, file }) {
+  const isSupported = SUPPORTED_IMAGE_MIMES.includes(file.mimetype) || SUPPORTED_PDF_MIMES.includes(file.mimetype);
+  if (!isSupported) {
+    throw Object.assign(new Error('Unsupported file type — upload a PDF or image (JPG/PNG/WEBP).'), { statusCode: 400 });
+  }
+
+  const base64 = await fetchAsBase64(file.url);
+  const part = buildFileContentPart(file, base64);
+  if (!part) throw Object.assign(new Error('Could not process this file type'), { statusCode: 400 });
+
+  const result = await openAiRequest('/chat/completions', {
+    apiKey,
+    method: 'POST',
+    timeoutMs: 60000,
+    body: {
+      model: model || DEFAULT_MODEL,
+      messages: [
+        { role: 'system', content: INVOICE_EXTRACTION_PROMPT },
+        { role: 'user', content: [{ type: 'text', text: 'Extract the invoice, vendor, and line-item details from this local purchase document.' }, part] },
+      ],
+      response_format: { type: 'json_object' },
+    },
+  });
+
+  if (result.statusCode !== 200) {
+    const msg = result.body?.error?.message || `OpenAI API returned status ${result.statusCode}`;
+    throw Object.assign(new Error(msg), { statusCode: result.statusCode === 401 ? 401 : 502 });
+  }
+
+  const raw = result.body?.choices?.[0]?.message?.content;
+  if (!raw) throw new Error('OpenAI returned an empty response');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Failed to parse the AI response as JSON');
+  }
+
+  const items = Array.isArray(parsed.items)
+    ? parsed.items
+        .map((it) => ({
+          name: it.name || it.itemName || '',
+          qty: Number(it.qty) || 0,
+          unit: it.unit || 'Pcs',
+          amount: Number(it.amount) || 0,
+        }))
+        .filter((it) => it.name)
+    : [];
+
+  return {
+    invoiceNo: parsed.invoiceNo || '',
+    vendorName: parsed.vendorName || '',
+    vendorPhone: parsed.vendorPhone || '',
+    vendorAddress: parsed.vendorAddress || '',
+    vendorGST: parsed.vendorGST || '',
+    items,
+    totalAmount: Number(parsed.totalAmount) || items.reduce((s, it) => s + it.amount, 0),
+  };
+}
+
 module.exports = {
   getAiConfig,
   resolveApiKey,
   encryptApiKey,
   testConnection,
   compareQuotationFiles,
+  extractVendorFields,
+  extractInvoiceFields,
   DEFAULT_MODEL,
 };

@@ -187,6 +187,9 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/vendors/${id}/ai-summary`, method: 'post' }),
       invalidatesTags: (result, error, id) => [{ type: 'Vendors', id }],
     }),
+    scanVendorDocument: builder.mutation({
+      query: (formData) => ({ url: '/vendors/scan-document', method: 'post', data: formData }),
+    }),
 
     // ── Purchase ────────────────────────────────────────────────────────────
     getRequests: builder.query({
@@ -228,6 +231,9 @@ export const apiSlice = createApi({
     getLocalPurchases: builder.query({
       query: () => ({ url: '/purchase/local' }),
       providesTags: ['LocalPurchases'],
+    }),
+    scanLocalPurchaseInvoice: builder.mutation({
+      query: (formData) => ({ url: '/purchase/local/scan-invoice', method: 'post', data: formData }),
     }),
     createLocalPurchase: builder.mutation({
       query: (formData) => ({ url: '/purchase/local', method: 'post', data: formData }),
@@ -1231,6 +1237,7 @@ export const {
   useGetVendorLedgerQuery,
   useUpdateVendorStatusMutation,
   useGenerateAiSummaryMutation,
+  useScanVendorDocumentMutation,
   // Purchase
   useGetRequestsQuery,
   useCreateBulkRequestMutation,
@@ -1242,6 +1249,7 @@ export const {
   useReceiveOrderMutation,
   useUploadPurchaseLRMutation,
   useGetLocalPurchasesQuery,
+  useScanLocalPurchaseInvoiceMutation,
   useCreateLocalPurchaseMutation,
   useGetLocalPurchaseQuery,
   useGetPurchaseHistoryQuery,

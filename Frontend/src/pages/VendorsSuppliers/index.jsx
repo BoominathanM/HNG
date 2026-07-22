@@ -31,6 +31,7 @@ import {
   useGetVendorLedgerQuery,
   useUpdateVendorStatusMutation,
   useGenerateAiSummaryMutation,
+  useScanVendorDocumentMutation,
   useCreateExpenseMutation,
   useGetUsersQuery,
   useCreateUserMutation,
@@ -110,6 +111,7 @@ export default function VendorsSuppliers() {
   const [deleteVendorMutation] = useDeleteVendorMutation();
   const [updateVendorStatus] = useUpdateVendorStatusMutation();
   const [generateAiSummary] = useGenerateAiSummaryMutation();
+  const [scanVendorDocument] = useScanVendorDocumentMutation();
   const [createExpense] = useCreateExpenseMutation();
 
   const [viewVendor, setViewVendor] = useState(null);
@@ -310,28 +312,42 @@ export default function VendorsSuppliers() {
     }
   };
 
-  const handleVendorAIScan = () => {
+  const handleVendorAIScan = async () => {
     if (!vendorScannedFile) { enqueueSnackbar('Please upload a document first', { variant: 'warning' }); return; }
     setVendorScanLoading(true);
-    setTimeout(() => {
-      vendorForm.setFieldsValue({
-        cust_name: 'Hilton Hotels & Resorts',
-        cust_phone: '+91 20 6720 0000',
-        cust_email: 'procurement@hilton.in',
-        cust_tax: '27AABHH5678K1Z2',
-        cust_address: 'Koregaon Park, Pune, MH 411001',
-        bankDetails: {
+    try {
+      const formData = new FormData();
+      formData.append('document', vendorScannedFile);
+      const res = await scanVendorDocument(formData).unwrap();
+      const extracted = res?.data || {};
+      const fields = {};
+      if (extracted.name) fields.cust_name = extracted.name;
+      if (extracted.phone) fields.cust_phone = extracted.phone;
+      if (extracted.email) fields.cust_email = extracted.email;
+      if (extracted.taxId) fields.cust_tax = extracted.taxId;
+      if (extracted.address) fields.cust_address = extracted.address;
+      if (extracted.notes) fields.cust_notes = extracted.notes;
+      const bd = extracted.bankDetails || {};
+      if (bd.accountHolderName || bd.accountNo || bd.ifsc || bd.bankName) {
+        fields.bankDetails = {
           method: 'bank',
-          accountHolderName: 'Hilton Hotels & Resorts',
-          accountNo: '007601234567',
-          ifsc: 'ICIC0000076',
-          bankName: 'ICICI Bank',
-        },
-        cust_notes: 'Premium hotel chain. Monthly billing cycle.',
-      });
+          ...(bd.accountHolderName && { accountHolderName: bd.accountHolderName }),
+          ...(bd.accountNo && { accountNo: bd.accountNo }),
+          ...(bd.ifsc && { ifsc: bd.ifsc }),
+          ...(bd.bankName && { bankName: bd.bankName }),
+        };
+      }
+      if (Object.keys(fields).length === 0) {
+        enqueueSnackbar('AI could not find any usable details in this document', { variant: 'warning' });
+      } else {
+        vendorForm.setFieldsValue(fields);
+        enqueueSnackbar('AI extracted vendor details from the document!', { variant: 'success' });
+      }
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'AI scan failed — please fill the details manually', { variant: 'error' });
+    } finally {
       setVendorScanLoading(false);
-      enqueueSnackbar('AI extracted vendor details from the document!', { variant: 'success' });
-    }, 2200);
+    }
   };
 
   const handleAddPrintingSupplier = async (vals) => {

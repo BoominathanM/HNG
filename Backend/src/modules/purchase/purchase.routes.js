@@ -18,6 +18,7 @@ router.post('/orders/:id/receive', upload.single('invoice'), ctrl.receiveOrder);
 router.patch('/orders/:id/lr', upload.single('lr'), ctrl.uploadLR);
 
 router.get('/local', ctrl.getLocalPurchases);
+router.post('/local/scan-invoice', upload.single('invoice'), ctrl.scanLocalPurchaseInvoice);
 router.post('/local', upload.single('invoice'), ctrl.createLocalPurchase);
 router.get('/local/:id', ctrl.getLocalPurchase);
 

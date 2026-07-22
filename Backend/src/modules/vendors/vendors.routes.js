@@ -2,11 +2,13 @@ const express = require('express');
 const router = express.Router();
 const ctrl = require('./vendors.controller');
 const { protect } = require('../../middleware/auth');
+const upload = require('../../config/multer');
 
 router.use(protect);
 
 router.get('/', ctrl.getVendors);
 router.post('/', ctrl.createVendor);
+router.post('/scan-document', upload.single('document'), ctrl.scanDocument);
 router.get('/:id', ctrl.getVendor);
 router.put('/:id', ctrl.updateVendor);
 router.delete('/:id', ctrl.deleteVendor);
