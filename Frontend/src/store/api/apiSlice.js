@@ -19,6 +19,13 @@ const axiosBaseQuery = () => async ({ url, method = 'get', data, params }) => {
 export const apiSlice = createApi({
   reducerPath: 'api',
   baseQuery: axiosBaseQuery(),
+  // Refetch on tab refocus / network reconnect so a Manager/Head who already has a
+  // list open (e.g. Sales/Operations/Tasks/Dispatch) picks up changes an Executive
+  // made in a different session — RTK Query's cache invalidation only propagates
+  // within the same browser tab, so without this, cross-session updates only show
+  // up once the cache entry naturally expires (60s) and the query remounts.
+  refetchOnFocus: true,
+  refetchOnReconnect: true,
   tagTypes: [
     'Auth', 'Staff', 'Claims',
     'Vendors', 'Purchase', 'PurchaseOrders', 'LocalPurchases', 'PurchaseHistory',

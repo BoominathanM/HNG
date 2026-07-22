@@ -76,9 +76,27 @@ async function sendDispatchNotifyWhatsApp(orderDoc, dispatch) {
 // filter actually matches instead of silently returning zero results.
 const STATUS_LABEL_TO_DB = { 'Ready to Dispatch': 'Confirmed', 'Packing': 'Draft', 'Dispatched': 'Dispatched' };
 
+// Visibility scoping (same rule as Sales getLeads/Operations getOrders):
+// - Admin / Super Admin / Manager / Head: all orders
+// - Everyone else (Executive, etc.): only orders they created, are assigned to, or are the salesPerson on
+// DispatchRecord/PickupOrder don't carry these fields themselves — they're resolved
+// via their linked Order, so this returns the visible Order _ids to filter `orderId` by
+// (null = unrestricted, no filtering needed).
+async function visibleOrderIds(user) {
+  if (!user || user.role === 'Super Admin' || user.role === 'Admin') return null;
+  const role = user.role || '';
+  if (/manager|head/i.test(role)) return null;
+  const visibility = [{ createdBy: user._id }, { assignedTo: user._id }];
+  const myName = user.fullName || user.name;
+  if (myName) visibility.push({ salesPerson: myName });
+  return Order.distinct('_id', { $or: visibility });
+}
+
 exports.getDispatches = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status && STATUS_LABEL_TO_DB[req.query.status]) filter.status = STATUS_LABEL_TO_DB[req.query.status];
+  const visibleIds = await visibleOrderIds(req.user);
+  if (visibleIds) filter.orderId = { $in: visibleIds };
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
 
@@ -140,9 +158,10 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(); end.setHours(23, 59, 59, 999);
   // Find all orders whose expected delivery date falls today.
-  const todayOrderIds = await Order.find({
-    expectedDeliveryDate: { $gte: start, $lte: end },
-  }).distinct('_id');
+  const todayFilter = { expectedDeliveryDate: { $gte: start, $lte: end } };
+  const visibleIds = await visibleOrderIds(req.user);
+  if (visibleIds) todayFilter._id = { $in: visibleIds };
+  const todayOrderIds = await Order.find(todayFilter).distinct('_id');
   const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
     .populate({
       path: 'orderId',
@@ -424,7 +443,10 @@ exports.updateTransportStatus = asyncHandler(async (req, res, next) => {
 // ─── PICKUP ORDERS ──────────────────────────────────────────────────────────
 // "All Orders" — every pickup job regardless of scheduled date.
 exports.getPickupOrders = asyncHandler(async (req, res) => {
-  const list = await PickupOrder.find().populate('pickupEmpId', 'fullName phone').sort('-createdAt').lean();
+  const filter = {};
+  const visibleIds = await visibleOrderIds(req.user);
+  if (visibleIds) filter.orderId = { $in: visibleIds };
+  const list = await PickupOrder.find(filter).populate('pickupEmpId', 'fullName phone').sort('-createdAt').lean();
   res.status(200).json({ success: true, total: list.length, data: list });
 });
 
@@ -432,7 +454,10 @@ exports.getPickupOrders = asyncHandler(async (req, res) => {
 exports.getTodaysPickupOrders = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  const list = await PickupOrder.find({ scheduledDate: { $gte: start, $lte: end } })
+  const filter = { scheduledDate: { $gte: start, $lte: end } };
+  const visibleIds = await visibleOrderIds(req.user);
+  if (visibleIds) filter.orderId = { $in: visibleIds };
+  const list = await PickupOrder.find(filter)
     .populate('pickupEmpId', 'fullName phone')
     .sort('-createdAt')
     .lean();

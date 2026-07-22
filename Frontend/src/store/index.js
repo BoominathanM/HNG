@@ -1,4 +1,5 @@
 import { configureStore } from '@reduxjs/toolkit';
+import { setupListeners } from '@reduxjs/toolkit/query';
 import themeReducer from './slices/themeSlice';
 import authReducer from './slices/authSlice';
 import purchaseReducer from './slices/purchaseSlice';
@@ -14,6 +15,10 @@ export const store = configureStore({
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(apiSlice.middleware),
 });
+
+// Enables refetchOnFocus/refetchOnReconnect (declared in apiSlice) by attaching the
+// window focus/online listeners RTK Query needs to act on them.
+setupListeners(store.dispatch);
 
 store.subscribe(() => {
   const { auth, theme } = store.getState();

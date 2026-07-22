@@ -14,9 +14,27 @@ const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
 
 // ─── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
+// Visibility scoping (same rule as Sales getLeads/Task Management getTasks):
+// - Admin / Super Admin / Manager / Head (role contains 'Manager' or 'Head'): all orders
+// - Everyone else (Executive, etc.): only orders they created, are assigned to, or are the salesPerson on
+function applyOrderVisibility(user, filter) {
+  if (user && user.role !== 'Super Admin' && user.role !== 'Admin') {
+    const role = user.role || '';
+    const isManagerOrHead = /manager|head/i.test(role);
+    if (!isManagerOrHead) {
+      const visibility = [{ createdBy: user._id }, { assignedTo: user._id }];
+      const myName = user.fullName || user.name;
+      if (myName) visibility.push({ salesPerson: myName });
+      filter.$or = visibility;
+    }
+  }
+  return filter;
+}
+
 exports.getOrders = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.status) filter.status = req.query.status;
+  applyOrderVisibility(req.user, filter);
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [orders, total] = await Promise.all([
@@ -44,18 +62,20 @@ exports.getOrders = asyncHandler(async (req, res) => {
 exports.getTodaysOrders = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  const orders = await Order.find({ createdAt: { $gte: start, $lte: end }, deletedAt: null });
+  const filter = applyOrderVisibility(req.user, { createdAt: { $gte: start, $lte: end }, deletedAt: null });
+  const orders = await Order.find(filter);
   res.status(200).json({ success: true, data: orders });
 });
 
 exports.getTodaysDispatch = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  const orders = await Order.find({
+  const filter = applyOrderVisibility(req.user, {
     status: { $in: ['Dispatch Ready', 'Dispatched'] },
     updatedAt: { $gte: start, $lte: end },
     deletedAt: null,
   });
+  const orders = await Order.find(filter);
   res.status(200).json({ success: true, data: orders });
 });
 
