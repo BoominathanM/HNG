@@ -27,7 +27,9 @@ exports.getLeads = asyncHandler(async (req, res) => {
       status: { $in: ['Dispatched', 'Delivered'] },
       leadId: { $ne: null },
     });
-    filter.status = { $nin: ['Dispatched', 'Delivered'] };
+    // Also exclude 'Converted' here so a lead that already became an order doesn't
+    // linger in the Leads list for roles whose Orders view is scoped by assignedTo.
+    filter.status = { $nin: ['Dispatched', 'Delivered', 'Converted'] };
     if (dispatchedLeadIds.length) {
       filter._id = { $nin: dispatchedLeadIds };
     }
@@ -760,7 +762,10 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     logoUrl: resolveField(negObj.logoUrl, lead?.hotelLogoUrl),
     logoRequired: resolveField(negObj.logoRequired, lead?.logoNeeded, false),
     orderCategory,
-    assignedTo: req.user._id,
+    // Keep the order assigned to the lead's sales exec, not whoever clicks "Convert to Order"
+    // (e.g. an admin converting on their behalf) — otherwise the order becomes invisible to
+    // that sales exec's role-scoped Orders query.
+    assignedTo: resolveField(lead?.assignedTo, req.user._id),
     createdBy: req.user._id,
     statusHistory: [{ status: 'In Production', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });
@@ -792,11 +797,18 @@ exports.createDirectOrder = asyncHandler(async (req, res) => {
   const orderCode = await generateCode(prefix);
   const clientPartyId = req.body.clientPartyId || await upsertPartyByName(req.body.clientName, req.user._id);
   const initialStatus = req.body.status || 'In Production';
+  // Same reasoning as convertToOrder: fall back to the originating lead's assigned sales
+  // exec so the order stays visible to them, not just to whoever created it (e.g. an admin).
+  let leadAssignedTo;
+  if (req.body.leadId) {
+    const leadForAssignment = await Lead.findById(req.body.leadId).select('assignedTo').lean();
+    leadAssignedTo = leadForAssignment?.assignedTo;
+  }
   const order = await Order.create({
     ...req.body,
     orderCode,
     clientPartyId,
-    assignedTo: req.user._id,
+    assignedTo: req.body.assignedTo || leadAssignedTo || req.user._id,
     createdBy: req.user._id,
     statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });

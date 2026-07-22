@@ -280,6 +280,9 @@ export const apiSlice = createApi({
       query: ({ id, formData, ...data }) => ({ url: `/dispatch/${id}/lr`, method: 'patch', data: formData || data }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
+    scanDispatchLR: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/dispatch/${id}/scan-lr`, method: 'post', data }),
+    }),
     verifyItem: builder.mutation({
       query: ({ id, itemId, formData, verified }) => ({
         url: `/dispatch/${id}/items/${itemId}/verify`,
@@ -1283,6 +1286,7 @@ export const {
   useSaveHotelDesignMutation,
   useApproveStickerRequestMutation,
   useUploadDispatchLRMutation,
+  useScanDispatchLRMutation,
   useVerifyItemMutation,
   // Inventory
   useGetItemsQuery,

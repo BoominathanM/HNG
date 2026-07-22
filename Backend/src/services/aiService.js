@@ -330,6 +330,78 @@ async function extractInvoiceFields({ apiKey, model, file }) {
   };
 }
 
+// ─── Lorry Receipt (LR) field extraction ───────────────────────────────────
+
+const LORRY_RECEIPT_EXTRACTION_PROMPT = `You are a data-entry assistant extracting details from a Lorry Receipt (LR) / transport consignment note (image or PDF). Extract:
+- lrNumber: the LR/consignment/GC number printed on the document
+- lrDate: the LR date, formatted YYYY-MM-DD if a date is present
+- transportName: the transport company/carrier name printed on the document
+- fromCity: the origin/consignor city
+- toCity: the destination/consignee city
+- weight: the total weight as printed (include unit, e.g. "45.5 Kg")
+- freight: the freight/amount charged, as printed (include currency symbol if shown)
+- packages: the number of packages/boxes as printed (plain number as a string, e.g. "30")
+- estimatedDelivery: the estimated delivery date, formatted YYYY-MM-DD if present, else ""
+- trackingUrl: a web tracking URL/link printed on the document (e.g. next to a QR code or as "Track your shipment at ..."), else ""
+
+Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
+{ "lrNumber": "", "lrDate": "", "transportName": "", "fromCity": "", "toCity": "", "weight": "", "freight": "", "packages": "", "estimatedDelivery": "", "trackingUrl": "" }
+If a field cannot be determined from the document, use an empty string for it — do not guess or invent data.`;
+
+// file: { url, originalName, mimetype } — Cloudinary-hosted, already uploaded by multer.
+async function extractLorryReceiptFields({ apiKey, model, file }) {
+  const isSupported = SUPPORTED_IMAGE_MIMES.includes(file.mimetype) || SUPPORTED_PDF_MIMES.includes(file.mimetype);
+  if (!isSupported) {
+    throw Object.assign(new Error('Unsupported file type — upload a PDF or image (JPG/PNG/WEBP).'), { statusCode: 400 });
+  }
+
+  const base64 = await fetchAsBase64(file.url);
+  const part = buildFileContentPart(file, base64);
+  if (!part) throw Object.assign(new Error('Could not process this file type'), { statusCode: 400 });
+
+  const result = await openAiRequest('/chat/completions', {
+    apiKey,
+    method: 'POST',
+    timeoutMs: 60000,
+    body: {
+      model: model || DEFAULT_MODEL,
+      messages: [
+        { role: 'system', content: LORRY_RECEIPT_EXTRACTION_PROMPT },
+        { role: 'user', content: [{ type: 'text', text: 'Extract the lorry receipt / transport details from this document.' }, part] },
+      ],
+      response_format: { type: 'json_object' },
+    },
+  });
+
+  if (result.statusCode !== 200) {
+    const msg = result.body?.error?.message || `OpenAI API returned status ${result.statusCode}`;
+    throw Object.assign(new Error(msg), { statusCode: result.statusCode === 401 ? 401 : 502 });
+  }
+
+  const raw = result.body?.choices?.[0]?.message?.content;
+  if (!raw) throw new Error('OpenAI returned an empty response');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Failed to parse the AI response as JSON');
+  }
+
+  return {
+    lrNumber: parsed.lrNumber || '',
+    lrDate: parsed.lrDate || '',
+    transportName: parsed.transportName || '',
+    fromCity: parsed.fromCity || '',
+    toCity: parsed.toCity || '',
+    weight: parsed.weight || '',
+    freight: parsed.freight || '',
+    packages: parsed.packages || '',
+    estimatedDelivery: parsed.estimatedDelivery || '',
+    trackingUrl: parsed.trackingUrl || '',
+  };
+}
+
 module.exports = {
   getAiConfig,
   resolveApiKey,
@@ -338,5 +410,6 @@ module.exports = {
   compareQuotationFiles,
   extractVendorFields,
   extractInvoiceFields,
+  extractLorryReceiptFields,
   DEFAULT_MODEL,
 };

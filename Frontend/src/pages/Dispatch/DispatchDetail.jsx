@@ -30,6 +30,7 @@ import {
   useGetCompanySettingsQuery,
   useGetKitsQuery,
   useUploadFilesMutation,
+  useScanDispatchLRMutation,
 } from '../../store/api/apiSlice';
 import { buildDocComposition } from '../../utils/docComposition';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
@@ -70,6 +71,7 @@ export default function DispatchDetail() {
   const [uploadBoxPhotos] = useUploadBoxPhotosMutation();
   const [uploadItemBoxPhotos] = useUploadItemBoxPhotosMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
+  const [scanDispatchLR] = useScanDispatchLRMutation();
 
   // Derive orderId from raw dispatch data (before `order` useMemo is computed)
   const dispatchRaw = dispatchData?.data;
@@ -497,6 +499,7 @@ export default function DispatchDetail() {
           freight: order.storedFreight,
           packages: order.storedPackages,
           estimatedDelivery: order.storedEstimatedDelivery,
+          trackingUrl: order.storedTrackingUrl,
         });
       }
     }
@@ -728,16 +731,59 @@ export default function DispatchDetail() {
     }
   };
 
-  const handleAIParse = () => {
+  const handleAIParse = async () => {
+    const lrFile = lrFileList?.[0];
+    const fileUrl = lrFile?.url || lrFile?.response?.url;
+    if (!fileUrl) {
+      enqueueSnackbar('Upload a lorry receipt first.', { variant: 'warning' });
+      return;
+    }
     setAiParsing(true);
-    setTimeout(() => {
-      const parsed = { lrNumber: '', lrDate: '', transportName: '', fromCity: 'Coimbatore', toCity: '', weight: '', freight: '', packages: '', estimatedDelivery: '' };
+    try {
+      const res = await scanDispatchLR({
+        id,
+        fileUrl,
+        mimetype: lrFile.type || lrFile.originFileObj?.type,
+        originalName: lrFile.name,
+      }).unwrap();
+      const parsed = res?.data || {};
       setAiParsed(parsed);
       lrForm.setFieldsValue(parsed);
+      setLrEditMode(false);
+
+      // Mirror the extracted LR number / tracking URL into the "Tracking via Lorry
+      // Service" fields below, without clobbering anything already typed there.
+      const trackVals = trackingForm.getFieldsValue();
+      const trackingLR = parsed.lrNumber || trackVals.trackingLR || '';
+      const trackingUrl = parsed.trackingUrl || trackVals.trackingUrl || '';
+      trackingForm.setFieldsValue({ trackingLR, trackingUrl });
+
+      // Persist right away so a page refresh — before "Save as Draft" or "Finished
+      // Dispatch" is clicked — never loses what the AI just extracted.
+      try {
+        await saveAsDraft({
+          id,
+          lrNumber: trackingLR || undefined,
+          trackingUrl: trackingUrl || undefined,
+          lrFileUrl: fileUrl,
+          lrDate: parsed.lrDate || undefined,
+          transportName: parsed.transportName || undefined,
+          fromCity: parsed.fromCity || undefined,
+          toCity: parsed.toCity || undefined,
+          weight: parsed.weight || undefined,
+          freight: parsed.freight || undefined,
+          packages: parsed.packages || undefined,
+          estimatedDelivery: parsed.estimatedDelivery || undefined,
+        }).unwrap();
+        enqueueSnackbar('AI extracted lorry receipt details and saved. Review and confirm below.', { variant: 'success' });
+      } catch {
+        enqueueSnackbar('AI extracted lorry receipt details, but auto-save failed — click "Save as Draft" so they survive a refresh.', { variant: 'warning' });
+      }
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'AI extraction failed. You can still fill details in manually.', { variant: 'error' });
+    } finally {
       setAiParsing(false);
-      setLrEditMode(true);
-      enqueueSnackbar('AI extracted lorry receipt details. Review and confirm below.', { variant: 'success' });
-    }, 1800);
+    }
   };
 
   const handleFinishedDispatch = async () => {
@@ -1604,16 +1650,46 @@ export default function DispatchDetail() {
                               </Col>
                             </Row>
                           ) : (
-                            <Descriptions bordered size="small" column={2} style={{ borderRadius: 8 }}>
-                              <Descriptions.Item label="LR Number"><Text strong style={{ color: '#B11E6A' }}>{aiParsed.lrNumber}</Text></Descriptions.Item>
-                              <Descriptions.Item label="LR Date">{aiParsed.lrDate}</Descriptions.Item>
-                              <Descriptions.Item label="Transport">{aiParsed.transportName}</Descriptions.Item>
-                              <Descriptions.Item label="Packages"><Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} />{aiParsed.packages}</Space></Descriptions.Item>
-                              <Descriptions.Item label="From → To">{aiParsed.fromCity} → {aiParsed.toCity}</Descriptions.Item>
-                              <Descriptions.Item label="Weight">{aiParsed.weight}</Descriptions.Item>
-                              <Descriptions.Item label="Freight">{aiParsed.freight}</Descriptions.Item>
-                              <Descriptions.Item label="Est. Delivery">{aiParsed.estimatedDelivery}</Descriptions.Item>
-                            </Descriptions>
+                            <Row gutter={[10, 10]}>
+                              {[
+                                { label: 'LR Number', value: aiParsed.lrNumber, icon: <FileDoneOutlined />, highlight: true },
+                                { label: 'LR Date', value: aiParsed.lrDate, icon: <CheckSquareOutlined /> },
+                                { label: 'Transport', value: aiParsed.transportName, icon: <CarOutlined /> },
+                                { label: 'Packages', value: aiParsed.packages, icon: <InboxOutlined /> },
+                                { label: 'From → To', value: [aiParsed.fromCity, aiParsed.toCity].filter(Boolean).join(' → '), icon: <EnvironmentOutlined /> },
+                                { label: 'Weight', value: aiParsed.weight, icon: <AppstoreOutlined /> },
+                                { label: 'Freight', value: aiParsed.freight, icon: <ThunderboltOutlined /> },
+                                { label: 'Est. Delivery', value: aiParsed.estimatedDelivery, icon: <CheckCircleOutlined /> },
+                                { label: 'Tracking URL', value: aiParsed.trackingUrl, icon: <LinkOutlined /> },
+                              ].map((f) => (
+                                <Col xs={12} sm={8} md={6} key={f.label}>
+                                  <Card
+                                    size="small"
+                                    bodyStyle={{ padding: '8px 10px' }}
+                                    style={{ borderRadius: 8, borderColor: '#B11E6A22', height: '100%' }}
+                                  >
+                                    <Space size={4} style={{ color: '#999', fontSize: 11 }}>
+                                      {f.icon}
+                                      <span>{f.label}</span>
+                                    </Space>
+                                    <div
+                                      style={{
+                                        marginTop: 2,
+                                        fontSize: 13,
+                                        fontWeight: f.highlight ? 700 : 500,
+                                        color: f.highlight ? '#B11E6A' : textColor,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                      }}
+                                      title={f.value || ''}
+                                    >
+                                      {f.value || '—'}
+                                    </div>
+                                  </Card>
+                                </Col>
+                              ))}
+                            </Row>
                           )}
                         </Form>
                       </motion.div>
@@ -1652,7 +1728,7 @@ export default function DispatchDetail() {
                     </Col>
                     <Col xs={24} sm={10}>
                       <Form.Item label="LR / Tracking Number" name="trackingLR" style={{ marginBottom: 8 }}>
-                        <Input placeholder="e.g. LR-78921" defaultValue={aiParsed?.lrNumber || ''} />
+                        <Input placeholder="e.g. LR-78921" />
                       </Form.Item>
                     </Col>
                   </Row>

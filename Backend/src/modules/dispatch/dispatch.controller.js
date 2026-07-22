@@ -14,6 +14,7 @@ const generateCode = require('../../utils/codeGenerator');
 const { notifyMany } = require('../../utils/notify');
 const { sendMessage } = require('../../services/whatsAppService');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
+const aiService = require('../../services/aiService');
 
 // Sends the "Dispatch Notify" WhatsApp template (configured in Integrations → WhatsApp →
 // Event Mapping) to both the order's sales person and the customer, with the confirmed
@@ -386,6 +387,29 @@ exports.saveAsDraft = asyncHandler(async (req, res, next) => {
     { new: true }
   );
   res.status(200).json({ success: true, data: dispatch });
+});
+
+// POST /api/dispatch/:id/scan-lr — the lorry receipt file is already on Cloudinary
+// (uploaded via the LR Upload control's own customRequest), so this just runs the
+// stored URL through OpenAI and returns extracted fields to prefill the LR form
+// (same wiring as purchase.scanLocalPurchaseInvoice / vendors.scanDocument).
+exports.scanLorryReceipt = asyncHandler(async (req, res, next) => {
+  const { fileUrl, mimetype, originalName } = req.body;
+  if (!fileUrl) return next(new AppError('No lorry receipt file to scan — upload one first', 400));
+
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) {
+    return next(new AppError('AI is not configured yet. Add your OpenAI API key under Integration → AI Integration.', 503));
+  }
+
+  const file = { url: fileUrl, originalName: originalName || 'lorry-receipt', mimetype };
+  try {
+    const extracted = await aiService.extractLorryReceiptFields({ apiKey, model: config.model, file });
+    res.status(200).json({ success: true, data: extracted });
+  } catch (err) {
+    return next(new AppError(`AI extraction failed: ${err.message}`, err.statusCode || 502));
+  }
 });
 
 exports.uploadLR = asyncHandler(async (req, res, next) => {
