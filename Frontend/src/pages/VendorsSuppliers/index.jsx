@@ -143,6 +143,7 @@ export default function VendorsSuppliers() {
     aiSummary: v.aiSummary,
     totalPaid: v.totalPaid || 0,
     pending: v.pending || 0,
+    createdAt: v.createdAt || '',
   })), [vendorData]);
   const printingSuppliers = useMemo(() => (usersData?.data || []).filter(u => u.department === 'Vendors').map((u) => ({
     key: u._id,
@@ -153,12 +154,14 @@ export default function VendorsSuppliers() {
     taxId: u.taxId || '',
     address: u.address || '',
     bank: u.bankDetails || '',
+    createdAt: u.createdAt || '',
   })), [usersData]);
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
   const [vendorSearch, setVendorSearch] = useState('');
   const [vendorFilter, setVendorFilter] = useState('all');
   const [vendorDateRange, setVendorDateRange] = useState(null);
   const [vendorHistorySearch, setVendorHistorySearch] = useState('');
+  const [vendorHistoryDateRange, setVendorHistoryDateRange] = useState(null);
   const [vendorForm] = Form.useForm();
   const [vendorScanLoading, setVendorScanLoading] = useState(false);
   const [vendorScannedFile, setVendorScannedFile] = useState(null);
@@ -205,8 +208,10 @@ export default function VendorsSuppliers() {
   /* ── Printing Suppliers state (loaded from API above) ── */
   const [printingSearch, setPrintingSearch] = useState('');
   const [printingTypeFilter, setPrintingTypeFilter] = useState('all');
+  const [printingSupplierDateRange, setPrintingSupplierDateRange] = useState(null);
   const [viewPrintingSupplier, setViewPrintingSupplier] = useState(null);
   const [showAddPrintingSupplierModal, setShowAddPrintingSupplierModal] = useState(false);
+  const [printingOrderDateRange, setPrintingOrderDateRange] = useState(null);
 
   const [customDeptRoles, setCustomDeptRoles] = useState({});
   const [newRole, setNewRole] = useState('');
@@ -285,10 +290,16 @@ export default function VendorsSuppliers() {
   };
 
   /* ── Computed ── */
-  const filteredVendors = vendors.filter((v) =>
-    v.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
-    v.phone.includes(vendorSearch)
-  );
+  const filteredVendors = vendors.filter((v) => {
+    const matchSearch = v.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
+      v.phone.includes(vendorSearch);
+    if (!matchSearch) return false;
+    if (vendorDateRange) {
+      const d = v.createdAt ? v.createdAt.slice(0, 10) : '';
+      if (d < vendorDateRange[0] || d > vendorDateRange[1]) return false;
+    }
+    return true;
+  });
 
   /* ── Handlers ── */
   const handleSaveVendor = async () => {
@@ -428,9 +439,14 @@ export default function VendorsSuppliers() {
                   children: (
                     <div className="fade-in" style={{ marginTop: 16 }}>
                       {viewVendor ? (() => {
-                        const filteredVendorHistory = vendorHistorySearch
-                          ? vendorHistoryRaw.filter(r => r.items.some(i => i.name.toLowerCase().includes(vendorHistorySearch.toLowerCase())))
-                          : vendorHistoryRaw;
+                        const filteredVendorHistory = vendorHistoryRaw.filter(r => {
+                          if (vendorHistorySearch && !r.items.some(i => i.name.toLowerCase().includes(vendorHistorySearch.toLowerCase()))) return false;
+                          if (vendorHistoryDateRange) {
+                            const d = r.date || '';
+                            if (d < vendorHistoryDateRange[0] || d > vendorHistoryDateRange[1]) return false;
+                          }
+                          return true;
+                        });
                         return (
                           <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
@@ -445,7 +461,12 @@ export default function VendorsSuppliers() {
                                   style={{ width: 200, borderRadius: 8 }}
                                   suffix={vendorHistorySearch ? <Text style={{ fontSize: 11, color: '#B11E6A' }}>{filteredVendorHistory.length}</Text> : null}
                                 />
-                                <DatePicker.RangePicker style={{ width: 250 }} placeholder={['From Date', 'To Date']} />
+                                <DatePicker.RangePicker
+                                  style={{ width: 250, borderRadius: 8 }}
+                                  placeholder={['From Date', 'To Date']}
+                                  onChange={(dates) => setVendorHistoryDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                                  allowClear
+                                />
                               </Space>
                               <Title level={4} style={{ margin: 0, color: '#B11E6A' }}>{viewVendor.name} - Detailed History</Title>
                             </div>
@@ -529,9 +550,9 @@ export default function VendorsSuppliers() {
                                 style={{ width: 200 }}
                               />
                               <DatePicker.RangePicker
-                                value={vendorDateRange}
-                                onChange={setVendorDateRange}
-                                style={{ width: 260 }}
+                                style={{ width: 260, borderRadius: 8 }}
+                                onChange={(dates) => setVendorDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                                allowClear
                               />
                               <Select value={vendorFilter} onChange={setVendorFilter} style={{ width: 140 }}>
                                 <Option value="all">All Time</Option>
@@ -611,6 +632,11 @@ export default function VendorsSuppliers() {
                               { value: 'Butter Paper', label: 'Butter Paper' },
                             ]}
                           />
+                          <DatePicker.RangePicker
+                            style={{ borderRadius: 8 }}
+                            onChange={(dates) => setPrintingSupplierDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                            allowClear
+                          />
                           <Button
                             type="primary"
                             icon={<PlusOutlined />}
@@ -678,7 +704,12 @@ export default function VendorsSuppliers() {
                           const q = printingSearch.toLowerCase();
                           const matchSearch = !q || (s.name || '').toLowerCase().includes(q) || (s.phone || '').toLowerCase().includes(q) || (s.email || '').toLowerCase().includes(q);
                           const matchType = printingTypeFilter === 'all' || s.type === printingTypeFilter;
-                          return matchSearch && matchType;
+                          if (!matchSearch || !matchType) return false;
+                          if (printingSupplierDateRange) {
+                            const d = s.createdAt ? s.createdAt.slice(0, 10) : '';
+                            if (d < printingSupplierDateRange[0] || d > printingSupplierDateRange[1]) return false;
+                          }
+                          return true;
                         })}
                         rowKey="key"
                         pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
@@ -734,12 +765,28 @@ export default function VendorsSuppliers() {
                 <Text type="secondary">Bank: </Text><Text>{viewPrintingSupplier.bank}</Text>
               </div>
             )}
-            <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 10 }}>
-              Orders Given ({viewPrintingSupplier.orders?.length || 0})
-            </Text>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+              <Text strong style={{ color: '#B11E6A' }}>
+                Orders Given ({(viewPrintingSupplier.orders || []).filter(o => {
+                  if (!printingOrderDateRange) return true;
+                  const d = o.date || '';
+                  return d >= printingOrderDateRange[0] && d <= printingOrderDateRange[1];
+                }).length})
+              </Text>
+              <DatePicker.RangePicker
+                size="small"
+                style={{ borderRadius: 8 }}
+                onChange={(dates) => setPrintingOrderDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                allowClear
+              />
+            </div>
             <Table
               size="small"
-              dataSource={viewPrintingSupplier.orders || []}
+              dataSource={(viewPrintingSupplier.orders || []).filter(o => {
+                if (!printingOrderDateRange) return true;
+                const d = o.date || '';
+                return d >= printingOrderDateRange[0] && d <= printingOrderDateRange[1];
+              })}
               rowKey="key"
               pagination={false}
               columns={[

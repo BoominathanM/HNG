@@ -3,7 +3,7 @@ import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Typography, Space,
-  Descriptions, Alert, Select, Tabs, Divider, Collapse, Upload, InputNumber,
+  Descriptions, Alert, Select, Tabs, Divider, Collapse, Upload, InputNumber, DatePicker,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -13,7 +13,7 @@ import {
   ExportOutlined, CheckSquareOutlined, WalletOutlined, UserOutlined,
   PhoneOutlined, FileTextOutlined, DollarCircleOutlined,
   AlertFilled, ExperimentOutlined, CalendarOutlined,
-  GiftOutlined, AppstoreOutlined,
+  GiftOutlined, AppstoreOutlined, ThunderboltFilled,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -70,7 +70,7 @@ const csvCell = (v) => {
 const exportCSV = (data, filename) => {
   const headers = ['S.No', 'Hotel Name', 'Box Count', 'Transport', 'Address', 'Phone Number', 'I STAY', 'After Dispatch'];
   const rows = data.map((o, i) => {
-    const address = [o.detailedAddress, o.city, o.state, o.pincode]
+    const address = [o.shippingAddress, o.shippingCity, o.shippingState, o.shippingPincode]
       .filter((p) => p && p !== '—')
       .join(', ') || o.destination || '';
     return [i + 1, o.client, o.boxes, o.transport, address, o.phone, '', ''];
@@ -107,6 +107,15 @@ export default function Dispatch() {
   const [reimbPayFilter, setReimbPayFilter] = useState(null);
   const [transportSearch, setTransportSearch] = useState('');
   const [transportStatusFilter, setTransportStatusFilter] = useState(null);
+  // Date-range filters (each holds null or ['YYYY-MM-DD','YYYY-MM-DD']).
+  // dispatchDateRange is shared by the "All Orders" / "Today's Dispatch Order" dispatch
+  // sub-tabs (mirrors how searchText/paymentFilter are already shared between them),
+  // filtering on order creation date. pickupDateRange is likewise shared by the
+  // "Today's Pickup Orders" / "All Orders" pickup sub-tabs, filtering on pickup date.
+  const [dispatchDateRange, setDispatchDateRange] = useState(null);
+  const [pickupDateRange, setPickupDateRange] = useState(null);
+  const [reimbDateRange, setReimbDateRange] = useState(null);
+  const [transportDateRange, setTransportDateRange] = useState(null);
   const { data: companySettingsData } = useGetCompanySettingsQuery();
   const companyInfo = useMemo(() => {
     const s = companySettingsData?.data || {};
@@ -156,6 +165,10 @@ export default function Dispatch() {
       orderCategory: isSample ? 'SAMPLE' : (d.orderId?.orderCategory || 'ORDER'),
       isSample,
       isEmergency: !!(d.orderId?.isEmergency),
+      // Set once Sales Head + Ops Head both approve an Emergency Dispatch request
+      // (dispatch-despite-pending-payment override) — distinct from isEmergency, which
+      // just flags an urgent delivery date on the order.
+      emergencyApproved: !!(d.orderId?.emergencyApproved),
       transport: d.transportName || d.lrNumber || '—',
       lrNumber: d.lrNumber,
       trackingUrl: d.trackingUrl,
@@ -179,6 +192,12 @@ export default function Dispatch() {
       city: d.orderId?.city || '—',
       state: d.orderId?.state || '—',
       pincode: d.orderId?.pincode || '—',
+      // Shipping address — dispatch labels/manifests use this, falling back to the
+      // billing address when no distinct shipping address was captured.
+      shippingAddress: d.orderId?.shippingAddress || d.orderId?.detailedAddress || '—',
+      shippingCity: d.orderId?.shippingCity || d.orderId?.city || '—',
+      shippingState: d.orderId?.shippingState || d.orderId?.state || '—',
+      shippingPincode: d.orderId?.shippingPincode || d.orderId?.pincode || '—',
     };
   };
 
@@ -196,6 +215,16 @@ export default function Dispatch() {
       trackingUrl: t.trackingUrl,
       dispatchDate: (t.dispatchedAt || '').slice(0, 10),
       status: t.status || 'In Transit',
+      // Dispatch details joined in from the linked Order/DispatchRecord (see
+      // getTransports) — previously these columns had no data source at all.
+      destination: t.orderId?.destination || '—',
+      contactPerson: t.orderId?.contactPerson || '—',
+      phone: t.orderId?.clientPhone || '—',
+      salesPerson: t.orderId?.assignedTo?.fullName || t.orderId?.salesPerson || '—',
+      isEmergency: !!t.orderId?.isEmergency,
+      emergencyApproved: !!t.orderId?.emergencyApproved,
+      payment: t.orderPaymentStatus || 'Pending',
+      invoiceNumber: t.dispatchId?.invoiceNumber || '—',
     }));
     if (fromApi.length) return fromApi;
     // Fallback: derive from dispatch records that carry an LR number.
@@ -204,6 +233,14 @@ export default function Dispatch() {
       client: d.client, transport: d.transport,
       dispatchDate: d.dispatchedAt?.slice(0, 10),
       status: d.status === 'Dispatched' ? 'In Transit' : 'Delivered',
+      destination: d.destination || '—',
+      contactPerson: d.contactPerson || '—',
+      phone: d.phone || '—',
+      salesPerson: d.salesPerson || '—',
+      isEmergency: !!d.isEmergency,
+      emergencyApproved: !!d.emergencyApproved,
+      payment: d.payment || 'Pending',
+      invoiceNumber: d.invoiceNumber || '—',
     }));
   }, [transportRaw, dispatchOrders]);
 
@@ -331,10 +368,10 @@ export default function Dispatch() {
       toName: order.client,
       toContact: order.contactPerson,
       toPhone: order.phone,
-      toAddress: order.detailedAddress,
-      toCity: order.city,
-      toState: order.state,
-      toPincode: order.pincode,
+      toAddress: order.shippingAddress,
+      toCity: order.shippingCity,
+      toState: order.shippingState,
+      toPincode: order.shippingPincode,
       toLocation: order.address,
       orderRef: order.id,
       boxCount: order.boxes,
@@ -589,10 +626,12 @@ export default function Dispatch() {
           <Space direction="vertical" size={2}>
             <Space size={4}>
               {r.isEmergency && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
+              {r.emergencyApproved && <ThunderboltFilled style={{ color: '#fa8c16', fontSize: 13 }} />}
               {r.orderCategory === 'SAMPLE' && <ExperimentOutlined style={{ color: '#722ed1', fontSize: 13 }} />}
               <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
             </Space>
             {r.isEmergency && <Tag color="red" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency</Tag>}
+            {r.emergencyApproved && <Tag color="orange" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency Dispatch</Tag>}
             {r.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Sample Order</Tag>}
           </Space>
         ),
@@ -635,22 +674,50 @@ export default function Dispatch() {
       },
     ];
 
-    // Insert Delivery Date column right after Order+Client for Today's Orders tab
-    if (showTodayActions) {
-      baseCols.splice(2, 0, deliveryDateCol);
-    }
+    // Insert Delivery Date column right after Order+Client — shown on both the
+    // "All Orders" and "Today's Dispatch Order" dispatch tables.
+    baseCols.splice(2, 0, deliveryDateCol);
 
     return baseCols;
   };
 
   const transportColumns = [
+    {
+      title: 'Order', dataIndex: 'orderId', width: 120,
+      render: (v, r) => (
+        <Space direction="vertical" size={2}>
+          <Space size={4}>
+            {r.isEmergency && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
+            {r.emergencyApproved && <ThunderboltFilled style={{ color: '#fa8c16', fontSize: 13 }} />}
+            <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
+          </Space>
+          {r.isEmergency && <Tag color="red" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency</Tag>}
+          {r.emergencyApproved && <Tag color="orange" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency Dispatch</Tag>}
+        </Space>
+      ),
+    },
     { title: 'LR Number', dataIndex: 'lrNumber', width: 115, render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text> },
-    { title: 'Order', dataIndex: 'orderId', width: 100, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Invoice No.', dataIndex: 'invoiceNumber', width: 110, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Client', dataIndex: 'client', width: 145, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Contact', key: 'contact', width: 150, responsive: ['lg'],
+      render: (_, r) => (
+        <Space direction="vertical" size={0}>
+          <Text style={{ fontSize: 13 }}>{r.contactPerson}</Text>
+          {r.phone && r.phone !== '—' && <Text type="secondary" style={{ fontSize: 12 }}>{r.phone}</Text>}
+        </Space>
+      ),
+    },
+    { title: 'Destination', dataIndex: 'destination', width: 130, responsive: ['md'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Sales Person', dataIndex: 'salesPerson', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Transport Co.', dataIndex: 'transport', width: 135, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Boxes', dataIndex: 'boxes', width: 80, render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> },
     { title: 'Weight', dataIndex: 'weight', width: 95, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Freight', dataIndex: 'freight', width: 95, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Payment', dataIndex: 'payment', width: 100,
+      render: v => <Tag color={v === 'Paid' ? 'success' : v === 'Partial' ? 'processing' : 'error'} style={{ fontSize: 12 }}>{v}</Tag>,
+    },
     { title: 'Dispatch Date', dataIndex: 'dispatchDate', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Status', dataIndex: 'status', width: 105, render: (v) => <Tag color={v === 'Delivered' ? 'success' : 'processing'} style={{ fontSize: 13 }}>{v}</Tag> },
   ];
@@ -734,16 +801,21 @@ export default function Dispatch() {
   const applyFilters = (orders) => orders.filter((o) => {
     const s = !searchText || (o.id || '').toLowerCase().includes(searchText.toLowerCase()) || (o.client || '').toLowerCase().includes(searchText.toLowerCase()) || (o.address || '').toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
     const p = paymentFilter === 'All' || o.payment === paymentFilter;
+    if (dispatchDateRange) {
+      const d = o.createdAt ? o.createdAt.slice(0, 10) : '';
+      if (d < dispatchDateRange[0] || d > dispatchDateRange[1]) return false;
+    }
     return s && p;
   });
 
   // Emergency orders surface first wherever dispatch orders are listed — sort is
   // stable, so recency order (already newest-first from the backend) is preserved
   // within the emergency and non-emergency buckets.
-  const sortEmergencyFirst = (arr) => [...arr].sort((a, b) => (b.isEmergency ? 1 : 0) - (a.isEmergency ? 1 : 0));
+  const sortEmergencyFirst = (arr) => [...arr].sort((a, b) => ((b.isEmergency || b.emergencyApproved) ? 1 : 0) - ((a.isEmergency || a.emergencyApproved) ? 1 : 0));
 
   const filteredOrders = sortEmergencyFirst(applyFilters(dispatchOrders));
-  // Today's Orders — sourced from the backend's dedicated /dispatch/today endpoint.
+  // Today's Dispatch Order — sourced from the backend's dedicated /dispatch/today
+  // endpoint, which filters on the order's tentative delivery date (expectedDeliveryDate).
   const todayOrders = sortEmergencyFirst(applyFilters(todayDispatchOrders));
 
   // Expandable config for all orders table
@@ -795,6 +867,11 @@ export default function Dispatch() {
           <Option value="Dispatched">Dispatched</Option>
           <Option value="Packing">Packing</Option>
         </Select>
+        <DatePicker.RangePicker
+          style={{ borderRadius: 8 }}
+          onChange={(dates) => setDispatchDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+          allowClear
+        />
       </Space>
     </div>
   );
@@ -810,6 +887,7 @@ export default function Dispatch() {
           // Counted across the whole dataset (backend `emergencyCount`), not just the
           // current page, since the other page-local counts below don't need to be exact.
           { label: 'Emergency Orders', count: dispatchData?.emergencyCount ?? dispatchOrders.filter(o => o.isEmergency).length, color: '#ff4d4f' },
+          { label: 'Emergency Dispatch', count: dispatchOrders.filter(o => o.emergencyApproved).length, color: '#fa8c16' },
           { label: 'Ready to Dispatch', count: dispatchOrders.filter(o => o.status === 'Ready to Dispatch').length, color: '#B11E6A' },
           { label: 'Packing in Progress', count: dispatchOrders.filter(o => o.status === 'Packing').length, color: '#8a1652' },
           { label: 'Dispatched Today', count: dispatchOrders.filter(o => o.status === 'Dispatched').length, color: '#C94F8A' },
@@ -881,7 +959,7 @@ export default function Dispatch() {
                     key: 'today',
                     label: (
                       <Space>
-                        Today's Orders
+                        Today's Dispatch Order
                         <Tag style={{ borderRadius: 20, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', fontSize: 11 }}>
                           {todayOrders.length}
                         </Tag>
@@ -891,13 +969,13 @@ export default function Dispatch() {
                       <div>
                         {filtersRow}
                         <Card
-                          title={<Space><CalendarOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Orders with Delivery Date Today</Text></Space>}
+                          title={<Space><CalendarOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Orders with Tentative Delivery Date Today</Text></Space>}
                           extra={
                             <Button
                               size="small"
                               icon={<ExportOutlined />}
                               style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
-                              onClick={() => exportCSV(todayOrders, `today-orders-${new Date().toLocaleDateString('en-IN').replace(/\//g, '-')}.csv`)}
+                              onClick={() => exportCSV(todayOrders, `today-dispatch-orders-${new Date().toLocaleDateString('en-IN').replace(/\//g, '-')}.csv`)}
                             >
                               Export All
                             </Button>
@@ -909,7 +987,7 @@ export default function Dispatch() {
                             {todayOrders.length === 0 ? (
                               <div style={{ textAlign: 'center', padding: '32px', color: isDark ? '#aaa' : '#888' }}>
                                 <CarOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block', color: '#B11E6A55' }} />
-                                No orders with delivery date today.
+                                No orders with tentative delivery date today.
                               </div>
                             ) : (
                               <Table
@@ -974,6 +1052,11 @@ export default function Dispatch() {
                               <Option value="Paid">Paid</Option>
                               <Option value="Unpaid">Unpaid</Option>
                             </Select>
+                            <DatePicker.RangePicker
+                              style={{ borderRadius: 8 }}
+                              onChange={(dates) => setPickupDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                              allowClear
+                            />
                           </div>
                           {(() => {
                             const rows = todaysPickupOrders.filter((r) => {
@@ -981,7 +1064,8 @@ export default function Dispatch() {
                               const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.client || '').toLowerCase().includes(q);
                               const matchTaken = !pickupTakenFilter || r.takenStatus === pickupTakenFilter;
                               const matchPay = !pickupPayFilter || r.paymentStatus === pickupPayFilter;
-                              return matchSearch && matchTaken && matchPay;
+                              const matchDate = !pickupDateRange || ((r.date || '') >= pickupDateRange[0] && (r.date || '') <= pickupDateRange[1]);
+                              return matchSearch && matchTaken && matchPay && matchDate;
                             });
                             if (todaysPickupOrders.length === 0) return (
                               <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
@@ -1023,6 +1107,11 @@ export default function Dispatch() {
                               <Option value="Paid">Paid</Option>
                               <Option value="Unpaid">Unpaid</Option>
                             </Select>
+                            <DatePicker.RangePicker
+                              style={{ borderRadius: 8 }}
+                              onChange={(dates) => setPickupDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                              allowClear
+                            />
                           </div>
                           {(() => {
                             const rows = allPickupOrders.filter((r) => {
@@ -1030,7 +1119,8 @@ export default function Dispatch() {
                               const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.client || '').toLowerCase().includes(q);
                               const matchTaken = !pickupTakenFilter || r.takenStatus === pickupTakenFilter;
                               const matchPay = !pickupPayFilter || r.paymentStatus === pickupPayFilter;
-                              return matchSearch && matchTaken && matchPay;
+                              const matchDate = !pickupDateRange || ((r.date || '') >= pickupDateRange[0] && (r.date || '') <= pickupDateRange[1]);
+                              return matchSearch && matchTaken && matchPay && matchDate;
                             });
                             if (allPickupOrders.length === 0) return (
                               <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
@@ -1078,6 +1168,11 @@ export default function Dispatch() {
                               <Option value="Partial">Partial</Option>
                               <Option value="Paid">Paid</Option>
                             </Select>
+                            <DatePicker.RangePicker
+                              style={{ borderRadius: 8 }}
+                              onChange={(dates) => setReimbDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                              allowClear
+                            />
                           </div>
                           {reimbExpenses.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '40px 0', color: isDark ? '#aaa' : '#888' }}>
@@ -1091,7 +1186,8 @@ export default function Dispatch() {
                                 const q = reimbSearch.toLowerCase();
                                 const matchSearch = !q || (r.orderId || '').toLowerCase().includes(q) || (r.client || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
                                 const matchPay = !reimbPayFilter || r.reimbursementStatus === reimbPayFilter;
-                                return matchSearch && matchPay;
+                                const matchDate = !reimbDateRange || ((r.date || '') >= reimbDateRange[0] && (r.date || '') <= reimbDateRange[1]);
+                                return matchSearch && matchPay && matchDate;
                               })}
                               rowKey="key"
                               pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
@@ -1138,6 +1234,11 @@ export default function Dispatch() {
                       <Option value="In Transit">In Transit</Option>
                       <Option value="Delivered">Delivered</Option>
                     </Select>
+                    <DatePicker.RangePicker
+                      style={{ borderRadius: 8 }}
+                      onChange={(dates) => setTransportDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                      allowClear
+                    />
                   </div>
                   <div className="table-responsive" style={{ padding: '4px' }}>
                     <Table
@@ -1145,7 +1246,8 @@ export default function Dispatch() {
                         const q = transportSearch.toLowerCase();
                         const matchSearch = !q || (t.lrNumber || '').toLowerCase().includes(q) || (t.orderId || '').toLowerCase().includes(q) || (t.client || '').toLowerCase().includes(q) || (t.transport || '').toLowerCase().includes(q);
                         const matchStatus = !transportStatusFilter || t.status === transportStatusFilter;
-                        return matchSearch && matchStatus;
+                        const matchDate = !transportDateRange || ((t.dispatchDate || '') >= transportDateRange[0] && (t.dispatchDate || '') <= transportDateRange[1]);
+                        return matchSearch && matchStatus && matchDate;
                       })}
                       columns={transportColumns}
                       pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}

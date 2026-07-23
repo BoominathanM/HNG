@@ -1977,6 +1977,8 @@ export default function Sales() {
   const [orderDateRange, setOrderDateRange] = useState(null);
   const [quotSearchText, setQuotSearchText] = useState('');
   const [quotDateRange, setQuotDateRange] = useState(null);
+  const [reminderDateRange, setReminderDateRange] = useState(null);
+  const [customerDateRange, setCustomerDateRange] = useState(null);
   const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
 
@@ -2955,6 +2957,7 @@ export default function Sales() {
   const watchedBillType = Form.useWatch('billType', leadForm);
   const watchedHotelType = Form.useWatch('hotelType', leadForm);
   const watchedLeadType = Form.useWatch('leadType', leadForm);
+  const watchedShippingSameAsBilling = Form.useWatch('shippingSameAsBilling', leadForm);
   const watchedProductType = Form.useWatch('productType', leadForm);
   const watchedSelectedKits = Form.useWatch('selectedKits', leadForm) || [];
   const watchedSingleKit = Form.useWatch('selectedKit', leadForm);
@@ -3709,7 +3712,7 @@ export default function Sales() {
   const newLeadDefaults = {
     hotelType: 'OLD', billType: 'GST', forwardingCharge: false, forwardingChargeAmount: 0,
     deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'BEFORE_100',
-    logoNeeded: false,
+    logoNeeded: false, shippingSameAsBilling: true,
     products: [],
     specifications: [],
     priority: 0,
@@ -3757,6 +3760,14 @@ export default function Sales() {
     const state = values.state || formStore.state;
     const pincode = values.pincode || formStore.pincode;
     const gstPhone = values.gstPhone || formStore.gstPhone;
+    // Shipping address: when "Same as Billing Address" is checked, materialize the billing
+    // values into the shipping fields so every downstream consumer (Order, Invoice, Dispatch)
+    // has a concrete shipping address to read without needing its own same-as-billing fallback.
+    const shippingSameAsBilling = values.shippingSameAsBilling ?? formStore.shippingSameAsBilling ?? true;
+    const shippingAddress = shippingSameAsBilling ? detailedAddress : (values.shippingAddress || formStore.shippingAddress);
+    const shippingCity = shippingSameAsBilling ? city : (values.shippingCity || formStore.shippingCity);
+    const shippingState = shippingSameAsBilling ? state : (values.shippingState || formStore.shippingState);
+    const shippingPincode = shippingSameAsBilling ? pincode : (values.shippingPincode || formStore.shippingPincode);
     // Extract Cloudinary URLs from file list fields
     const hotelLogoUrl = (values.hotelLogo || []).find(f => f.url)?.url || undefined;
     const paymentProofFiles = (values.paymentProofs || []).map(f => ({
@@ -3776,6 +3787,11 @@ export default function Sales() {
       pincode,
       gstPhone,
       address: detailedAddress,
+      shippingSameAsBilling,
+      shippingAddress,
+      shippingCity,
+      shippingState,
+      shippingPincode,
       locationCity: values.location,
       location: values.location,
       salesPerson: values.salesPerson,
@@ -4088,6 +4104,7 @@ export default function Sales() {
     const fieldsBySection = {
       hotel: ['hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
       billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber', 'gstPhone'],
+      shipping: ['shippingSameAsBilling', 'shippingAddress', 'shippingCity', 'shippingState', 'shippingPincode'],
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
       leadJourney: ['followUpStep'],
       personalization: ['productType', 'displayUnit', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitPrice', 'kitOverallQty', 'kitOrders', 'products'],
@@ -4270,6 +4287,10 @@ export default function Sales() {
         city: lead.city,
         state: lead.state,
         pincode: lead.pincode,
+        shippingAddress: lead.shippingAddress,
+        shippingCity: lead.shippingCity,
+        shippingState: lead.shippingState,
+        shippingPincode: lead.shippingPincode,
         contactPerson: lead.contactPerson,
         phone: lead.phone,
         email: lead.email,
@@ -4323,6 +4344,10 @@ export default function Sales() {
         city: lead.city,
         state: lead.state,
         pincode: lead.pincode,
+        shippingAddress: lead.shippingAddress,
+        shippingCity: lead.shippingCity,
+        shippingState: lead.shippingState,
+        shippingPincode: lead.shippingPincode,
         products: sampleProducts,
         // Operations reads order.items — map products so sample products show there too
         items: sampleProducts.map(p => mapOrderItem(p, lead.kitDisplayUnit || lead.displayUnit || '')),
@@ -4647,6 +4672,8 @@ export default function Sales() {
           destination: d.destination,
           gstNumber: d.gstNumber,
           branch: d.branch || branch,
+          ...(d.billType ? { billType: d.billType } : {}),
+          ...(d.gstPhone ? { gstPhone: d.gstPhone } : {}),
           // Form fields use "alternativeRole/Name/Phone", not "altRole/Name/Number"
           alternativeRole: d.altRole,
           alternativeName: d.altName,
@@ -4655,6 +4682,17 @@ export default function Sales() {
           // Form field is "rowsInHotel", not "numRooms"
           rowsInHotel: d.numRooms || d.rowsInHotel,
           source: d.source,
+          // Billing address — not previously auto-filled, only guessed manually or via GST verify
+          ...(d.detailedAddress || d.address ? { detailedAddress: d.detailedAddress || d.address } : {}),
+          ...(d.city ? { city: d.city } : {}),
+          ...(d.state ? { state: d.state } : {}),
+          ...(d.pincode ? { pincode: d.pincode } : {}),
+          // Shipping address
+          ...(d.shippingAddress ? { shippingAddress: d.shippingAddress } : {}),
+          ...(d.shippingCity ? { shippingCity: d.shippingCity } : {}),
+          ...(d.shippingState ? { shippingState: d.shippingState } : {}),
+          ...(d.shippingPincode ? { shippingPincode: d.shippingPincode } : {}),
+          ...(d.shippingSameAsBilling != null ? { shippingSameAsBilling: d.shippingSameAsBilling } : {}),
           // Populate logo from stored Cloudinary URL
           ...(d.hotelLogoUrl ? {
             hotelLogo: [{ uid: '-1', name: 'hotel-logo', status: 'done', url: d.hotelLogoUrl }],
@@ -4761,6 +4799,10 @@ export default function Sales() {
       city: q.city,
       state: q.state,
       pincode: q.pincode,
+      shippingAddress: q.shippingAddress,
+      shippingCity: q.shippingCity,
+      shippingState: q.shippingState,
+      shippingPincode: q.shippingPincode,
       forwardingCharge: q.forwardingCharge,
       forwardingChargeAmount: q.forwardingChargeAmount || 0,
       deliveryBy: q.deliveryBy,
@@ -10517,6 +10559,17 @@ export default function Sales() {
                               generalOccupancy: undefined,
                               rowsInHotel: undefined,
                               hotelLogo: [],
+                              detailedAddress: undefined,
+                              city: undefined,
+                              state: undefined,
+                              pincode: undefined,
+                              shippingAddress: undefined,
+                              shippingCity: undefined,
+                              shippingState: undefined,
+                              shippingPincode: undefined,
+                              shippingSameAsBilling: true,
+                              billType: 'GST',
+                              gstPhone: undefined,
                             });
                           }}
                         >
@@ -10690,11 +10743,15 @@ export default function Sales() {
                 )}
               </Card>
               {/* Consolidated Row: Billing, Status, Progress */}
-              <Row gutter={16} style={{ marginBottom: 16 }}>
+              {/* align="top" — Billing & Address and Shipping Address routinely have very
+                  different content heights (Shipping collapses to one checkbox line when
+                  "Same as Billing" is checked); without this the default flex stretch forces
+                  the shorter card to inflate to match, leaving a large blank card body. */}
+              <Row gutter={[16, 16]} align="top" style={{ marginBottom: 16 }}>
                 {/* Billing & Address */}
                 <Col xs={24} lg={12}>
                   <Card
-                    style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#52c41a' }} /><span>Billing & Address</span></Space>}
                     extra={usePerCardEdit && (
                       editingSection === 'billing' ? (
@@ -10860,10 +10917,61 @@ export default function Sales() {
                   </Card>
                 </Col>
 
-                {/* Lead Status / Customer Type */}
-                <Col xs={24} lg={6}>
+                {/* Shipping Address */}
+                <Col xs={24} lg={12}>
                   <Card
-                    style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={<Space><div style={{ width: 4, height: 20, background: '#1677ff', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#1677ff' }} /><span>Shipping Address</span></Space>}
+                    extra={usePerCardEdit && (
+                      editingSection === 'shipping' ? (
+                        <Space size="small">
+                          <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('shipping')} style={{ background: '#1677ff', border: 'none', borderRadius: 6 }}>Save</Button>
+                          <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                        </Space>
+                      ) : (
+                        <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('shipping'); }} style={{ borderRadius: 6 }}>Edit</Button>
+                      )
+                    )}
+                  >
+                    {usePerCardEdit && editingSection !== 'shipping' ? (
+                      record.shippingSameAsBilling !== false ? (
+                        <InfoRow label="Shipping Address" value="Same as Billing Address" />
+                      ) : (
+                        <Row gutter={[24, 12]}>
+                          <Col xs={24} sm={12}><InfoRow label="City" value={record.shippingCity} /></Col>
+                          <Col xs={24} sm={12}><InfoRow label="State" value={record.shippingState} /></Col>
+                          <Col xs={24} sm={12}><InfoRow label="Pincode" value={record.shippingPincode} /></Col>
+                          <Col xs={24}><InfoRow label="Detailed Address" value={record.shippingAddress} /></Col>
+                        </Row>
+                      )
+                    ) : (
+                      <Row gutter={12}>
+                        <Col xs={24}>
+                          <Form.Item name="shippingSameAsBilling" valuePropName="checked" style={{ marginBottom: 8 }}>
+                            <Checkbox>Same as Billing Address</Checkbox>
+                          </Form.Item>
+                        </Col>
+                        {watchedShippingSameAsBilling === false && (
+                          <>
+                            <Col xs={24}><Form.Item label="Detailed Address" name="shippingAddress"><Input.TextArea rows={2} placeholder="Full shipping address" /></Form.Item></Col>
+                            <Col xs={24} sm={12}><Form.Item label="City" name="shippingCity"><Input placeholder="City" /></Form.Item></Col>
+                            <Col xs={24} sm={12}><Form.Item label="State" name="shippingState"><Input placeholder="State" /></Form.Item></Col>
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="Pincode" name="shippingPincode" rules={[{ pattern: /^[0-9]*$/, message: 'Pincode must contain only numbers' }]}>
+                                <Input placeholder="Pincode" maxLength={6} inputMode="numeric" />
+                              </Form.Item>
+                            </Col>
+                          </>
+                        )}
+                      </Row>
+                    )}
+                  </Card>
+                </Col>
+
+                {/* Lead Status / Customer Type */}
+                <Col xs={24} lg={12}>
+                  <Card
+                    style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><StarOutlined style={{ color: '#B11E6A' }} /><span>{isAddCustomer ? 'Customer Settings' : 'Lead Status'}</span></Space>}
                     extra={usePerCardEdit && (
                       editingSection === 'leadStatus' ? (
@@ -10979,7 +11087,7 @@ export default function Sales() {
                 </Col>
 
                 {/* Follow-up Progress (Steps) */}
-                <Col xs={24} lg={6}>
+                <Col xs={24} lg={12}>
                   <Card
                     style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><CalendarOutlined style={{ color: '#722ed1' }} /><span>Lead Journey</span></Space>}
@@ -13788,6 +13896,11 @@ export default function Sales() {
                         <Option key={t} value={t}>{t}</Option>
                       ))}
                     </Select>
+                    <DatePicker.RangePicker
+                      style={{ borderRadius: 8 }}
+                      onChange={(dates) => setReminderDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                      allowClear
+                    />
                     <Input
                       prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
                       placeholder="Search lead, party..."
@@ -13802,6 +13915,7 @@ export default function Sales() {
                       const q = searchText.toLowerCase();
                       const matchSearch = !q || (r.title || '').toLowerCase().includes(q) || (r.refCode || '').toLowerCase().includes(q);
                       const matchType = !reminderTypeFilter || r.kind === reminderTypeFilter;
+                      if (reminderDateRange) { const d = r.dueDate ? r.dueDate.slice(0, 10) : ''; if (d < reminderDateRange[0] || d > reminderDateRange[1]) return false; }
                       return matchSearch && matchType;
                     })}
                     columns={[
@@ -13940,8 +14054,18 @@ export default function Sales() {
               label: 'Parties',
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
+                    <DatePicker.RangePicker
+                      style={{ borderRadius: 8 }}
+                      onChange={(dates) => setCustomerDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                      allowClear
+                    />
+                  </div>
                   <Table
-                    dataSource={filtered(customersData)}
+                    dataSource={filtered(customersData).filter(r => {
+                      if (customerDateRange) { const d = r.createdAt ? r.createdAt.slice(0, 10) : ''; if (d < customerDateRange[0] || d > customerDateRange[1]) return false; }
+                      return true;
+                    })}
                     columns={customerColumns}
                     pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"

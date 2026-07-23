@@ -472,6 +472,7 @@ export default function Inventory() {
   const [approvalSearch, setApprovalSearch] = useState('');
   const [approvalType, setApprovalType] = useState(null);
   const [approvalStatus, setApprovalStatus] = useState(null);
+  const [approvalDateRange, setApprovalDateRange] = useState(null);
   /* ── Stock History ── */
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(10);
@@ -561,16 +562,23 @@ export default function Inventory() {
   const [editingMaterialStock, setEditingMaterialStock] = useState(null);
   const [materialStockForm] = Form.useForm();
   const [materialStockSearch, setMaterialStockSearch] = useState('');
+  const [materialStockDateRange, setMaterialStockDateRange] = useState(null);
   const [materialStockInvoiceUploading, setMaterialStockInvoiceUploading] = useState(false);
   const [materialStockInvoiceFile, setMaterialStockInvoiceFile] = useState(null);
   const makeUploadMs = useCloudinaryUpload();
 
   const filteredMaterialStocks = useMemo(() => {
     const q = materialStockSearch.toLowerCase();
-    return materialStocksList.filter(s =>
-      !q || s.packingMaterial.toLowerCase().includes(q) || (s.size || '').toLowerCase().includes(q) || (s.vendor || '').toLowerCase().includes(q)
-    );
-  }, [materialStocksList, materialStockSearch]);
+    return materialStocksList.filter(s => {
+      const matchSearch = !q || s.packingMaterial.toLowerCase().includes(q) || (s.size || '').toLowerCase().includes(q) || (s.vendor || '').toLowerCase().includes(q);
+      if (!matchSearch) return false;
+      if (materialStockDateRange) {
+        const d = s.purchaseDate ? s.purchaseDate.slice(0, 10) : '';
+        if (d < materialStockDateRange[0] || d > materialStockDateRange[1]) return false;
+      }
+      return true;
+    });
+  }, [materialStocksList, materialStockSearch, materialStockDateRange]);
 
   // Vendor dropdown for the "Add Purchase" (Material Stock) modal — same raw-material
   // vendor list used on the Inventory Add Item form. Keeps the currently-edited record's
@@ -684,9 +692,15 @@ export default function Inventory() {
     notes: m.notes || '',
     checkedBy: m.createdBy?.fullName || '—',
     date: m.createdAt ? dayjs(m.createdAt).format('DD MMM YYYY') : '—',
+    rawDate: m.createdAt ? m.createdAt.slice(0, 10) : '',
     time: m.createdAt ? dayjs(m.createdAt).format('hh:mm A') : '—',
     approvalStatus: m.approvalStatus,
   })), [checkHistoryData]);
+  const [checkLogDateRange, setCheckLogDateRange] = useState(null);
+  const filteredCheckHistory = useMemo(() => checkHistoryList.filter((r) => {
+    if (!checkLogDateRange) return true;
+    return r.rawDate >= checkLogDateRange[0] && r.rawDate <= checkLogDateRange[1];
+  }), [checkHistoryList, checkLogDateRange]);
 
   // Populate checkSession once inventory data loads from RTK Query (useState runs before data arrives).
   // On subsequent loads (e.g. after an approval), refresh systemCount while preserving the user's
@@ -724,7 +738,12 @@ export default function Inventory() {
     const matchSearch = !q || (a.item || '').toLowerCase().includes(q) || (a.person || '').toLowerCase().includes(q);
     const matchType = !approvalType || a.type === approvalType;
     const matchStatus = !approvalStatus || a.status === approvalStatus;
-    return matchSearch && matchType && matchStatus;
+    let matchDate = true;
+    if (approvalDateRange) {
+      const d = a.date || '';
+      matchDate = d >= approvalDateRange[0] && d <= approvalDateRange[1];
+    }
+    return matchSearch && matchType && matchStatus && matchDate;
   });
 
   const filteredHistory = stockHistory.filter(h => {
@@ -1278,6 +1297,11 @@ export default function Inventory() {
                     <Option value="Approved">Approved</Option>
                     <Option value="Rejected">Rejected</Option>
                   </Select>
+                  <DatePicker.RangePicker
+                    style={{ borderRadius: 8 }}
+                    onChange={(dates) => setApprovalDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                    allowClear
+                  />
                 </div>
                 <Table
                   size="small"
@@ -1575,15 +1599,20 @@ export default function Inventory() {
                     style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginTop: 16 }}
                     styles={{ body: { padding: 0 } }}
                   >
-                    <div style={{ padding: '12px 16px', borderBottom: `1px solid ${borderColor}` }}>
-                      <Space>
+                    <div style={{ padding: '12px 16px', borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                      <Space wrap>
                         <SafetyCertificateOutlined style={{ color: '#B11E6A' }} />
                         <Text strong style={{ color: textColor }}>Stock Check Log — Known &amp; Unknown Reasons</Text>
                         <Tag color="purple" style={{ borderRadius: 20 }}>Super Admin / Admin only</Tag>
                       </Space>
+                      <DatePicker.RangePicker
+                        style={{ borderRadius: 8 }}
+                        onChange={(dates) => setCheckLogDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                        allowClear
+                      />
                     </div>
                     <Table
-                      dataSource={checkHistoryList}
+                      dataSource={filteredCheckHistory}
                       size="small"
                       pagination={{ pageSize: 10 }}
                       scroll={{ x: 'max-content' }}
@@ -1756,6 +1785,11 @@ export default function Inventory() {
                         onChange={e => setMaterialStockSearch(e.target.value)}
                         allowClear
                         style={{ width: 220, borderRadius: 8, height: 34 }}
+                      />
+                      <DatePicker.RangePicker
+                        style={{ borderRadius: 8, height: 34 }}
+                        onChange={(dates) => setMaterialStockDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                        allowClear
                       />
                       <Button
                         type="primary" icon={<PlusOutlined />}

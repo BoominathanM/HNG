@@ -325,6 +325,7 @@ export default function Billing() {
       orderCategory: (fullOrder?.orderCategory === 'SAMPLE' || linkedLead?.leadType === 'SAMPLE' || quotationLead?.leadType === 'SAMPLE') ? 'SAMPLE' : (fullOrder?.orderCategory || linkedOrder?.orderCategory || 'ORDER'),
       isEmergency: !!(fullOrder?.isEmergency || linkedOrder?.isEmergency),
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
+      rawDate: inv.invoiceDate || null,
       dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
       amount: kitMoney.taxable || inv.subtotal,
       gst: kitMoney.gst || inv.gstAmount,
@@ -355,6 +356,11 @@ export default function Billing() {
         gstin: inv.partyId?.gstNumber || fullOrder?.gstNumber || linkedLead?.gstNumber || '',
         address: fullOrder?.detailedAddress || linkedLead?.detailedAddress || linkedLead?.address || quotationLead?.detailedAddress || inv.partyId?.address || '',
         city: [fullOrder?.city || linkedLead?.city || quotationLead?.city, fullOrder?.state || linkedLead?.state || quotationLead?.state, fullOrder?.pincode || linkedLead?.pincode || quotationLead?.pincode].filter(Boolean).join(', ') || inv.partyId?.city || '',
+        // Ship To — falls back to billing address/city when no distinct shipping address is set
+        shipAddress: fullOrder?.shippingAddress || linkedLead?.shippingAddress || fullOrder?.detailedAddress || linkedLead?.detailedAddress || linkedLead?.address || quotationLead?.detailedAddress || inv.partyId?.address || '',
+        shipCity: [fullOrder?.shippingCity || linkedLead?.shippingCity || fullOrder?.city || linkedLead?.city || quotationLead?.city,
+                   fullOrder?.shippingState || linkedLead?.shippingState || fullOrder?.state || linkedLead?.state || quotationLead?.state,
+                   fullOrder?.shippingPincode || linkedLead?.shippingPincode || fullOrder?.pincode || linkedLead?.pincode || quotationLead?.pincode].filter(Boolean).join(', ') || inv.partyId?.city || '',
         pan: inv.partyId?.pan || inv.partyId?.panNumber || '',
         placeOfSupply: fullOrder?.state || linkedLead?.state || quotationLead?.state || inv.partyId?.state || 'Tamil Nadu',
       },
@@ -446,6 +452,7 @@ export default function Billing() {
       orderCategory: (lead?.leadType === 'SAMPLE') ? 'SAMPLE' : 'ORDER',
       isEmergency: false,
       date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
+      rawDate: q.quoteDate || null,
       expectedDeliveryDate: (() => {
         const d = q.orderDeliveryDate || lead?.orderDeliveryDate || linkedOrder?.expectedDeliveryDate;
         return d && dayjs(d).isValid() ? dayjs(d).format('DD/MM/YYYY') : '';
@@ -472,9 +479,12 @@ export default function Billing() {
         name: clientDisplay,
         mobile: lead?.phone || '',
         gstin: lead?.gstNumber || '',
-        // Detailed address for Bill To / Ship To — prefer lead's full address, fall back to city
+        // Detailed address for Bill To — prefer lead's full address, fall back to city
         address: lead?.detailedAddress || lead?.address || '',
         city: [lead?.city, lead?.state, lead?.pincode].filter(Boolean).join(', ') || lead?.locationCity || '',
+        // Ship To — falls back to billing address when no distinct shipping address is set
+        shipAddress: lead?.shippingAddress || lead?.detailedAddress || lead?.address || '',
+        shipCity: [lead?.shippingCity || lead?.city, lead?.shippingState || lead?.state, lead?.shippingPincode || lead?.pincode].filter(Boolean).join(', ') || lead?.locationCity || '',
         pan: '',
         placeOfSupply: lead?.state || 'Tamil Nadu',
       },
@@ -624,7 +634,9 @@ export default function Billing() {
   const [payChequeDate, setPayChequeDate] = useState(null);
   const [quotStatusFilter, setQuotStatusFilter] = useState('all');
   const [quotSearch, setQuotSearch] = useState('');
+  const [quotDateRange, setQuotDateRange] = useState(null);
   const [invoiceSearch, setInvoiceSearch] = useState('');
+  const [invoiceDateRange, setInvoiceDateRange] = useState(null);
   const [ledgerSearch, setLedgerSearch] = useState('');
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState(null);
   const [payNote, setPayNote] = useState('');
@@ -1290,12 +1302,22 @@ export default function Billing() {
                     <Option value="Paid">Paid</Option>
                     <Option value="Partially Paid">Partially Paid</Option>
                   </Select>
+                  <DatePicker.RangePicker
+                    style={{ borderRadius: 8 }}
+                    onChange={(dates) => setQuotDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                    allowClear
+                  />
                 </div>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
                     dataSource={quotationList
                       .filter(q => quotStatusFilter === 'all' || q.status === quotStatusFilter)
-                      .filter(q => !quotSearch || (q.quot || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.client || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.order || '').toLowerCase().includes(quotSearch.toLowerCase()))}
+                      .filter(q => !quotSearch || (q.quot || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.client || '').toLowerCase().includes(quotSearch.toLowerCase()) || (q.order || '').toLowerCase().includes(quotSearch.toLowerCase()))
+                      .filter(q => {
+                        if (!quotDateRange) return true;
+                        const d = q.rawDate ? dayjs(q.rawDate).format('YYYY-MM-DD') : '';
+                        return d >= quotDateRange[0] && d <= quotDateRange[1];
+                      })}
                     columns={makeQuotationColumns('in-process')}
                     pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"
@@ -1323,12 +1345,22 @@ export default function Billing() {
                     <Option value="Partially Paid">Partially Paid</Option>
                     <Option value="Overdue">Overdue</Option>
                   </Select>
+                  <DatePicker.RangePicker
+                    style={{ borderRadius: 8 }}
+                    onChange={(dates) => setInvoiceDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                    allowClear
+                  />
                 </div>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
                     dataSource={invoiceList.filter((inv) => {
                       const q = invoiceSearch.toLowerCase();
-                      return !q || (inv.inv || '').toLowerCase().includes(q) || (inv.client || '').toLowerCase().includes(q) || (inv.order || '').toLowerCase().includes(q);
+                      if (q && !((inv.inv || '').toLowerCase().includes(q) || (inv.client || '').toLowerCase().includes(q) || (inv.order || '').toLowerCase().includes(q))) return false;
+                      if (invoiceDateRange) {
+                        const d = inv.rawDate ? dayjs(inv.rawDate).format('YYYY-MM-DD') : '';
+                        if (d < invoiceDateRange[0] || d > invoiceDateRange[1]) return false;
+                      }
+                      return true;
                     })}
                     columns={columns}
                     pagination={{

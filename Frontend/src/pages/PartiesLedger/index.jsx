@@ -73,7 +73,15 @@ const prettyPartyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').re
 // Lists every order placed by the party, each with full product + kit specifications,
 // notes and attachments — mirrors the richness of the Sales / Operations detail views.
 function PartyOrdersSection({ orders = [], isDark, cardBg }) {
+  const [orderHistoryDateRange, setOrderHistoryDateRange] = useState(null);
   if (!orders.length) return null;
+  const filteredOrders = orders.filter((o) => {
+    if (orderHistoryDateRange) {
+      const d = o.createdAt ? String(o.createdAt).slice(0, 10) : '';
+      if (d < orderHistoryDateRange[0] || d > orderHistoryDateRange[1]) return false;
+    }
+    return true;
+  });
   const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
   const specTags = (src) => {
     const flat = Object.entries(src || {}).filter(([k, v]) => !PARTY_SPEC_SKIP.has(k) && v != null && v !== '' && typeof v !== 'object');
@@ -86,9 +94,18 @@ function PartyOrdersSection({ orders = [], isDark, cardBg }) {
     <Card
       style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
       title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ fontSize: FONT_SIZE }}>Orders & Products ({orders.length})</span></Space>}
+      extra={
+        <DatePicker.RangePicker
+          size="small"
+          style={{ borderRadius: 8 }}
+          onChange={(dates) => setOrderHistoryDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+          allowClear
+        />
+      }
     >
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
-        {orders.map((o) => {
+        {filteredOrders.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>No orders in selected date range.</Text>}
+        {filteredOrders.map((o) => {
           // Prefer o.products — it carries the full product specifications (shape, fragrance,
           // size, color, specification, productAttributes) entered on the Lead. o.items can be
           // spec-less on orders created before the quotation items map was fixed, so it's only a
@@ -202,14 +219,31 @@ const BILL_STATUS_COLOR = { Paid: 'green', 'Partial Paid': 'orange', 'Partially 
 // the two separate collections vendor spend is split across — with full item detail
 // and each bill's own payment history, mirroring PartyOrdersSection for customers.
 function VendorBillsSection({ bills = [], isDark, cardBg }) {
+  const [vendorBillDateRange, setVendorBillDateRange] = useState(null);
   if (!bills.length) return null;
+  const filteredBills = bills.filter((b) => {
+    if (vendorBillDateRange) {
+      const d = b.date ? String(b.date).slice(0, 10) : '';
+      if (d < vendorBillDateRange[0] || d > vendorBillDateRange[1]) return false;
+    }
+    return true;
+  });
   return (
     <Card
       style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
       title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ fontSize: FONT_SIZE }}>Bills & Purchases ({bills.length})</span></Space>}
+      extra={
+        <DatePicker.RangePicker
+          size="small"
+          style={{ borderRadius: 8 }}
+          onChange={(dates) => setVendorBillDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+          allowClear
+        />
+      }
     >
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
-        {bills.map((b) => (
+        {filteredBills.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>No bills in selected date range.</Text>}
+        {filteredBills.map((b) => (
           <div key={b._id} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`, borderRadius: 12, overflow: 'hidden' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '10px 14px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.04)' }}>
               <Space size={8} wrap>
@@ -257,7 +291,15 @@ function VendorBillsSection({ bills = [], isDark, cardBg }) {
 // Every payment recorded against this vendor, across every bill, in one chronological
 // feed — the "all payment records" view distinct from the per-bill breakdown above.
 function VendorPaymentsSection({ payments = [], cardBg }) {
+  const [vendorPaymentDateRange, setVendorPaymentDateRange] = useState(null);
   if (!payments.length) return null;
+  const filteredPayments = payments.filter((p) => {
+    if (vendorPaymentDateRange) {
+      const d = p.paidDate ? String(p.paidDate).slice(0, 10) : '';
+      if (d < vendorPaymentDateRange[0] || d > vendorPaymentDateRange[1]) return false;
+    }
+    return true;
+  });
   const columns = [
     { title: 'Date', dataIndex: 'paidDate', width: 110, render: (v) => <Text style={{ fontSize: FONT_SIZE }}>{v ? dayjs(v).format('DD MMM YYYY') : '—'}</Text> },
     {
@@ -281,8 +323,16 @@ function VendorPaymentsSection({ payments = [], cardBg }) {
     <Card
       style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
       title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><WalletOutlined style={{ color: '#52c41a' }} /><span style={{ fontSize: FONT_SIZE }}>Payment History — All Records ({payments.length})</span></Space>}
+      extra={
+        <DatePicker.RangePicker
+          size="small"
+          style={{ borderRadius: 8 }}
+          onChange={(dates) => setVendorPaymentDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+          allowClear
+        />
+      }
     >
-      <Table size="small" dataSource={payments} columns={columns} rowKey={(r, i) => `${r.billId}-${i}`} pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }} scroll={{ x: 'max-content' }} />
+      <Table size="small" dataSource={filteredPayments} columns={columns} rowKey={(r, i) => `${r.billId}-${i}`} pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }} scroll={{ x: 'max-content' }} locale={{ emptyText: 'No payments in selected date range.' }} />
     </Card>
   );
 }

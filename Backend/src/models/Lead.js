@@ -68,6 +68,14 @@ const leadSchema = new mongoose.Schema({
   state: String,
   pincode: String,
 
+  // Shipping address (defaults to billing unless overridden) — dispatch uses this,
+  // while invoices continue to use the billing address above.
+  shippingAddress: String,
+  shippingCity: String,
+  shippingState: String,
+  shippingPincode: String,
+  shippingSameAsBilling: { type: Boolean, default: true },
+
   // Lead status / journey
   status: { type: String, default: 'Cold' },
   statusHistory: [mongoose.Schema.Types.Mixed],

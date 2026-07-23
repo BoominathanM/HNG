@@ -429,16 +429,21 @@ exports.dispatchOrder = asyncHandler(async (req, res, next) => {
   if (!task) return next(new AppError('Task not found', 404));
   if (!task.orderId) return next(new AppError('This task is not linked to an order', 400));
 
+  const order = await Order.findById(task.orderId).populate('leadId', 'leadType');
+  if (!order) return next(new AppError('Order not found', 404));
+  // A sibling task's emergency approval already flips this at the order level (see
+  // approveEmergencyOps) — fall back to it so every task on the order, not just the one
+  // that was individually approved, can bypass gates 1/2 below.
+  const emergencyApproved = !!(task.emergencyApproved || order.emergencyApproved);
+
   // Gate 1 — all tasks for the order must be completed (bypassed for an approved Emergency Dispatch).
   const siblings = await Task.find({ orderId: task.orderId });
   const allDone = siblings.length > 0 && siblings.every((t) => t.status === 'Done');
-  if (!allDone && !task.emergencyApproved) {
+  if (!allDone && !emergencyApproved) {
     const pending = siblings.filter((t) => t.status !== 'Done').length;
     return next(new AppError(`${pending} task(s) on this order are not yet completed. Complete all tasks before dispatch.`, 400));
   }
 
-  const order = await Order.findById(task.orderId).populate('leadId', 'leadType');
-  if (!order) return next(new AppError('Order not found', 404));
   if (order.status === 'Dispatched') {
     return next(new AppError('This order has already been dispatched.', 400));
   }
@@ -451,7 +456,7 @@ exports.dispatchOrder = asyncHandler(async (req, res, next) => {
 
   // Gate 2 — payment must be settled, unless this is a sample order or an approved Emergency Dispatch.
   const isSample = order.orderCategory === 'SAMPLE' || order.leadId?.leadType === 'SAMPLE';
-  if (!isSample && !task.emergencyApproved) {
+  if (!isSample && !emergencyApproved) {
     const payStatus = await resolveOrderPaymentStatus(order._id).catch(() => 'Pending');
     if (payStatus !== 'Paid') {
       return next(new AppError(`Payment is "${payStatus}". Dispatch requires full payment or an approved Emergency Dispatch.`, 400));

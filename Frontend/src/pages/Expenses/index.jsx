@@ -121,6 +121,7 @@ export default function Expenses() {
   const [expSearch, setExpSearch] = useState('');
   const [expCategory, setExpCategory] = useState('all');
   const [expStatus, setExpStatus] = useState(null);
+  const [expenseDateRange, setExpenseDateRange] = useState(null);
 
   // Combined expense list for "All Expenses" tab
   const allExpenses = [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -130,7 +131,12 @@ export default function Expenses() {
     const matchSearch = !q || (e.desc || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q) || (e.invoice_no || '').toLowerCase().includes(q);
     const matchCategory = expCategory === 'all' || e.category === expCategory;
     const matchStatus = !expStatus || e.status === expStatus;
-    return matchSearch && matchCategory && matchStatus;
+    let matchDateRange = true;
+    if (expenseDateRange) {
+      const d = e.date || '';
+      matchDateRange = d >= expenseDateRange[0] && d <= expenseDateRange[1];
+    }
+    return matchSearch && matchCategory && matchStatus && matchDateRange;
   });
 
   const handleAddExpense = async (values) => {
@@ -321,6 +327,12 @@ export default function Expenses() {
                     <Option value="Partially Paid">Partially Paid</Option>
                     <Option value="Unpaid">Unpaid</Option>
                   </Select>
+                  <DatePicker.RangePicker
+                    size="small"
+                    style={{ borderRadius: 8 }}
+                    onChange={(dates) => setExpenseDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                    allowClear
+                  />
                 </Space>
               }
               items={filterTabs([

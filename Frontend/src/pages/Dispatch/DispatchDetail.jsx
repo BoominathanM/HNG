@@ -320,8 +320,15 @@ export default function DispatchDetail() {
       creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
       payment: isCredit ? 'Credit' : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (emergencyApproved ? 'Emergency Approved' : (basePaymentConfirmed ? 'Confirmed' : 'Pending')))),
       destination: o.destination || lead.destination || '',
+      expectedDeliveryDate: o.expectedDeliveryDate || lead.expectedDeliveryDate || null,
       detailedAddress: o.detailedAddress || lead.detailedAddress || lead.address || '',
       city: o.city || lead.city || '', state: o.state || lead.state || '', pincode: o.pincode || lead.pincode || '',
+      // Shipping address — falls back to the billing address when no distinct shipping
+      // address was captured, so older orders/leads render unchanged.
+      shippingAddress: o.shippingAddress || o.detailedAddress || lead.shippingAddress || lead.detailedAddress || lead.address || '',
+      shippingCity: o.shippingCity || o.city || lead.shippingCity || lead.city || '',
+      shippingState: o.shippingState || o.state || lead.shippingState || lead.state || '',
+      shippingPincode: o.shippingPincode || o.pincode || lead.shippingPincode || lead.pincode || '',
       transport: d.transportName || '', status: d.status || '',
       salesPerson: o.assignedTo?.fullName || o.salesPerson || lead.salesPerson || '',
       isSample,
@@ -614,7 +621,8 @@ export default function DispatchDetail() {
 <table>
   <tr><th>Client</th><td>${order.client}</td><th>Contact</th><td>${order.contactPerson}</td></tr>
   <tr><th>Phone</th><td>${order.phone}</td><th>Email</th><td>${order.email}</td></tr>
-  <tr><th>Destination</th><td>${order.destination || '—'}</td><th>Address</th><td>${order.detailedAddress}, ${order.city}, ${order.state} — ${order.pincode}</td></tr>
+  <tr><th>Destination</th><td>${order.destination || '—'}</td><th>Expected Delivery</th><td>${order.expectedDeliveryDate ? new Date(order.expectedDeliveryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td></tr>
+  <tr><th>Address</th><td colspan="3">${order.shippingAddress}, ${order.shippingCity}, ${order.shippingState} — ${order.shippingPincode}</td></tr>
   <tr><th>Product</th><td>${order.product || '—'}</td><th>Weight</th><td>${order.weight || '—'}</td></tr>
   <tr><th>Transport</th><td>${order.transport || '—'}</td><th>Sales Person</th><td>${order.salesPerson || '—'}</td></tr>
   <tr><th>Payment</th><td>${order.payment}</td><th>Status</th><td>${order.status}</td></tr>
@@ -917,6 +925,42 @@ export default function DispatchDetail() {
 
   const lrUploaded = lrFileList.length > 0;
 
+  // Cross-check the AI-parsed transport receipt's destination (toCity) against the
+  // order/lead's own destination + shipping address — a mismatch usually means the
+  // transporter shipped to (or the receipt was misread for) the wrong city, so it's
+  // flagged loudly rather than silently trusting the AI extraction.
+  const normalizeLoc = (s) => (s || '').toString().trim().toLowerCase().replace(/[.,]/g, '');
+  const aiToCity = normalizeLoc(aiParsed?.toCity);
+  const destinationCandidates = [order.destination, order.shippingCity, order.shippingState]
+    .map(normalizeLoc)
+    .filter(Boolean);
+  const destinationMatch = (!aiToCity || destinationCandidates.length === 0)
+    ? null
+    : destinationCandidates.some((c) => c.includes(aiToCity) || aiToCity.includes(c));
+  const orderDestinationLabel = order.destination
+    || [order.shippingCity, order.shippingState].filter(Boolean).join(', ')
+    || '—';
+
+  // Cross-check the AI-parsed receipt's package count and weight against what was
+  // manually entered in the Dispatch Verification form above — same intent as the
+  // destination check: a mismatch usually means a typo (manual) or a misread (AI),
+  // so it's flagged for review rather than silently trusted either way.
+  const parseNumeric = (s) => {
+    const m = String(s ?? '').match(/[\d,]+\.?\d*/);
+    return m ? Number(m[0].replace(/,/g, '')) : null;
+  };
+  const aiPackagesNum = parseNumeric(aiParsed?.packages);
+  const manualBoxesNum = parseNumeric(liveBoxes ?? order.storedBoxes ?? order.boxes);
+  const boxesMatch = (aiPackagesNum == null || manualBoxesNum == null)
+    ? null
+    : aiPackagesNum === manualBoxesNum;
+
+  const aiWeightNum = parseNumeric(aiParsed?.weight);
+  const manualWeightNum = parseNumeric(liveWeight ?? order.storedWeight ?? order.weight);
+  const weightMatch = (aiWeightNum == null || manualWeightNum == null)
+    ? null
+    : Math.abs(aiWeightNum - manualWeightNum) < 0.01;
+
   // Transport / Weight / Boxes must be entered before dispatch can be confirmed — for
   // both Partial and Full Dispatch — same as the open/close box photo requirement below.
   const transportFilled = !!String(liveTransport ?? order.storedTransportName ?? '').trim();
@@ -1011,10 +1055,17 @@ export default function DispatchDetail() {
                 <Descriptions.Item label="Destination">
                   <Space size={4}><EnvironmentOutlined style={{ color: '#B11E6A' }} /><Text strong>{order.destination || '—'}</Text></Space>
                 </Descriptions.Item>
+                <Descriptions.Item label="Expected Delivery">
+                  {order.expectedDeliveryDate ? (
+                    <Tag color={new Date(order.expectedDeliveryDate) < new Date().setHours(0, 0, 0, 0) ? 'red' : 'green'} style={{ fontWeight: 600 }}>
+                      {new Date(order.expectedDeliveryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </Tag>
+                  ) : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
                 <Descriptions.Item label="Address">
                   <Space align="start">
                     <EnvironmentOutlined style={{ color: '#B11E6A', marginTop: 2 }} />
-                    <span>{order.detailedAddress},<br />{order.city}, {order.state} — {order.pincode}</span>
+                    <span>{order.shippingAddress},<br />{order.shippingCity}, {order.shippingState} — {order.shippingPincode}</span>
                   </Space>
                 </Descriptions.Item>
                 <Descriptions.Item label="Product">{order.product || '—'}</Descriptions.Item>
@@ -1369,7 +1420,7 @@ export default function DispatchDetail() {
                   </div>
                 )}
 
-                {/* All Closed Box Photos — order-level closed-box evidence, up to 5,
+                {/* All Closed Box Photos — order-level closed-box evidence, up to 20,
                     uploaded immediately. Open box photos are no longer collected here
                     (only via the per-item Open/Closed buttons in the table above), so
                     only closeBoxCount gates Confirm Dispatch below. */}
@@ -1381,11 +1432,18 @@ export default function DispatchDetail() {
                   <Upload
                     showUploadList={false}
                     accept="image/*"
-                    disabled={closeBoxCount >= 5 || uploadingKeys.has('order-close')}
+                    disabled={closeBoxCount >= 20 || uploadingKeys.has('order-close')}
+                    beforeUpload={(file) => {
+                      if (file.size > 5 * 1024 * 1024) {
+                        enqueueSnackbar('Photo must be under 5 MB', { variant: 'error' });
+                        return Upload.LIST_IGNORE;
+                      }
+                      return true;
+                    }}
                     customRequest={makeBoxUpload()}
                   >
                     <Button icon={uploadingKeys.has('order-close') ? <LoadingOutlined spin /> : <CameraOutlined />}>
-                      Upload Closed Box Photo ({closeBoxCount}/5)
+                      Upload Closed Box Photo ({closeBoxCount}/20)
                     </Button>
                   </Upload>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
@@ -1600,6 +1658,63 @@ export default function DispatchDetail() {
                           </Button>
                         </div>
 
+                        {destinationMatch === false && (
+                          <Alert
+                            type="error"
+                            showIcon
+                            message="Destination Mismatch — Verify Before Dispatch"
+                            description={`The lorry receipt's destination ("${aiParsed.toCity}") does not match this order's destination/shipping address ("${orderDestinationLabel}"). Confirm the transporter is shipping to the correct city before proceeding.`}
+                            style={{ marginBottom: 12, borderRadius: 8 }}
+                          />
+                        )}
+                        {destinationMatch === true && (
+                          <Alert
+                            type="success"
+                            showIcon
+                            message="Destination Verified"
+                            description={`Lorry receipt destination ("${aiParsed.toCity}") matches the order's destination/shipping address ("${orderDestinationLabel}").`}
+                            style={{ marginBottom: 12, borderRadius: 8 }}
+                          />
+                        )}
+
+                        {boxesMatch === false && (
+                          <Alert
+                            type="error"
+                            showIcon
+                            message="Box Count Mismatch — Verify Before Dispatch"
+                            description={`The lorry receipt lists ${aiParsed.packages} package(s), but ${manualBoxesNum} box(es) were entered manually above. Confirm the correct count before proceeding.`}
+                            style={{ marginBottom: 12, borderRadius: 8 }}
+                          />
+                        )}
+                        {boxesMatch === true && (
+                          <Alert
+                            type="success"
+                            showIcon
+                            message="Box Count Verified"
+                            description={`Lorry receipt package count (${aiParsed.packages}) matches the manually entered boxes (${manualBoxesNum}).`}
+                            style={{ marginBottom: 12, borderRadius: 8 }}
+                          />
+                        )}
+
+                        {weightMatch === false && (
+                          <Alert
+                            type="error"
+                            showIcon
+                            message="Weight Mismatch — Verify Before Dispatch"
+                            description={`The lorry receipt lists a weight of ${aiParsed.weight}, but ${manualWeightNum} kg was entered manually above. Confirm the correct weight before proceeding.`}
+                            style={{ marginBottom: 12, borderRadius: 8 }}
+                          />
+                        )}
+                        {weightMatch === true && (
+                          <Alert
+                            type="success"
+                            showIcon
+                            message="Weight Verified"
+                            description={`Lorry receipt weight (${aiParsed.weight}) matches the manually entered weight (${manualWeightNum} kg).`}
+                            style={{ marginBottom: 12, borderRadius: 8 }}
+                          />
+                        )}
+
                         <Form form={lrForm} layout="vertical" size="small">
                           {lrEditMode ? (
                             <Row gutter={12}>
@@ -1655,9 +1770,27 @@ export default function DispatchDetail() {
                                 { label: 'LR Number', value: aiParsed.lrNumber, icon: <FileDoneOutlined />, highlight: true },
                                 { label: 'LR Date', value: aiParsed.lrDate, icon: <CheckSquareOutlined /> },
                                 { label: 'Transport', value: aiParsed.transportName, icon: <CarOutlined /> },
-                                { label: 'Packages', value: aiParsed.packages, icon: <InboxOutlined /> },
-                                { label: 'From → To', value: [aiParsed.fromCity, aiParsed.toCity].filter(Boolean).join(' → '), icon: <EnvironmentOutlined /> },
-                                { label: 'Weight', value: aiParsed.weight, icon: <AppstoreOutlined /> },
+                                {
+                                  label: 'Packages',
+                                  value: aiParsed.packages,
+                                  icon: <InboxOutlined />,
+                                  mismatch: boxesMatch === false,
+                                  matched: boxesMatch === true,
+                                },
+                                {
+                                  label: 'From → To',
+                                  value: [aiParsed.fromCity, aiParsed.toCity].filter(Boolean).join(' → '),
+                                  icon: <EnvironmentOutlined />,
+                                  mismatch: destinationMatch === false,
+                                  matched: destinationMatch === true,
+                                },
+                                {
+                                  label: 'Weight',
+                                  value: aiParsed.weight,
+                                  icon: <AppstoreOutlined />,
+                                  mismatch: weightMatch === false,
+                                  matched: weightMatch === true,
+                                },
                                 { label: 'Freight', value: aiParsed.freight, icon: <ThunderboltOutlined /> },
                                 { label: 'Est. Delivery', value: aiParsed.estimatedDelivery, icon: <CheckCircleOutlined /> },
                                 { label: 'Tracking URL', value: aiParsed.trackingUrl, icon: <LinkOutlined /> },
@@ -1666,18 +1799,25 @@ export default function DispatchDetail() {
                                   <Card
                                     size="small"
                                     bodyStyle={{ padding: '8px 10px' }}
-                                    style={{ borderRadius: 8, borderColor: '#B11E6A22', height: '100%' }}
+                                    style={{
+                                      borderRadius: 8,
+                                      height: '100%',
+                                      borderColor: f.mismatch ? '#ff4d4f' : f.matched ? '#52c41a' : '#B11E6A22',
+                                      borderWidth: (f.mismatch || f.matched) ? 2 : 1,
+                                    }}
                                   >
                                     <Space size={4} style={{ color: '#999', fontSize: 11 }}>
                                       {f.icon}
                                       <span>{f.label}</span>
+                                      {f.mismatch && <Text style={{ fontSize: 10, color: '#ff4d4f', fontWeight: 700 }}>MISMATCH</Text>}
+                                      {f.matched && <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 11 }} />}
                                     </Space>
                                     <div
                                       style={{
                                         marginTop: 2,
                                         fontSize: 13,
-                                        fontWeight: f.highlight ? 700 : 500,
-                                        color: f.highlight ? '#B11E6A' : textColor,
+                                        fontWeight: (f.highlight || f.mismatch) ? 700 : 500,
+                                        color: f.mismatch ? '#ff4d4f' : f.highlight ? '#B11E6A' : textColor,
                                         overflow: 'hidden',
                                         textOverflow: 'ellipsis',
                                         whiteSpace: 'nowrap',

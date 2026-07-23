@@ -588,13 +588,17 @@ export default function Purchase() {
   /* ── Search & Filter state (per-tab) ── */
   const [stockSearch, setStockSearch] = useState('');
   const [stockReqStatusFilter, setStockReqStatusFilter] = useState(null);
+  const [bulkDateRange, setBulkDateRange] = useState(null);
   const [dtSearch, setDtSearch] = useState('');
   const [dtDeliveryFilter, setDtDeliveryFilter] = useState(null);
   const [dtPayFilter, setDtPayFilter] = useState(null);
+  const [dtDateRange, setDtDateRange] = useState(null);
   const [expenseSearch, setExpenseSearch] = useState('');
   const [expensePaidFilter, setExpensePaidFilter] = useState(null);
+  const [expenseDateRange, setExpenseDateRange] = useState(null);
   const [localSearch, setLocalSearch] = useState('');
   const [localPayFilter, setLocalPayFilter] = useState(null);
+  const [localDateRange, setLocalDateRange] = useState(null);
 
   /* ── Local Purchase tab state ── */
   const [localPurchases, setLocalPurchases] = useState([]);
@@ -2005,8 +2009,13 @@ export default function Purchase() {
 
                       {/* ── Bulk Purchase Requests Table (category-separated) ── */}
                       {(() => {
-                        const bulkReqs = raisedRequests.filter(r => r.requestType === 'bulk');
-                        if (bulkReqs.length === 0) return null;
+                        const allBulkReqs = raisedRequests.filter(r => r.requestType === 'bulk');
+                        if (allBulkReqs.length === 0) return null;
+                        const bulkReqs = allBulkReqs.filter(req => {
+                          if (!bulkDateRange) return true;
+                          const d = req.date ? req.date.slice(0, 10) : '';
+                          return d >= bulkDateRange[0] && d <= bulkDateRange[1];
+                        });
 
                         // Group by category
                         const categoryMap = {};
@@ -2385,7 +2394,14 @@ export default function Purchase() {
                                 <Title level={5} style={{ margin: 0, color: textColor }}>Bulk Purchase Requests</Title>
                                 <Text type="secondary">Requests raised via Bulk Purchase — grouped by category</Text>
                               </div>
-                              <Tag color="pink" style={{ borderRadius: 10, fontWeight: 600, fontSize: 12 }}>{bulkReqs.length} Total</Tag>
+                              <Space wrap>
+                                <DatePicker.RangePicker
+                                  style={{ borderRadius: 8 }}
+                                  onChange={(dates) => setBulkDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                                  allowClear
+                                />
+                                <Tag color="pink" style={{ borderRadius: 10, fontWeight: 600, fontSize: 12 }}>{bulkReqs.length} Total</Tag>
+                              </Space>
                             </div>
                             {Object.entries(categoryMap).map(([cat, items]) => (
                               <div key={cat} style={{ marginBottom: 20 }}>
@@ -2449,6 +2465,11 @@ export default function Purchase() {
                           <Option value="Paid">Paid</Option>
                           <Option value="Unpaid">Unpaid</Option>
                         </Select>
+                        <DatePicker.RangePicker
+                          style={{ borderRadius: 8 }}
+                          onChange={(dates) => setDtDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                          allowClear
+                        />
                       </div>
                       <Table
                         size="small"
@@ -2457,6 +2478,10 @@ export default function Purchase() {
                           const matchSearch = !q || (o.orderId || '').toLowerCase().includes(q) || (o.supplier || '').toLowerCase().includes(q) || (o.item || '').toLowerCase().includes(q);
                           const matchDelivery = !dtDeliveryFilter || o.deliveryStatus === dtDeliveryFilter;
                           const matchPay = !dtPayFilter || o.paymentStatus === dtPayFilter;
+                          if (dtDateRange) {
+                            const d = o.date ? o.date.slice(0, 10) : '';
+                            if (d < dtDateRange[0] || d > dtDateRange[1]) return false;
+                          }
                           return matchSearch && matchDelivery && matchPay;
                         })}
                         rowKey="key"
@@ -2907,6 +2932,11 @@ export default function Purchase() {
                               <Option value="Partially Paid">Partially Paid</Option>
                               <Option value="Pending">Pending</Option>
                             </Select>
+                            <DatePicker.RangePicker
+                              style={{ borderRadius: 8 }}
+                              onChange={(dates) => setLocalDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                              allowClear
+                            />
                           </div>
                           <Table
                             size="small"
@@ -2914,6 +2944,10 @@ export default function Purchase() {
                               const q = localSearch.toLowerCase();
                               const matchSearch = !q || (lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.itemName || i.name || '').toLowerCase().includes(q));
                               const matchPay = !localPayFilter || lp.paymentStatus === localPayFilter;
+                              if (localDateRange) {
+                                const d = lp.date ? lp.date.slice(0, 10) : '';
+                                if (d < localDateRange[0] || d > localDateRange[1]) return false;
+                              }
                               return matchSearch && matchPay;
                             })}
                             rowKey="key"
@@ -3017,6 +3051,11 @@ export default function Purchase() {
                           <Option value="Partially Paid">Partially Paid</Option>
                           <Option value="Unpaid">Unpaid</Option>
                         </Select>
+                        <DatePicker.RangePicker
+                          style={{ borderRadius: 8 }}
+                          onChange={(dates) => setExpenseDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                          allowClear
+                        />
                       </div>
                       <Table
                         size="small"
@@ -3024,6 +3063,10 @@ export default function Purchase() {
                           const q = expenseSearch.toLowerCase();
                           const matchSearch = !q || (p.entity || '').toLowerCase().includes(q) || (p.inv_no || '').toLowerCase().includes(q) || (p.bill_no || '').toLowerCase().includes(q) || (p.items || []).some(i => (i.name || '').toLowerCase().includes(q));
                           const matchPaid = !expensePaidFilter || (p.paid_status || 'Unpaid') === expensePaidFilter;
+                          if (expenseDateRange) {
+                            const d = p.date ? p.date.slice(0, 10) : '';
+                            if (d < expenseDateRange[0] || d > expenseDateRange[1]) return false;
+                          }
                           return matchSearch && matchPaid;
                         })}
                         rowKey="key"

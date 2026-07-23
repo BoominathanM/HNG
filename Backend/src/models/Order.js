@@ -167,6 +167,11 @@ const orderSchema = new mongoose.Schema({
   city: String,
   state: String,
   pincode: String,
+  // Shipping address — dispatch reads this; invoices continue to use the billing address above.
+  shippingAddress: String,
+  shippingCity: String,
+  shippingState: String,
+  shippingPincode: String,
   forwardingChargeAmount: { type: Number, default: 0 },
   paymentProofs: [mongoose.Schema.Types.Mixed],
   splitDates: [mongoose.Schema.Types.Mixed],

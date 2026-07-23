@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react'; // useEffect intentionally removed — data from RTK Query
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
-  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, Tabs, Statistic, Divider, 
-  Modal, Descriptions, Upload, InputNumber, Form, Input, Badge, Tooltip, Alert, 
-  Image,
+  Row, Col, Card, Table, Tag, Button, Typography, Space, Select, Tabs, Statistic, Divider,
+  Modal, Descriptions, Upload, InputNumber, Form, Input, Badge, Tooltip, Alert,
+  Image, DatePicker,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -270,6 +270,12 @@ export default function Financial() {
   const [expSearch, setExpSearch] = useState('');
   const [pickupSearch, setPickupSearch] = useState('');
   const [localExpSearch, setLocalExpSearch] = useState('');
+
+  // ── Date-range filter state (per table) ──
+  const [purchaseReqDateRange, setPurchaseReqDateRange] = useState(null);
+  const [expDateRange, setExpDateRange] = useState(null);
+  const [pickupDateRange, setPickupDateRange] = useState(null);
+  const [localExpDateRange, setLocalExpDateRange] = useState(null);
 
   const [partiesSearch, setPartiesSearch] = useState('');
   const [viewPartyLedger, setViewPartyLedger] = useState(null);
@@ -692,12 +698,22 @@ export default function Financial() {
                       <Option value="Rejected">Rejected</Option>
                       <Option value="Modification">Modification</Option>
                     </Select>
+                    <DatePicker.RangePicker
+                      style={{ borderRadius: 8 }}
+                      onChange={(dates) => setPurchaseReqDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                      allowClear
+                    />
                   </div>
                   <Table
                     size="small"
                     dataSource={groupRequestsByBatch(raisedRequests.filter((r) => {
                       const q = purchaseReqSearch.toLowerCase();
-                      return !q || (r.item || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q);
+                      if (q && !((r.item || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q))) return false;
+                      if (purchaseReqDateRange) {
+                        const d = r.date || '';
+                        if (d < purchaseReqDateRange[0] || d > purchaseReqDateRange[1]) return false;
+                      }
+                      return true;
                     }))}
                     pagination={{
                       current: reqPage,
@@ -847,12 +863,22 @@ export default function Financial() {
                       <Option value="Paid">Paid</Option>
                       <Option value="Partial Paid">Partial Paid</Option>
                     </Select>
+                    <DatePicker.RangePicker
+                      style={{ borderRadius: 8 }}
+                      onChange={(dates) => setExpDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                      allowClear
+                    />
                   </div>
                   <Table
                     size="small"
                     dataSource={expenseRequests.filter((e) => {
                       const q = expSearch.toLowerCase();
-                      return !q || (e.desc || '').toLowerCase().includes(q) || (e.bill_no || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q);
+                      if (q && !((e.desc || '').toLowerCase().includes(q) || (e.bill_no || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q))) return false;
+                      if (expDateRange) {
+                        const d = e.date || '';
+                        if (d < expDateRange[0] || d > expDateRange[1]) return false;
+                      }
+                      return true;
                     })}
                     columns={expenseColumns}
                     pagination={{
@@ -907,6 +933,11 @@ export default function Financial() {
                                 <Option value="Partial">Partial</Option>
                                 <Option value="Paid">Paid</Option>
                               </Select>
+                              <DatePicker.RangePicker
+                                style={{ borderRadius: 8 }}
+                                onChange={(dates) => setPickupDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                                allowClear
+                              />
                             </div>
                             {reimbursementExpenses.length === 0 ? (
                               <div style={{ textAlign: 'center', padding: '40px 0' }}>
@@ -918,7 +949,12 @@ export default function Financial() {
                                 size="small"
                                 dataSource={reimbursementExpenses.filter((r) => {
                                   const q = pickupSearch.toLowerCase();
-                                  return !q || (r.orderId || '').toLowerCase().includes(q) || (r.vendor || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q);
+                                  if (q && !((r.orderId || '').toLowerCase().includes(q) || (r.vendor || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q))) return false;
+                                  if (pickupDateRange) {
+                                    const d = r.date || '';
+                                    if (d < pickupDateRange[0] || d > pickupDateRange[1]) return false;
+                                  }
+                                  return true;
                                 })}
                                 rowKey="key"
                                 pagination={{
@@ -1019,6 +1055,11 @@ export default function Financial() {
                                 <Option value="Partially Paid">Partially Paid</Option>
                                 <Option value="Pending">Pending</Option>
                               </Select>
+                              <DatePicker.RangePicker
+                                style={{ borderRadius: 8 }}
+                                onChange={(dates) => setLocalExpDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                                allowClear
+                              />
                             </div>
                             {localPurchaseExpenses.length === 0 ? (
                               <div style={{ textAlign: 'center', padding: '40px 0' }}>
@@ -1030,7 +1071,12 @@ export default function Financial() {
                                 size="small"
                                 dataSource={localPurchaseExpenses.filter((lp) => {
                                   const q = localExpSearch.toLowerCase();
-                                  return !q || (lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.name || '').toLowerCase().includes(q));
+                                  if (q && !((lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.name || '').toLowerCase().includes(q)))) return false;
+                                  if (localExpDateRange) {
+                                    const d = lp.date || '';
+                                    if (d < localExpDateRange[0] || d > localExpDateRange[1]) return false;
+                                  }
+                                  return true;
                                 })}
                                 rowKey="key"
                                 pagination={{

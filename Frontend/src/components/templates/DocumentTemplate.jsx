@@ -782,8 +782,8 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
         <div style="font-weight:800;color:${ACCENT};margin-bottom:7px;font-size:11px;letter-spacing:1px;">SHIP TO</div>
         <div style="font-weight:700;font-size:12px;margin-bottom:5px;">${customer.name}</div>
         <div style="color:#444;font-size:11px;line-height:1.8;">
-          <div>${customer.address}</div>
-          <div>${customer.city}</div>
+          <div>${customer.shipAddress || customer.address}</div>
+          <div>${customer.shipCity || customer.city}</div>
         </div>
       </div>
     </div>
@@ -1102,8 +1102,8 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
           <div style={{ fontWeight: 800, color: ACCENT, marginBottom: 7, fontSize: 11, letterSpacing: 1 }}>SHIP TO</div>
           <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 5 }}>{customer.name}</div>
           <div style={{ color: '#444', fontSize: 11, lineHeight: 1.8 }}>
-            <div>{customer.address}</div>
-            <div>{customer.city}</div>
+            <div>{customer.shipAddress || customer.address}</div>
+            <div>{customer.shipCity || customer.city}</div>
           </div>
         </div>
       </div>

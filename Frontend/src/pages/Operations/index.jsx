@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Col,
+  DatePicker,
   Descriptions,
   Divider,
   Form,
@@ -148,6 +149,12 @@ export default function Operations() {
   const [frostedSearch, setFrostedSearch] = useState('');
   const [butterSearch, setButterSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
+  // Date-range filters — each Table listing real records gets its own, independent state.
+  const [orderMgmtDateRange, setOrderMgmtDateRange] = useState(null);
+  const [stickerDateRange, setStickerDateRange] = useState(null);
+  const [boxDateRange, setBoxDateRange] = useState(null);
+  const [frostedDateRange, setFrostedDateRange] = useState(null);
+  const [butterDateRange, setButterDateRange] = useState(null);
 
   // API-backed state — RTK Query
   const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery({ limit: 500 }, { refetchOnMountOrArgChange: true });
@@ -616,7 +623,12 @@ export default function Operations() {
       const query = searchText.trim().toLowerCase();
       const matchSearch = !query || order.id.toLowerCase().includes(query) || order.hotelLogo.toLowerCase().includes(query) || order.specsSummary.toLowerCase().includes(query) || order.items.some((item) => (item.itemName || item.product || '').toLowerCase().includes(query));
       const matchStatus = !orderStatusFilter || (orderStatusFilter === 'urgent' ? order.isUrgent : !order.isUrgent);
-      return matchSearch && matchStatus;
+      let matchDate = true;
+      if (orderMgmtDateRange) {
+        const d = order.createdAt ? order.createdAt.slice(0, 10) : '';
+        matchDate = d >= orderMgmtDateRange[0] && d <= orderMgmtDateRange[1];
+      }
+      return matchSearch && matchStatus && matchDate;
     });
     return [...result].sort((a, b) => {
       if (b.hasEmergencyProducts && !a.hasEmergencyProducts) return 1;
@@ -625,7 +637,7 @@ export default function Operations() {
       if (a.isUrgent && !b.isUrgent) return -1;
       return 0;
     });
-  }, [searchText, orderStatusFilter, apiOrders]);
+  }, [searchText, orderStatusFilter, orderMgmtDateRange, apiOrders]);
 
   const stats = [
     {
@@ -1465,7 +1477,7 @@ export default function Operations() {
     }
   };
 
-  const renderQueueCard = (type, rows, label, search, setSearch) => {
+  const renderQueueCard = (type, rows, label, search, setSearch, dateRange, setDateRange) => {
     const visibleRows = getVisibleQueueRows(type, rows);
     // Sort priority:
     //   1. Emergency products from urgent orders (process these FIRST)
@@ -1482,11 +1494,22 @@ export default function Operations() {
         if (a.isUrgent && !b.isUrgent) return -1;
         return 0;
       });
-    const closedRows = visibleRows.filter((r) => getQueueStep(r) === 6);
+    // Rows carry no date field of their own — resolve "when this happened" via the parent
+    // order's createdAt so the date-range filter below can apply to both active and closed rows.
+    const rowDateStr = (r) => {
+      const ord = apiOrders.find((o) => o.id === r.orderId);
+      return ord?.createdAt ? ord.createdAt.slice(0, 10) : '';
+    };
+    const matchesDateRange = (r) => {
+      if (!dateRange) return true;
+      const d = rowDateStr(r);
+      return d >= dateRange[0] && d <= dateRange[1];
+    };
+    const closedRows = visibleRows.filter((r) => getQueueStep(r) === 6).filter(matchesDateRange);
     const activeRows = allActive.filter((r) => {
       const q = (search || '').toLowerCase();
       return !q || (r.orderId || '').toLowerCase().includes(q) || (r.hotelLogo || '').toLowerCase().includes(q) || (r.product || '').toLowerCase().includes(q);
-    });
+    }).filter(matchesDateRange);
 
     // For Box/Frosted tabs: group only true kit orders (kitDisplayUnit set) under one
     // shared parent row. Non-kit orders with multiple products stay as individual rows.
@@ -1633,8 +1656,13 @@ export default function Operations() {
           style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
           styles={{ body: { padding: 0 } }}
         >
-          <div style={{ padding: '8px 12px', borderBottom: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <div style={{ padding: '8px 12px', borderBottom: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
             <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order, hotel, product..." allowClear value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 230, borderRadius: 8 }} />
+            <DatePicker.RangePicker
+              style={{ borderRadius: 8 }}
+              onChange={(dates) => setDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+              allowClear
+            />
           </div>
           <div className="table-responsive" style={{ padding: 4 }}>
             <Table
@@ -1804,6 +1832,11 @@ export default function Operations() {
                         <Option value="urgent">Urgent</Option>
                         <Option value="normal">Normal</Option>
                       </Select>
+                      <DatePicker.RangePicker
+                        style={{ borderRadius: 8 }}
+                        onChange={(dates) => setOrderMgmtDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                        allowClear
+                      />
                     </Space>
                   }
                   style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
@@ -1882,22 +1915,22 @@ export default function Operations() {
           {
             key: 'sticker',
             label: <Space><TagsOutlined />Sticker Printing</Space>,
-            children: renderQueueCard('Sticker', productionQueues.sticker, 'Sticker Queue', stickerSearch, setStickerSearch),
+            children: renderQueueCard('Sticker', productionQueues.sticker, 'Sticker Queue', stickerSearch, setStickerSearch, stickerDateRange, setStickerDateRange),
           },
           {
             key: 'box',
             label: <Space><BoxPlotOutlined />Box</Space>,
-            children: renderQueueCard('Box', productionQueues.box, 'Box Manufacturing Queue', boxSearch, setBoxSearch),
+            children: renderQueueCard('Box', productionQueues.box, 'Box Manufacturing Queue', boxSearch, setBoxSearch, boxDateRange, setBoxDateRange),
           },
           {
             key: 'frosted',
             label: <Space><InboxOutlined />Frosted Ziplock</Space>,
-            children: renderQueueCard('Frosted Ziplock', productionQueues.frosted, 'Frosted Ziplock Queue', frostedSearch, setFrostedSearch),
+            children: renderQueueCard('Frosted Ziplock', productionQueues.frosted, 'Frosted Ziplock Queue', frostedSearch, setFrostedSearch, frostedDateRange, setFrostedDateRange),
           },
           {
             key: 'butter_paper',
             label: <Space><ContainerOutlined />Butter Paper</Space>,
-            children: renderQueueCard('Butter Paper', productionQueues.butter, 'Butter Paper Queue', butterSearch, setButterSearch),
+            children: renderQueueCard('Butter Paper', productionQueues.butter, 'Butter Paper Queue', butterSearch, setButterSearch, butterDateRange, setButterDateRange),
           },
         ])}
         activeKey={activeKeyFor(activeTab)}

@@ -106,6 +106,9 @@ export default function Tasks() {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState(null);
   const [configForm] = Form.useForm();
+  // Date-range filter for the Time Management "Configured Tasks" listing table —
+  // no due-date-like field is displayed for these records, so this filters on createdAt.
+  const [timeConfigDateRange, setTimeConfigDateRange] = useState(null);
 
   const taskList = useMemo(() => (tasksData?.data || []).map((t) => ({
     key: t._id,
@@ -161,6 +164,9 @@ export default function Tasks() {
   const [filterType, setFilterType] = useState(null);
   const [filterPriority, setFilterPriority] = useState(null);
   const [filterStatus, setFilterStatus] = useState(null);
+  // Date-range filter for the Current Task (order-level) listing table — filters on
+  // each order group's Expected Delivery Date, the date field already shown as a column.
+  const [currentTaskDateRange, setCurrentTaskDateRange] = useState(null);
   const [mainTab, setMainTab] = useState('suggested');
   const { filterTabs, activeKeyFor } = useTabAccess('Task Management');
   const { requireAccess } = usePageAccess('Task Management');
@@ -671,7 +677,7 @@ export default function Tasks() {
               Dispatch
             </Button>
           )}
-          {r.status === 'Completed' && !r.isSample && !r.emergencyApproved && r.paymentStatus && r.paymentStatus !== 'Paid' && !r.dispatchStatus && (
+          {r.status === 'Completed' && !r.isSample && !r.emergencyApproved && !isAlreadySentToDispatch(r.orderStatus) && r.paymentStatus && r.paymentStatus !== 'Paid' && !r.dispatchStatus && (
             <Space direction="vertical" size={2}>
               <Tag color="warning" style={{ fontSize: 10 }}>Awaiting Payment</Tag>
               <Button size="small" danger icon={<ExclamationCircleOutlined />}
@@ -967,6 +973,11 @@ export default function Tasks() {
                       <Select allowClear placeholder="Status" value={filterStatus} onChange={setFilterStatus} style={{ width: 140, borderRadius: 8 }}>
                         {Object.keys(statusColor).map((s) => <Option key={s} value={s}>{s}</Option>)}
                       </Select>
+                      <DatePicker.RangePicker
+                        style={{ borderRadius: 8 }}
+                        onChange={(dates) => setCurrentTaskDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                        allowClear
+                      />
                     </>
                   )}
                 </div>
@@ -976,7 +987,13 @@ export default function Tasks() {
                   <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                     <div className="table-responsive" style={{ padding: '4px' }}>
                       <Table
-                        dataSource={groupedByOrder}
+                        dataSource={groupedByOrder.filter((g) => {
+                          if (currentTaskDateRange) {
+                            const d = g.deliveryDate || '';
+                            if (d < currentTaskDateRange[0] || d > currentTaskDateRange[1]) return false;
+                          }
+                          return true;
+                        })}
                         columns={orderColumns}
                         rowKey="key"
                         pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
@@ -1158,14 +1175,27 @@ export default function Tasks() {
                   styles={{ body: { padding: 16 } }}
                   title={<Text strong style={{ color: textColor }}>Configured Tasks</Text>}
                   extra={(
-                    <Button type="primary" icon={<PlusOutlined />} onClick={() => openConfigModal()}
-                      style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
-                      Add Task Time
-                    </Button>
+                    <Space wrap>
+                      <DatePicker.RangePicker
+                        style={{ borderRadius: 8 }}
+                        onChange={(dates) => setTimeConfigDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                        allowClear
+                      />
+                      <Button type="primary" icon={<PlusOutlined />} onClick={() => openConfigModal()}
+                        style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
+                        Add Task Time
+                      </Button>
+                    </Space>
                   )}
                 >
                   <Table
-                    dataSource={timeConfigs.map((c) => ({ ...c, key: c._id }))}
+                    dataSource={timeConfigs.filter((c) => {
+                      if (timeConfigDateRange) {
+                        const d = c.createdAt ? c.createdAt.slice(0, 10) : '';
+                        if (d < timeConfigDateRange[0] || d > timeConfigDateRange[1]) return false;
+                      }
+                      return true;
+                    }).map((c) => ({ ...c, key: c._id }))}
                     pagination={false}
                     size="small"
                     scroll={{ x: 'max-content' }}
@@ -1776,11 +1806,24 @@ export default function Tasks() {
                 </div>
               )}
 
-              {/* Dispatch blocked notice — skipped for sample orders */}
-              {selectedTask.status === 'Completed' && !selectedTask.isSample && selectedTask.paymentStatus && selectedTask.paymentStatus !== 'Paid' && !selectedTask.dispatchStatus && (
+              {/* Dispatch blocked notice — skipped for sample orders, and once Sales+Ops have
+                  emergency-approved this order (either this task directly, or a sibling task
+                  which already forwarded the whole order to Dispatch) */}
+              {selectedTask.status === 'Completed' && !selectedTask.isSample && !selectedTask.emergencyApproved
+                && !isAlreadySentToDispatch(selectedTask.orderStatus)
+                && selectedTask.paymentStatus && selectedTask.paymentStatus !== 'Paid' && !selectedTask.dispatchStatus && (
                 <Alert type="error" showIcon icon={<ExclamationCircleOutlined />}
                   message="Dispatch Blocked — Payment Pending"
                   description={`Payment status: "${selectedTask.paymentStatus}". Dispatch is enabled only after full payment. For emergencies, use Emergency Dispatch — requires Sales Person + Operation Head approval.`}
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+              {selectedTask.status === 'Completed' && !selectedTask.isSample
+                && (selectedTask.emergencyApproved || isAlreadySentToDispatch(selectedTask.orderStatus))
+                && selectedTask.paymentStatus && selectedTask.paymentStatus !== 'Paid' && (
+                <Alert type="warning" showIcon icon={<AlertFilled />}
+                  message="Emergency-Approved — Dispatch Allowed With Payment Pending"
+                  description="Sales Head and Ops Head both approved this emergency dispatch. Payment is not yet fully collected — follow up separately."
                   style={{ borderRadius: 8 }}
                 />
               )}

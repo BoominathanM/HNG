@@ -132,7 +132,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   const dispatchesRaw = await DispatchRecord.find({ _id: { $in: pageIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName total orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo expectedDeliveryDate kitOrders items',
+      select: 'orderCode clientName total orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo expectedDeliveryDate kitOrders items',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -166,7 +166,7 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode leadId assignedTo kitOrders items',
+      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -187,7 +187,7 @@ exports.getDispatch = asyncHandler(async (req, res, next) => {
     .populate({
       path: 'orderId',
       populate: [
-        { path: 'leadId', select: 'leadType hotelName contactPerson phone email destination detailedAddress address city state pincode salesPerson products' },
+        { path: 'leadId', select: 'leadType hotelName contactPerson phone email destination detailedAddress address city state pincode shippingAddress shippingCity shippingState shippingPincode salesPerson products' },
         { path: 'assignedTo', select: 'fullName' },
       ],
     })
@@ -453,8 +453,26 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
 });
 
 // ─── TRANSPORT ────────────────────────────────────────────────────────────────
+// The Transport tab table previously only showed the handful of fields stored
+// directly on the Transport doc itself (LR/boxes/weight/freight) — destination,
+// contact, sales person, payment status, emergency, and invoice number all live on
+// the linked Order/DispatchRecord and were never joined in, so those columns had
+// nothing to render. Populate both links here so the frontend can show them.
 exports.getTransports = asyncHandler(async (req, res) => {
-  const transports = await Transport.find().sort('-dispatchedAt').lean();
+  const transports = await Transport.find()
+    .populate({
+      path: 'orderId',
+      select: 'destination detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode contactPerson clientPhone email salesPerson assignedTo isEmergency emergencyApproved paymentTerms',
+      populate: [{ path: 'assignedTo', select: 'fullName' }],
+    })
+    .populate({ path: 'dispatchId', select: 'invoiceNumber invoiceDate dispatchType' })
+    .sort('-dispatchedAt')
+    .lean();
+  await Promise.all(transports.map(async (t) => {
+    t.orderPaymentStatus = t.orderId?._id
+      ? await resolveOrderPaymentStatus(t.orderId._id).catch(() => 'Pending')
+      : 'Pending';
+  }));
   res.status(200).json({ success: true, total: transports.length, data: transports });
 });
 
