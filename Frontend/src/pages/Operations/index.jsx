@@ -138,6 +138,7 @@ export default function Operations() {
   const makeUpload = useCloudinaryUpload();
   const navigate = useNavigate();
   const isDark = useSelector((state) => state.theme.isDark);
+  const currentUser = useSelector((state) => state.auth.user);
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('orders');
   const { filterTabs, activeKeyFor } = useTabAccess('Operations');
@@ -554,6 +555,25 @@ export default function Operations() {
     // category; fall back to a legacy request that has no category (orders created before this).
     return matches.find((s) => (s.category || '') === cat) || matches.find((s) => !s.category);
   };
+
+  // Vendor Team Members (Sticker/Box/Ziplock/Butter Paper role, department 'Vendors')
+  // only see queue rows routed to them for that type — mirrors the backend's
+  // StickerRequest.vendorId scoping on getStickerRequests. Everyone else (Admin/Sales/
+  // Ops Head/etc.) sees every row, unchanged.
+  const getVisibleQueueRows = (type, rows) => {
+    const autoKeyForType = type === 'Frosted Ziplock' ? 'Ziplock' : type;
+    const isMyVendorRole = currentUser?.department === 'Vendors' && currentUser?.role === autoKeyForType;
+    if (!isMyVendorRole) return rows;
+    return rows.filter((r) => {
+      // A matching request already passed the backend's per-vendor visibility filter
+      // (mine, or legacy/unassigned) — trust it. No request yet means a brand-new,
+      // unclaimed row: show it only to whoever is currently the Auto vendor for this
+      // type, since that's who it'll be routed to once actioned.
+      const sr = findStickerReq(r);
+      if (sr) return true;
+      return automationVendors[autoKeyForType] === currentUser._id;
+    });
+  };
   // Local overrides take priority (immediate post-action feedback);
   // falls back to DB-backed status so approved/printed steps survive page refresh.
   const getQueueStep = (item) => {
@@ -615,7 +635,7 @@ export default function Operations() {
     },
     {
       label: 'Sticker Delivery',
-      value: productionQueues.sticker.filter((item) => item.sent > 0 && !item.verified).length,
+      value: getVisibleQueueRows('Sticker', productionQueues.sticker).filter((item) => item.sent > 0 && !item.verified).length,
       color: '#B11E6A',
     },
     {
@@ -625,12 +645,12 @@ export default function Operations() {
     },
     {
       label: 'Box',
-      value: productionQueues.box.length,
+      value: getVisibleQueueRows('Box', productionQueues.box).length,
       color: '#6b1240',
     },
     {
       label: 'Frosted',
-      value: productionQueues.frosted.length,
+      value: getVisibleQueueRows('Frosted Ziplock', productionQueues.frosted).length,
       color: '#aa3f72',
     },
     {
@@ -1434,6 +1454,7 @@ export default function Operations() {
         stickerType: requestType,
         quantity: Number(vals.qty) || 0,
         stickerSize: vals.size || '',
+        vendorId: vals.vendorId || undefined,
       }).unwrap();
       requestForm.resetFields();
       setRequestOpen(false);
@@ -1445,11 +1466,12 @@ export default function Operations() {
   };
 
   const renderQueueCard = (type, rows, label, search, setSearch) => {
+    const visibleRows = getVisibleQueueRows(type, rows);
     // Sort priority:
     //   1. Emergency products from urgent orders (process these FIRST)
     //   2. Other items from urgent orders
     //   3. All other items
-    const allActive = rows
+    const allActive = visibleRows
       .filter((r) => getQueueStep(r) < 6)
       .sort((a, b) => {
         const aEmg = a.isUrgent && a.isEmergencyProduct;
@@ -1460,7 +1482,7 @@ export default function Operations() {
         if (a.isUrgent && !b.isUrgent) return -1;
         return 0;
       });
-    const closedRows = rows.filter((r) => getQueueStep(r) === 6);
+    const closedRows = visibleRows.filter((r) => getQueueStep(r) === 6);
     const activeRows = allActive.filter((r) => {
       const q = (search || '').toLowerCase();
       return !q || (r.orderId || '').toLowerCase().includes(q) || (r.hotelLogo || '').toLowerCase().includes(q) || (r.product || '').toLowerCase().includes(q);

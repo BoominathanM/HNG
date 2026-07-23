@@ -40,6 +40,10 @@ const stickerRequestSchema = new mongoose.Schema({
   // Kit context: which kit this approval covers and what products are packed inside
   kitType: { type: String, default: '' },
   kitProducts: [{ type: String }],
+  // Vendor / Team Member (User) this request is routed to — defaults to whichever
+  // team member is currently marked "Auto" for this stickerType on the Vendors &
+  // Suppliers page (CompanySettings.automationVendors), unless manually overridden.
+  vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

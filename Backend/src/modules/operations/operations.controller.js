@@ -2,12 +2,14 @@ const Order = require('../../models/Order');
 const StickerRequest = require('../../models/StickerRequest');
 const Task = require('../../models/Task');
 const User = require('../../models/User');
+const CompanySettings = require('../../models/CompanySettings');
 const WhatsAppEvent = require('../../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
+const { ROLE_TO_STICKER_TYPE } = require('../../utils/alertConfigQueries');
 const { sendMessage } = require('../../services/whatsAppService');
 const { computeTaskEstimate } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
@@ -317,17 +319,54 @@ exports.getStickerRequests = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.type) filter.stickerType = req.query.type;
   if (req.query.status) filter.status = req.query.status;
+  // Vendor Team Members (Sticker/Box/Ziplock/Butter Paper role, department 'Vendors')
+  // only see requests routed to them personally — not every teammate sharing their
+  // role — so switching who's marked "Auto" actually redirects the work, not just
+  // the badge. Legacy requests created before this existed (vendorId still null)
+  // stay visible to any teammate of that role so nothing already in flight vanishes.
+  const myStickerType = req.user && ROLE_TO_STICKER_TYPE[req.user.role];
+  if (req.user?.department === 'Vendors' && myStickerType) {
+    filter.$or = [
+      { vendorId: req.user._id },
+      { vendorId: null, stickerType: myStickerType },
+    ];
+  }
   const stickers = await StickerRequest.find(filter)
     .populate('orderId', 'orderCode clientName')
     .populate('salesApprovedBy', 'fullName')
     .populate('opsHeadApprovedBy', 'fullName')
+    .populate('vendorId', 'fullName email')
     .sort('-createdAt');
   res.status(200).json({ success: true, data: stickers });
 });
 
 exports.createStickerRequest = asyncHandler(async (req, res) => {
-  const sticker = await StickerRequest.create({ ...req.body, createdBy: req.user._id });
-  notifyRoles({ modules: ['Operations', 'Sales Team'], type: 'task', title: 'Sticker/Design Request Created', message: `${sticker.stickerType || 'Sticker'} request for "${sticker.product || 'product'}" pending approval`, link: '/operations' }).catch(() => {});
+  let vendorId = req.body.vendorId || null;
+  // The "Assign to Vendor / Team Member" field also lists external printing-supplier
+  // companies alongside internal team-member Users — only a real Vendors-department
+  // User is a valid routing target for task visibility/notifications below.
+  if (vendorId) {
+    const asTeamMember = await User.findOne({ _id: vendorId, department: 'Vendors' }).select('_id').lean();
+    if (!asTeamMember) vendorId = null;
+  }
+  if (!vendorId) {
+    // No team member picked explicitly — route to whichever teammate is currently
+    // marked "Auto" for this stickerType (Vendors & Suppliers > Vendor Team Members).
+    const vendorRole = Object.keys(ROLE_TO_STICKER_TYPE).find((role) => ROLE_TO_STICKER_TYPE[role] === req.body.stickerType);
+    if (vendorRole) {
+      const settings = await CompanySettings.findOne().lean();
+      vendorId = settings?.automationVendors?.[vendorRole] || null;
+    }
+  }
+  const sticker = await StickerRequest.create({ ...req.body, vendorId, createdBy: req.user._id });
+  notifyRoles({
+    modules: ['Operations', 'Sales Team'],
+    userIds: vendorId ? [vendorId] : [],
+    type: 'task',
+    title: 'Sticker/Design Request Created',
+    message: `${sticker.stickerType || 'Sticker'} request for "${sticker.product || 'product'}" pending approval`,
+    link: '/operations',
+  }).catch(() => {});
   res.status(201).json({ success: true, data: sticker });
 });
 
