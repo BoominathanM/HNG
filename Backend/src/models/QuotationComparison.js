@@ -20,11 +20,35 @@ const quotationComparisonSchema = new mongoose.Schema({
     score:     Number, // 0-100
     pros:      [String],
     cons:      [String],
+    items: [{ // line items as read off this document, for the product-wise comparison below
+      name:       String,
+      qty:        Number,
+      unitPrice:  Number,
+      totalPrice: Number,
+    }],
   }],
   recommendation: {
     bestIndex: Number,
     summary:   String,
   },
+  // Cross-quotation, product-wise breakdown: the same real-world product matched across
+  // documents even when each supplier names it differently (e.g. "Soap" vs "Bar"), so the
+  // best price can be picked per-product rather than only by whole-quotation total.
+  productComparison: [{
+    productName: String, // canonical name for the matched product group
+    aliases:     [String], // the different names each supplier actually printed
+    entries: [{
+      fileIndex:   Number, // index into `files`/`results` above
+      name:        String, // supplier name, denormalized for display
+      matchedName: String, // the name that supplier's document used for this product
+      qty:         Number,
+      unitPrice:   Number,
+      totalPrice:  Number,
+    }],
+    bestFileIndex: Number, // entry with the lowest unit price for this specific product
+    bestPrice:     Number,
+    note:          String,
+  }],
   error: String,
 
   selectedIndex: Number,

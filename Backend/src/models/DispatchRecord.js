@@ -39,6 +39,33 @@ const dispatchRecordSchema = new mongoose.Schema({
   partialTransportName: String,
   partialWeight: String,
   partialBoxes: Number,
+  // Per-kit dispatch progress — Personalized Kit / Separate Kit are dispatched as one
+  // unit (one count, one open/close photo pair), separate from Order.kitOrders which is
+  // just the static order-time definition (kitId/kitName/category/overallQty). Seeded
+  // from order.kitOrders when the DispatchRecord is created (see tasks.controller.js
+  // forwardOrderToDispatch); dispatchedQty accumulates across partial/full confirm rounds.
+  kitDispatch: [{
+    kitId: String,
+    kitName: String,
+    category: String,
+    overallQty: { type: Number, default: 0 },
+    dispatchedQty: { type: Number, default: 0 },
+    openBoxPhotos: { type: [String], default: [] },
+    closeBoxPhotos: { type: [String], default: [] },
+  }],
+  // One entry per confirm action that actually dispatched something — preserves what
+  // happened each round (unlike transportName/weight/boxes, which get overwritten on
+  // every confirm), so an order shipped across many partial rounds keeps a full trail.
+  dispatchHistory: [{
+    date: { type: Date, default: Date.now },
+    dispatchType: String, // 'Full Dispatch' | 'Partial Dispatch' — this round's outcome
+    transportName: String,
+    weight: String,
+    boxes: Number,
+    kits: [{ kitName: String, category: String, dispatchedQty: Number }],
+    products: [{ itemName: String, dispatchedQty: Number }],
+    confirmedByName: String,
+  }],
   items: [{
     itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },
     itemName: String,

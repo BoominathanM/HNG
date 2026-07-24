@@ -8,6 +8,7 @@ router.use(protect);
 
 router.get('/', ctrl.getTasks);
 router.get('/suggested', ctrl.getSuggestedTasks);
+router.get('/suggested/insight', ctrl.getSuggestedTasksInsight);
 router.get('/emergency-requests', ctrl.getEmergencyRequests);
 
 // ── Time Management config (must precede '/:id' so the literal isn't captured) ──

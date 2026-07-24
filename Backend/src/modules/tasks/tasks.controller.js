@@ -10,6 +10,7 @@ const { notifyRoles } = require('../../utils/notify');
 const { computeTaskEstimate, computeRating } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
+const aiService = require('../../services/aiService');
 
 // Resolve the time-management fields for a task being created, from its configured
 // per-unit time × qty. plannedStartTime defaults to now (the assignment time);
@@ -63,13 +64,25 @@ async function forwardOrderToDispatch(orderId, userId) {
         itemId: it.itemId,
         itemName: it.itemName,
         qtyOrdered: it.qty,
-        qtyDispatched: it.qty,
+        // Dispatch now starts fully pending — the dispatcher enters how many actually
+        // go out per round (see dispatch.controller.js confirmDispatch), instead of the
+        // old all-or-nothing model where the full qty was marked dispatched immediately.
+        qtyDispatched: 0,
         boxes: it.boxes,
         isKit: it.isKit,
         kitId: it.kitId,
         kitName: it.kitName,
         kitType: it.kitType,
         category: it.category,
+      })),
+      // Personalized Kit / Separate Kit are dispatched as one unit — seed a progress
+      // tracker per kit from the order's static kitOrders definition.
+      kitDispatch: (order.kitOrders || []).map((ko) => ({
+        kitId: ko.kitId,
+        kitName: ko.kitName || ko.kitType,
+        category: ko.category || 'separate_kit',
+        overallQty: Number(ko.overallQty) || 0,
+        dispatchedQty: 0,
       })),
       createdBy: userId,
     });
@@ -152,20 +165,65 @@ function resolveDesignType(it, order) {
   return '';
 }
 
+// Which configured task names actually apply to a given order line item — mirrors the
+// frontend's getRelevantTaskOptions (Tasks/index.jsx) so the backend can tell whether a
+// product still needs MORE task types assigned, not just whether it has ANY task at all.
+function relevantTaskNamesFor(it, timeConfigs, designType, needsPrinting) {
+  const productKey = (it.product || it.itemName || it.kitName || '').toLowerCase();
+  const productWords = productKey.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  const isStickerRouted = designType === 'Sticker';
+  const isPackRouted = !isStickerRouted;
+  const seen = new Set();
+  timeConfigs.forEach((c) => {
+    if (!c.taskName || c.active === false || seen.has(c.taskName)) return;
+    const name = c.taskName.toLowerCase();
+    const cfgProduct = (c.product || '').trim().toLowerCase();
+    let relevant;
+    if (cfgProduct) {
+      relevant = cfgProduct === productKey;
+    } else {
+      const mentionsProduct = productWords.some((w) => name.includes(w));
+      const isStickerTask = /stick|label/.test(name);
+      const isPrintTask = /print/.test(name);
+      const isPackTask = /pack/.test(name);
+      relevant = mentionsProduct
+        || (isStickerRouted && isStickerTask)
+        || (needsPrinting && isPrintTask)
+        || (isPackRouted && isPackTask);
+    }
+    if (relevant) seen.add(c.taskName);
+  });
+  return seen;
+}
+
 // Suggested Tasks: orders ready (or partially ready) for production but not yet fully tasked.
 // Readiness is computed from inventory stock + packaging/sticker design status per the doc.
-exports.getSuggestedTasks = asyncHandler(async (req, res) => {
+// Shared by GET /suggested (the checklist itself) and GET /suggested/insight (the AI summary
+// on top of it), so both always reason about the exact same list.
+async function computeSuggestedTasks() {
   const InventoryItem = require('../../models/InventoryItem');
   const StickerRequest = require('../../models/StickerRequest');
   const Kit = require('../../models/Kit');
   const Order = require('../../models/Order');
+  const TaskTimeConfig = require('../../models/TaskTimeConfig');
 
   // Only orders still awaiting production — once forwarded to Dispatch Ready the order
   // has already left this workflow, so it shouldn't keep resurfacing here.
   const orders = await Order.find({ deletedAt: null, status: 'In Production' })
-    .select('orderCode clientName items printingStatus isUrgent displayUnitTab').lean();
-  const existingTasks = await Task.find({ orderId: { $ne: null } }).select('orderId productIndex').lean();
-  const taskedSet = new Set(existingTasks.map((t) => `${t.orderId}-${t.productIndex ?? 'x'}`));
+    .select('orderCode clientName items printingStatus isUrgent isEmergency emergencyApproved displayUnitTab createdAt').lean();
+  // Same task NAME can be split across multiple tasks (different assignees), and a product
+  // can independently need SEVERAL different task names (e.g. "Filling" then "Packing"),
+  // each covering the full required qty on its own — see checkTaskQuantityOverflow /
+  // normTaskName in Tasks/index.jsx. So a product only fully leaves this checklist once
+  // EVERY relevant task name for it is qty-complete, not the moment a single task exists.
+  const existingTasks = await Task.find({ orderId: { $ne: null } }).select('orderId productIndex taskName qty').lean();
+  const qtyByKey = new Map(); // `${orderId}-${productIndex}-${normalizedTaskName}` -> summed qty
+  existingTasks.forEach((t) => {
+    const key = `${t.orderId}-${t.productIndex ?? 'x'}-${(t.taskName || '').trim().toLowerCase()}`;
+    qtyByKey.set(key, (qtyByKey.get(key) || 0) + (Number(t.qty) || 0));
+  });
+  const anyTaskSet = new Set(existingTasks.map((t) => `${t.orderId}-${t.productIndex ?? 'x'}`));
+  const timeConfigs = await TaskTimeConfig.find({ active: true }).select('taskName product active').lean();
 
   // Build a stock lookup by item name (case-insensitive). NOTE: the field is `itemName`,
   // not `name` — selecting/reading `name` silently returned undefined for every item,
@@ -184,7 +242,6 @@ exports.getSuggestedTasks = asyncHandler(async (req, res) => {
   for (const o of orders) {
     const stickerReqs = await StickerRequest.find({ orderId: o._id }).select('product status stickerType category').lean();
     (o.items || []).forEach((it, idx) => {
-      if (taskedSet.has(`${o._id}-${idx}`)) return; // already has a task
       const productKey = it.product || it.itemName || it.kitName || '';
       const isKitItem = !!(it.isKit || it.kitType || it.kitName);
       const requiredQty = it.overallQty || it.qty || 0;
@@ -226,26 +283,106 @@ exports.getSuggestedTasks = asyncHandler(async (req, res) => {
       const needsPrintStep = normYN(it.printing) === 'YES';
       const printingReady = !needsPrintStep || !o.printingStatus || ['Closed', 'Received'].includes(o.printingStatus);
 
+      // Printing completion is a hard blocker — there is no physical task to assign until
+      // the print step is actually done, so those items don't belong on today's checklist
+      // at all (they'll reappear here once printing closes).
+      if (!printingReady) return;
+
+      // Only drop this product off the checklist once every task NAME relevant to it
+      // (Filling, Packing, etc. — see relevantTaskNamesFor) has been assigned enough qty
+      // to cover the full required quantity. Each task name needs the full qty independently
+      // (they don't split it between them — see normTaskName in Tasks/index.jsx), so
+      // assigning just one of several needed task types must NOT hide the card — the user
+      // still needs to come back and assign the others.
+      const relevantNames = relevantTaskNamesFor(it, timeConfigs, designType, needsPrintStep);
+      if (relevantNames.size > 0) {
+        const fullyCovered = [...relevantNames].every((name) => {
+          const key = `${o._id}-${idx}-${name.trim().toLowerCase()}`;
+          return (qtyByKey.get(key) || 0) >= requiredQty;
+        });
+        if (fullyCovered) return;
+      } else if (anyTaskSet.has(`${o._id}-${idx}`)) {
+        // No configured task name matches this product — fall back to the original
+        // any-task-exists rule so the card doesn't linger forever with nothing to clear it.
+        return;
+      }
+
+      // Readiness on this checklist is purely stock-driven now — design/sticker status is
+      // tracked separately in Operations and is NOT a "pending" reason here (most orders
+      // reach production before a StickerRequest is even raised, and that's still real,
+      // assignable work). `designType`/`stickerReady` are kept on the payload as passive
+      // metadata only, never surfaced as a blocker or counted in `pending`.
       const pending = [];
       if (!stockReady) pending.push('Inventory stock');
-      if (!stickerReady) pending.push(designType ? `${designType} design` : 'Sticker/printing');
-      if (!printingReady) pending.push('Printing approval');
+      // "Emergency" folds every flag the app uses for it elsewhere: `isEmergency` is what
+      // the Dispatch queue's own emergency-first sort actually keys on, `isUrgent` is set
+      // alongside it on most creation paths, and `emergencyApproved` covers the dual-approval
+      // emergency-dispatch flow — an order can arrive via any one of the three.
+      const isEmergencyOrder = !!(o.isUrgent || o.isEmergency || o.emergencyApproved);
       suggestions.push({
         id: `${o._id}-${idx}`,
         orderId: o._id, orderCode: o.orderCode, client: o.clientName,
         product: it.itemName, qty: it.qty, logoType: it.logoType,
-        isUrgent: o.isUrgent,
+        isUrgent: isEmergencyOrder,
+        emergencyApproved: !!o.emergencyApproved,
+        orderCreatedAt: o.createdAt,
         inventoryStock: stock,
         designType,
+        // Passive metadata for the frontend's "Suggested Tasks" chip relevance filter —
+        // needsDesign/needsPrinting tell it which task-name keywords actually apply to
+        // THIS product (e.g. don't offer a Filling task to a Brush that needs neither
+        // a sticker/box design step nor a print step, only Packing).
+        needsDesign: !!designType,
+        needsPrinting: needsPrintStep,
         stockReady, stickerReady, printingReady,
-        fullyReady: stockReady && stickerReady && printingReady,
-        pending, // components still pending (task still shown to help planning)
+        fullyReady: stockReady, // ready-to-assign now means "stock available" — design/print no longer factor in
+        pending, // stock shortfall only (task is still shown either way)
       });
     });
   }
-  // Fully-ready first, then urgent.
-  suggestions.sort((a, b) => (b.fullyReady - a.fullyReady) || (b.isUrgent - a.isUrgent));
+  // Emergency orders first, then FIFO by when the order was placed — matches the Dispatch
+  // queue's own sort-first-for-emergency rule so Task Management prioritizes the same way.
+  suggestions.sort((a, b) => {
+    const aEmergency = a.isUrgent || a.emergencyApproved;
+    const bEmergency = b.isUrgent || b.emergencyApproved;
+    if (aEmergency !== bEmergency) return (bEmergency ? 1 : 0) - (aEmergency ? 1 : 0);
+    return new Date(a.orderCreatedAt) - new Date(b.orderCreatedAt);
+  });
+  return suggestions;
+}
+
+exports.getSuggestedTasks = asyncHandler(async (req, res) => {
+  const suggestions = await computeSuggestedTasks();
   res.status(200).json({ success: true, total: suggestions.length, data: suggestions });
+});
+
+// GET /api/tasks/suggested/insight — AI-generated prioritized action plan on top of the
+// same Today's Checklist data (button-triggered, not auto-run on every poll, to avoid
+// spending API credits on every fetch).
+exports.getSuggestedTasksInsight = asyncHandler(async (req, res, next) => {
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) {
+    return next(new AppError('AI is not configured yet. Add your OpenAI API key under Integration → AI Integration.', 503));
+  }
+
+  const suggestions = await computeSuggestedTasks();
+  if (!suggestions.length) {
+    return res.status(200).json({ success: true, data: { insight: 'No pending suggested tasks right now — all caught up.' } });
+  }
+
+  // The org's own production step vocabulary (e.g. "Filling", "Packing", "Sealing") —
+  // give the AI these so it recommends real, assignable task names instead of talking
+  // about design/sticker status (which isn't tracked as a blocker on this checklist).
+  const TaskTimeConfig = require('../../models/TaskTimeConfig');
+  const taskNames = [...new Set((await TaskTimeConfig.find({ active: true }).select('taskName').lean()).map((c) => c.taskName).filter(Boolean))];
+
+  try {
+    const insight = await aiService.generateTaskInsight({ apiKey, model: config.model, suggestions, taskNames });
+    res.status(200).json({ success: true, data: { insight } });
+  } catch (err) {
+    return next(new AppError(`AI insight failed: ${err.message}`, err.statusCode || 502));
+  }
 });
 
 exports.getTask = asyncHandler(async (req, res, next) => {

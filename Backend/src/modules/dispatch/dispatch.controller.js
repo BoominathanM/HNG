@@ -132,7 +132,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   const dispatchesRaw = await DispatchRecord.find({ _id: { $in: pageIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName total orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo expectedDeliveryDate kitOrders items',
+      select: 'orderCode clientName total orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo expectedDeliveryDate kitOrders items packagingIncludes',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -166,7 +166,7 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items',
+      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -230,7 +230,6 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   dispatch.status = 'Confirmed';
   dispatch.invoiceNumber = req.body.invoiceNumber;
   dispatch.invoiceDate = req.body.invoiceDate;
-  dispatch.dispatchType = req.body.dispatchType;
   // Single checkbox on the frontend now governs the WhatsApp dispatch notification.
   // FormData sends booleans as strings; treat 'false' (string or boolean) as disabled.
   const sendWhatsapp = req.body.sendWhatsapp !== false && req.body.sendWhatsapp !== 'false';
@@ -247,14 +246,106 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   // Not a schema field — only needed transiently below to name the WhatsApp attachment.
   if (req.body.invoiceDocumentFilename) dispatch.invoiceDocumentFilename = req.body.invoiceDocumentFilename;
 
-  // "Partial Dispatch" is a checkpoint, not a completion: it records that the emergency/
-  // first portion has gone out and keeps the record open — no inventory decrement, no
+  const orderDoc = dispatch.orderId && (dispatch.orderId._id ? dispatch.orderId : await Order.findById(dispatch.orderId));
+  const orderItems = orderDoc?.items || [];
+
+  const decrementStock = async (itemId, qty) => {
+    if (!itemId || !qty) return;
+    const invItem = await InventoryItem.findById(itemId);
+    if (!invItem) return;
+    const before = invItem.currentStock;
+    invItem.currentStock = Math.max(0, invItem.currentStock - qty);
+    await invItem.save({ validateBeforeSave: false });
+    await StockMovement.create({
+      itemId,
+      movementType: 'OUT',
+      qty,
+      qtyBefore: before,
+      qtyAfter: invItem.currentStock,
+      referenceType: 'Order',
+      referenceId: orderDoc?._id,
+      approvalStatus: 'Approved',
+      approvedBy: req.user._id,
+      approvedAt: Date.now(),
+      createdBy: req.user._id,
+    });
+  };
+
+  // ─── Apply this round's dispatch counts ───────────────────────────────────
+  // kitCounts/productCounts are JSON-stringified arrays of { id, dispatchNow } sent from
+  // the Dispatch Verification table — id is the kitDispatch subdoc _id (kits, dispatched
+  // as one unit) or the dispatch item's own _id (separate products). Every delta is
+  // clamped server-side to what's actually still pending, so a stale/duplicate submit can
+  // never over-dispatch or double-decrement stock.
+  const parseCounts = (raw) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    try { return JSON.parse(raw); } catch { return []; }
+  };
+  const kitCounts = parseCounts(req.body.kitCounts);
+  const productCounts = parseCounts(req.body.productCounts);
+
+  // This round's actual movement, for the dispatch history log below — only rows with a
+  // real delta (not just whatever was requested) are recorded.
+  const historyKits = [];
+  const historyProducts = [];
+
+  for (const entry of kitCounts) {
+    const dispatchNow = Number(entry?.dispatchNow) || 0;
+    if (dispatchNow <= 0) continue;
+    const kd = dispatch.kitDispatch.id(entry.id) || dispatch.kitDispatch.find((k) => String(k.kitId) === String(entry.id));
+    if (!kd) continue;
+    const delta = Math.max(0, Math.min(dispatchNow, kd.overallQty - kd.dispatchedQty));
+    if (delta <= 0) continue;
+    kd.dispatchedQty += delta;
+    historyKits.push({ kitName: kd.kitName, category: kd.category, dispatchedQty: delta });
+    // Every component of this kit ships proportionally — decrement each by its
+    // per-kit-unit share (component's total ordered qty / kit's overall qty) × delta.
+    const components = orderItems.filter((it) => it.kitId && String(it.kitId) === String(kd.kitId));
+    for (const comp of components) {
+      const perKitQty = kd.overallQty > 0 ? (Number(comp.qty) || 0) / kd.overallQty : 0;
+      await decrementStock(comp.itemId, Math.round(perKitQty * delta * 100) / 100);
+    }
+  }
+
+  for (const entry of productCounts) {
+    const dispatchNow = Number(entry?.dispatchNow) || 0;
+    if (dispatchNow <= 0) continue;
+    const item = dispatch.items.id(entry.id);
+    if (!item) continue;
+    const delta = Math.max(0, Math.min(dispatchNow, (item.qtyOrdered || 0) - (item.qtyDispatched || 0)));
+    if (delta <= 0) continue;
+    item.qtyDispatched = (item.qtyDispatched || 0) + delta;
+    historyProducts.push({ itemName: item.itemName, dispatchedQty: delta });
+    await decrementStock(item.itemId, delta);
+  }
+
+  // ─── Determine completion — server-computed from actual progress, not the client's
+  // say-so — so it can't be spoofed and always matches what's really been dispatched.
+  const fullyDispatched = dispatch.kitDispatch.every((kd) => kd.dispatchedQty >= kd.overallQty)
+    && dispatch.items.filter((it) => !it.isKit).every((it) => (it.qtyDispatched || 0) >= (it.qtyOrdered || 0));
+  dispatch.dispatchType = fullyDispatched ? 'Full Dispatch' : 'Partial Dispatch';
+
+  // Log this round in the history trail — only when something was actually dispatched
+  // (an empty/no-op confirm shouldn't clutter the log).
+  if (historyKits.length || historyProducts.length) {
+    dispatch.dispatchHistory.push({
+      date: Date.now(),
+      dispatchType: dispatch.dispatchType,
+      transportName: dispatch.transportName,
+      weight: dispatch.weight,
+      boxes: dispatch.boxes,
+      kits: historyKits,
+      products: historyProducts,
+      confirmedByName: req.user?.fullName || req.user?.name || '',
+    });
+  }
+
+  // "Partial Dispatch" is a checkpoint, not a completion: stock for whatever was entered
+  // this round has already been decremented above, but the record stays open — no
   // Order/Lead status change, no dispatch notification — so the dispatcher can come back
-  // and confirm the remaining items as "Full Dispatch" later, which is what actually
-  // finalizes the order. Without this branch, picking "Partial Dispatch" finalized the
-  // order immediately, indistinguishable from "Full Dispatch".
-  const isPartialCheckpoint = req.body.dispatchType === 'Partial Dispatch' && !dispatch.partialDispatchConfirmed;
-  if (isPartialCheckpoint) {
+  // and confirm the remaining items later, which is what actually finalizes the order.
+  if (!fullyDispatched) {
     dispatch.partialDispatchConfirmed = true;
     dispatch.partialDispatchAt = Date.now();
     // Snapshot now, before a later Full Dispatch confirm overwrites transportName/weight/boxes.
@@ -268,33 +359,7 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   dispatch.dispatchedAt = Date.now();
   await dispatch.save({ validateBeforeSave: false });
 
-  // Decrement inventory for each dispatched item
-  for (const item of dispatch.items || []) {
-    if (item.itemId && item.qtyDispatched) {
-      const invItem = await InventoryItem.findById(item.itemId);
-      if (invItem) {
-        const before = invItem.currentStock;
-        invItem.currentStock = Math.max(0, invItem.currentStock - item.qtyDispatched);
-        await invItem.save({ validateBeforeSave: false });
-        await StockMovement.create({
-          itemId: item.itemId,
-          movementType: 'OUT',
-          qty: item.qtyDispatched,
-          qtyBefore: before,
-          qtyAfter: invItem.currentStock,
-          referenceType: 'Order',
-          referenceId: dispatch.orderId?._id,
-          approvalStatus: 'Approved',
-          approvedBy: req.user._id,
-          approvedAt: Date.now(),
-          createdBy: req.user._id,
-        });
-      }
-    }
-  }
-
   // Update order status and mark linked lead as Dispatched
-  const orderDoc = dispatch.orderId && (dispatch.orderId._id ? dispatch.orderId : await Order.findById(dispatch.orderId));
   if (orderDoc) {
     const orderUpdate = { status: 'Dispatched' };
     // A dispatcher-raised forwarding charge lives in the Order (source of truth for
@@ -544,6 +609,24 @@ exports.uploadItemBoxPhotos = asyncHandler(async (req, res, next) => {
   const remaining = Math.max(0, 5 - existing.length);
   const urls = (req.files || []).slice(0, remaining).map((f) => f.path);
   item[field] = [...existing, ...urls];
+  await dispatch.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, data: dispatch });
+});
+
+// Upload open/close box photos for a single kit (Personalized Kit / Separate Kit are
+// dispatched — and photographed — as one unit, not per component). Capped at 1 photo
+// per field: "one common photo is enough" for the whole kit.
+exports.uploadKitBoxPhotos = asyncHandler(async (req, res, next) => {
+  const dispatch = await DispatchRecord.findById(req.params.id);
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  const kit = dispatch.kitDispatch.id(req.params.kitDispatchId);
+  if (!kit) return next(new AppError('Kit dispatch entry not found', 404));
+  const type = req.body.type || req.query.type;
+  const field = type === 'close' ? 'closeBoxPhotos' : 'openBoxPhotos';
+  const existing = kit[field] || [];
+  const remaining = Math.max(0, 1 - existing.length);
+  const urls = (req.files || []).slice(0, remaining).map((f) => f.path);
+  kit[field] = [...existing, ...urls];
   await dispatch.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, data: dispatch });
 });

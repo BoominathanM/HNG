@@ -10,7 +10,7 @@ import {
   CarOutlined, CheckCircleOutlined, UploadOutlined, EyeOutlined,
   SearchOutlined, PrinterOutlined, SaveOutlined, EditOutlined,
   InboxOutlined, FilterOutlined, GlobalOutlined,
-  ExportOutlined, CheckSquareOutlined, WalletOutlined, UserOutlined,
+  ExportOutlined, WalletOutlined, UserOutlined,
   PhoneOutlined, FileTextOutlined, DollarCircleOutlined,
   AlertFilled, ExperimentOutlined, CalendarOutlined,
   GiftOutlined, AppstoreOutlined, ThunderboltFilled,
@@ -27,7 +27,6 @@ import {
   useGetCompanySettingsQuery,
   useUploadDispatchLRMutation,
   useConfirmDispatchMutation,
-  useVerifyItemMutation,
   useGetTransportsQuery,
   useGetPickupOrdersQuery,
   useGetTodaysPickupOrdersQuery,
@@ -43,6 +42,7 @@ const { Option } = Select;
 
 const statusColor = {
   'Ready to Dispatch': '#C94F8A',
+  'Partially Dispatched': '#d97706',
   'Payment Pending': '#D85C9E',
   'Dispatched': '#6b1240',
   'Packing': '#B11E6A',
@@ -130,8 +130,6 @@ export default function Dispatch() {
   const [aiParsed, setAiParsed] = useState(null);
   const [aiForm] = Form.useForm();
 
-  // Product verify state: { [orderId]: { verifiedProducts: Set } }
-  const [productVerify, setProductVerify] = useState({});
   // Expanded rows for product panel
   const [expandedRows, setExpandedRows] = useState([]);
 
@@ -148,7 +146,6 @@ export default function Dispatch() {
   const { data: todaysDispatchData } = useGetTodaysDispatchesQuery();
   const [uploadLR] = useUploadDispatchLRMutation();
   const [confirmDispatch] = useConfirmDispatchMutation();
-  const [verifyItem] = useVerifyItemMutation();
 
   const normalizeDispatch = (d) => {
     const isSample = d.orderId?.orderCategory === 'SAMPLE' || d.orderId?.leadId?.leadType === 'SAMPLE';
@@ -161,7 +158,16 @@ export default function Dispatch() {
       boxes: d.boxes || 0,
       weight: d.weight || '—',
       payment: isSample ? 'N/A' : (d.orderPaymentStatus || 'Pending'),
-      status: d.status === 'Dispatched' ? 'Dispatched' : d.status === 'Confirmed' ? 'Ready to Dispatch' : 'Packing',
+      // A Confirmed record that's still Partial Dispatch (some rows have pending counts
+      // left) reads as "Partially Dispatched" rather than the generic "Ready to Dispatch" —
+      // orders that go out fully in one round keep the original 3-state mapping unchanged.
+      status: d.status === 'Dispatched'
+        ? 'Dispatched'
+        : d.status === 'Confirmed'
+        ? (d.dispatchType === 'Partial Dispatch' ? 'Partially Dispatched' : 'Ready to Dispatch')
+        : 'Packing',
+      dispatchType: d.dispatchType || null,
+      kitDispatch: d.kitDispatch || [],
       orderCategory: isSample ? 'SAMPLE' : (d.orderId?.orderCategory || 'ORDER'),
       isSample,
       isEmergency: !!(d.orderId?.isEmergency),
@@ -182,6 +188,10 @@ export default function Dispatch() {
       // buildDispatchGroupedProducts).
       kitOrders: d.orderId?.kitOrders || [],
       orderItems: d.orderId?.items || [],
+      // Sales' "Select Kit(s) to Include" — separate kit(s)/product(s) packed inside the
+      // personalized kit's own box, so buildDispatchGroupedProducts nests them under the
+      // Personalized Kit bucket instead of Separate Kit/Product (see dispatchGrouping.js).
+      packagingIncludes: d.orderId?.packagingIncludes || [],
       // Customer / address fields (now populated from the order)
       destination: d.orderId?.destination || '—',
       salesPerson: d.orderId?.assignedTo?.fullName || '—',
@@ -430,58 +440,21 @@ export default function Dispatch() {
     }, 1200);
   };
 
-  // `itemIds` may be a single id (plain product/kit-item row) or an array (a
-  // personalized kit header, which must persist verification for every component item).
-  // `row` (when passed) carries openBoxPhotos/closeBoxPhotos so verify can be gated on
-  // per-product photos already uploaded from the Dispatch Detail page — mirrors the same
-  // gate in DispatchDetail.jsx's toggleVerify, so it can't be bypassed from this list panel.
-  const toggleVerifyProduct = async (orderId, productKey, itemIds, row) => {
-    const ids = Array.isArray(itemIds) ? itemIds.filter(Boolean) : (itemIds ? [itemIds] : []);
-    const willVerify = !productVerify[orderId]?.verifiedProducts?.has(productKey);
-    if (willVerify && row) {
-      const hasOpen = (row.openBoxPhotos?.length || 0) > 0;
-      const hasClose = (row.closeBoxPhotos?.length || 0) > 0;
-      if (!hasOpen || !hasClose) {
-        enqueueSnackbar('Upload open & closed box photos on the Dispatch Detail page before verifying.', { variant: 'warning' });
-        return;
-      }
-    }
-    setProductVerify(prev => {
-      const existing = prev[orderId] || { verifiedProducts: new Set() };
-      const next = new Set(existing.verifiedProducts);
-      next.has(productKey) ? next.delete(productKey) : next.add(productKey);
-      return { ...prev, [orderId]: { ...existing, verifiedProducts: next } };
-    });
-    // Persist both verify and unverify to the backend.
-    if (ids.length) {
-      try {
-        // Sequential, not Promise.all — each verifyItem call reads-then-saves the whole
-        // dispatch document, so firing them concurrently lets a later save's stale copy
-        // overwrite an earlier item's verified flag.
-        for (const itemId of ids) {
-          await verifyItem({ id: orderId, itemId, verified: willVerify }).unwrap();
-        }
-      } catch {
-        enqueueSnackbar(`Failed to save ${willVerify ? 'verification' : 'unverify'}`, { variant: 'error' });
-      }
-    }
-  };
-
-  // ── Product verify expanded row ────────────────────────────────────────────
+  // ── Product progress expanded row ──────────────────────────────────────────
   // Groups items into Personalized Kit / Separate Kits / Separate Products — same
-  // categorization + counts as the Dispatch Detail page's verification table.
+  // categorization + counts as the Dispatch Detail page's verification table. Read-only
+  // here: entering dispatch counts, uploading photos, and confirming all happen on the
+  // Dispatch Detail page (this panel is just a progress summary).
   const renderProductPanel = (record) => {
-    const state = productVerify[record.key] || {};
-    const verified = state.verifiedProducts || new Set();
-    const isRowVerified = (row) => verified.has(row.key) || !!row.verified;
-
     const { products, groupedProducts } = buildDispatchGroupedProducts({
       items: record.items,
       kitOrders: record.kitOrders,
       orderItems: record.orderItems,
       boxes: record.boxes,
+      kitDispatch: record.kitDispatch,
+      packagingIncludes: record.packagingIncludes,
     });
-    const summary = summarizeDispatchVerification(products, isRowVerified);
+    const summary = summarizeDispatchVerification(products);
 
     const catMeta = {
       personalized: { icon: <GiftOutlined />, bg: '#ede9fe', color: '#5b21b6', label: 'Personalized Kit' },
@@ -498,7 +471,7 @@ export default function Dispatch() {
           <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>— Product Details</Text>
           <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888', marginLeft: 'auto' }}>
             <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
-            {summary.overall.verified} / {summary.overall.total} verified
+            {summary.overall.dispatched} / {summary.overall.total} dispatched
           </Text>
         </div>
         <Space size={6} wrap style={{ marginBottom: 10 }}>
@@ -506,7 +479,7 @@ export default function Dispatch() {
             .filter((b) => b.total > 0)
             .map((b) => (
               <Tag key={b.label} style={{ borderRadius: 12, fontSize: 11, background: 'transparent', border: '1px solid #B11E6A33' }}>
-                {b.label}: {b.verified}/{b.total}
+                {b.label}: {b.dispatched}/{b.total} ({b.pending} pending)
               </Tag>
             ))}
         </Space>
@@ -521,15 +494,14 @@ export default function Dispatch() {
             {
               title: 'Product / Kit',
               dataIndex: 'name',
-              // Every kit header (Personalized or Separate) is a divider row only — each
-              // component item underneath (personalized_item / kit_item) is individually
-              // verified and gets its own Status/Action cells.
-              onCell: (row) => (row.type === 'kit_header' ? { colSpan: 3 } : {}),
+              // Pure divider rows (no `bucket`) span the full row. Real dispatchable kit
+              // headers (Personalized/Separate Kit, `bucket` set) get their own Progress cell.
+              onCell: (row) => (row.type === 'kit_header' && !row.bucket ? { colSpan: 2 } : {}),
               render: (v, row) => {
                 if (row.type === 'kit_header') {
                   const cm = catMeta[row.category] || catMeta.separate_kit;
                   return (
-                    <div style={{ background: cm.bg, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, margin: '-1px -1px' }}>
+                    <div style={{ background: cm.bg, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, margin: '-1px -1px', flexWrap: 'wrap' }}>
                       <span style={{ color: cm.color }}>{cm.icon}</span>
                       <Text strong style={{ color: cm.color, fontSize: 12 }}>{row.kitName}</Text>
                       {row.qty != null && (
@@ -550,38 +522,32 @@ export default function Dispatch() {
                     )}
                     <Text style={{ fontSize: 12 }}>{v}</Text>
                     {row.perKitQty != null && <Text style={{ fontSize: 10, color: '#bbb' }}>({row.perKitQty}/kit)</Text>}
+                    {row.includedFrom && (
+                      <Tag style={{ borderRadius: 10, fontSize: 10, background: '#ede9fe', color: '#5b21b6', border: '1px solid #5b21b633' }}>
+                        {row.includedFrom}
+                      </Tag>
+                    )}
                   </Space>
                 );
               },
             },
             {
-              title: 'Status', key: 'status',
-              onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
+              title: 'Progress', key: 'progress',
+              onCell: (row) => (!row.bucket ? { colSpan: 0 } : {}),
               render: (_, row) => {
-                if (row.type === 'kit_header') return null;
-                return isRowVerified(row)
-                  ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
-                  : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>;
-              },
-            },
-            {
-              title: 'Action', key: 'action',
-              onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
-              render: (_, row) => {
-                if (row.type === 'kit_header') return null;
-                const verified = isRowVerified(row);
-                const hasPhotos = (row.openBoxPhotos?.length || 0) > 0 && (row.closeBoxPhotos?.length || 0) > 0;
+                if (!row.bucket) return null;
+                const total = row.overallQty ?? row.qtyOrdered ?? 0;
+                const done = row.dispatchedQty ?? row.qtyDispatched ?? 0;
+                const pending = Math.max(0, total - done);
                 return (
-                  <Button
-                    size="small"
-                    icon={<CheckSquareOutlined />}
-                    disabled={!verified && !hasPhotos}
-                    title={!verified && !hasPhotos ? 'Upload open & closed box photos on the Dispatch Detail page first' : undefined}
-                    style={verified ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                    onClick={() => toggleVerifyProduct(record.key, row.key, row.itemId, row)}
-                  >
-                    {verified ? 'Unverify' : 'Verify'}
-                  </Button>
+                  <Space direction="vertical" size={0}>
+                    <Text style={{ fontSize: 12 }}>{done} / {total}</Text>
+                    {pending === 0
+                      ? <Tag color="success" style={{ borderRadius: 20, fontSize: 11 }}>Fully Dispatched</Tag>
+                      : done > 0
+                      ? <Tag color="orange" style={{ borderRadius: 20, fontSize: 11 }}>Partial — {pending} pending</Tag>
+                      : <Tag color="default" style={{ borderRadius: 20, fontSize: 11 }}>Pending</Tag>}
+                  </Space>
                 );
               },
             },
@@ -655,6 +621,29 @@ export default function Dispatch() {
         },
       },
       { title: 'Transport', dataIndex: 'transport', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      {
+        title: 'Balance', key: 'balance', width: 170,
+        // Pending counts broken down by Personalized Kit / Separate Kit / Separate
+        // Product — only the buckets actually present on this order.
+        render: (_, r) => {
+          const { products } = buildDispatchGroupedProducts({
+            items: r.items, kitOrders: r.kitOrders, orderItems: r.orderItems,
+            boxes: r.boxes, kitDispatch: r.kitDispatch, packagingIncludes: r.packagingIncludes,
+          });
+          const summary = summarizeDispatchVerification(products);
+          const buckets = [summary.personalizedKit, summary.separateKit, summary.separateProduct].filter((b) => b.total > 0);
+          if (buckets.length === 0) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+          return (
+            <Space direction="vertical" size={2}>
+              {buckets.map((b) => (
+                <Tag key={b.label} color={b.pending === 0 ? 'success' : 'orange'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>
+                  {b.label}: {b.pending} pending
+                </Tag>
+              ))}
+            </Space>
+          );
+        },
+      },
       {
         title: 'Status', dataIndex: 'status', width: 140,
         render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, fontSize: 13, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag>,
@@ -822,20 +811,6 @@ export default function Dispatch() {
   const expandable = {
     expandedRowKeys: expandedRows,
     onExpand: (expanded, record) => {
-      if (expanded && !productVerify[record.key]) {
-        // Seed verified set from DB items so status persists after refresh
-        const { products: seedProducts } = buildDispatchGroupedProducts({
-          items: record.items,
-          kitOrders: record.kitOrders,
-          orderItems: record.orderItems,
-          boxes: record.boxes,
-        });
-        const dbVerifiedKeys = new Set(seedProducts.filter((p) => p.verified).map((p) => p.key));
-        setProductVerify(prev => ({
-          ...prev,
-          [record.key]: { ...(prev[record.key] || {}), verifiedProducts: dbVerifiedKeys },
-        }));
-      }
       setExpandedRows(expanded ? [...expandedRows, record.key] : expandedRows.filter(k => k !== record.key));
     },
     expandedRowRender: (record) => renderProductPanel(record),

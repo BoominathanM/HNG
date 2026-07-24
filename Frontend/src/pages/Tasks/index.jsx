@@ -10,7 +10,7 @@ import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
   FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
-  EditOutlined, DeleteOutlined, FieldTimeOutlined,
+  EditOutlined, DeleteOutlined, FieldTimeOutlined, RobotOutlined, TeamOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -22,6 +22,7 @@ import { estimateSecFor, secToHuman, perUnitLabel, unitToSec, secToUnit, ratingC
 import {
   useGetTasksQuery,
   useGetSuggestedTasksQuery,
+  useLazyGetSuggestedTasksInsightQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useDispatchTaskOrderMutation,
@@ -74,6 +75,16 @@ export default function Tasks() {
   const { data: tasksData, isLoading: tasksLoading } = useGetTasksQuery({ limit: 500 });
   const { data: suggestedData } = useGetSuggestedTasksQuery();
   const suggestedList = suggestedData?.data || [];
+  const [fetchTaskInsight, { isFetching: taskInsightLoading }] = useLazyGetSuggestedTasksInsightQuery();
+  const [taskInsight, setTaskInsight] = useState(null);
+  const handleGetTaskInsight = async () => {
+    try {
+      const res = await fetchTaskInsight().unwrap();
+      setTaskInsight(res?.data?.insight || '');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.error || err?.data || 'AI insight failed.', { variant: 'error' });
+    }
+  };
 
   // Orders — drive the New Task modal's Order → Products selectors
   const { data: ordersData } = useGetSalesOrdersQuery({ limit: 500 });
@@ -100,6 +111,60 @@ export default function Tasks() {
     return timeConfigs.filter((c) => c.taskName && !seen.has(c.taskName) && seen.add(c.taskName))
       .map((c) => ({ value: c.taskName, label: c.taskName }));
   }, [timeConfigs]);
+  // Suggested Tasks (Today's Checklist chips) — instead of dumping every configured task
+  // name on every product card, only offer the ones that actually fit THIS product/order
+  // spec. Two ways a config becomes relevant:
+  //  1. Explicit scope: its `product` field (set in the Time Management modal) matches
+  //     this item's product name exactly — an admin override, always wins.
+  //  2. General config (product left blank): matched by keyword against the item's own
+  //     spec — its product name (covers e.g. "Shampoo Filling" for a Shampoo line item),
+  //     whether it's actually routed through the Sticker design queue (a literal sticker
+  //     goes on the product itself), whether it needs a print step, and Box/Frosted
+  //     Ziplock/Butter Paper/no-design items which are packed rather than stickered.
+  //     This is what keeps a Box-routed item like Brush/Paste from suggesting "Sticker
+  //     Placing" meant for a Sticker-routed item like Soap, and vice versa.
+  const getRelevantTaskOptions = (item) => {
+    const productKey = (item.product || '').toLowerCase();
+    const productWords = productKey.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+    const isStickerRouted = item.designType === 'Sticker';
+    const needsPrinting = !!item.needsPrinting;
+    // Box / Frosted Ziplock / Butter Paper / no design step at all — these are packed,
+    // not stickered directly onto the product.
+    const isPackRouted = !isStickerRouted;
+    // Suggested Tasks chips reuse the "orderId-productIndex" checklist card id.
+    const orderIdStr = item.orderId?.toString ? item.orderId.toString() : item.orderId;
+    const productIndex = typeof item.id === 'string' ? item.id.split('-').pop() : undefined;
+    const requiredQty = Number(item.qty) || 0;
+
+    const seen = new Set();
+    const result = [];
+    timeConfigs.forEach((c) => {
+      if (!c.taskName || c.active === false || seen.has(c.taskName)) return;
+      const name = c.taskName.toLowerCase();
+      const cfgProduct = (c.product || '').trim().toLowerCase();
+      let relevant;
+      if (cfgProduct) {
+        relevant = cfgProduct === productKey;
+      } else {
+        const mentionsProduct = productWords.some((w) => name.includes(w));
+        const isStickerTask = /stick|label/.test(name);
+        const isPrintTask = /print/.test(name);
+        const isPackTask = /pack/.test(name);
+        relevant = mentionsProduct
+          || (isStickerRouted && isStickerTask)
+          || (needsPrinting && isPrintTask)
+          || (isPackRouted && isPackTask);
+      }
+      if (!relevant) return;
+      seen.add(c.taskName);
+      // Already fully assigned under this exact task name — don't keep offering it,
+      // but other task names this product still needs stay available.
+      const assignedKey = `${orderIdStr}-${productIndex}-${name}`;
+      const alreadyCovered = requiredQty > 0 && (assignedQtyByKey.get(assignedKey) || 0) >= requiredQty;
+      if (!alreadyCovered) result.push({ value: c.taskName, label: c.taskName });
+    });
+    return result;
+  };
   const [createTimeConfig] = useCreateTaskTimeConfigMutation();
   const [updateTimeConfig] = useUpdateTaskTimeConfigMutation();
   const [deleteTimeConfig] = useDeleteTaskTimeConfigMutation();
@@ -109,6 +174,21 @@ export default function Tasks() {
   // Date-range filter for the Time Management "Configured Tasks" listing table —
   // no due-date-like field is displayed for these records, so this filters on createdAt.
   const [timeConfigDateRange, setTimeConfigDateRange] = useState(null);
+
+  // Sum of qty already assigned per (orderId, productIndex, taskName) — lets the
+  // Suggested Tasks chips stop offering a task name once it's already fully covered,
+  // while still offering any OTHER task name the product still needs (each task name
+  // needs the full qty independently — see normTaskName above).
+  const assignedQtyByKey = useMemo(() => {
+    const map = new Map();
+    (tasksData?.data || []).forEach((t) => {
+      const oid = (typeof t.orderId === 'object' ? t.orderId?._id : t.orderId)?.toString();
+      if (!oid) return;
+      const key = `${oid}-${t.productIndex ?? 'x'}-${(t.taskName || '').trim().toLowerCase()}`;
+      map.set(key, (map.get(key) || 0) + (Number(t.qty) || 0));
+    });
+    return map;
+  }, [tasksData]);
 
   const taskList = useMemo(() => (tasksData?.data || []).map((t) => ({
     key: t._id,
@@ -316,16 +396,22 @@ export default function Tasks() {
 
   // Open the Assign-Task modal pre-filled from a Suggested-Task readiness card.
   // Task details (assignee, priority, due date) are mandatory — no direct assign.
-  const handleAssignSuggested = (s) => {
+  // Mirrors Operations' openAssignModal: just Order ID/Product + Task Breakdown by
+  // Quantity — no Priority/Due Date/Description prompts. Priority and start time are
+  // derived automatically instead of asked for, same as the Operations flow.
+  // presetTaskName: set when opened from a "Suggested Tasks" quick-assign chip (e.g.
+  // "Filling") — pre-fills the first breakdown row so the user doesn't retype it.
+  const handleAssignSuggested = (s, presetTaskName) => {
     if (!requireAccess('add')) return;
     setAssignTarget(s);
     assignForm.resetFields();
     assignForm.setFieldsValue({
-      priority: s.isUrgent ? 'Urgent' : undefined,
+      orderId: s.orderCode,
+      product: s.product,
       // Auto-fetch the start time from the assignment time (now).
       startTime: dayjs(),
     });
-    setAssignSubTasks([]);
+    setAssignSubTasks(presetTaskName ? [{ id: nextSubTaskId(), description: presetTaskName, qty: s.qty || '', assignee: '' }] : []);
     setAssignModalOpen(true);
   };
 
@@ -364,12 +450,14 @@ export default function Tasks() {
     setNewSubTasks([]);
   };
 
-  // Submit the Assign-Task modal — validates mandatory fields before creating.
+  // Submit the Assign-Task modal — mirrors Operations' submitAssignTask: no Priority/Due
+  // Date/Description prompts, just the Task Breakdown rows. Priority is derived from the
+  // order's own emergency flag instead of asked for, same as Operations does.
   const handleSubmitAssign = async () => {
     const s = assignTarget;
     if (!s) return;
     try {
-      const vals = await assignForm.validateFields();
+      await assignForm.validateFields();
       // No top-level Task Title/Assign To anymore — require at least one filled task below.
       const filledSubTasks = assignSubTasks.filter((st) => st.description || st.qty || st.assignee);
       if (filledSubTasks.length === 0) {
@@ -382,6 +470,7 @@ export default function Tasks() {
         return;
       }
       const startDt = dayjs();
+      const priority = s.isUrgent ? 'Urgent' : 'Medium';
       const cleanSubTasks = filledSubTasks.map((st) => {
         const u = assignableUsers.find((x) => x._id === st.assignee);
         return { label: st.description, qty: Number(st.qty) || 0, assignedTo: u?._id, assigneeName: u?.fullName };
@@ -397,18 +486,16 @@ export default function Tasks() {
           await createTask({ // eslint-disable-line no-await-in-loop
             taskName: row.label,
             taskType: 'Production',
-            priority: vals.priority,
+            priority,
             assignedTo: row.assignedTo,
             assigneeName: row.assigneeName,
-            dueDate: vals.due ? vals.due.toISOString() : undefined,
-            description: vals.desc,
             orderId: s.orderId,
             product: s.product,
             productIndex,
             qty: row.qty,
             clientName: s.client,
             status: 'Pending',
-            isEmergency: vals.priority === 'Urgent',
+            isEmergency: s.isUrgent,
             plannedStartTime: startDt.toISOString(),
             ...(rowEstimate.matched ? {
               estimatedDurationSec: rowEstimate.estimatedSec,
@@ -442,6 +529,7 @@ export default function Tasks() {
     if (cfg) {
       configForm.setFieldsValue({
         taskName: cfg.taskName,
+        product: cfg.product || '',
         inputValue: cfg.inputValue ?? secToUnit(cfg.timePerUnitSec, cfg.inputUnit || 'min'),
         inputUnit: cfg.inputUnit || 'min',
         notes: cfg.notes || '',
@@ -457,6 +545,7 @@ export default function Tasks() {
     try { vals = await configForm.validateFields(); } catch { return; }
     const payload = {
       taskName: vals.taskName.trim(),
+      product: (vals.product || '').trim(),
       inputValue: Number(vals.inputValue) || 0,
       inputUnit: vals.inputUnit || 'min',
       notes: vals.notes || '',
@@ -831,10 +920,43 @@ export default function Tasks() {
                   type="info"
                   showIcon
                   icon={<BulbOutlined />}
-                  message="Today's Checklist — Hotel-wise Production"
-                  description="Order products grouped by hotel. Click a hotel to see its orders and resource readiness. Items with pending components are shown to help plan the workflow."
+                  message={(
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                      <span>Today's Checklist — Hotel-wise Production</span>
+                      {suggestedList.length > 0 && (
+                        <Button
+                          size="small"
+                          icon={<RobotOutlined />}
+                          loading={taskInsightLoading}
+                          onClick={handleGetTaskInsight}
+                          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', color: '#fff' }}
+                        >
+                          {taskInsightLoading ? 'Analysing...' : 'Get AI Insight'}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  description="Order products grouped by hotel — readiness here is based on inventory stock. Emergency orders are prioritized first, then oldest-placed orders. Stock shortages are marked in red."
                   style={{ marginBottom: 16, borderRadius: 8 }}
                 />
+
+                {taskInsight && (
+                  <div style={{ marginBottom: 16, padding: '16px 20px', borderRadius: 12, background: 'linear-gradient(135deg,#B11E6A18,#D85C9E10)', border: '1.5px solid #B11E6A44' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <RobotOutlined style={{ color: '#fff', fontSize: 16 }} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 4 }}>
+                          AI Insight — Today's Priorities
+                        </Text>
+                        <Text style={{ fontSize: 13, color: isDark ? '#e0e0e0' : '#333', lineHeight: 1.7, whiteSpace: 'pre-line' }}>
+                          {taskInsight}
+                        </Text>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {suggestedList.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '48px 0' }}>
@@ -859,15 +981,23 @@ export default function Tasks() {
                         </div>
                         <Row gutter={[16, 16]}>
                           {items.map((s) => {
-                            const readyAlertType = s.fullyReady ? 'success' : 'warning';
-                            const readyText = s.fullyReady
+                            // Design/printing are hard-gated server-side — every item reaching this
+                            // checklist is print/design-complete already, so readiness here is purely
+                            // about stock.
+                            const readyAlertType = s.stockReady ? 'success' : 'error';
+                            const readyText = s.stockReady
                               ? 'All resources ready — safe to assign and start production.'
-                              : `Ready to plan. Pending: ${s.pending.join(', ')}.`;
+                              : 'Stock Not Available — insufficient inventory to fully produce this item.';
                             return (
                               <Col xs={24} md={12} lg={8} key={s.id}>
                                 <motion.div whileHover={{ y: -2 }}>
                                   <Card
-                                    style={{ borderRadius: 12, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                                    style={{
+                                      borderRadius: 12,
+                                      border: s.stockReady ? 'none' : '1.5px solid #ff4d4f',
+                                      background: s.stockReady ? cardBg : (isDark ? '#2d1516' : '#fff1f0'),
+                                      boxShadow: s.stockReady ? '0 4px 20px rgba(177,30,106,0.06)' : '0 4px 20px rgba(255,77,79,0.15)',
+                                    }}
                                     styles={{ body: { padding: 16 } }}
                                   >
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
@@ -880,9 +1010,9 @@ export default function Tasks() {
                                     <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{s.product}</Text>
                                     <Space size={4} wrap style={{ marginBottom: 10 }}>
                                       {s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
-                                      <Tag color={s.stockReady ? 'green' : 'red'}>Stock {s.inventoryStock ?? '—'}</Tag>
-                                      <Tag color={s.stickerReady ? 'green' : 'orange'}>{s.designType || 'Design'} {s.stickerReady ? '✓' : '⏳'}</Tag>
-                                      <Tag color={s.printingReady ? 'green' : 'orange'}>Print {s.printingReady ? '✓' : '⏳'}</Tag>
+                                      <Tag color={s.stockReady ? 'green' : 'red'}>
+                                        {s.stockReady ? `Stock: ${s.inventoryStock ?? '—'}` : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
+                                      </Tag>
                                     </Space>
                                     <Alert
                                       type={readyAlertType}
@@ -890,6 +1020,29 @@ export default function Tasks() {
                                       message={readyText}
                                       style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
                                     />
+                                    {/* Suggested Tasks — quick-assign chips, filtered to only the configured
+                                        task names that actually fit THIS product/order spec (see
+                                        getRelevantTaskOptions): explicit per-product configs, or general
+                                        configs matched by product-name/sticker/print/pack keywords. */}
+                                    {(() => {
+                                      const relevantOptions = s.stockReady ? getRelevantTaskOptions(s) : [];
+                                      return relevantOptions.length > 0 && (
+                                        <div style={{ marginBottom: 12 }}>
+                                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Suggested Tasks</Text>
+                                          <Space size={4} wrap>
+                                            {relevantOptions.map((opt) => (
+                                              <Tag
+                                                key={opt.value}
+                                                style={{ cursor: 'pointer', borderRadius: 10, borderColor: '#B11E6A66', color: '#B11E6A' }}
+                                                onClick={() => handleAssignSuggested(s, opt.value)}
+                                              >
+                                                + {opt.label}
+                                              </Tag>
+                                            ))}
+                                          </Space>
+                                        </div>
+                                      );
+                                    })()}
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                                       <Button
                                         size="small" type="primary" icon={<UserOutlined />}
@@ -935,8 +1088,8 @@ export default function Tasks() {
                               <Space size={[4, 4]} wrap style={{ marginBottom: 8 }}>
                                 <Tag color="blue">{orderCount} order{orderCount !== 1 ? 's' : ''}</Tag>
                                 <Tag color="default">{allItems.length} item{allItems.length !== 1 ? 's' : ''}</Tag>
-                                {readyCount > 0 && <Tag color="green">{readyCount} ready</Tag>}
-                                {allItems.length - readyCount > 0 && <Tag color="orange">{allItems.length - readyCount} pending</Tag>}
+                                {readyCount > 0 && <Tag color="green">{readyCount} stock ready</Tag>}
+                                {allItems.length - readyCount > 0 && <Tag color="red">{allItems.length - readyCount} stock short</Tag>}
                               </Space>
                               <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', marginTop: 4 }}>
                                 Click to view orders →
@@ -1203,6 +1356,10 @@ export default function Tasks() {
                     columns={[
                       { title: 'Task Name', dataIndex: 'taskName', render: (v) => <Text strong>{v}</Text> },
                       {
+                        title: 'Applies To', dataIndex: 'product',
+                        render: (v) => (v ? <Tag color="geekblue">{v}</Tag> : <Text type="secondary" style={{ fontSize: 12 }}>General</Text>),
+                      },
+                      {
                         title: 'Time / Unit',
                         key: 'time',
                         render: (_, r) => <Tag color="purple">{r.inputValue ?? secToUnit(r.timePerUnitSec, r.inputUnit || 'min')} {r.inputUnit || 'min'}</Tag>,
@@ -1388,40 +1545,33 @@ export default function Tasks() {
         </Form>
       </Modal>
 
-      {/* ── Assign Task Modal (from Today's Checklist) ────────────────────────── */}
+      {/* ── Assign Task Modal (from Today's Checklist) — mirrors Operations' Assign Task
+            modal: Order ID/Product read-only fields + Task Breakdown by Quantity only,
+            no Priority/Due Date/Description prompts. ────────────────────────── */}
       <Modal
-        title="Assign Task"
+        title={
+          <Space>
+            <TeamOutlined style={{ color: '#B11E6A' }} />
+            <span>Assign Task</span>
+            {assignTarget?.isUrgent && <Tag color="red">Emergency</Tag>}
+          </Space>
+        }
         open={assignModalOpen}
         onCancel={() => { setAssignModalOpen(false); setAssignTarget(null); }}
-        footer={[
-          <Button key="cancel" onClick={() => { setAssignModalOpen(false); setAssignTarget(null); }}>Cancel</Button>,
-          <Button key="assign" type="primary" onClick={handleSubmitAssign} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Assign Task</Button>,
-        ]}
+        footer={null}
         width={Math.min(520, window.innerWidth - 32)}
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto', paddingRight: 4 } }}>
-        {assignTarget && (
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 16, borderRadius: 8 }}
-            message={`${assignTarget.product}${assignTarget.qty > 0 ? ` — ${Number(assignTarget.qty).toLocaleString()} units` : ''}`}
-            description={`${assignTarget.client || 'Unknown'}${assignTarget.orderCode ? ` · ${assignTarget.orderCode}` : ''}`}
-          />
-        )}
-        <Form form={assignForm} layout="vertical">
+        <Form form={assignForm} layout="vertical" style={{ marginTop: 8 }}>
           <Row gutter={16}>
             <Col xs={24} sm={12}>
-              <Form.Item label="Priority" name="priority" rules={[{ required: true, message: 'Please select a priority' }]}>
-                <Select>{Object.keys(priorityColor).map((p) => <Option key={p} value={p}>{p}</Option>)}</Select>
+              <Form.Item label="Order ID" name="orderId">
+                <Input readOnly style={{ borderRadius: 8, background: isDark ? '#2a2a3a' : '#fafafa' }} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item label="Due Date" name="due" rules={[{ required: true, message: 'Please select a due date' }]}>
-                <DatePicker style={{ width: '100%' }} />
+              <Form.Item label="Product" name="product">
+                <Input readOnly style={{ borderRadius: 8, background: isDark ? '#2a2a3a' : '#fafafa' }} />
               </Form.Item>
-            </Col>
-            <Col xs={24}>
-              <Form.Item label="Description" name="desc"><Input.TextArea rows={3} /></Form.Item>
             </Col>
 
             {/* Task Breakdown by Quantity — each task below is independent: its own Task
@@ -1526,6 +1676,24 @@ export default function Tasks() {
               </Col>
             )}
           </Row>
+
+          <Form.Item style={{ marginBottom: 0, marginTop: 16 }}>
+            <Button
+              type="primary"
+              block
+              style={{
+                height: 42,
+                borderRadius: 10,
+                background: 'linear-gradient(135deg,#B11E6A,#D85C9E)',
+                border: 'none',
+                fontWeight: 600,
+                boxShadow: '0 4px 15px rgba(177,30,106,0.3)',
+              }}
+              onClick={handleSubmitAssign}
+            >
+              Create and Assign Task
+            </Button>
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -1548,6 +1716,13 @@ export default function Tasks() {
             extra="e.g. Sticker placing, Packing, Sealing, Filling, Printing"
           >
             <Input placeholder="Task name" />
+          </Form.Item>
+          <Form.Item
+            label="Applies To (Product)"
+            name="product"
+            extra="Optional — scope this task to one product (e.g. Shampoo). Leave blank to let it apply generally, wherever its name/keywords fit."
+          >
+            <Input placeholder="e.g. Shampoo — leave blank for general" />
           </Form.Item>
           <Row gutter={12}>
             <Col xs={14}>

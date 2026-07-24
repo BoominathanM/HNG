@@ -445,12 +445,15 @@ exports.compareQuotations = asyncHandler(async (req, res, next) => {
     // then resolve each to its true index in `fileDocs` via URL match so
     // `results[i].fileIndex` reliably points back into `comparison.files`.
     const n = Math.min(usableFiles.length, parsed.suppliers.length);
+    // AI-facing fileIndex is positional within `usableFiles` (0..n-1) — this maps that
+    // back to the true index in `fileDocs`, reused below for productComparison entries.
+    const usableIdxToOriginal = usableFiles.map((f) => fileDocs.findIndex((fd) => fd.url === f.url));
     const results = [];
     for (let i = 0; i < n; i++) {
       const s = parsed.suppliers[i] || {};
-      const originalIndex = fileDocs.findIndex((f) => f.url === usableFiles[i].url);
+      const originalIndex = usableIdxToOriginal[i] >= 0 ? usableIdxToOriginal[i] : i;
       results.push({
-        fileIndex: originalIndex >= 0 ? originalIndex : i,
+        fileIndex: originalIndex,
         name: s.name || usableFiles[i].originalName || `Quotation ${i + 1}`,
         price: Number(s.price) || 0,
         currency: s.currency || 'INR',
@@ -460,6 +463,14 @@ exports.compareQuotations = asyncHandler(async (req, res, next) => {
         score: Math.max(0, Math.min(100, Math.round(Number(s.score)) || 0)),
         pros: Array.isArray(s.pros) ? s.pros.slice(0, 5) : [],
         cons: Array.isArray(s.cons) ? s.cons.slice(0, 5) : [],
+        items: Array.isArray(s.items)
+          ? s.items.slice(0, 40).map((it) => ({
+              name: it.name || '',
+              qty: Number(it.qty) || 0,
+              unitPrice: Number(it.unitPrice) || 0,
+              totalPrice: Number(it.totalPrice) || (Number(it.unitPrice) || 0) * (Number(it.qty) || 0),
+            })).filter((it) => it.name)
+          : [],
       });
     }
 
@@ -469,8 +480,46 @@ exports.compareQuotations = asyncHandler(async (req, res, next) => {
       ? parsed.bestIndex
       : results.reduce((bestI, r, i, arr) => (r.score > arr[bestI].score ? i : bestI), 0);
 
+    // Product-wise comparison — same product matched across documents by the AI (handles
+    // related/synonymous naming), best price per-product recomputed here from the entries
+    // themselves rather than trusted from the model, so it can never point at a nonexistent
+    // or unpriced entry.
+    const nameByOriginalIndex = {};
+    results.forEach((r) => { nameByOriginalIndex[r.fileIndex] = r.name; });
+    const productComparison = Array.isArray(parsed.productComparison)
+      ? parsed.productComparison.slice(0, 40).map((p) => {
+          const entries = (Array.isArray(p.entries) ? p.entries : []).map((e) => {
+            const usableIdx = Number(e.fileIndex);
+            const originalIndex = Number.isInteger(usableIdx) && usableIdx >= 0 && usableIdx < usableIdxToOriginal.length
+              ? usableIdxToOriginal[usableIdx]
+              : -1;
+            if (originalIndex < 0) return null;
+            return {
+              fileIndex: originalIndex,
+              name: nameByOriginalIndex[originalIndex] || '',
+              matchedName: e.matchedName || '',
+              qty: Number(e.qty) || 0,
+              unitPrice: Number(e.unitPrice) || 0,
+              totalPrice: Number(e.totalPrice) || 0,
+            };
+          }).filter(Boolean);
+          if (!entries.length) return null;
+          const priced = entries.filter((e) => e.unitPrice > 0);
+          const best = (priced.length ? priced : entries).reduce((a, b) => (b.unitPrice > 0 && (a.unitPrice === 0 || b.unitPrice < a.unitPrice) ? b : a));
+          return {
+            productName: p.productName || entries[0].matchedName || 'Unnamed product',
+            aliases: Array.isArray(p.aliases) ? p.aliases.slice(0, 8).map(String) : [],
+            entries,
+            bestFileIndex: best.fileIndex,
+            bestPrice: best.unitPrice,
+            note: p.note || '',
+          };
+        }).filter(Boolean)
+      : [];
+
     comparison.results = results;
     comparison.recommendation = { bestIndex, summary: parsed.summary || '' };
+    comparison.productComparison = productComparison;
     comparison.status = 'Completed';
     if (skipped?.length) {
       comparison.error = `${skipped.length} file(s) skipped (unsupported type — only PDF/JPG/PNG/WEBP are analyzed): ${skipped.map((f) => f.originalName).join(', ')}`;
@@ -486,6 +535,7 @@ exports.compareQuotations = asyncHandler(async (req, res, next) => {
         best: { name: results[bestIndex]?.name, score: results[bestIndex]?.score },
         bestIndex,
         suppliers: results,
+        productComparison,
         summary: comparison.recommendation.summary,
         warning: comparison.error || null,
       },

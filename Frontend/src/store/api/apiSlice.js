@@ -302,6 +302,10 @@ export const apiSlice = createApi({
       query: ({ id, itemId, formData }) => ({ url: `/dispatch/${id}/items/${itemId}/box-photos`, method: 'post', data: formData }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
+    uploadKitBoxPhotos: builder.mutation({
+      query: ({ id, kitDispatchId, formData }) => ({ url: `/dispatch/${id}/kits/${kitDispatchId}/box-photos`, method: 'post', data: formData }),
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
+    }),
     addBoxPhotoUrl: builder.mutation({
       query: ({ id, type, url }) => ({ url: `/dispatch/${id}/box-photo-url`, method: 'patch', data: { type, url } }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
@@ -724,6 +728,11 @@ export const apiSlice = createApi({
     getSuggestedTasks: builder.query({
       query: () => ({ url: '/tasks/suggested' }),
       providesTags: ['SuggestedTasks', 'Tasks', 'Inventory'],
+    }),
+    // Button-triggered AI summary on top of Today's Checklist — use the lazy hook so it
+    // only fires on demand, not on every poll/refetch of getSuggestedTasks.
+    getSuggestedTasksInsight: builder.query({
+      query: () => ({ url: '/tasks/suggested/insight' }),
     }),
     getEmergencyRequests: builder.query({
       query: () => ({ url: '/tasks/emergency-requests' }),
@@ -1266,6 +1275,7 @@ export const {
   useVerifyInvoiceMutation,
   useUploadBoxPhotosMutation,
   useUploadItemBoxPhotosMutation,
+  useUploadKitBoxPhotosMutation,
   useAddBoxPhotoUrlMutation,
   useGetTodaysDispatchesQuery,
   useGetTransportsQuery,
@@ -1279,6 +1289,7 @@ export const {
   useGetHotelNamesQuery,
   useLazyLookupHotelQuery,
   useGetSuggestedTasksQuery,
+  useLazyGetSuggestedTasksInsightQuery,
   useAssignTasksPerProductMutation,
   useSetOrderEmergencyMutation,
   useSplitPartialDeliveryMutation,

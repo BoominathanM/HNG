@@ -105,18 +105,29 @@ const SYSTEM_PROMPT = `You are a procurement analyst for a manufacturing company
 - score: an integer 0-100 reflecting overall procurement value — weigh price most heavily, then delivery speed, then payment-term favorability, then quality
 - pros: 1-3 short bullet strings
 - cons: 1-3 short bullet strings
+- items: EVERY line item printed on that document, as { "name": "...", "qty": 0, "unitPrice": 0, "totalPrice": 0 }. Read the actual printed line-item name — do not invent items.
 
 Then pick the single best document overall by index.
+
+Then build a PRODUCT-WISE comparison across all documents, so the same physical product can be compared line-by-line even when each supplier names it slightly differently. Group line items from different documents together when they refer to the same real-world product — match on meaning, not just exact text: treat singular/plural, abbreviations, brand-vs-generic naming, and closely related/synonymous terms as the same product (for example "Soap" and "Bar" both refer to bar soap; "Ziplock" and "Pouch" both refer to a ziplock pouch). Do not merge genuinely different products just because they share a category. For each product group, report:
+- productName: a clean, human-readable canonical name for the group
+- aliases: the different names each supplier actually printed for this same product
+- entries: one entry per document that quotes this product — { "fileIndex": 0, "matchedName": "the exact name that document used", "qty": 0, "unitPrice": 0, "totalPrice": 0 }. Omit documents that don't quote this product at all.
+- bestFileIndex: the fileIndex with the best (lowest, all else equal) unit price for this specific product
+- note: one short sentence on why that document is the best choice for this specific product (e.g. lowest unit price, or a meaningful tradeoff)
 
 Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
 {
   "suppliers": [
-    { "fileIndex": 0, "name": "...", "price": 0, "currency": "INR", "delivery": "...", "quality": "Standard", "terms": "...", "score": 0, "pros": ["..."], "cons": ["..."] }
+    { "fileIndex": 0, "name": "...", "price": 0, "currency": "INR", "delivery": "...", "quality": "Standard", "terms": "...", "score": 0, "pros": ["..."], "cons": ["..."], "items": [ { "name": "...", "qty": 0, "unitPrice": 0, "totalPrice": 0 } ] }
   ],
   "bestIndex": 0,
-  "summary": "2-3 sentence explanation of why bestIndex was chosen over the others"
+  "summary": "2-3 sentence explanation of why bestIndex was chosen over the others",
+  "productComparison": [
+    { "productName": "...", "aliases": ["..."], "entries": [ { "fileIndex": 0, "matchedName": "...", "qty": 0, "unitPrice": 0, "totalPrice": 0 } ], "bestFileIndex": 0, "note": "..." }
+  ]
 }
-If a document is unreadable, blurry, or not actually a quotation, still include an entry for it with your best-effort guess, a low score, and "Could not fully read this document" as a con.`;
+If a document is unreadable, blurry, or not actually a quotation, still include an entry for it with your best-effort guess, a low score, and "Could not fully read this document" as a con (and an empty items array).`;
 
 // files: [{ url, originalName, mimetype }] — Cloudinary-hosted, already uploaded by multer.
 async function compareQuotationFiles({ apiKey, model, files }) {
@@ -402,6 +413,71 @@ async function extractLorryReceiptFields({ apiKey, model, file }) {
   };
 }
 
+// ─── Task Management: Today's Checklist AI insight ──────────────────────────
+
+const TASK_INSIGHT_PROMPT = `You are a production floor planner for a manufacturing company. You will be given: (1) a list of the factory's configured production task names (the actual, real steps its floor staff assign, e.g. "Filling", "Packing", "Sealing"), and (2) a JSON list of today's suggested checklist items, each with: orderCode, client (hotel), product, qty, isEmergency, stockReady (whether there's enough inventory to produce it), pending (non-empty only when stock is short), orderPlacedAt (when the order was placed).
+
+Readiness on this checklist is driven ONLY by stock — every item listed is already clear to produce as far as design/artwork/printing go, so do NOT mention design, artwork, sticker, or printing status anywhere in your answer; talk only about stock and the actual production steps.
+
+Write a short, prioritized action plan for the floor supervisor:
+- Call out emergency orders first, then the oldest non-emergency orders (first placed, first processed).
+- For items with enough stock, recommend which of the factory's configured task names to assign first (e.g. "Filling" then "Packing") — pick only from the task name list given, never invent a step that isn't in it.
+- Name specific orders/products that are blocked by insufficient stock.
+- If the same or a closely related product repeats across multiple orders/hotels, suggest batching them into one production run.
+- Keep it concise and actionable: 3-6 short bullet points, each one sentence, plain language.
+
+Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
+{ "insight": "• bullet one\\n• bullet two\\n..." }`;
+
+// suggestions: the array returned by computeSuggestedTasks() in tasks.controller.js.
+// taskNames: the factory's configured TaskTimeConfig names (e.g. ["Filling", "Packing"]).
+async function generateTaskInsight({ apiKey, model, suggestions, taskNames }) {
+  const compact = (suggestions || []).slice(0, 60).map((s) => ({
+    orderCode: s.orderCode,
+    client: s.client,
+    product: s.product,
+    qty: s.qty,
+    isEmergency: !!(s.isUrgent || s.emergencyApproved),
+    stockReady: s.stockReady,
+    pending: s.pending,
+    orderPlacedAt: s.orderCreatedAt,
+  }));
+
+  const result = await openAiRequest('/chat/completions', {
+    apiKey,
+    method: 'POST',
+    timeoutMs: 60000,
+    body: {
+      model: model || DEFAULT_MODEL,
+      messages: [
+        { role: 'system', content: TASK_INSIGHT_PROMPT },
+        {
+          role: 'user',
+          content: `Configured task names available to assign: ${JSON.stringify(taskNames || [])}\n\nToday's suggested tasks (${compact.length} items):\n${JSON.stringify(compact)}`,
+        },
+      ],
+      response_format: { type: 'json_object' },
+    },
+  });
+
+  if (result.statusCode !== 200) {
+    const msg = result.body?.error?.message || `OpenAI API returned status ${result.statusCode}`;
+    throw Object.assign(new Error(msg), { statusCode: result.statusCode === 401 ? 401 : 502 });
+  }
+
+  const raw = result.body?.choices?.[0]?.message?.content;
+  if (!raw) throw new Error('OpenAI returned an empty response');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Failed to parse the AI response as JSON');
+  }
+
+  return parsed.insight || '';
+}
+
 module.exports = {
   getAiConfig,
   resolveApiKey,
@@ -411,5 +487,6 @@ module.exports = {
   extractVendorFields,
   extractInvoiceFields,
   extractLorryReceiptFields,
+  generateTaskInsight,
   DEFAULT_MODEL,
 };

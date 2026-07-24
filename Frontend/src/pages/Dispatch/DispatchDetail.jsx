@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, InputNumber, Upload, Typography, Space,
   Steps, Descriptions, Alert, Tag, Checkbox,
-  Select, Table, Divider, Spin, Image,
+  Table, Divider, Spin, Image,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import html2pdf from 'html2pdf.js';
@@ -22,10 +22,10 @@ import {
   useGetDispatchQuery,
   useConfirmDispatchMutation,
   useUploadDispatchLRMutation,
-  useVerifyItemMutation,
   useSaveAsDraftMutation,
   useUploadBoxPhotosMutation,
   useUploadItemBoxPhotosMutation,
+  useUploadKitBoxPhotosMutation,
   useGetInvoicesQuery,
   useGetCompanySettingsQuery,
   useGetKitsQuery,
@@ -35,10 +35,9 @@ import {
 import { buildDocComposition } from '../../utils/docComposition';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
-import { buildDispatchGroupedProducts, summarizeDispatchVerification } from '../../utils/dispatchGrouping';
+import { buildDispatchGroupedProducts, summarizeDispatchVerification, getRowPendingQty } from '../../utils/dispatchGrouping';
 
 const { Title, Text } = Typography;
-const { Option } = Select;
 
 const statusColor = {
   'Ready to Dispatch': '#C94F8A',
@@ -66,10 +65,10 @@ export default function DispatchDetail() {
   const { data: dispatchData, isLoading: dispatchLoading } = useGetDispatchQuery(id, { skip: !id });
   const [confirmDispatch] = useConfirmDispatchMutation();
   const [uploadLR] = useUploadDispatchLRMutation();
-  const [verifyItem] = useVerifyItemMutation();
   const [saveAsDraft] = useSaveAsDraftMutation();
   const [uploadBoxPhotos] = useUploadBoxPhotosMutation();
   const [uploadItemBoxPhotos] = useUploadItemBoxPhotosMutation();
+  const [uploadKitBoxPhotos] = useUploadKitBoxPhotosMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
   const [scanDispatchLR] = useScanDispatchLRMutation();
 
@@ -124,9 +123,9 @@ export default function DispatchDetail() {
     }
   };
 
-  // Per-product open/closed box photo upload — required before that product can be
-  // verified. Relies on the Dispatch cache invalidation to refetch, so the row's
-  // openBoxPhotos/closeBoxPhotos (threaded through dispatchGrouping's toRow) update
+  // Per-product open/closed box photo upload (Separate Product rows only — kits use
+  // makeKitBoxUpload below). Relies on the Dispatch cache invalidation to refetch, so the
+  // row's openBoxPhotos/closeBoxPhotos (threaded through dispatchGrouping's toRow) update
   // reactively — no local counter state needed.
   const makeItemBoxUpload = (itemId, type) => async ({ file, onSuccess, onError }) => {
     const key = `${itemId}-${type}`;
@@ -136,6 +135,27 @@ export default function DispatchDetail() {
     fd.append('type', type);
     try {
       const result = await uploadItemBoxPhotos({ id, itemId, formData: fd }).unwrap();
+      onSuccess(result.data, file);
+      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo saved`, { variant: 'success' });
+    } catch {
+      onError(new Error('Upload failed'));
+      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo upload failed`, { variant: 'error' });
+    } finally {
+      stopUploading(key);
+    }
+  };
+
+  // Kit-level open/closed box photo upload — Personalized Kit / Separate Kit are
+  // dispatched (and photographed) as ONE unit, so this is called once per kit, not once
+  // per component. `kitDispatchId` is the DispatchRecord.kitDispatch subdoc _id.
+  const makeKitBoxUpload = (kitDispatchId, type) => async ({ file, onSuccess, onError }) => {
+    const key = `kit-${kitDispatchId}-${type}`;
+    startUploading(key);
+    const fd = new FormData();
+    fd.append('photos', file);
+    fd.append('type', type);
+    try {
+      const result = await uploadKitBoxPhotos({ id, kitDispatchId, formData: fd }).unwrap();
       onSuccess(result.data, file);
       enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo saved`, { variant: 'success' });
     } catch {
@@ -164,15 +184,24 @@ export default function DispatchDetail() {
     if (filterVerified) {
       // dispatch items (order.items) line up positionally with the order's own
       // products/items array — same fallback convention dispatchGrouping.js and the
-      // emergency-badge lookup below already rely on — so verified state at index i
-      // applies to srcProds[i].
+      // emergency-badge lookup below already rely on — so "actually dispatched" state at
+      // index i applies to srcProds[i]. Kit-linked items are dispatched as one unit via
+      // kitDispatch (dispatchedQty > 0 for that kit); plain items use their own
+      // qtyDispatched — replaces the old per-item verified flag.
       const dispatchItemsList = order?.items || [];
-      const verifiedIndexSet = new Set(
+      const kitDispatchByKitId = new Map((order?.kitDispatch || []).map((kd) => [String(kd.kitId), kd]));
+      const dispatchedIndexSet = new Set(
         dispatchItemsList
-          .map((it, i) => (it?._id && (verifiedProducts.has(it._id) || it.verified) ? i : -1))
+          .map((it, i) => {
+            if (!it?._id) return -1;
+            const isDispatched = it.kitId
+              ? (kitDispatchByKitId.get(String(it.kitId))?.dispatchedQty || 0) > 0
+              : (it.qtyDispatched || 0) > 0;
+            return isDispatched ? i : -1;
+          })
           .filter((i) => i >= 0)
       );
-      const filteredProds = srcProds.filter((_, i) => verifiedIndexSet.has(i));
+      const filteredProds = srcProds.filter((_, i) => dispatchedIndexSet.has(i));
       srcKitOrders = srcKitOrders.filter((ko) => !ko.kitId || filteredProds.some((p) => String(p.kitId) === String(ko.kitId)));
       srcProds = filteredProds;
     }
@@ -236,9 +265,9 @@ export default function DispatchDetail() {
     };
   };
 
-  // filterVerified=true → "Print Invoice" / "Print Combined Invoice" (only verified
-  // products so far). filterVerified=false → "Print Full Invoice" (every order item,
-  // available once fully dispatched, regardless of verification).
+  // filterVerified=true → "Print Invoice" / "Print Combined Invoice" (only products/kits
+  // actually dispatched so far). filterVerified=false → "Print Full Invoice" (every order
+  // item, available once fully dispatched, regardless of progress).
   const handlePrintInvoice = async (filterVerified = true) => {
     const rawInvoices = orderInvoicesData?.data || [];
     if (rawInvoices.length === 0) {
@@ -342,6 +371,14 @@ export default function DispatchDetail() {
       // kit fields were copied onto DispatchRecord.items.
       orderRawItems: o.items || [],
       kitOrders: o.kitOrders || [],
+      // Sales' "Select Kit(s) to Include" physical packing instruction — which separate
+      // kit(s)/product(s) are packed inside the personalized kit's own box. Consumed by
+      // dispatchGrouping.js to nest those under the Personalized Kit header instead of
+      // showing them as their own Separate Kit/Product row.
+      packagingIncludes: o.packagingIncludes || [],
+      // Per-kit dispatch progress (overallQty/dispatchedQty/photos per kit, dispatched
+      // as one unit) — see dispatchGrouping.js.
+      kitDispatch: d.kitDispatch || [],
       // Emergency split — same source Operations reads (splitDates), used here to badge
       // which product/kit rows are emergency and to gate the Partial → Full dispatch flow.
       isEmergency: !!(o.isEmergency || lead.isEmergency),
@@ -363,6 +400,10 @@ export default function DispatchDetail() {
       storedWeight: d.weight || '',
       storedBoxes: d.boxes || 0,
       storedDispatchType: d.dispatchType || null,
+      // Full trail of every confirm round that actually dispatched something — each entry
+      // is frozen at the time it happened (transport/weight/boxes for THAT round), unlike
+      // the top-level transportName/weight/boxes fields which get overwritten each round.
+      dispatchHistory: d.dispatchHistory || [],
       // The backend only ever sets DispatchRecord.status to 'Confirmed' — both for the
       // Partial Dispatch checkpoint AND the real Full Dispatch confirm — so `status` alone
       // can't tell the two apart. `dispatchedAt` is only ever set on the real Full Dispatch
@@ -449,21 +490,13 @@ export default function DispatchDetail() {
       transport: order.storedTransportName || (order.transport !== '—' ? order.transport : ''),
       weight: order.storedWeight || (order.weight !== '—' ? order.weight : ''),
       boxes: order.storedBoxes || order.boxes || 0,
-      dispatchType: order.storedDispatchType || undefined,
       invoiceNumber: order.storedInvoiceNumber || '',
     });
 
-    // Sync dispatchType state so the product verification table shows
-    if (order.storedDispatchType) {
-      setDispatchType(order.storedDispatchType);
-    }
-
-    // A prior Partial Dispatch checkpoint was already confirmed — force the next round
-    // to Full Dispatch and keep the Confirm button active for it.
+    // A prior Partial Dispatch checkpoint was already confirmed — keep the Confirm
+    // button active so the remaining pending counts can go out as the final round.
     if (order.storedPartialDispatchConfirmed) {
       setPartialConfirmed(true);
-      setDispatchType('Full Dispatch');
-      form.setFieldsValue({ dispatchType: 'Full Dispatch' });
     }
 
     // Dispatched status — `dispatchedAt` (not `status`) is the reliable signal: `status`
@@ -534,9 +567,10 @@ export default function DispatchDetail() {
   const fwdAmountRaised = order && !order.isCredit && effectiveFwdAmount > (order.forwardingChargeAmount || 0);
   const paymentConfirmed = order?.isCredit || (!fwdAmountRaised && (order?.basePaymentConfirmed || false));
 
-  // Dispatch verification state
-  const [dispatchType, setDispatchType] = useState(null);
-  const [verifiedProducts, setVerifiedProducts] = useState(new Set());
+  // Dispatch verification state — how many units of each dispatchable row (kit header or
+  // separate-product row) the dispatcher is sending THIS round, keyed by row key. Reset
+  // after each confirm so the next round starts from the freshly-refetched pending counts.
+  const [dispatchNowCounts, setDispatchNowCounts] = useState({});
   // Single checkbox: when checked, a "Dispatch Notify" WhatsApp message (with the invoice
   // attached) is sent to both the order's sales person and the customer on confirm.
   const [notifyWhatsApp, setNotifyWhatsApp] = useState(true);
@@ -563,45 +597,11 @@ export default function DispatchDetail() {
   const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
   const sectionBg = isDark ? '#161622' : '#fafbff';
 
-  // A row reads as verified if this session toggled it OR the backend already has it
-  // stored (row.verified, persisted by a previous verifyItem call) — without this
-  // fallback, verified products flip back to "Pending" on every reload/revisit even
-  // though the DB still has them marked verified.
-  const isRowVerified = (row) => verifiedProducts.has(row.key) || !!row.verified;
-
-  // Every verifiable row (Personalized Kit component, Separate Kit component, or
-  // Separate Product) must have at least one open-box and one closed-box photo on
-  // file before it can be verified — unverifying is always allowed, no photo needed.
-  const toggleVerify = async (row) => {
-    const productKey = row.key;
-    const alreadyVerified = isRowVerified(row);
-    const willVerify = !alreadyVerified;
-    if (willVerify) {
-      const hasOpen = (row.openBoxPhotos?.length || 0) > 0;
-      const hasClose = (row.closeBoxPhotos?.length || 0) > 0;
-      if (!hasOpen || !hasClose) {
-        enqueueSnackbar('Upload at least one open-box and one closed-box photo for this product before verifying.', { variant: 'warning' });
-        return;
-      }
-    }
-    setVerifiedProducts(prev => {
-      const next = new Set(prev);
-      if (alreadyVerified) next.delete(productKey); else next.add(productKey);
-      return next;
-    });
-    const itemIds = (row.childItemIds && row.childItemIds.length) ? row.childItemIds : (row.itemId ? [row.itemId] : []);
-    if (itemIds.length) {
-      try {
-        // Sequential, not Promise.all: each verifyItem call reads-then-saves the whole
-        // dispatch document, so firing them concurrently lets a later save's stale copy
-        // overwrite an earlier item's verified flag.
-        for (const itemId of itemIds) {
-          await verifyItem({ id, itemId, verified: willVerify }).unwrap();
-        }
-      } catch {
-        enqueueSnackbar(`Failed to persist ${willVerify ? 'verification' : 'unverify'}`, { variant: 'error' });
-      }
-    }
+  // How many units of `row` are entered to go out this round, clamped to its pending qty.
+  const setDispatchNow = (row, value) => {
+    const pending = getRowPendingQty(row);
+    const clamped = Math.max(0, Math.min(Number(value) || 0, pending));
+    setDispatchNowCounts((prev) => ({ ...prev, [row.key]: clamped }));
   };
 
   const handlePrintDispatchDetails = () => {
@@ -664,7 +664,20 @@ export default function DispatchDetail() {
       formData.append('transport', vals.transport || order.storedTransportName || order.transport || '');
       formData.append('boxes', vals.boxes ?? order.storedBoxes ?? order.boxes ?? 0);
       formData.append('weight', vals.weight ?? order.storedWeight ?? order.weight ?? '');
-      formData.append('dispatchType', vals.dispatchType || dispatchType || 'Full Dispatch');
+      // Counts entered this round for each dispatchable row — kits (dispatched as one
+      // unit) and separate products. The backend clamps/recomputes everything itself and
+      // decides Full vs Partial from actual progress, not this label.
+      const kitCounts = products
+        .filter((p) => p.type === 'kit_header' && p.kitDispatchId)
+        .map((p) => ({ id: p.kitDispatchId, dispatchNow: dispatchNowCounts[p.key] || 0 }))
+        .filter((c) => c.dispatchNow > 0);
+      const productCounts = products
+        .filter((p) => p.type === 'product' && p.itemId)
+        .map((p) => ({ id: p.itemId, dispatchNow: dispatchNowCounts[p.key] || 0 }))
+        .filter((c) => c.dispatchNow > 0);
+      formData.append('kitCounts', JSON.stringify(kitCounts));
+      formData.append('productCounts', JSON.stringify(productCounts));
+      formData.append('dispatchType', willFullyComplete ? 'Full Dispatch' : 'Partial Dispatch');
       formData.append('invoiceNumber', vals.invoiceNumber || '');
       // Persist a forwarding-charge override raised here — otherwise the edit only
       // lives in local state and reverts to the original amount on reload.
@@ -682,13 +695,12 @@ export default function DispatchDetail() {
       const invoiceFile = vals.invoiceFile?.[0]?.originFileObj || vals.invoiceFile?.file?.originFileObj;
       if (invoiceFile) formData.append('invoice', invoiceFile);
       const result = await confirmDispatch({ id, formData }).unwrap();
+      setDispatchNowCounts({});
       if (result?.partial) {
-        // Emergency/first portion only — keep the button active and switch to Full
-        // Dispatch so the next confirm finalizes the remaining items.
+        // This round didn't cover everything — keep the button active so the
+        // remaining pending counts can go out as a later, final confirm.
         setPartialConfirmed(true);
-        setDispatchType('Full Dispatch');
-        form.setFieldsValue({ dispatchType: 'Full Dispatch' });
-        enqueueSnackbar('Partial Dispatch confirmed for the emergency items. Confirm the remaining items as Full Dispatch once ready.', { variant: 'success' });
+        enqueueSnackbar('Partial Dispatch confirmed. Confirm the remaining items once ready.', { variant: 'success' });
       } else {
         setDispatched(true);
         enqueueSnackbar(
@@ -711,7 +723,7 @@ export default function DispatchDetail() {
       const lrFileUrl = lrFileList?.[0]?.url || lrFileList?.[0]?.response?.url || undefined;
       await saveAsDraft({
         id,
-        dispatchType: vals.dispatchType || dispatchType || undefined,
+        dispatchType: order.storedDispatchType || undefined,
         invoiceNumber: vals.invoiceNumber || undefined,
         invoiceDate: vals.invoiceDate?.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate,
         transportName: lrVals.transportName || vals.transport || undefined,
@@ -847,15 +859,18 @@ export default function DispatchDetail() {
 
   // Kit-grouped product rows for the verification table (Personalized Kit / Separate
   // Kits / Separate Products), shared with the Dispatch list's expand-row panel.
-  // `products` = verifiable units (personalized kit headers count as ONE unit; separate items are individual).
+  // `products` = dispatchable units — a Personalized/Separate Kit header counts as ONE
+  // unit (one count, one photo pair); Separate Products are individual.
   // `groupedProducts` = all display rows including kit header + child item rows.
   const { products, groupedProducts } = buildDispatchGroupedProducts({
     items: order?.items,
     kitOrders: order?.kitOrders,
     orderItems: order?.orderRawItems,
     boxes: order?.boxes,
+    kitDispatch: order?.kitDispatch,
+    packagingIncludes: order?.packagingIncludes,
   });
-  const verifySummary = summarizeDispatchVerification(products, isRowVerified);
+  const verifySummary = summarizeDispatchVerification(products);
 
   // Per-item name/qty lookup used to badge each product/kit row with its emergency count.
   // Dispatch items get a fresh _id at creation (not copied from the order item), so they
@@ -898,19 +913,21 @@ export default function DispatchDetail() {
     return matched ? { emergencyQty, totalQty } : null;
   };
 
-  // Doc: every product must be verified before dispatch can be confirmed.
-  const allProductsVerified = products.length > 0 && products.every((p) => verifiedProducts.has(p.key) || p.verified);
-
-  // Partial Dispatch only ships the emergency-flagged items, so it only needs those
-  // verified — not the whole order. Full Dispatch (first-time, or the second/final
-  // confirm after a partial round) still needs every product verified.
+  // Emergency badges are informational only now — the dispatcher decides what count to
+  // send each round via "Dispatch Now", not gated on which items are emergency-flagged.
   const emergencyProducts = products.filter((p) => !!getRowEmergency(p));
-  const allEmergencyVerified = emergencyProducts.length > 0
-    && emergencyProducts.every((p) => verifiedProducts.has(p.key) || p.verified);
-  const isPartialRound = dispatchType === 'Partial Dispatch' && !partialConfirmed;
-  const verificationGateSatisfied = (isPartialRound && emergencyProducts.length > 0)
-    ? allEmergencyVerified
-    : allProductsVerified;
+
+  // Gate: must be dispatching something this round, and every row being dispatched must
+  // have its open+closed box photo(s) on file. No requirement on rows NOT being sent this
+  // round — that's the "no restriction" behavior: partial rounds only need what's going out.
+  const rowsBeingDispatchedNow = products.filter((p) => (dispatchNowCounts[p.key] || 0) > 0);
+  const totalDispatchNow = rowsBeingDispatchedNow.reduce((s, p) => s + (dispatchNowCounts[p.key] || 0), 0);
+  const dispatchingRowsHavePhotos = rowsBeingDispatchedNow.every((p) => (p.openBoxPhotos?.length || 0) > 0 && (p.closeBoxPhotos?.length || 0) > 0);
+  const verificationGateSatisfied = totalDispatchNow > 0 && dispatchingRowsHavePhotos;
+
+  // Whether this round's counts, added to what's already been dispatched, close out
+  // every row — purely for display (the backend recomputes this authoritatively).
+  const willFullyComplete = products.every((p) => (dispatchNowCounts[p.key] || 0) >= getRowPendingQty(p));
 
   // Exact emergency count for the page-level banner — summed directly from
   // emergencyByTarget (i.e. straight from order.splitDates, each target's total already
@@ -1125,7 +1142,8 @@ export default function DispatchDetail() {
               styles={{ body: { padding: 16 } }}
             >
               <Form form={form} layout="vertical" size="small">
-                {/* Row 1: Transport, Weight, Boxes, Dispatch Type */}
+                {/* Row 1: Transport, Weight, Boxes — Dispatch Type is now computed from
+                    the per-row dispatch counts below, not a manual choice. */}
                 <Row gutter={12}>
                   <Col xs={24} sm={12}>
                     <Form.Item
@@ -1157,27 +1175,12 @@ export default function DispatchDetail() {
                       <InputNumber min={0} placeholder="0" style={{ width: '100%' }} prefix={<InboxOutlined style={{ color: '#B11E6A' }} />} />
                     </Form.Item>
                   </Col>
-                  <Col xs={24} sm={12}>
-                    <Form.Item
-                      label="Dispatch Type"
-                      name="dispatchType"
-                      extra={partialConfirmed && !dispatched
-                        ? <Text style={{ fontSize: 11, color: '#ff4d4f' }}>Partial Dispatch already confirmed — send the remaining items as Full Dispatch.</Text>
-                        : undefined}
-                    >
-                      <Select
-                        placeholder="Select dispatch type"
-                        // Locked to Full Dispatch once a Partial Dispatch checkpoint has been
-                        // confirmed — the only thing left to do is send the remaining items.
-                        disabled={partialConfirmed}
-                        onChange={(v) => { setDispatchType(v); setVerifiedProducts(new Set()); }}
-                      >
-                        <Option value="Full Dispatch">Full Dispatch</Option>
-                        <Option value="Partial Dispatch">Partial Dispatch</Option>
-                      </Select>
-                    </Form.Item>
-                  </Col>
                 </Row>
+                {partialConfirmed && !dispatched && (
+                  <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block', marginTop: -8, marginBottom: 12 }}>
+                    A Partial Dispatch checkpoint is already confirmed — enter the remaining counts below to finish this order.
+                  </Text>
+                )}
 
                 {/* Forwarding Charge — shown if applicable on this order */}
                 {order.forwardingCharge && (
@@ -1216,21 +1219,25 @@ export default function DispatchDetail() {
                   </Row>
                 )}
 
-                {/* Product Details table — shows when dispatch type selected */}
-                {dispatchType && (
+                {/* Product Details table — Personalized Kit / Separate Kit dispatch as ONE
+                    unit (one count, one open/close photo pair); Separate Products are
+                    dispatched — and photographed — individually. */}
+                {products.length > 0 && (
                   <div style={{ marginBottom: 16, border: `1px solid #B11E6A33`, borderRadius: 10, overflow: 'hidden' }}>
                     <div style={{ background: 'linear-gradient(135deg,#B11E6A18,#B11E6A08)', padding: '10px 14px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                         <Space size={8}>
                           <InboxOutlined style={{ color: '#B11E6A' }} />
                           <Text strong style={{ color: textColor }}>Product Details — {order.id}</Text>
-                          <Tag color={dispatchType === 'Partial Dispatch' ? 'orange' : 'blue'} style={{ borderRadius: 12, fontSize: 11 }}>
-                            {dispatchType}
+                          <Tag color={verifySummary.overall.pending === 0 ? 'blue' : (willFullyComplete ? 'blue' : 'orange')} style={{ borderRadius: 12, fontSize: 11 }}>
+                            {verifySummary.overall.pending === 0 && totalDispatchNow === 0
+                              ? 'Fully Dispatched'
+                              : (willFullyComplete ? 'Full Dispatch' : 'Partial Dispatch')}
                           </Tag>
                         </Space>
                         <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#888' }}>
                           <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
-                          {verifySummary.overall.verified} / {verifySummary.overall.total} verified
+                          {verifySummary.overall.dispatched} / {verifySummary.overall.total} dispatched
                         </Text>
                       </div>
                       <Space size={6} wrap style={{ marginTop: 8 }}>
@@ -1238,7 +1245,7 @@ export default function DispatchDetail() {
                           .filter((b) => b.total > 0)
                           .map((b) => (
                             <Tag key={b.label} style={{ borderRadius: 12, fontSize: 11, background: 'transparent', border: '1px solid #B11E6A33', color: textColor }}>
-                              {b.label}: {b.verified}/{b.total}
+                              {b.label}: {b.dispatched}/{b.total} ({b.pending} pending)
                             </Tag>
                           ))}
                       </Space>
@@ -1252,10 +1259,11 @@ export default function DispatchDetail() {
                         {
                           title: 'Product / Kit',
                           dataIndex: 'name',
-                          // Every kit header (Personalized or Separate) is a divider row only —
-                          // each component item underneath (personalized_item / kit_item) is
-                          // individually verified and gets its own Status/Photos/Action cells.
-                          onCell: (row) => (row.type === 'kit_header' ? { colSpan: 4 } : {}),
+                          // Pure divider rows ("Separate Products" synthetic header, or a
+                          // legacy no-kitOrders header) span the full row. Real dispatchable
+                          // kit headers (row.bucket set) get their own Ordered/Dispatch Now/
+                          // Photos cells like any other dispatchable row.
+                          onCell: (row) => (row.type === 'kit_header' && !row.bucket ? { colSpan: 4 } : {}),
                           render: (v, row) => {
                             const emergencyInfo = getRowEmergency(row);
                             const emergencyBadge = emergencyInfo && (
@@ -1286,7 +1294,7 @@ export default function DispatchDetail() {
                                 </div>
                               );
                             }
-                            // personalized_item or kit_item or product
+                            // personalized_item or kit_item (display-only component rows) or product
                             return (
                               <Space size={4} wrap>
                                 {(row.type === 'kit_item' || row.type === 'personalized_item') && (
@@ -1296,26 +1304,64 @@ export default function DispatchDetail() {
                                 {row.perKitQty != null && (
                                   <Text style={{ fontSize: 10, color: '#bbb' }}>({row.perKitQty}/kit)</Text>
                                 )}
+                                {row.includedFrom && (
+                                  <Tag style={{ borderRadius: 10, fontSize: 10, background: '#ede9fe', color: '#5b21b6', border: '1px solid #5b21b633' }}>
+                                    {row.includedFrom}
+                                  </Tag>
+                                )}
                                 {emergencyBadge}
                               </Space>
                             );
                           },
                         },
                         {
-                          title: 'Status', key: 'status',
-                          onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
+                          title: 'Ordered / Dispatched / Pending', key: 'progress',
+                          onCell: (row) => (!row.bucket ? { colSpan: 0 } : {}),
                           render: (_, row) => {
-                            if (row.type === 'kit_header') return null;
-                            return isRowVerified(row)
-                              ? <Tag color="success" style={{ borderRadius: 20 }}>Verified</Tag>
-                              : <Tag color="default" style={{ borderRadius: 20 }}>Pending</Tag>;
+                            if (!row.bucket) return null;
+                            const total = row.overallQty ?? row.qtyOrdered ?? 0;
+                            const done = row.dispatchedQty ?? row.qtyDispatched ?? 0;
+                            const pending = getRowPendingQty(row);
+                            return (
+                              <Space direction="vertical" size={0}>
+                                <Text style={{ fontSize: 12 }}>{done} / {total}</Text>
+                                {pending === 0
+                                  ? <Tag color="success" style={{ borderRadius: 20, fontSize: 11 }}>Fully Dispatched</Tag>
+                                  : done > 0
+                                  ? <Tag color="orange" style={{ borderRadius: 20, fontSize: 11 }}>Partial — {pending} pending</Tag>
+                                  : <Tag color="default" style={{ borderRadius: 20, fontSize: 11 }}>Pending</Tag>}
+                              </Space>
+                            );
+                          },
+                        },
+                        {
+                          title: 'Dispatch Now', key: 'dispatchNow',
+                          onCell: (row) => (!row.bucket ? { colSpan: 0 } : {}),
+                          render: (_, row) => {
+                            if (!row.bucket) return null;
+                            const pending = getRowPendingQty(row);
+                            return (
+                              <InputNumber
+                                size="small"
+                                min={0}
+                                max={pending}
+                                value={dispatchNowCounts[row.key] || 0}
+                                onChange={(v) => setDispatchNow(row, v)}
+                                disabled={dispatched || pending === 0}
+                                style={{ width: 90 }}
+                              />
+                            );
                           },
                         },
                         {
                           title: 'Open / Closed Box Photos', key: 'photos',
-                          onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
+                          onCell: (row) => (!row.bucket ? { colSpan: 0 } : {}),
                           render: (_, row) => {
-                            if (row.type === 'kit_header') return null;
+                            if (!row.bucket) return null;
+                            const isKitRow = row.type === 'kit_header';
+                            const uploadFn = isKitRow ? makeKitBoxUpload(row.kitDispatchId, 'open') : makeItemBoxUpload(row.itemId, 'open');
+                            const uploadFnClose = isKitRow ? makeKitBoxUpload(row.kitDispatchId, 'close') : makeItemBoxUpload(row.itemId, 'close');
+                            const uploadKey = isKitRow ? `kit-${row.kitDispatchId}` : row.itemId;
                             const openPhotos = row.openBoxPhotos || [];
                             const closePhotos = row.closeBoxPhotos || [];
                             const openCount = openPhotos.length;
@@ -1337,15 +1383,16 @@ export default function DispatchDetail() {
                                 />
                               </span>
                             );
-                            const openUploading = uploadingKeys.has(`${row.itemId}-open`);
-                            const closeUploading = uploadingKeys.has(`${row.itemId}-close`);
+                            const openUploading = uploadingKeys.has(`${uploadKey}-open`);
+                            const closeUploading = uploadingKeys.has(`${uploadKey}-close`);
+                            const noKitTarget = isKitRow && !row.kitDispatchId;
                             return (
                               <Space size={4}>
                                 <Upload
                                   showUploadList={false}
                                   accept="image/*"
-                                  disabled={openCount >= 1 || openUploading}
-                                  customRequest={makeItemBoxUpload(row.itemId, 'open')}
+                                  disabled={openCount >= 1 || openUploading || noKitTarget}
+                                  customRequest={uploadFn}
                                 >
                                   <Button size="small" icon={openUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
                                     style={openCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
@@ -1357,8 +1404,8 @@ export default function DispatchDetail() {
                                 <Upload
                                   showUploadList={false}
                                   accept="image/*"
-                                  disabled={closeCount >= 1 || closeUploading}
-                                  customRequest={makeItemBoxUpload(row.itemId, 'close')}
+                                  disabled={closeCount >= 1 || closeUploading || noKitTarget}
+                                  customRequest={uploadFnClose}
                                 >
                                   <Button size="small" icon={closeUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
                                     style={closeCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
@@ -1371,25 +1418,63 @@ export default function DispatchDetail() {
                             );
                           },
                         },
+                      ]}
+                    />
+                  </div>
+                )}
+
+                {/* Dispatch History — every confirm round that actually sent something,
+                    oldest→each round frozen at the time it happened (unlike the live
+                    transportName/weight/boxes fields above, which get overwritten each
+                    round). This is what lets a 1000-unit order split across many partial
+                    rounds (e.g. 500 now, 500 later) be traced round by round, and is the
+                    audit trail behind the Ordered/Dispatched/Pending numbers above. */}
+                {order.dispatchHistory.length > 0 && (
+                  <div style={{ marginBottom: 16, border: `1px solid #B11E6A33`, borderRadius: 10, overflow: 'hidden' }}>
+                    <div style={{ background: 'linear-gradient(135deg,#B11E6A18,#B11E6A08)', padding: '10px 14px' }}>
+                      <Space size={8}>
+                        <FileDoneOutlined style={{ color: '#B11E6A' }} />
+                        <Text strong style={{ color: textColor }}>Dispatch History</Text>
+                        <Tag style={{ borderRadius: 12, fontSize: 11 }}>{order.dispatchHistory.length} round{order.dispatchHistory.length !== 1 ? 's' : ''}</Tag>
+                      </Space>
+                    </div>
+                    <Table
+                      size="small"
+                      pagination={false}
+                      rowKey={(r, i) => `${r.date}-${i}`}
+                      dataSource={[...order.dispatchHistory].reverse()}
+                      style={{ borderRadius: 0 }}
+                      columns={[
                         {
-                          title: 'Action', key: 'action',
-                          onCell: (row) => (row.type === 'kit_header' ? { colSpan: 0 } : {}),
-                          render: (_, row) => {
-                            if (row.type === 'kit_header') return null;
-                            const verified = isRowVerified(row);
-                            const hasPhotos = (row.openBoxPhotos?.length || 0) > 0 && (row.closeBoxPhotos?.length || 0) > 0;
-                            return (
-                              <Button size="small" icon={<CheckSquareOutlined />}
-                                disabled={!verified && !hasPhotos}
-                                title={!verified && !hasPhotos ? 'Upload open & closed box photos first' : undefined}
-                                style={verified ? { borderColor: '#52c41a', color: '#52c41a' } : { background: '#B11E6A', border: 'none', color: '#fff' }}
-                                onClick={() => toggleVerify(row)}
-                              >
-                                {verified ? 'Unverify' : 'Verify'}
-                              </Button>
-                            );
-                          },
+                          title: 'Date', dataIndex: 'date', width: 150,
+                          render: (v) => <Text style={{ fontSize: 12 }}>{v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</Text>,
                         },
+                        {
+                          title: 'Type', dataIndex: 'dispatchType', width: 110,
+                          render: (v) => <Tag color={v === 'Partial Dispatch' ? 'orange' : 'blue'} style={{ borderRadius: 12, fontSize: 11 }}>{v || '—'}</Tag>,
+                        },
+                        {
+                          title: 'Dispatched', key: 'dispatched',
+                          render: (_, r) => (
+                            <Space direction="vertical" size={0}>
+                              {(r.kits || []).map((k, i) => (
+                                <Text key={`k-${i}`} style={{ fontSize: 12 }}>
+                                  {k.category === 'personalized' ? 'Personalized Kit' : 'Separate Kit'} — {k.kitName}: <b>{k.dispatchedQty}</b>
+                                </Text>
+                              ))}
+                              {(r.products || []).map((p, i) => (
+                                <Text key={`p-${i}`} style={{ fontSize: 12 }}>
+                                  Product — {p.itemName}: <b>{p.dispatchedQty}</b>
+                                </Text>
+                              ))}
+                              {!(r.kits?.length || r.products?.length) && <Text type="secondary" style={{ fontSize: 12 }}>—</Text>}
+                            </Space>
+                          ),
+                        },
+                        { title: 'Transport', dataIndex: 'transportName', width: 120, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                        { title: 'Weight', dataIndex: 'weight', width: 90, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                        { title: 'Boxes', dataIndex: 'boxes', width: 70, render: (v) => <Text style={{ fontSize: 12 }}>{v ?? '—'}</Text> },
+                        { title: 'Confirmed By', dataIndex: 'confirmedByName', width: 130, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
                       ]}
                     />
                   </div>
@@ -1488,7 +1573,7 @@ export default function DispatchDetail() {
                         onClick={() => handlePrintInvoice(true)}
                         style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontWeight: 600 }}
                       >
-                        Print Combined Invoice (Verified Only)
+                        Print Combined Invoice (Dispatched Only)
                       </Button>
                       <Button
                         icon={<PrinterOutlined />}
@@ -1506,7 +1591,7 @@ export default function DispatchDetail() {
                       onClick={() => handlePrintInvoice(true)}
                       style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontWeight: 600 }}
                     >
-                      Print Invoice (Verified Only)
+                      Print Invoice (Dispatched Only)
                     </Button>
                   )}
                   {!orderInvoicesData?.data?.length && (
@@ -1530,9 +1615,14 @@ export default function DispatchDetail() {
 
               {/* ── Action Buttons ── */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                {isPartialRound && emergencyProducts.length > 0 && !allEmergencyVerified && (
+                {!dispatched && totalDispatchNow === 0 && (
                   <Text style={{ fontSize: 12, color: '#ff4d4f', marginRight: 'auto' }}>
-                    Verify the emergency-flagged item(s) above to enable Confirm Partial Dispatch.
+                    Enter a Dispatch Now count for at least one row above.
+                  </Text>
+                )}
+                {!dispatched && totalDispatchNow > 0 && !dispatchingRowsHavePhotos && (
+                  <Text style={{ fontSize: 12, color: '#ff4d4f', marginRight: 'auto' }}>
+                    Upload open &amp; closed box photos for everything you're dispatching this round.
                   </Text>
                 )}
                 {(!transportFilled || !weightFilled || !boxesFilled) && (
@@ -1555,11 +1645,9 @@ export default function DispatchDetail() {
                 >
                   {dispatched
                     ? 'Dispatched ✓'
-                    : partialConfirmed
-                    ? 'Confirm Full Dispatch'
-                    : dispatchType === 'Partial Dispatch'
-                    ? 'Confirm Partial Dispatch'
-                    : 'Confirm Dispatch'}
+                    : willFullyComplete
+                    ? (partialConfirmed ? 'Confirm Full Dispatch' : 'Confirm Dispatch')
+                    : 'Confirm Partial Dispatch'}
                 </Button>
               </div>
 

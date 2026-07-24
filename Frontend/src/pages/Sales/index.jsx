@@ -519,7 +519,9 @@ function kitOrderValue(ko, kitRows = []) {
   const rows = kitRows.filter(p => p && p.kitId === ko?.kitId);
   const sub = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0), 0);
   const gst = rows.reduce((s, p) => s + (Number(p.qty)||0)*(Number(p.rate)||0)*((Number(p.gst)||0)/100), 0);
-  const rowsSum = r2(sub + gst);
+  // Round once, at the end, after multiplying by qty — rounding rowsSum here first would
+  // amplify sub-paisa residue linearly with qty (e.g. +0.0006/kit becomes +0.01 at qty 10+).
+  const rowsSum = sub + gst;
   if (koCategory(ko) === ORDER_CATEGORIES.SEPARATE_KIT) {
     return r2((price + rowsSum) * (qty || 1));
   }
@@ -2966,6 +2968,8 @@ export default function Sales() {
   const watchedPackagingIncludesQty = Form.useWatch('packagingIncludesQty', leadForm) || {};
   const watchedKitOverallQty = Form.useWatch('kitOverallQty', leadForm);
   const watchedKitPrice = Form.useWatch('kitPrice', leadForm);
+  const watchedKitSticker = Form.useWatch('kitSticker', leadForm);
+  const watchedKitPrinting = Form.useWatch('kitPrinting', leadForm);
   const watchedPriority = Form.useWatch('priority', leadForm);
   const watchedStatus = Form.useWatch('status', leadForm);
   const watchedSoftwareInterest = Form.useWatch('interestedInSoftware', leadForm);
@@ -3101,7 +3105,7 @@ export default function Sales() {
   const hotelNameOptions = (hotelNamesRaw?.data || []).map((n) => ({ value: n, label: n }));
   const { data: perfRaw, isLoading: perfLoading } = useGetMyPerformanceQuery();
   const { data: staffRaw } = useGetStaffQuery();
-  const { data: usersRaw } = useGetUsersQuery();
+  const { data: usersRaw } = useGetUsersQuery({ limit: 1000 });
   const { data: kitsRaw } = useGetKitsQuery();
   const { data: companySettingsData } = useGetCompanySettingsQuery();
   const invoiceSettings = companySettingsData?.data || {};
@@ -3749,7 +3753,17 @@ export default function Sales() {
       for (const v of vals) if (Array.isArray(v)) return v;
       return [];
     };
-    const srcProducts = pickArr(values.products, formStore.products, editingLead?.products, selectedRecord?.products);
+    // Per-row merge on top of the array-level pick above: a product row's dynamic spec
+    // Form.Items (shape, fragrance, …) only register once its matching inventory item
+    // resolves on that render, so validateFields() can quietly omit a key even while
+    // values.products itself is a non-empty array. Backfill every key from the full form
+    // store (and the record being edited) so specs already on the lead never drop out.
+    const srcProductsBase = pickArr(values.products, formStore.products, editingLead?.products, selectedRecord?.products);
+    const srcProducts = srcProductsBase.map((p, i) => ({
+      ...(selectedRecord?.products?.[i] || editingLead?.products?.[i] || {}),
+      ...(formStore.products?.[i] || {}),
+      ...(p || {}),
+    }));
     const srcKitOrders = pickArr(values.kitOrders, formStore.kitOrders, editingLead?.kitOrders, selectedRecord?.kitOrders);
     const srcSelectedKits = pickArr(values.selectedKits, formStore.selectedKits, editingLead?.selectedKits, selectedRecord?.selectedKits);
     const srcPackagingIncludes = pickArr(values.packagingIncludes, formStore.packagingIncludes, editingLead?.packagingIncludes, selectedRecord?.packagingIncludes);
@@ -4412,7 +4426,16 @@ export default function Sales() {
         // (kit bucket + separate + forwarding) so it matches the table/detail.
         const qStore = quotationForm.getFieldsValue(true);
         const pickArrQ = (...vals) => { for (const v of vals) if (Array.isArray(v)) return v; return []; };
-        const qProducts = pickArrQ(values.products, qStore.products, editingQuotation.products);
+        // Per-row merge (not just "pick the first non-empty array"): a row's dynamic spec
+        // Form.Items only register once its matching inventory item resolves on that render,
+        // so validateFields() can silently omit a key even while values.products is non-empty.
+        // Fall back through the full form store, then the record being edited, for every key.
+        const qProductsBase = pickArrQ(values.products, qStore.products, editingQuotation.products);
+        const qProducts = qProductsBase.map((p, i) => ({
+          ...(editingQuotation.products?.[i] || {}),
+          ...(qStore.products?.[i] || {}),
+          ...(p || {}),
+        }));
         const qKitOrders = pickArrQ(values.kitOrders, qStore.kitOrders, editingQuotation.kitOrders);
         const qKitAware = r2(computeRecordGrandTotal({ ...editingQuotation, ...values, products: qProducts, kitOrders: qKitOrders }));
         const qTotal = qKitAware > 0 ? qKitAware : (Number(editingQuotation.total || editingQuotation.totalAmount) || total);
@@ -4434,12 +4457,16 @@ export default function Sales() {
             kitOrders: qKitOrders,
             totalAmount: qTotal,
             total: qTotal,
+            // Spread the full product FIRST (see create-path comment above) so an edit to an
+            // existing quotation doesn't strip the specs/kit fields it already had.
             items: qProducts.map((p) => ({
-              itemName: p.name,
+              ...p,
+              itemName: p.name || p.itemName,
               unit: p.unit,
               price: Number(p.rate) || 0,
               qty: Number(p.qty) || 0,
               lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
+              attachments: normalizeAttachments(p.attachments),
             })),
             revisionHistory: updated.revisionHistory,
           }).unwrap();
@@ -4452,10 +4479,6 @@ export default function Sales() {
           return;
         }
       } else {
-        const subtotal = calcTotal(values.products);
-        const gstAmount = (values.products || []).reduce(
-          (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
-        const itemsTotal = subtotal + gstAmount;
         const src = quotationFromLead || {};
         // Kit details are entered/edited in the quotation form (kitOrders, display unit, kit
         // price, …). validateFields() can omit fields whose cards are collapsed/unmounted, so
@@ -4467,9 +4490,19 @@ export default function Sales() {
           if (fv != null && fv !== '' && !(Array.isArray(fv) && fv.length === 0)) return fv;
           return src[k];
         };
+        // Collapse-safe products: a row's dynamic spec Form.Items (shape, fragrance, kit
+        // details, …) only register once the matching inventory item resolves on that render —
+        // if that lookup misses even briefly, validateFields() silently omits those keys even
+        // though they're still sitting in the form store (seeded from the lead). Merge the full
+        // store row underneath the validated row so nothing entered on the lead is lost here.
+        const qProducts = (values.products || []).map((p, i) => ({ ...(qStore.products?.[i] || {}), ...(p || {}) }));
+        const subtotal = calcTotal(qProducts);
+        const gstAmount = qProducts.reduce(
+          (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+        const itemsTotal = subtotal + gstAmount;
         const kitAwareTotal = r2(computeRecordGrandTotal({
           ...values,
-          products: values.products || [],
+          products: qProducts,
           kitOrders: normalizeKitOrdersForSave(values.kitOrders || [], values.productType),
           forwardingCharge: values.forwardingCharge,
           forwardingChargeAmount: values.forwardingChargeAmount || 0,
@@ -4496,7 +4529,7 @@ export default function Sales() {
           // quotation.items and flow through negotiation → order → Operations. Previously this
           // hand-picked map dropped them, so anything reading order.items (Operations, Parties,
           // Billing) showed no specs even though order.products kept them.
-          items: (values.products || []).map((p) => ({
+          items: qProducts.map((p) => ({
             ...p,
             itemName: p.name || p.itemName,
             unit: p.unit,
@@ -4505,7 +4538,7 @@ export default function Sales() {
             lineTotal: (Number(p.qty) || 0) * (Number(p.rate) || 0),
             attachments: normalizeAttachments(p.attachments),
           })),
-          products: values.products || [],
+          products: qProducts,
           note: values.note,
           // Contact + billing fields carried forward from the lead
           hotelName: values.hotelName || src.hotelName,
@@ -4587,6 +4620,10 @@ export default function Sales() {
   // Operations builds its Sticker/Box/Frosted queues by filtering order items on logoType.
   // kitDisplayUnit: order-level display unit (e.g. "ZIPLOCK POUCH") used for kit items that
   // don't carry their own packingMaterial — so they get routed to the correct ops queue.
+  // Logo field label follows whichever selection (Sticker/Printing) the user picked — Sticker
+  // takes priority to match inferLogoType's own precedence below.
+  const logoLabelFor = (sticker, printing) => (sticker === 'YES' ? 'Sticker Logo' : printing === 'YES' ? 'Printing Logo' : 'Logo');
+
   const inferLogoType = (p, kitDisplayUnit = '') => {
     // Explicit sticker-printing selection wins over any packaging-type inference,
     // including the kit-level display unit (e.g. ZIPLOCK_POUCH).
@@ -5727,10 +5764,18 @@ export default function Sales() {
     const DetailProductCards = ({ products = [], totalAmount, kitDisplayUnit, kitSize, kitName, selectedKits = [], kitOrders = [], kitSticker, kitLogo, kitPrinting, kitOverallQty, kitPrice, forwardingCharge, forwardingChargeAmount, packagingIncludes, packagingIncludesQty }) => {
       const kitProds = products.filter(p => p && (p.isKit || p.kitType));
       const sepProds = products.filter(p => p && !p.isKit && !p.kitType);
+      // Kit rows that won't be picked up by any per-selected-kit block below (kitId doesn't
+      // match a selected kit, e.g. stale/reassigned kitId) — rendered as a fallback so they're
+      // never silently dropped from the Order view.
+      const unmatchedKitProds = kitProds.filter(p =>
+        !selectedKits.includes(p.kitId) && !(!p.kitId && selectedKits.length <= 1));
       const effectiveKitName = kitName || (kitProds.length > 0 ? (kitProds[0].kitName || kitProds[0].kitType || null) : null);
       const effectiveDisplayUnit = (kitDisplayUnit || '').replace(/_/g, ' ');
-      // Per-kit summary: render one block per selected kit with its order details
-      const hasKitSummary = selectedKits.length > 0 || (kitProds.length > 0 && (effectiveKitName || effectiveDisplayUnit || kitSticker || kitLogo || kitPrinting || kitOverallQty || kitPrice));
+      // Per-kit summary: render one block per selected kit with its order details.
+      // Any kit product row must force this on — otherwise a kit added without top-level
+      // summary metadata (e.g. a Separate Kit filled in during a Lead edit) silently
+      // vanishes instead of falling through to the flat kitProds list below.
+      const hasKitSummary = selectedKits.length > 0 || kitProds.length > 0;
       // Helper: render a single product card (reused in per-kit sections and flat list)
       const renderDetailProdCard = (p, i) => {
         // Normalize: fields may be top-level OR nested under p.specs (legacy)
@@ -5948,7 +5993,13 @@ export default function Sales() {
               </div>
             );
           })
-        ) : hasKitSummary ? (
+        ) : null}
+        {hasKitSummary && selectedKits.length > 0 && unmatchedKitProds.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {unmatchedKitProds.map((p, j) => renderDetailProdCard(p, j))}
+          </div>
+        )}
+        {!(hasKitSummary && selectedKits.length > 0) && hasKitSummary ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.18)', flexWrap: 'wrap' }}>
               <GiftOutlined style={{ color: '#722ed1' }} />
@@ -7672,6 +7723,28 @@ export default function Sales() {
                               </div>
                             );
                           })}
+                        </div>
+                      </div>
+                    )}
+                    {/* Kit contents — the actual product rows inside the (Separate/Personalized) kit */}
+                    {isKitTypePA && kitProductsToShowPA.length > 0 && (
+                      <div style={{ marginTop: 10 }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
+                          KIT CONTENTS ({kitProductsToShowPA.length} items)
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {kitProductsToShowPA.map((kp, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                              <div>
+                                <Text strong style={{ fontSize: 13 }}>{kp.productName || '—'}</Text>
+                                {kp.displayType && <Tag color="purple" style={{ marginLeft: 8, borderRadius: 12, fontSize: 10 }}>{kp.displayType}</Tag>}
+                              </div>
+                              <div style={{ textAlign: 'right' }}>
+                                <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{r2((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -11454,17 +11527,17 @@ export default function Sales() {
                           </Col>
                           <Col xs={8} sm={4}>
                             <Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}>
-                              <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              <Select allowClear placeholder="Sticker?" disabled={watchedKitPrinting === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                             </Form.Item>
                           </Col>
                           <Col xs={8} sm={4}>
-                            <Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}>
+                            <Form.Item label={logoLabelFor(watchedKitSticker, watchedKitPrinting)} name="kitLogo" style={{ marginBottom: 0 }}>
                               <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                             </Form.Item>
                           </Col>
                           <Col xs={8} sm={4}>
                             <Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}>
-                              <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              <Select allowClear placeholder="Printing?" disabled={watchedKitSticker === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                             </Form.Item>
                           </Col>
                         </Row>
@@ -11839,17 +11912,17 @@ export default function Sales() {
                                     </Col>
                                     <Col xs={12} sm={4}>
                                       <Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}>
-                                        <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                        <Select allowClear placeholder="Sticker?" disabled={watchedKitOrders?.[kitIndex]?.printing === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                                       </Form.Item>
                                     </Col>
                                     <Col xs={12} sm={4}>
-                                      <Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
+                                      <Form.Item label={logoLabelFor(watchedKitOrders?.[kitIndex]?.sticker, watchedKitOrders?.[kitIndex]?.printing)} name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
                                         <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                                       </Form.Item>
                                     </Col>
                                     <Col xs={12} sm={4}>
                                       <Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}>
-                                        <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                        <Select allowClear placeholder="Printing?" disabled={watchedKitOrders?.[kitIndex]?.sticker === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                                       </Form.Item>
                                     </Col>
                                   </Row>
@@ -12383,17 +12456,17 @@ export default function Sales() {
                             </Col>
                             <Col xs={8} sm={4}>
                               <Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}>
-                                <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                <Select allowClear placeholder="Sticker?" disabled={watchedKitOrders?.[kitIndex]?.printing === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                               </Form.Item>
                             </Col>
                             <Col xs={8} sm={4}>
-                              <Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
+                              <Form.Item label={logoLabelFor(watchedKitOrders?.[kitIndex]?.sticker, watchedKitOrders?.[kitIndex]?.printing)} name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}>
                                 <Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                               </Form.Item>
                             </Col>
                             <Col xs={8} sm={4}>
                               <Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}>
-                                <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                <Select allowClear placeholder="Printing?" disabled={watchedKitOrders?.[kitIndex]?.sticker === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
                               </Form.Item>
                             </Col>
                           </Row>

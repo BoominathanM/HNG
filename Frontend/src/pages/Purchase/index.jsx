@@ -3381,6 +3381,69 @@ export default function Purchase() {
                             ]}
                           />
 
+                          {/* Product-wise Comparison — same product matched across quotations by AI
+                              (handles related/synonymous naming, e.g. "Soap" vs "Bar"), so the best
+                              price can be picked per product rather than only by whole-quotation total. */}
+                          {quotCompareResult.productComparison?.length > 0 && (
+                            <div style={{ marginTop: 24 }}>
+                              <Title level={5} style={{ margin: '0 0 4px', color: isDark ? '#e0e0e0' : '#1a1a2e' }}>
+                                <RobotOutlined style={{ marginRight: 6, color: '#B11E6A' }} />
+                                Product-wise Comparison
+                              </Title>
+                              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+                                Matching products across quotations analyzed by AI (recognizes related/similar product names) — lowest price per product highlighted in green.
+                              </Text>
+                              {quotCompareResult.productComparison.map((p, pi) => {
+                                const bestEntry = p.entries.find((e) => e.fileIndex === p.bestFileIndex);
+                                return (
+                                  <Card
+                                    key={pi}
+                                    size="small"
+                                    style={{ marginBottom: 12, borderRadius: 10, border: `1px solid ${isDark ? '#2a2a3a' : '#f0f0f0'}`, background: isDark ? '#1a1a2a' : '#fff' }}
+                                  >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                                      <div>
+                                        <Text strong style={{ fontSize: 13, color: isDark ? '#e0e0e0' : '#1a1a2e' }}>{p.productName}</Text>
+                                        {p.aliases?.length > 0 && (
+                                          <div style={{ marginTop: 4 }}>
+                                            <Space size={4} wrap>
+                                              {p.aliases.map((a, ai) => <Tag key={ai} style={{ fontSize: 10, borderRadius: 8 }}>{a}</Tag>)}
+                                            </Space>
+                                          </div>
+                                        )}
+                                      </div>
+                                      {bestEntry && (
+                                        <Tag color="#B11E6A" style={{ borderRadius: 10 }}>
+                                          Best: {bestEntry.name} · ₹{(bestEntry.unitPrice || 0).toLocaleString()}/unit
+                                        </Tag>
+                                      )}
+                                    </div>
+                                    <Table
+                                      size="small"
+                                      pagination={false}
+                                      rowKey={(r) => `${pi}-${r.fileIndex}`}
+                                      dataSource={p.entries}
+                                      scroll={{ x: 'max-content' }}
+                                      columns={[
+                                        { title: 'Quotation', dataIndex: 'name', width: 160, render: (v, r) => <Text strong style={{ color: r.fileIndex === p.bestFileIndex ? '#B11E6A' : undefined }}>{v}</Text> },
+                                        { title: 'Matched As', dataIndex: 'matchedName', width: 160, render: (v) => <Text type="secondary" style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                                        { title: 'Qty', dataIndex: 'qty', width: 90, render: (v) => v ? Number(v).toLocaleString() : '—' },
+                                        {
+                                          title: 'Unit Price', dataIndex: 'unitPrice', width: 110,
+                                          render: (v, r) => <Text strong style={{ color: r.fileIndex === p.bestFileIndex ? '#52c41a' : (isDark ? '#e0e0e0' : '#333') }}>{v ? `₹${Number(v).toLocaleString()}` : '—'}</Text>,
+                                        },
+                                        { title: 'Total', dataIndex: 'totalPrice', width: 110, render: (v) => v ? `₹${Number(v).toLocaleString()}` : '—' },
+                                      ]}
+                                    />
+                                    {p.note && (
+                                      <Alert type="info" showIcon message={p.note} style={{ marginTop: 8, borderRadius: 8, fontSize: 12 }} />
+                                    )}
+                                  </Card>
+                                );
+                              })}
+                            </div>
+                          )}
+
                           {/* Actions */}
                           <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                             <Button

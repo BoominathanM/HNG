@@ -44,7 +44,9 @@ export function kitOrderValue(ko, kitRows = []) {
   const rows = kitRows.filter(p => p && p.kitId === ko?.kitId);
   const sub = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
   const gst = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
-  const rowsSum = r2(sub + gst);
+  // Round once, at the end, after multiplying by qty — rounding rowsSum here first would
+  // amplify sub-paisa residue linearly with qty (e.g. +0.0006/kit becomes +0.01 at qty 10+).
+  const rowsSum = sub + gst;
   if (koCategory(ko) === ORDER_CATEGORIES.SEPARATE_KIT) {
     return r2((price + rowsSum) * (qty || 1));
   }
