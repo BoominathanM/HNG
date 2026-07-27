@@ -667,6 +667,7 @@ export default function Inventory() {
   const watchedItemName = Form.useWatch('name', addItemForm);
   const productTypeKey = useMemo(() => getProductTypeKey(watchedItemName), [watchedItemName]);
   const productFieldDefs = PRODUCT_FIELD_DEFS[productTypeKey] || [];
+  const watchedPackingMaterial = Form.useWatch(['productAttrs', 'packingMaterial'], addItemForm);
 
   /* ── Category & Kit expand ── */
   const [expandedCategory, setExpandedCategory] = useState(null);
@@ -2704,6 +2705,11 @@ export default function Inventory() {
           {/* ── Dynamic product-type attributes ── */}
           {(() => {
             const activeDefs = productFieldDefs.length > 0 ? productFieldDefs : GENERIC_PRODUCT_FIELD_DEFS;
+            const hasPackingMaterial = activeDefs.some((fd) => fd.key === 'packingMaterial');
+            const selectedPackingMaterials = (Array.isArray(watchedPackingMaterial) ? watchedPackingMaterial : [watchedPackingMaterial])
+              .filter(Boolean)
+              .map((v) => String(v).toLowerCase());
+            const showStickerSizeFor = (needle) => selectedPackingMaterials.some((v) => v.includes(needle));
             return (
               <>
                 <Divider style={{ margin: '4px 0 12px' }}>
@@ -2730,6 +2736,29 @@ export default function Inventory() {
                     </Col>
                     );
                   })}
+                  {/* Per-packing-material sticker size — one field per selected material, so the
+                      Lead form can later auto-fetch the right size once Sticker = Yes. */}
+                  {hasPackingMaterial && showStickerSizeFor('box') && (
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Box Sticker Size" name={['productAttrs', 'boxStickerSize']}>
+                        <Input placeholder="e.g. 3in x 2in" allowClear />
+                      </Form.Item>
+                    </Col>
+                  )}
+                  {hasPackingMaterial && showStickerSizeFor('ziplock') && (
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Ziplock Sticker Size" name={['productAttrs', 'ziplockStickerSize']}>
+                        <Input placeholder="e.g. 3in x 2in" allowClear />
+                      </Form.Item>
+                    </Col>
+                  )}
+                  {hasPackingMaterial && showStickerSizeFor('butter') && (
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Butter Paper Sticker Size" name={['productAttrs', 'butterPaperStickerSize']}>
+                        <Input placeholder="e.g. 3in x 2in" allowClear />
+                      </Form.Item>
+                    </Col>
+                  )}
                 </Row>
               </>
             );

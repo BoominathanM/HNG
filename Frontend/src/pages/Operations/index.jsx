@@ -368,6 +368,7 @@ export default function Operations() {
           category: rawItem.category || prod.category || '',
           displayUnit: rawItem.displayUnit || prod.displayUnit || '',
           size: rawItem.size || prod.size || '',
+          stickerSize: rawItem.stickerSize || prod.stickerSize || '',
           sticker: rawItem.sticker || prod.sticker || '',
           logo: rawItem.logo || prod.logo || '',
           printing: rawItem.printing || prod.printing || '',
@@ -943,6 +944,14 @@ export default function Operations() {
           return value ? <Tag color="geekblue">{value}</Tag> : '—';
         },
       },
+      {
+        title: 'Sticker Size',
+        dataIndex: 'stickerSize',
+        render: (value, record) => {
+          if (record.isKitChild) return value ? <Text type="secondary" style={{ fontSize: 11 }}>{value}</Text> : <Text type="secondary">—</Text>;
+          return value ? <Tag color="magenta">{value}</Tag> : '—';
+        },
+      },
       ...(label !== 'Sticker' ? [{
         title: label === 'Box' ? 'Box Type' : label === 'Butter Paper' ? 'Butter Paper Type' : 'Ziplock Type',
         key: 'displayUnitType',
@@ -1114,7 +1123,7 @@ export default function Operations() {
                               category: record.category || '',
                               stickerType: queueType,
                               quantity: record.qty,
-                              stickerSize: record.size,
+                              stickerSize: record.stickerSize || record.size,
                               designFileUrl: existingHotelDesign.designFileUrl,
                               status: 'Approved',
                               salesApproved: true,
@@ -1187,7 +1196,7 @@ export default function Operations() {
                             category: record.category || '',
                             stickerType: queueType,
                             quantity: record.qty,
-                            stickerSize: record.size,
+                            stickerSize: record.stickerSize || record.size,
                             ...(kitTypeName && { kitType: kitTypeName }),
                             ...(kitProductsList.length && { kitProducts: kitProductsList }),
                           }).unwrap();
@@ -1329,7 +1338,7 @@ export default function Operations() {
                             category: record.category || '',
                             stickerType: 'Sticker',
                             quantity: record.qty,
-                            stickerSize: record.size,
+                            stickerSize: record.stickerSize || record.size,
                           }).unwrap();
                           srId = created.data._id;
                         }

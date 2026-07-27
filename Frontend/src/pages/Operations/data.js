@@ -471,6 +471,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             isKit: !!(item.isKit || item.kitType),
             displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
             sticker: item.sticker || '',
+            stickerSize: item.stickerSize || '',
             printing: item.printing || '',
             packingMaterial: item.packingMaterial || item.packaging || '',
           });
@@ -563,6 +564,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           displayUnitType: item.displayUnitType || '',
           lamination: item.lamination || '',
           sticker: item.sticker || '',
+          stickerSize: item.stickerSize || '',
           printing: item.printing || '',
           packingMaterial: item.packingMaterial || item.packaging || '',
         });
@@ -661,6 +663,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
           displayUnitType: item.displayUnitType || '',
           sticker: item.sticker || '',
+          stickerSize: item.stickerSize || '',
           printing: item.printing || '',
           packingMaterial: item.packingMaterial || item.packaging || '',
         });
@@ -753,6 +756,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
           displayUnitType: item.displayUnitType || '',
           sticker: item.sticker || '',
+          stickerSize: item.stickerSize || '',
           printing: item.printing || '',
           packingMaterial: item.packingMaterial || item.packaging || '',
         });

@@ -18,6 +18,7 @@ const negotiationItemSchema = new mongoose.Schema({
   sticker: String,
   printing: String,
   size: String,
+  stickerSize: String,
   gst: Number,
   isKit: Boolean,
   kitId: String,

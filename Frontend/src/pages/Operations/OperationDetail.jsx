@@ -288,6 +288,7 @@ export default function OperationDetail() {
           category: rawIt.category || prod.category || '',
           displayUnit: rawIt.displayUnit || prod.displayUnit || '',
           size: rawIt.size || prod.size || '',
+          stickerSize: rawIt.stickerSize || prod.stickerSize || '',
           sticker: rawIt.sticker || prod.sticker || '',
           printing: rawIt.printing || prod.printing || '',
           packingMaterial: rawIt.packingMaterial || rawIt.packaging || prod.packingMaterial || prod.packaging || '',
@@ -1393,6 +1394,7 @@ export default function OperationDetail() {
           const pMat      = record.materialCategory || record.material || '';
           const pBrand    = record.brand || '';
           const pSticker  = record.sticker || '';
+          const pStickerSize = record.stickerSize || '';
           const pLogo     = record.logo || '';
           const pPrinting = record.printing || '';
           const pSpec     = record.specification || record.specs || '';
@@ -1402,7 +1404,7 @@ export default function OperationDetail() {
             'itemName','name','product','kitType','isKit','kitName','kitId','qty','rate','price',
             'gst','gstPercent','lineTotal','logoType','boxes','packaging','packingMaterial',
             'material','materialCategory','hsnCode','discountPercent','discount','logo','sticker',
-            'brand','size','defaultSize','specs','displayType','itemId','_id','key','amount',
+            'stickerSize','brand','size','defaultSize','specs','displayType','itemId','_id','key','amount',
             'rateValue','total','inventoryStock','printing','stickerPrinting','isEmergencyProduct',
             'isEmergencyGated','productAttributes','attachments','category','displayUnit',
             'displayUnitType','displayUnitTab','packingMaterialTab','isIncludedInPersonalized',
@@ -1419,7 +1421,7 @@ export default function OperationDetail() {
           });
           const mergedAttrs = new Map([...recAttrs, ...flatAttrs]);
           const prettyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
-          const hasAny = pSize || pPacking || pMat || pBrand || pSticker || pLogo || pPrinting || pSpec || pOther || mergedAttrs.size > 0;
+          const hasAny = pSize || pPacking || pMat || pBrand || pSticker || pStickerSize || pLogo || pPrinting || pSpec || pOther || mergedAttrs.size > 0;
           if (!hasAny) return <Text type="secondary">—</Text>;
           return (
             <Space direction="vertical" size={3} style={{ minWidth: 130, paddingLeft: 6, borderLeft: '2px solid rgba(24,144,255,0.3)' }}>
@@ -1452,6 +1454,12 @@ export default function OperationDetail() {
                   {pSticker && <Tag color={yn(pSticker) ? 'green' : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Sticker: {yn(pSticker) ? 'Yes' : 'No'}</Tag>}
                   {pLogo    && <Tag color={yn(pLogo)    ? 'cyan'  : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Logo: {yn(pLogo)    ? 'Yes' : 'No'}</Tag>}
                   {pPrinting && <Tag color={yn(pPrinting) ? 'blue' : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 10 }}>Print: {yn(pPrinting) ? 'Yes' : 'No'}</Tag>}
+                </Space>
+              )}
+              {yn(pSticker) && pStickerSize && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>Sticker Size:</Text>
+                  <Tag color="magenta" style={{ fontSize: 10, margin: 0 }}>{pStickerSize}</Tag>
                 </Space>
               )}
               {mergedAttrs.size > 0 && (

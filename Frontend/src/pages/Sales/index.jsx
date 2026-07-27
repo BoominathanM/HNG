@@ -1088,6 +1088,9 @@ const YES_NO_ATTR_KEYS = new Set(['sticker', 'logo', 'printing', 'stickerPrintin
 // Sticker/Printing are mutually exclusive per product — choosing one auto-clears the other to 'NO'
 // so an item can never route to both the Sticker team and a packing-material team at once.
 const STICKER_LIKE_KEYS = new Set(['sticker', 'stickerPrinting']);
+// Internal per-packing-material sticker size keys stored on the inventory item — resolved into a
+// single "Sticker Size" field rather than shown as their own raw dropdowns (Inventory + Lead).
+const STICKER_SIZE_ATTR_KEYS = new Set(['boxStickerSize', 'ziplockStickerSize', 'butterPaperStickerSize']);
 
 // Per-product-type attribute fields — kept in sync with Inventory's PRODUCT_FIELD_DEFS so the
 // lead form shows exactly the attributes that inventory collects for each product type. The
@@ -1102,6 +1105,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'color', label: 'Color', field: 'soap_color', options: [] },
     { key: 'packingMaterial', label: 'Packing Material', field: 'soap_packingMaterial', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'soap_stickerPrinting', options: _YES_NO },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'soap_stickerSize', options: [], showIf: 'stickerPrinting', inputType: 'readonly' },
     { key: 'printing', label: 'Printing', field: 'soap_printing', options: _YES_NO },
   ],
   shampoo: [
@@ -1133,7 +1137,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'brand', label: 'Brand', field: 'brush_brand', options: [] },
     { key: 'packingMaterial', label: 'Packing Material', field: 'brush_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'brush_sticker', options: _YES_NO },
-    { key: 'size', label: 'Sticker Size', field: 'brush_size', options: [], showIf: 'sticker', inputType: 'text' },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'brush_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' },
     { key: 'printing', label: 'Printing', field: 'brush_printing', options: _YES_NO },
   ],
   paste: [
@@ -1141,38 +1145,39 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'size', label: 'Sizes (gram)', field: 'paste_size', options: _SIZES_SOAP },
     { key: 'packingMaterial', label: 'Packing Material', field: 'paste_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'paste_sticker', options: _YES_NO },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'paste_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' },
     { key: 'printing', label: 'Printing', field: 'paste_printing', options: _YES_NO },
   ],
   razor: [
     { key: 'brand', label: 'Brand', field: 'razor_brand', options: [] },
     { key: 'packingMaterial', label: 'Packing Material', field: 'razor_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'razor_sticker', options: _YES_NO },
-    { key: 'size', label: 'Sticker Size', field: 'razor_size', options: [], showIf: 'sticker', inputType: 'text' },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'razor_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' },
     { key: 'printing', label: 'Printing', field: 'razor_printing', options: _YES_NO },
   ],
   gel: [
     { key: 'brand', label: 'Brand', field: 'gel_brand', options: [] },
     { key: 'packingMaterial', label: 'Packing Material', field: 'gel_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'gel_sticker', options: _YES_NO },
-    { key: 'size', label: 'Sticker Size', field: 'gel_size', options: [], showIf: 'sticker', inputType: 'text' },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'gel_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' },
     { key: 'printing', label: 'Printing', field: 'gel_printing', options: _YES_NO },
   ],
   vanity_item: [
     { key: 'packingMaterial', label: 'Packing Material', field: 'vanity_item_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'vanity_item_sticker', options: _YES_NO },
-    { key: 'size', label: 'Sticker Size', field: 'vanity_item_size', options: [], showIf: 'sticker', inputType: 'text' },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'vanity_item_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' },
     { key: 'printing', label: 'Printing', field: 'vanity_item_printing', options: _YES_NO },
   ],
   med_kit: [
     { key: 'packingMaterial', label: 'Packing Material', field: 'medkit_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'medkit_sticker', options: _YES_NO },
-    { key: 'size', label: 'Sticker Size', field: 'medkit_size', options: [], showIf: 'sticker', inputType: 'text' },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'medkit_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' },
     { key: 'printing', label: 'Printing', field: 'medkit_printing', options: _YES_NO },
   ],
   sewing: [
     { key: 'packingMaterial', label: 'Packing Material', field: 'sewing_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'sewing_sticker', options: _YES_NO },
-    { key: 'size', label: 'Sticker Size', field: 'sewing_size', options: [], showIf: 'sticker', inputType: 'text' },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'sewing_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' },
     { key: 'printing', label: 'Printing', field: 'sewing_printing', options: _YES_NO },
   ],
 };
@@ -1248,6 +1253,10 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const selectedName = Form.useWatch([fieldName, name, 'name']);
   // Drives the conditional "Sticker Size" spec field — only relevant once Sticker = Yes.
   const stickerVal = Form.useWatch([fieldName, name, 'sticker']);
+  // Soap has no plain "sticker" field — it uses Sticker Printing as its yes/no flag instead.
+  const stickerPrintingVal = Form.useWatch([fieldName, name, 'stickerPrinting']);
+  // Drives the auto-fetched "Sticker Size" value: which packing material the row currently has.
+  const packingMaterialVal = Form.useWatch([fieldName, name, 'packingMaterial']);
 
   const form = Form.useFormInstance();
   const selectedKitIds = Form.useWatch('selectedKits', form) || [];
@@ -1320,15 +1329,26 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const dynamicFieldDefs = React.useMemo(() => {
     if (productTypeKey && PRODUCT_FIELD_DEFS_LEAD[productTypeKey]) return PRODUCT_FIELD_DEFS_LEAD[productTypeKey];
     const attrs = invItem?.productAttributes || {};
-    return Object.keys(attrs).map((k) => ({
-      key: k,
-      label: prettyAttrKeyLead(k),
-      field: `product_attr_${k}`,
-      // Sticker/Logo/Printing are per-order Yes/No decisions (same convention as the
-      // per-product-type defs above) — always offer both choices, not just the value
-      // that happens to be stored on this inventory item.
-      options: YES_NO_ATTR_KEYS.has(k) ? _YES_NO : [],
-    }));
+    // The per-material sizes (boxStickerSize/ziplockStickerSize/butterPaperStickerSize) are internal
+    // storage keys on the inventory item, not something to expose as their own dropdowns here —
+    // they're resolved into the single "Sticker Size" field below instead.
+    const defs = Object.keys(attrs)
+      .filter((k) => !STICKER_SIZE_ATTR_KEYS.has(k))
+      .map((k) => ({
+        key: k,
+        label: prettyAttrKeyLead(k),
+        field: `product_attr_${k}`,
+        // Sticker/Logo/Printing are per-order Yes/No decisions (same convention as the
+        // per-product-type defs above) — always offer both choices, not just the value
+        // that happens to be stored on this inventory item.
+        options: YES_NO_ATTR_KEYS.has(k) ? _YES_NO : [],
+      }));
+    // Unrecognized product types still get the auto-fetched, read-only Sticker Size field —
+    // same as the predefined types — as long as the item itself has a Sticker attribute.
+    if (defs.some((d) => d.key === 'sticker')) {
+      defs.push({ key: 'stickerSize', label: 'Sticker Size', field: 'product_attr_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' });
+    }
+    return defs;
   }, [productTypeKey, invItem]);
 
   // Pre-fill a spec field only when the inventory item defines a single value; when it offers
@@ -1373,6 +1393,21 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     applySpec('materialCategory', item.materialCategory);
     applyAttrSpec('brand', item.brand);
   };
+
+  // Auto-fetch Sticker Size from the selected inventory item's per-packing-material size
+  // (Box/Ziplock/Butter Paper) once Sticker is Yes — read-only, kept live as the packing
+  // material or the selected inventory item changes.
+  const activeStickerFlag = productTypeKey === 'soap' ? stickerPrintingVal : stickerVal;
+  React.useEffect(() => {
+    if (activeStickerFlag !== 'YES') return;
+    const pm = String(packingMaterialVal || '').toLowerCase();
+    const attrs = invItem?.productAttributes || {};
+    const resolved = pm.includes('box') ? attrs.boxStickerSize
+      : pm.includes('ziplock') ? attrs.ziplockStickerSize
+      : pm.includes('butter') ? attrs.butterPaperStickerSize
+      : '';
+    form.setFieldValue([fieldName, name, 'stickerSize'], resolved || '');
+  }, [activeStickerFlag, packingMaterialVal, invItem, fieldName, name, form]);
 
   return (
     <div
@@ -1682,11 +1717,14 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           {dynamicFieldDefs.length > 0 ? (
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {dynamicFieldDefs.map((fd) => {
-                // Fields flagged showIf: 'sticker' (e.g. Sticker Size) only matter once Sticker
-                // is set to Yes — keep them out of the layout entirely otherwise. The field stays
-                // registered in the form store when hidden, so a previously entered size survives
-                // toggling Sticker off and back on.
-                if (fd.showIf === 'sticker' && stickerVal !== 'YES') return null;
+                // Fields flagged showIf (e.g. Sticker Size, gated on 'sticker' or, for soap,
+                // 'stickerPrinting') only matter once that flag is Yes — keep them out of the
+                // layout entirely otherwise. The field stays registered in the form store when
+                // hidden, so a previously fetched size survives toggling Sticker off and back on.
+                if (fd.showIf) {
+                  const gateVal = fd.showIf === 'stickerPrinting' ? stickerPrintingVal : stickerVal;
+                  if (gateVal !== 'YES') return null;
+                }
                 // Yes/No toggle fields (sticker, printing, …) always offer both choices — they're a
                 // per-order decision, not a stored inventory value. Everything else is sourced from
                 // the actual values stored on matching inventory items.
@@ -1711,6 +1749,8 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fd.label}</span>} style={{ marginBottom: 0 }}>
                       {fd.inputType === 'text' ? (
                         <Input placeholder="e.g. 2.5cm x 2.5cm" disabled={isItemDisabled} size="small" />
+                      ) : fd.inputType === 'readonly' ? (
+                        <Input readOnly size="small" placeholder="Set on the Inventory item" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : '#f5f5f5', cursor: 'not-allowed' }} />
                       ) : (
                         // Spec values come purely from inventory — no inline "Add" option here.
                         // Yes/No toggles offer both choices; everything else lists only the values

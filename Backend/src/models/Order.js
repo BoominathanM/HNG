@@ -37,6 +37,9 @@ const orderItemSchema = new mongoose.Schema({
     },
   },
   size: String,
+  // Sticker dimensions for this item's chosen packing material, sourced from the matching
+  // Inventory item's per-material size (boxStickerSize/ziplockStickerSize/butterPaperStickerSize).
+  stickerSize: String,
   packaging: String,
   packingMaterial: String,
   material: String,
