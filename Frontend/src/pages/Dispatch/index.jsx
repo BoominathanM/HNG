@@ -192,6 +192,9 @@ export default function Dispatch() {
       // personalized kit's own box, so buildDispatchGroupedProducts nests them under the
       // Personalized Kit bucket instead of Separate Kit/Product (see dispatchGrouping.js).
       packagingIncludes: d.orderId?.packagingIncludes || [],
+      // Order-level packing Tasks (productIndex/taskType/assignedTo) — lets the product
+      // panel below tell an assigned product/kit apart from one nobody's picked up yet.
+      tasks: d.tasks || [],
       // Customer / address fields (now populated from the order)
       destination: d.orderId?.destination || '—',
       salesPerson: d.orderId?.assignedTo?.fullName || '—',
@@ -453,6 +456,7 @@ export default function Dispatch() {
       boxes: record.boxes,
       kitDispatch: record.kitDispatch,
       packagingIncludes: record.packagingIncludes,
+      tasks: record.tasks,
     });
     const summary = summarizeDispatchVerification(products);
 
@@ -490,6 +494,10 @@ export default function Dispatch() {
           dataSource={groupedProducts}
           rowKey="key"
           style={{ borderRadius: 8, overflow: 'hidden' }}
+          // Rows with no assigned packing Task yet (row.assigned === false, set by
+          // buildDispatchGroupedProducts) render disabled — greyed out and inert —
+          // until Operations assigns someone to pack them.
+          onRow={(row) => (row.assigned === false ? { style: { opacity: 0.45, pointerEvents: 'none' } } : {})}
           columns={[
             {
               title: 'Product / Kit',
@@ -512,6 +520,11 @@ export default function Dispatch() {
                       <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: cm.color, border: `1px solid ${cm.color}33` }}>
                         {cm.label}
                       </Tag>
+                      {row.bucket && row.assigned === false && (
+                        <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: '#999', border: '1px solid #99999955' }}>
+                          Task Not Assigned
+                        </Tag>
+                      )}
                     </div>
                   );
                 }
@@ -525,6 +538,11 @@ export default function Dispatch() {
                     {row.includedFrom && (
                       <Tag style={{ borderRadius: 10, fontSize: 10, background: '#ede9fe', color: '#5b21b6', border: '1px solid #5b21b633' }}>
                         {row.includedFrom}
+                      </Tag>
+                    )}
+                    {row.bucket === 'separateProduct' && row.assigned === false && (
+                      <Tag style={{ borderRadius: 10, fontSize: 10, background: 'transparent', color: '#999', border: '1px solid #99999955' }}>
+                        Task Not Assigned
                       </Tag>
                     )}
                   </Space>

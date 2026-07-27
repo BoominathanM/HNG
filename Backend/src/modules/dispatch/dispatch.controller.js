@@ -2,6 +2,7 @@ const DispatchRecord = require('../../models/DispatchRecord');
 const Order = require('../../models/Order');
 const Lead = require('../../models/Lead');
 const User = require('../../models/User');
+const Task = require('../../models/Task');
 const WhatsAppEvent = require('../../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
 const InventoryItem = require('../../models/InventoryItem');
@@ -11,7 +12,7 @@ const PickupOrder = require('../../models/PickupOrder');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
-const { notifyMany } = require('../../utils/notify');
+const { notifyMany, notifyRoles } = require('../../utils/notify');
 const { sendMessage } = require('../../services/whatsAppService');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 const aiService = require('../../services/aiService');
@@ -93,6 +94,28 @@ async function visibleOrderIds(user) {
   return Order.distinct('_id', { $or: visibility });
 }
 
+// Attaches each dispatch's order-level packing Tasks (productIndex/taskType/assignedTo)
+// so the frontend can tell an assigned product/kit apart from one nobody's been
+// assigned to yet (see dispatchGrouping.js `assigned` flag) — Task itself only links
+// to Order, not DispatchRecord, so this has to be joined in manually per orderId.
+async function attachOrderTasks(dispatches) {
+  const orderIds = [...new Set(dispatches.map((d) => d.orderId?._id || d.orderId).filter(Boolean).map(String))];
+  if (orderIds.length === 0) return;
+  const tasks = await Task.find({ orderId: { $in: orderIds } })
+    .select('orderId productIndex taskType assignedTo assignedToMany')
+    .lean();
+  const tasksByOrder = new Map();
+  tasks.forEach((t) => {
+    const key = String(t.orderId);
+    if (!tasksByOrder.has(key)) tasksByOrder.set(key, []);
+    tasksByOrder.get(key).push(t);
+  });
+  dispatches.forEach((d) => {
+    const key = String(d.orderId?._id || d.orderId || '');
+    d.tasks = tasksByOrder.get(key) || [];
+  });
+}
+
 exports.getDispatches = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status && STATUS_LABEL_TO_DB[req.query.status]) filter.status = STATUS_LABEL_TO_DB[req.query.status];
@@ -151,6 +174,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
       ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending')
       : 'Pending';
   }));
+  await attachOrderTasks(dispatches);
   res.status(200).json({ success: true, total: sortedIds.length, emergencyCount, page, data: dispatches });
 });
 
@@ -179,6 +203,7 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
       ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending')
       : 'Pending';
   }));
+  await attachOrderTasks(dispatches);
   res.status(200).json({ success: true, total: dispatches.length, data: dispatches });
 });
 
@@ -198,6 +223,7 @@ exports.getDispatch = asyncHandler(async (req, res, next) => {
   plain.orderPaymentStatus = ordObjectId
     ? await resolveOrderPaymentStatus(ordObjectId).catch(() => 'Pending')
     : 'Pending';
+  await attachOrderTasks([plain]);
   res.status(200).json({ success: true, data: plain });
 });
 
@@ -625,6 +651,9 @@ exports.createPickupOrder = asyncHandler(async (req, res) => {
 // GPay/amount/proof and opens a reimbursement claim for Finance to pay back) and any
 // other field update (taken status, assigned pickup person, etc).
 exports.updatePickupOrder = asyncHandler(async (req, res, next) => {
+  const existing = await PickupOrder.findById(req.params.id);
+  if (!existing) return next(new AppError('Pickup order not found', 404));
+
   const update = { ...req.body };
   if (update.takenStatus && update.takenStatus !== 'Pending') update.taken = true;
   if (update.paymentBy === 'Finance') {
@@ -635,7 +664,23 @@ exports.updatePickupOrder = asyncHandler(async (req, res, next) => {
     update.reimbursementStatus = 'Pending';
   }
   const pickup = await PickupOrder.findByIdAndUpdate(req.params.id, update, { new: true });
-  if (!pickup) return next(new AppError('Pickup order not found', 404));
+
+  // Vendor shipment just dropped off — nudge Purchase to go verify/receive it.
+  if (
+    update.takenStatus === 'Pickup Dropped' &&
+    existing.takenStatus !== 'Pickup Dropped' &&
+    pickup.purchaseOrderId
+  ) {
+    notifyRoles({
+      modules: ['Purchase'],
+      type: 'purchase',
+      title: 'Shipment Dropped — Ready to Receive',
+      message: `Pickup order ${pickup.orderCode || pickup._id} has been dropped off — verify and mark as received in Dispatch Order Tracking.`,
+      link: '/purchase',
+      data: { pickupOrderId: pickup._id.toString(), purchaseOrderId: pickup.purchaseOrderId.toString() },
+    }).catch(() => {});
+  }
+
   res.status(200).json({ success: true, data: pickup });
 });
 

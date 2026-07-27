@@ -37,10 +37,26 @@ const purchaseOrderSchema = new mongoose.Schema({
   // Purchase's own Paid/Not Paid toggle captured at LR-upload time — separate from
   // `paymentStatus` above (which tracks the vendor invoice amount paid via Financial).
   lrPaymentStatus: { type: String, enum: ['Paid', 'Not Paid'] },
-  dispatchStatus: { type: String, enum: ['Pending', 'In Transit', 'Received'], default: 'Pending' },
+  dispatchStatus: { type: String, enum: ['Pending', 'In Transit', 'Received', 'Partially Received'], default: 'Pending' },
   receivedAt: Date,
   stockUpdated: { type: Boolean, default: false },
   invoiceFileUrl: String,
+  // Per-line-item breakdown captured at receiving time (from AI invoice scan + manual
+  // adjustment) — persists what the frontend previously only tracked in local React state.
+  receivedItems: [{
+    itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },
+    itemName: String,
+    orderedQty: Number,
+    receivedQty: Number,
+    missingQty: Number,
+    reason: String,
+  }],
+  // Only set when a shortfall was recorded (dispatchStatus === 'Partially Received').
+  missedBy: { type: String, enum: ['vendor', 'lorry', null], default: null },
+  vendorMissedAction: { type: String, enum: ['new_order', 'attach_upcoming', null], default: null },
+  // Set once the "attach to upcoming order" shortfall has been checked/actioned by Purchase,
+  // so the info banner on the vendor's next order stops showing it.
+  missingResolved: { type: Boolean, default: false },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

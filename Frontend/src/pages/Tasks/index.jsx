@@ -11,6 +11,7 @@ import {
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
   FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
   EditOutlined, DeleteOutlined, FieldTimeOutlined, RobotOutlined, TeamOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -1032,6 +1033,13 @@ export default function Tasks() {
                                         {s.stockReady ? `Stock: ${s.inventoryStock ?? '—'}` : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
                                       </Tag>
                                     </Space>
+                                    <Alert
+                                      type="info"
+                                      showIcon
+                                      icon={<InfoCircleOutlined />}
+                                      message="Stock already deducted for this order"
+                                      style={{ borderRadius: 8, marginBottom: 8, fontSize: 12 }}
+                                    />
                                     <Alert
                                       type={readyAlertType}
                                       showIcon

@@ -379,6 +379,9 @@ export default function DispatchDetail() {
       // Per-kit dispatch progress (overallQty/dispatchedQty/photos per kit, dispatched
       // as one unit) — see dispatchGrouping.js.
       kitDispatch: d.kitDispatch || [],
+      // Order-level packing Tasks (productIndex/taskType/assignedTo) — lets the
+      // verification table below disable rows nobody's been assigned to pack yet.
+      tasks: d.tasks || [],
       // Emergency split — same source Operations reads (splitDates), used here to badge
       // which product/kit rows are emergency and to gate the Partial → Full dispatch flow.
       isEmergency: !!(o.isEmergency || lead.isEmergency),
@@ -869,6 +872,7 @@ export default function DispatchDetail() {
     boxes: order?.boxes,
     kitDispatch: order?.kitDispatch,
     packagingIncludes: order?.packagingIncludes,
+    tasks: order?.tasks,
   });
   const verifySummary = summarizeDispatchVerification(products);
 
@@ -1255,6 +1259,10 @@ export default function DispatchDetail() {
                       pagination={false}
                       dataSource={groupedProducts}
                       style={{ borderRadius: 0 }}
+                      // Rows with no assigned packing Task yet (row.assigned === false, set
+                      // by buildDispatchGroupedProducts) render disabled — greyed out and
+                      // inert — until Operations assigns someone to pack them.
+                      onRow={(row) => (row.assigned === false ? { style: { opacity: 0.45, pointerEvents: 'none' } } : {})}
                       columns={[
                         {
                           title: 'Product / Kit',
@@ -1290,6 +1298,11 @@ export default function DispatchDetail() {
                                   <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: cm.color, border: `1px solid ${cm.color}33` }}>
                                     {cm.label}
                                   </Tag>
+                                  {row.bucket && row.assigned === false && (
+                                    <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: '#999', border: '1px solid #99999955' }}>
+                                      Task Not Assigned
+                                    </Tag>
+                                  )}
                                   {emergencyBadge}
                                 </div>
                               );
@@ -1307,6 +1320,11 @@ export default function DispatchDetail() {
                                 {row.includedFrom && (
                                   <Tag style={{ borderRadius: 10, fontSize: 10, background: '#ede9fe', color: '#5b21b6', border: '1px solid #5b21b633' }}>
                                     {row.includedFrom}
+                                  </Tag>
+                                )}
+                                {row.bucket === 'separateProduct' && row.assigned === false && (
+                                  <Tag style={{ borderRadius: 10, fontSize: 10, background: 'transparent', color: '#999', border: '1px solid #99999955' }}>
+                                    Task Not Assigned
                                   </Tag>
                                 )}
                                 {emergencyBadge}
@@ -1347,7 +1365,7 @@ export default function DispatchDetail() {
                                 max={pending}
                                 value={dispatchNowCounts[row.key] || 0}
                                 onChange={(v) => setDispatchNow(row, v)}
-                                disabled={dispatched || pending === 0}
+                                disabled={dispatched || pending === 0 || row.assigned === false}
                                 style={{ width: 90 }}
                               />
                             );
@@ -1391,7 +1409,7 @@ export default function DispatchDetail() {
                                 <Upload
                                   showUploadList={false}
                                   accept="image/*"
-                                  disabled={openCount >= 20 || openUploading || noKitTarget || dispatched}
+                                  disabled={openCount >= 20 || openUploading || noKitTarget || dispatched || row.assigned === false}
                                   customRequest={uploadFn}
                                 >
                                   <Button size="small" icon={openUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
@@ -1404,7 +1422,7 @@ export default function DispatchDetail() {
                                 <Upload
                                   showUploadList={false}
                                   accept="image/*"
-                                  disabled={closeCount >= 20 || closeUploading || noKitTarget || dispatched}
+                                  disabled={closeCount >= 20 || closeUploading || noKitTarget || dispatched || row.assigned === false}
                                   customRequest={uploadFnClose}
                                 >
                                   <Button size="small" icon={closeUploading ? <LoadingOutlined spin /> : <CameraOutlined />}

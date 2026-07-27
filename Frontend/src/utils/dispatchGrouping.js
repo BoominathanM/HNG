@@ -18,10 +18,30 @@
 // existed have no kitDispatch entries — those kits are treated as already fully
 // dispatched (matching the old all-dispatched-on-creation behavior they were built
 // under), so they show 0 pending and no photo action is needed.
-export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, boxes, kitDispatch, packagingIncludes }) {
+export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, boxes, kitDispatch, packagingIncludes, tasks }) {
   const dispatchItems = items || [];
   const sourceOrderItems = orderItems || [];
   const kitDispatchByKitId = new Map((kitDispatch || []).map((kd) => [String(kd.kitId), kd]));
+
+  // A Task is "assigned" once it has a single or multi assignee. Kit Packing has a
+  // single shared task per order covering every kit in it (see operations.controller.js
+  // assignTask — a second Kit Packing task per order is rejected outright), so any
+  // assigned Kit Packing task marks EVERY kit header row as assigned. Individual
+  // product tasks (assignTasksPerProduct) each carry the order.items array index they
+  // were fanned out for — matched below via each raw item's own position in that array.
+  const isTaskAssigned = (t) => !!(t.assignedTo || (t.assignedToMany && t.assignedToMany.length));
+  const taskList = tasks || [];
+  // `tasks` omitted entirely (undefined) means the caller hasn't wired task data through
+  // yet — keep their original unrestricted display rather than disabling everything.
+  // Only a caller that explicitly passes an array (even an empty one, meaning genuinely
+  // no tasks assigned yet) opts into gating rows by assignment.
+  const gatingActive = tasks !== undefined;
+  const kitPackingAssigned = !gatingActive || taskList.some((t) => t.taskType === 'Kit Packing' && isTaskAssigned(t));
+  const assignedProductIndices = new Set(
+    taskList
+      .filter((t) => t.taskType !== 'Kit Packing' && t.productIndex !== undefined && t.productIndex !== null && isTaskAssigned(t))
+      .map((t) => Number(t.productIndex))
+  );
 
   // "Select Kit(s) to Include" (order.packagingIncludes) is Sales' physical packing
   // instruction — a separate kit's kitId, or a separate product's name, that's packed
@@ -54,6 +74,10 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       boxes: it.boxes ?? fallback.boxes ?? 0,
       qtyOrdered: it.qtyOrdered ?? fallback.qty ?? 0,
       qtyDispatched: it.qtyDispatched ?? 0,
+      // This item's own position in order.items — DispatchRecord.items is seeded 1:1
+      // in the same order (see forwardOrderToDispatch), so it lines up with the
+      // per-product Task.productIndex assignTasksPerProduct fanned out against.
+      productIndex: i,
     };
   });
 
@@ -77,6 +101,7 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
     qtyOrdered: item.qtyOrdered || 0,
     qtyDispatched: item.qtyDispatched || 0,
     pendingQty: Math.max(0, (item.qtyOrdered || 0) - (item.qtyDispatched || 0)),
+    assigned: !gatingActive || assignedProductIndices.has(item.productIndex),
   });
 
   // No kit info anywhere — flat product list (unchanged from before).
@@ -150,6 +175,7 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
         isPersonalized,
         childItemIds: kitItemIds,
         bucket: isPersonalized ? 'personalizedKit' : 'separateKit',
+        assigned: kitPackingAssigned,
       };
       rows.push(headerRow);
       verifiable.push(headerRow);
@@ -162,7 +188,7 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
         const totalQty = Number(item.qty || item.qtyOrdered) || 0;
         const perKitQty = overallQty > 0 ? Math.round(totalQty / overallQty) : null;
         const itemType = isPersonalized ? 'personalized_item' : 'kit_item';
-        const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0, bucket: null });
+        const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0, bucket: null, assigned: kitPackingAssigned });
         rows.push(row);
       });
 
@@ -180,7 +206,7 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
           });
           incItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
           incItems.forEach((item, ii) => {
-            const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom: incKitName });
+            const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom: incKitName, assigned: kitPackingAssigned });
             rows.push(row);
           });
         });
@@ -197,7 +223,7 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
         });
         includedProdItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
         includedProdItems.forEach((item, ii) => {
-          const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom: 'Included in kit packing' });
+          const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom: 'Included in kit packing', assigned: kitPackingAssigned });
           rows.push(row);
         });
       }

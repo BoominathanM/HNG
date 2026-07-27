@@ -224,6 +224,13 @@ export const apiSlice = createApi({
       query: ({ id, formData }) => ({ url: `/purchase/orders/${id}/receive`, method: 'post', data: formData }),
       invalidatesTags: ['PurchaseOrders', 'Inventory', 'Reports'],
     }),
+    scanReceivedInvoice: builder.mutation({
+      query: ({ id, formData }) => ({ url: `/purchase/orders/${id}/scan-invoice`, method: 'post', data: formData }),
+    }),
+    resolveMissingOrder: builder.mutation({
+      query: (id) => ({ url: `/purchase/orders/${id}/resolve-missing`, method: 'patch' }),
+      invalidatesTags: ['PurchaseOrders'],
+    }),
     uploadPurchaseLR: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/purchase/orders/${id}/lr`, method: 'patch', data }),
       invalidatesTags: ['PurchaseOrders', 'Reports'],
@@ -1277,6 +1284,8 @@ export const {
   useAddPurchaseNoteMutation,
   useGetPurchaseOrdersQuery,
   useReceiveOrderMutation,
+  useScanReceivedInvoiceMutation,
+  useResolveMissingOrderMutation,
   useUploadPurchaseLRMutation,
   useGetLocalPurchasesQuery,
   useScanLocalPurchaseInvoiceMutation,

@@ -1133,6 +1133,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'brand', label: 'Brand', field: 'brush_brand', options: [] },
     { key: 'packingMaterial', label: 'Packing Material', field: 'brush_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'brush_sticker', options: _YES_NO },
+    { key: 'size', label: 'Sticker Size', field: 'brush_size', options: [], showIf: 'sticker', inputType: 'text' },
     { key: 'printing', label: 'Printing', field: 'brush_printing', options: _YES_NO },
   ],
   paste: [
@@ -1146,27 +1147,32 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'brand', label: 'Brand', field: 'razor_brand', options: [] },
     { key: 'packingMaterial', label: 'Packing Material', field: 'razor_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'razor_sticker', options: _YES_NO },
+    { key: 'size', label: 'Sticker Size', field: 'razor_size', options: [], showIf: 'sticker', inputType: 'text' },
     { key: 'printing', label: 'Printing', field: 'razor_printing', options: _YES_NO },
   ],
   gel: [
     { key: 'brand', label: 'Brand', field: 'gel_brand', options: [] },
     { key: 'packingMaterial', label: 'Packing Material', field: 'gel_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'gel_sticker', options: _YES_NO },
+    { key: 'size', label: 'Sticker Size', field: 'gel_size', options: [], showIf: 'sticker', inputType: 'text' },
     { key: 'printing', label: 'Printing', field: 'gel_printing', options: _YES_NO },
   ],
   vanity_item: [
     { key: 'packingMaterial', label: 'Packing Material', field: 'vanity_item_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'vanity_item_sticker', options: _YES_NO },
+    { key: 'size', label: 'Sticker Size', field: 'vanity_item_size', options: [], showIf: 'sticker', inputType: 'text' },
     { key: 'printing', label: 'Printing', field: 'vanity_item_printing', options: _YES_NO },
   ],
   med_kit: [
     { key: 'packingMaterial', label: 'Packing Material', field: 'medkit_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'medkit_sticker', options: _YES_NO },
+    { key: 'size', label: 'Sticker Size', field: 'medkit_size', options: [], showIf: 'sticker', inputType: 'text' },
     { key: 'printing', label: 'Printing', field: 'medkit_printing', options: _YES_NO },
   ],
   sewing: [
     { key: 'packingMaterial', label: 'Packing Material', field: 'sewing_packingMaterial', options: [] },
     { key: 'sticker', label: 'Sticker', field: 'sewing_sticker', options: _YES_NO },
+    { key: 'size', label: 'Sticker Size', field: 'sewing_size', options: [], showIf: 'sticker', inputType: 'text' },
     { key: 'printing', label: 'Printing', field: 'sewing_printing', options: _YES_NO },
   ],
 };
@@ -1240,6 +1246,8 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const rate = Form.useWatch([fieldName, name, 'rate']);
   const gst = Form.useWatch([fieldName, name, 'gst']);
   const selectedName = Form.useWatch([fieldName, name, 'name']);
+  // Drives the conditional "Sticker Size" spec field — only relevant once Sticker = Yes.
+  const stickerVal = Form.useWatch([fieldName, name, 'sticker']);
 
   const form = Form.useFormInstance();
   const selectedKitIds = Form.useWatch('selectedKits', form) || [];
@@ -1674,6 +1682,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           {dynamicFieldDefs.length > 0 ? (
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {dynamicFieldDefs.map((fd) => {
+                // Fields flagged showIf: 'sticker' (e.g. Sticker Size) only matter once Sticker
+                // is set to Yes — keep them out of the layout entirely otherwise. The field stays
+                // registered in the form store when hidden, so a previously entered size survives
+                // toggling Sticker off and back on.
+                if (fd.showIf === 'sticker' && stickerVal !== 'YES') return null;
                 // Yes/No toggle fields (sticker, printing, …) always offer both choices — they're a
                 // per-order decision, not a stored inventory value. Everything else is sourced from
                 // the actual values stored on matching inventory items.
@@ -1696,20 +1709,24 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 return (
                   <div key={fd.key} style={{ flex: '1 1 120px', minWidth: 100 }}>
                     <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fd.label}</span>} style={{ marginBottom: 0 }}>
-                      {/* Spec values come purely from inventory — no inline "Add" option here.
-                          Yes/No toggles offer both choices; everything else lists only the values
-                          stored on matching inventory items. */}
-                      <Select
-                        allowClear
-                        showSearch
-                        optionFilterProp="label"
-                        placeholder={invItem ? fd.label : 'Select a product first'}
-                        disabled={isItemDisabled || (!isYesNo && !invItem)}
-                        size="small"
-                        options={opts}
-                        onChange={handleStickerPrintingChange}
-                        notFoundContent={isYesNo ? undefined : 'No values in inventory for this spec'}
-                      />
+                      {fd.inputType === 'text' ? (
+                        <Input placeholder="e.g. 2.5cm x 2.5cm" disabled={isItemDisabled} size="small" />
+                      ) : (
+                        // Spec values come purely from inventory — no inline "Add" option here.
+                        // Yes/No toggles offer both choices; everything else lists only the values
+                        // stored on matching inventory items.
+                        <Select
+                          allowClear
+                          showSearch
+                          optionFilterProp="label"
+                          placeholder={invItem ? fd.label : 'Select a product first'}
+                          disabled={isItemDisabled || (!isYesNo && !invItem)}
+                          size="small"
+                          options={opts}
+                          onChange={handleStickerPrintingChange}
+                          notFoundContent={isYesNo ? undefined : 'No values in inventory for this spec'}
+                        />
+                      )}
                     </Form.Item>
                   </div>
                 );

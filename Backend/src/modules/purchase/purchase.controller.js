@@ -181,7 +181,10 @@ exports.addNote = asyncHandler(async (req, res, next) => {
 exports.getPurchaseOrders = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
-  if (req.query.dispatchStatus) filter.dispatchStatus = req.query.dispatchStatus;
+  if (req.query.dispatchStatus) {
+    const statuses = req.query.dispatchStatus.split(',').map((s) => s.trim()).filter(Boolean);
+    filter.dispatchStatus = statuses.length > 1 ? { $in: statuses } : statuses[0];
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [orders, total] = await Promise.all([
@@ -198,42 +201,179 @@ exports.getPurchaseOrders = asyncHandler(async (req, res) => {
 });
 
 // ─── RECEIVE ORDER ────────────────────────────────────────────────────────────
+// POST /api/purchase/orders/:id/scan-invoice — AI-scan a receiving invoice
+// (already Cloudinary-hosted via the frontend's upload/camera-capture step) and
+// match its line items against this PO's ordered items, so the Received Order
+// modal can pre-fill actual-vs-ordered quantities instead of assuming full receipt.
+exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
+  if (!req.file) return next(new AppError('Please upload an invoice file', 400));
+
+  const order = await PurchaseOrder.findById(req.params.id).populate('vendorId', 'name');
+  if (!order) return next(new AppError('Purchase order not found', 404));
+
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) {
+    return next(new AppError('AI is not configured yet. Add your OpenAI API key under Integration → AI Integration.', 503));
+  }
+
+  const file = { url: req.file.path, originalName: req.file.originalname, mimetype: req.file.mimetype };
+  let extracted;
+  try {
+    extracted = await aiService.extractInvoiceFields({ apiKey, model: config.model, file });
+  } catch (err) {
+    return next(new AppError(`AI extraction failed: ${err.message}`, err.statusCode || 502));
+  }
+
+  // Ordered lines: multi-item PO uses `items[]`, single-item PO uses the top-level fields.
+  const orderedLines = (order.items && order.items.length)
+    ? order.items.map((it) => ({ itemId: it.itemId, itemName: it.itemName, orderedQty: it.qty, unit: it.unit }))
+    : [{ itemId: order.itemId, itemName: order.itemName, orderedQty: order.qty, unit: order.unit }];
+
+  const norm = (s) => (s || '').toLowerCase().trim();
+  const scannedItems = extracted.items || [];
+  const items = orderedLines.map((line) => {
+    const match = scannedItems.find((si) => norm(si.name).includes(norm(line.itemName)) || norm(line.itemName).includes(norm(si.name)));
+    return {
+      itemId: line.itemId,
+      itemName: line.itemName,
+      orderedQty: line.orderedQty,
+      receivedQty: match ? Number(match.qty) || 0 : 0,
+      unit: line.unit,
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    data: {
+      items,
+      vendorName: extracted.vendorName || order.vendorId?.name,
+      invoiceNo: extracted.invoiceNo,
+      totalAmount: extracted.totalAmount,
+    },
+  });
+});
+
 exports.receiveOrder = asyncHandler(async (req, res, next) => {
-  const order = await PurchaseOrder.findById(req.params.id);
+  const order = await PurchaseOrder.findById(req.params.id).populate('vendorId', 'name');
   if (!order) return next(new AppError('Purchase order not found', 404));
   if (order.stockUpdated) return next(new AppError('Stock already updated for this order', 400));
 
   if (req.file) order.invoiceFileUrl = req.file.path;
-  order.dispatchStatus = 'Received';
+
+  let lines;
+  try {
+    lines = req.body.items ? JSON.parse(req.body.items) : null;
+  } catch {
+    return next(new AppError('Invalid items payload', 400));
+  }
+  if (!lines || !lines.length) {
+    lines = [{ itemId: order.itemId, itemName: order.itemName, orderedQty: order.qty, receivedQty: order.qty }];
+  }
+
+  const missedBy = ['vendor', 'lorry'].includes(req.body.missedBy) ? req.body.missedBy : null;
+  const vendorMissedAction = ['new_order', 'attach_upcoming'].includes(req.body.vendorMissedAction) ? req.body.vendorMissedAction : null;
+
+  order.receivedItems = lines.map((li) => ({
+    itemId: li.itemId || undefined,
+    itemName: li.itemName,
+    orderedQty: Number(li.orderedQty) || 0,
+    receivedQty: Number(li.receivedQty) || 0,
+    missingQty: Math.max(0, (Number(li.orderedQty) || 0) - (Number(li.receivedQty) || 0)),
+    reason: li.reason || '',
+  }));
+  const isPartial = order.receivedItems.some((li) => li.missingQty > 0);
+
+  order.dispatchStatus = isPartial ? 'Partially Received' : 'Received';
   order.receivedAt = Date.now();
   order.stockUpdated = true;
+  order.missedBy = isPartial ? missedBy : null;
+  order.vendorMissedAction = isPartial ? vendorMissedAction : null;
   await order.save({ validateBeforeSave: false });
 
-  // Update inventory stock
-  if (order.itemId && order.qty) {
-    const item = await InventoryItem.findById(order.itemId);
-    if (item) {
-      const before = item.currentStock;
-      item.currentStock += order.qty;
-      await item.save({ validateBeforeSave: false });
-      await StockMovement.create({
-        itemId: item._id,
-        movementType: 'IN',
-        qty: order.qty,
-        qtyBefore: before,
-        qtyAfter: item.currentStock,
-        referenceType: 'Purchase',
-        referenceId: order._id,
-        supplyPrice: order.amount / order.qty,
-        approvalStatus: 'Approved',
-        approvedBy: req.user._id,
-        approvedAt: Date.now(),
-        createdBy: req.user._id,
-      });
+  // Credit inventory for whatever actually arrived, attributed to this vendor as its own
+  // purchase batch — same FIFO batch convention used everywhere else in Inventory, so a
+  // partially-short delivery doesn't get blended anonymously into currentStock.
+  const vendorId = order.vendorId?._id || order.vendorId;
+  const vendorName = order.vendorId?.name;
+  for (const li of order.receivedItems) {
+    if (!li.itemId || !li.receivedQty) continue;
+    const item = await InventoryItem.findById(li.itemId);
+    if (!item) continue;
+    const before = item.currentStock;
+    item.purchaseBatches.push({
+      vendorId: vendorId || undefined,
+      vendorName,
+      purchaseDate: Date.now(),
+      qty: li.receivedQty,
+      remainingQty: li.receivedQty,
+    });
+    item.currentStock = before + li.receivedQty;
+    await item.save({ validateBeforeSave: false });
+    await StockMovement.create({
+      itemId: item._id,
+      movementType: 'IN',
+      qty: li.receivedQty,
+      qtyBefore: before,
+      qtyAfter: item.currentStock,
+      referenceType: 'Purchase',
+      referenceId: order._id,
+      vendorId: vendorId || undefined,
+      vendorName,
+      purchaseDate: Date.now(),
+      supplyPrice: li.orderedQty ? order.amount / li.orderedQty : undefined,
+      approvalStatus: 'Approved',
+      approvedBy: req.user._id,
+      approvedAt: Date.now(),
+      createdBy: req.user._id,
+    });
+  }
+
+  if (isPartial) {
+    const missingSummary = order.receivedItems.filter((li) => li.missingQty > 0)
+      .map((li) => `${li.itemName}: ${li.missingQty} short`).join(', ');
+
+    if (missedBy === 'vendor' && vendorMissedAction === 'new_order') {
+      notifyRoles({
+        modules: ['Purchase'],
+        type: 'purchase',
+        title: `Missing Stock — Send Immediately (${order.poCode})`,
+        message: `Order ${order.poCode} from ${vendorName || 'vendor'} is short: ${missingSummary}. Raise/send a replacement immediately.`,
+        link: '/purchase',
+        data: { purchaseOrderId: order._id.toString(), poCode: order.poCode },
+      }).catch(() => {});
+    } else if (missedBy === 'vendor' && vendorMissedAction === 'attach_upcoming') {
+      notifyRoles({
+        modules: ['Purchase'],
+        type: 'purchase',
+        title: `Missing Stock — Attach to Next Order (${order.poCode})`,
+        message: `Order ${order.poCode} from ${vendorName || 'vendor'} is short: ${missingSummary}. This will be flagged on the vendor's next order.`,
+        link: '/purchase',
+        data: { purchaseOrderId: order._id.toString(), poCode: order.poCode },
+      }).catch(() => {});
+    } else if (missedBy === 'lorry') {
+      // notifyRoles always includes every Admin/Super Admin regardless of `modules`.
+      notifyRoles({
+        modules: ['Purchase'],
+        type: 'purchase',
+        title: `Lorry Short-Delivery (${order.poCode})`,
+        message: `Order ${order.poCode} from ${vendorName || 'vendor'} was short-delivered by the lorry/transporter: ${missingSummary}.`,
+        link: '/purchase',
+        data: { purchaseOrderId: order._id.toString(), poCode: order.poCode },
+      }).catch(() => {});
     }
   }
 
-  res.status(200).json({ success: true, data: order, message: 'Order received and stock updated' });
+  res.status(200).json({ success: true, data: order, message: isPartial ? 'Partial receipt recorded and stock updated' : 'Order received and stock updated' });
+});
+
+// PATCH /api/purchase/orders/:id/resolve-missing — mark a vendor's "attach to
+// upcoming order" shortfall as checked/handled, so the info banner shown when
+// opening the vendor's next order stops surfacing it.
+exports.resolveMissingOrder = asyncHandler(async (req, res, next) => {
+  const order = await PurchaseOrder.findByIdAndUpdate(req.params.id, { missingResolved: true }, { new: true });
+  if (!order) return next(new AppError('Purchase order not found', 404));
+  res.status(200).json({ success: true, data: order });
 });
 
 exports.uploadLR = asyncHandler(async (req, res, next) => {

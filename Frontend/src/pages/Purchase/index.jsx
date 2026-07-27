@@ -30,6 +30,8 @@ import {
   useUploadQuotationFileMutation,
   useUpdatePurchaseRequestDetailsMutation,
   useReceiveOrderMutation,
+  useScanReceivedInvoiceMutation,
+  useResolveMissingOrderMutation,
   useUploadPurchaseLRMutation,
   useScanLocalPurchaseInvoiceMutation,
   useCreateLocalPurchaseMutation,
@@ -140,6 +142,8 @@ export default function Purchase() {
   const [uploadFilesMutation] = useUploadFilesMutation();
   const [sendWhatsAppMessageMutation] = useSendWhatsAppMessageMutation();
   const [receiveOrderMutation] = useReceiveOrderMutation();
+  const [scanReceivedInvoiceMutation] = useScanReceivedInvoiceMutation();
+  const [resolveMissingOrderMutation] = useResolveMissingOrderMutation();
   const [uploadPurchaseLR] = useUploadPurchaseLRMutation();
   const [createLocalPurchaseMutation] = useCreateLocalPurchaseMutation();
   const [scanLocalPurchaseInvoice] = useScanLocalPurchaseInvoiceMutation();
@@ -458,20 +462,33 @@ export default function Purchase() {
   };
 
   /* ── Dispatch Order Tracking tab state — from RTK Query ── */
-  const { data: dispatchTrackingData } = useGetPurchaseOrdersQuery({ dispatchStatus: 'In Transit' });
+  // 'Partially Received' orders stay in this fetch (not just 'In Transit') so the
+  // Missing/Short-Received table and the attach-to-upcoming banner keep working after
+  // a partial receipt is confirmed — a plain 'Received' order still rolls off.
+  const { data: dispatchTrackingData } = useGetPurchaseOrdersQuery({ dispatchStatus: 'In Transit,Partially Received' });
   const [dispatchTrackingOrders, setDispatchTrackingOrders] = useState([]);
   useEffect(() => {
-    setDispatchTrackingOrders((dispatchTrackingData?.data || []).map((o) => ({
-      key: o._id, orderId: o.poCode, date: o.createdAt?.slice(0, 10),
-      supplier: o.vendorId?.name || '-', item: o.itemId?.itemName || o.itemName,
-      qty: o.qty, unit: o.unit, amount: o.amount,
-      lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
-      lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
-      paymentProof: o.paymentProofUrl || null,
-      paymentHistory: o.paymentHistory || [],
-      deliveryStatus: o.dispatchStatus === 'Received' ? 'Delivered' : 'In Transit',
-      receivedStatus: o.dispatchStatus === 'Received' ? 'received' : null,
-    })));
+    setDispatchTrackingOrders((dispatchTrackingData?.data || []).map((o) => {
+      const missingItems = (o.receivedItems || [])
+        .filter((li) => li.missingQty > 0)
+        .map((li) => ({ key: li.itemId?._id || li.itemId || li.itemName, name: li.itemName, ordered: li.orderedQty, received: li.receivedQty, missing: li.missingQty }));
+      return {
+        key: o._id, orderId: o.poCode, date: o.createdAt?.slice(0, 10),
+        supplier: o.vendorId?.name || '-', vendorId: o.vendorId?._id || o.vendorId,
+        item: o.itemId?.itemName || o.itemName,
+        qty: o.qty, unit: o.unit, amount: o.amount,
+        lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
+        lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
+        paymentProof: o.paymentProofUrl || null,
+        paymentHistory: o.paymentHistory || [],
+        deliveryStatus: o.dispatchStatus === 'Received' ? 'Delivered' : o.dispatchStatus === 'Partially Received' ? 'Partial Delivery' : 'In Transit',
+        receivedStatus: o.dispatchStatus === 'Received' ? 'received' : o.dispatchStatus === 'Partially Received' ? 'partial' : null,
+        missingItems,
+        missedBy: o.missedBy || null,
+        vendorMissedAction: o.vendorMissedAction || null,
+        missingResolved: !!o.missingResolved,
+      };
+    }));
   }, [dispatchTrackingData]);
 
   const [showTakenModal, setShowTakenModal] = useState(false);
@@ -484,13 +501,14 @@ export default function Purchase() {
   const [invoiceScanned, setInvoiceScanned] = useState(false);
   const [invoiceProducts, setInvoiceProducts] = useState([]);
   const [productQtys, setProductQtys] = useState({});
+  const [receivedInvoiceFile, setReceivedInvoiceFile] = useState(null);
+  const [receivedConfirmLoading, setReceivedConfirmLoading] = useState(false);
   const [productNotes, setProductNotes] = useState({});
   const [partialReceived, setPartialReceived] = useState(false);
   const [missedBy, setMissedBy] = useState(null);
   const [vendorMissedAction, setVendorMissedAction] = useState(null);
   const [customActionOptions, setCustomActionOptions] = useState(['Completely Received']);
   const [newActionInput, setNewActionInput] = useState('');
-  const [prevOrdersDelivered, setPrevOrdersDelivered] = useState(null);
   const [viewLRCopyModal, setViewLRCopyModal] = useState(null);
 
   /* ── Place Order — LR copy reminder after send ── */
@@ -533,23 +551,41 @@ export default function Purchase() {
     setPartialReceived(false);
     setMissedBy(null);
     setVendorMissedAction(null);
-    setPrevOrdersDelivered(null);
+    setReceivedInvoiceFile(null);
     setShowReceivedModal(true);
   };
 
-  const handleInvoiceScan = () => {
+  const handleInvoiceScan = async () => {
     if (!receivedTarget) return;
+    if (!receivedInvoiceFile) {
+      enqueueSnackbar('Upload or scan the invoice first.', { variant: 'warning' });
+      return;
+    }
     setInvoiceScanLoading(true);
-    setTimeout(() => {
-      const products = [{ key: 1, name: receivedTarget.item, hsn: '3401', gst: '18%', originalQty: receivedTarget.qty, unit: receivedTarget.unit, rate: receivedTarget.qty ? Math.round(receivedTarget.amount / receivedTarget.qty * 100) / 100 : 0, amount: receivedTarget.amount }];
+    try {
+      const fd = new FormData();
+      fd.append('invoice', receivedInvoiceFile);
+      const res = await scanReceivedInvoiceMutation({ id: receivedTarget.key, formData: fd }).unwrap();
+      const scannedItems = res?.data?.items || [];
+      const products = scannedItems.map((it, idx) => ({
+        key: it.itemId ? String(it.itemId) : idx,
+        itemId: it.itemId,
+        name: it.itemName,
+        hsn: '-', gst: '-',
+        originalQty: it.orderedQty,
+        unit: it.unit || receivedTarget.unit,
+      }));
       setInvoiceProducts(products);
       const qtys = {};
-      products.forEach(p => { qtys[p.key] = p.originalQty; });
+      scannedItems.forEach((it, idx) => { qtys[products[idx].key] = it.receivedQty; });
       setProductQtys(qtys);
       setInvoiceScanned(true);
-      setInvoiceScanLoading(false);
       enqueueSnackbar('Invoice scanned — products fetched successfully!', { variant: 'success' });
-    }, 1800);
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'AI scan failed', { variant: 'error' });
+    } finally {
+      setInvoiceScanLoading(false);
+    }
   };
 
   const getMissingItems = () => invoiceProducts.filter(p => (productQtys[p.key] || 0) < p.originalQty)
@@ -559,28 +595,35 @@ export default function Purchase() {
     if (!receivedTarget) return;
     const missing = getMissingItems();
     const isPartial = missing.length > 0;
-    const newStatus = isPartial ? 'partial' : 'received';
-    const newDelivery = isPartial ? 'Partial Delivery' : 'Delivered';
-    // Persist a full receipt to the backend (marks Received + updates inventory stock).
-    // Partial deliveries are tracked locally only (backend has no partial-receipt model).
-    if (!isPartial && receivedTarget.key) {
-      try {
-        const fd = new FormData();
-        await receiveOrderMutation({ id: receivedTarget.key, formData: fd }).unwrap();
-      } catch (err) {
-        enqueueSnackbar(err?.data?.message || err?.data || 'Failed to mark order as received', { variant: 'error' });
-        return;
-      }
+    if (isPartial && !missedBy) {
+      enqueueSnackbar('Select whether the shortfall was missed by the vendor or the lorry.', { variant: 'warning' });
+      return;
     }
-    setDispatchTrackingOrders(prev => prev.map(o => o.key === receivedTarget.key ? {
-      ...o,
-      receivedStatus: newStatus,
-      deliveryStatus: newDelivery,
-      missingItems: missing.length > 0 ? missing.map(m => ({ key: m.key, name: m.name, ordered: m.originalQty, received: m.receivedQty, missing: m.missingQty })) : [],
-      partialVendorAction: vendorMissedAction,
-      partialMissedBy: missedBy,
-    } : o));
-    enqueueSnackbar(missing.length > 0 ? 'Partial delivery recorded!' : 'Order marked as Received!', { variant: 'success' });
+    if (isPartial && missedBy === 'vendor' && !vendorMissedAction) {
+      enqueueSnackbar('Choose a vendor action for the missing items.', { variant: 'warning' });
+      return;
+    }
+    setReceivedConfirmLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append('items', JSON.stringify(invoiceProducts.map(p => ({
+        itemId: p.itemId,
+        itemName: p.name,
+        orderedQty: p.originalQty,
+        receivedQty: productQtys[p.key] ?? p.originalQty,
+        reason: productNotes[p.key] || '',
+      }))));
+      if (missedBy) fd.append('missedBy', missedBy);
+      if (vendorMissedAction) fd.append('vendorMissedAction', vendorMissedAction);
+      if (receivedInvoiceFile) fd.append('invoice', receivedInvoiceFile);
+      await receiveOrderMutation({ id: receivedTarget.key, formData: fd }).unwrap();
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record receipt', { variant: 'error' });
+      setReceivedConfirmLoading(false);
+      return;
+    }
+    setReceivedConfirmLoading(false);
+    enqueueSnackbar(isPartial ? 'Partial delivery recorded!' : 'Order marked as Received!', { variant: 'success' });
     setShowReceivedModal(false);
     setReceivedTarget(null);
   };
@@ -2654,7 +2697,7 @@ export default function Purchase() {
                                     o.orderId, o.date, o.supplier, o.item, o.qty, o.unit, o.amount,
                                     `${o.missingItems?.length || 0} item(s)`,
                                     o.deliveryStatus,
-                                    o.partialMissedBy === 'supplier' ? 'Vendor' : o.partialMissedBy === 'lorry' ? 'Lorry' : '',
+                                    o.missedBy === 'vendor' ? 'Vendor' : o.missedBy === 'lorry' ? 'Lorry' : '',
                                     o.actionTakenStatus || '',
                                     !o.actionTakenStatus ? 'Pending' : o.actionTakenStatus,
                                   ]),
@@ -2720,9 +2763,9 @@ export default function Purchase() {
                                 },
                                 {
                                   title: 'Missed By', key: 'missed_by', width: 120,
-                                  render: (_, r) => r.partialMissedBy ? (
-                                    <Tag color={r.partialMissedBy === 'supplier' ? 'red' : 'orange'} style={{ borderRadius: 8 }}>
-                                      {r.partialMissedBy === 'supplier' ? 'Vendor' : 'Lorry'}
+                                  render: (_, r) => r.missedBy ? (
+                                    <Tag color={r.missedBy === 'vendor' ? 'red' : 'orange'} style={{ borderRadius: 8 }}>
+                                      {r.missedBy === 'vendor' ? 'Vendor' : 'Lorry'}
                                     </Tag>
                                   ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
                                 },
@@ -5488,28 +5531,34 @@ export default function Purchase() {
               </Space>
             </div>
 
-            {/* Previous orders delivered check */}
-            {dispatchTrackingOrders.filter(o => o.supplier === receivedTarget.supplier && o.receivedStatus === 'partial' && o.key !== receivedTarget.key).length > 0 && (
+            {/* Unresolved "attach to upcoming order" shortfall from this same vendor */}
+            {dispatchTrackingOrders.filter(o => o.vendorId === receivedTarget.vendorId && o.missedBy === 'vendor' && o.vendorMissedAction === 'attach_upcoming' && !o.missingResolved && o.key !== receivedTarget.key).length > 0 && (
               <Alert
-                type="warning"
+                type="info"
                 showIcon
                 icon={<ExclamationCircleOutlined />}
                 style={{ marginBottom: 12, borderRadius: 8 }}
                 message={
-                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                    <Text strong style={{ fontSize: 13 }}>Pending Partial Deliveries from {receivedTarget.supplier}</Text>
-                    {dispatchTrackingOrders.filter(o => o.supplier === receivedTarget.supplier && o.receivedStatus === 'partial' && o.key !== receivedTarget.key).map(o => (
-                      <Text key={o.key} style={{ fontSize: 12 }}>· {o.orderId} — {o.item} (Partial)</Text>
+                  <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                    <Text strong style={{ fontSize: 13 }}>Previous Order Missing by {receivedTarget.supplier}</Text>
+                    {dispatchTrackingOrders.filter(o => o.vendorId === receivedTarget.vendorId && o.missedBy === 'vendor' && o.vendorMissedAction === 'attach_upcoming' && !o.missingResolved && o.key !== receivedTarget.key).map(o => (
+                      <div key={o.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%' }}>
+                        <Text style={{ fontSize: 12 }}>· {o.orderId} — {o.item}: {(o.missingItems || []).map(m => `${m.name} short by ${m.missing}`).join(', ')}</Text>
+                        <Button
+                          size="small"
+                          onClick={async () => {
+                            try {
+                              await resolveMissingOrderMutation(o.key).unwrap();
+                              enqueueSnackbar('Marked as checked/updated.', { variant: 'success' });
+                            } catch (err) {
+                              enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update', { variant: 'error' });
+                            }
+                          }}
+                        >
+                          Mark Checked / Updated
+                        </Button>
+                      </div>
                     ))}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
-                      <Text style={{ fontSize: 12 }}>Are all previous orders from this vendor delivered/received?</Text>
-                      <Select size="small" placeholder="Select" value={prevOrdersDelivered} onChange={setPrevOrdersDelivered} style={{ width: 80 }}>
-                        <Option value="yes">Yes</Option>
-                        <Option value="no">No</Option>
-                      </Select>
-                      {prevOrdersDelivered === 'yes' && <Tag color="success" style={{ borderRadius: 8 }}>All Good</Tag>}
-                      {prevOrdersDelivered === 'no' && <Tag color="warning" style={{ borderRadius: 8 }}>Partial Pending</Tag>}
-                    </div>
                   </Space>
                 }
               />
@@ -5519,10 +5568,10 @@ export default function Purchase() {
             <div style={{ background: isDark ? '#161622' : '#f8f9ff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px dashed ${isDark ? '#3a3a5a' : '#d6e4ff'}` }}>
               <Text strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>Invoice Upload & Scan</Text>
               <Space wrap>
-                <Upload maxCount={1} customRequest={makeUpload('purchase/invoices')} accept=".pdf,.jpg,.jpeg,.png">
+                <Upload maxCount={1} beforeUpload={(file) => { setReceivedInvoiceFile(file); return false; }} accept=".pdf,.jpg,.jpeg,.png">
                   <Button icon={<UploadOutlined />} style={{ borderColor: '#1890ff', color: '#1890ff' }}>Upload Invoice</Button>
                 </Upload>
-                <Button icon={<QrcodeOutlined />} style={{ borderColor: '#722ed1', color: '#722ed1' }} onClick={() => openCameraCapture(() => {})} >
+                <Button icon={<QrcodeOutlined />} style={{ borderColor: '#722ed1', color: '#722ed1' }} onClick={() => openCameraCapture(setReceivedInvoiceFile)} >
                   Scan Invoice
                 </Button>
                 <Button
@@ -5534,6 +5583,7 @@ export default function Purchase() {
                 >
                   {invoiceScanned ? 'Re-Scan Invoice' : 'AI Scan & Fetch Products'}
                 </Button>
+                {receivedInvoiceFile && <Text type="secondary" style={{ fontSize: 12 }}>{receivedInvoiceFile.name}</Text>}
               </Space>
             </div>
 
@@ -5708,6 +5758,7 @@ export default function Purchase() {
                 <Button block onClick={() => { setShowReceivedModal(false); setReceivedTarget(null); }}>Cancel</Button>
                 <Button
                   block type="primary"
+                  loading={receivedConfirmLoading}
                   style={{ background: getMissingItems().length > 0 ? '#fa8c16' : '#52c41a', border: 'none' }}
                   onClick={handleConfirmReceived}
                 >
