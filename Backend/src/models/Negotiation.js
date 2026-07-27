@@ -66,6 +66,8 @@ const negotiationSchema = new mongoose.Schema({
   },
   items: [negotiationItemSchema],
   note: String,
+  deletedAt: Date,
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true, strict: false });
 

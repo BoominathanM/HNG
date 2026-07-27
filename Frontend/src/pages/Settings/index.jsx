@@ -1473,6 +1473,7 @@ export default function Settings() {
                       <Option value="all">All Modules</Option>
                       <Option value="Parties & Ledger">Parties & Ledger</Option>
                       <Option value="Sales Team">Sales Team</Option>
+                      <Option value="Billing">Billing</Option>
                       <Option value="Inventory">Inventory</Option>
                       <Option value="Vendors">Vendors</Option>
                       <Option value="Staff Management">Staff Management</Option>

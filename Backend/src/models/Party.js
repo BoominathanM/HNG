@@ -20,6 +20,7 @@ const partySchema = new mongoose.Schema({
   city: String,
   runningBalance: { type: Number, default: 0 },
   deletedAt: Date,
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

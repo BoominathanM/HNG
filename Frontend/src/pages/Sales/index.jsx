@@ -17,7 +17,7 @@ import {
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
   WarningOutlined, ExclamationCircleOutlined, DollarOutlined, AlertFilled, ExperimentOutlined,
-  AppstoreOutlined, LoadingOutlined,
+  AppstoreOutlined, LoadingOutlined, DeleteOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -32,6 +32,7 @@ import {
   useGetSalesQuotationsQuery,
   useGetNegotiationsQuery,
   useUpdateNegotiationMutation,
+  useDeleteNegotiationMutation,
   useGetSalesOrdersQuery,
   useGetSalesOrderQuery,
   useGetComplaintsQuery,
@@ -42,12 +43,14 @@ import {
   useAssignLeadMutation,
   useCreateSalesQuotationMutation,
   useUpdateSalesQuotationMutation,
+  useDeleteSalesQuotationMutation,
   useConvertToNegotiationMutation,
   useConvertLeadToNegotiationMutation,
   useConvertToOrderMutation,
   useCreateSalesOrderMutation,
   useUpdateSalesOrderMutation,
   useUpdateSalesOrderStatusMutation,
+  useDeleteSalesOrderMutation,
   useCreateComplaintMutation,
   useUpdateComplaintStatusMutation,
   useGetMyPerformanceQuery,
@@ -128,6 +131,19 @@ const STATUS_COLORS = {
   'In Process': '#1890ff',
 };
 
+// An order's raw `status` only ever flips to 'Dispatched' once every item has shipped —
+// a Partial Dispatch checkpoint (some items out, some still pending) deliberately leaves
+// it untouched (see Backend dispatch.controller.js confirmDispatch), so it reads as
+// whatever the order was before (e.g. "Completed") with no sign anything shipped yet.
+// `dispatchStage` (resolved server-side from the linked DispatchRecord, see
+// sales.controller.js attachDispatchStage) fills that gap. This only ever changes the
+// *label shown*, never the underlying order.status value anything else keys off.
+function getOrderStatusDisplay(order) {
+  if (order?.status === 'Dispatched') return { label: 'Fully Dispatch', color: '#1890ff' };
+  if (order?.dispatchStage === 'Partial Dispatch') return { label: 'Partial Dispatch', color: '#fa8c16' };
+  return { label: order?.status, color: STATUS_COLORS[order?.status] || 'blue' };
+}
+
 const LEAD_STEPS = [
   { title: 'Follow up 1', description: 'Initial Contact' },
   { title: 'Follow up 2', description: 'Requirement' },
@@ -176,6 +192,78 @@ const CATEGORY_META = {
   [ORDER_CATEGORIES.PERSONALIZED]: { label: 'Personalized', short: 'A', color: '#7c3aed' },
   [ORDER_CATEGORIES.SEPARATE_KIT]: { label: 'Separate Kit', short: 'B', color: '#0ea5e9' },
   [ORDER_CATEGORIES.SEPARATE_PRODUCT]: { label: 'Separate Product', short: 'C', color: '#ec4899' },
+};
+
+// ─── Emergency-delivery ("Urgent / Emergency Deliveries") dropdown options ────────────────────
+// Grouped by COMPOSITION, not by individual line item — a Personalized Kit that bundles a
+// Separate Kit + a Separate Product together (via packagingIncludes) should offer ONE
+// "Personalized Kit" choice (selecting it marks the whole bundle emergency), not three separate
+// product rows. Anything not bundled into a personalized order still gets its own Separate
+// Kit / Separate Product option, one per distinct kit/product.
+// Value scheme consumed by Operations/data.js's getEmergencyProductQtyMap (and its
+// OperationDetail.jsx mirror): '__personalized__', `__sepkit__:<kitId|kitName>`, or the product's
+// own name (unchanged, matches existing stored records).
+const buildEmergencySelectionOptions = (products, packagingIncludes) => {
+  const list = (Array.isArray(products) ? products : []).filter((p) => p && (p.name || p.itemName || p.kitType));
+  const includeSet = new Set((packagingIncludes || []).map(String));
+  const isBundled = (p) => includeSet.has(String(p.kitId)) || includeSet.has(String(p.name || p.itemName));
+  const isPersonalized = (p) => p.category === ORDER_CATEGORIES.PERSONALIZED || isBundled(p);
+
+  const options = [];
+  if (list.some(isPersonalized)) {
+    options.push({ value: '__personalized__', label: 'Personalized Kit', isKit: true });
+  }
+  const seenKits = new Set();
+  list.filter((p) => !isPersonalized(p) && (p.isKit || p.kitType)).forEach((p) => {
+    const kKey = String(p.kitId || p.kitName || p.kitType);
+    if (seenKits.has(kKey)) return;
+    seenKits.add(kKey);
+    options.push({ value: `__sepkit__:${kKey}`, label: `Separate Kit — ${p.kitName || p.kitType}`, isKit: true });
+  });
+  list.filter((p) => !isPersonalized(p) && !(p.isKit || p.kitType)).forEach((p) => {
+    options.push({ value: p.name || p.itemName, label: `Separate Product — ${p.name || p.itemName}` });
+  });
+  return options;
+};
+
+// A row already saved with an older value (the legacy '__kit__' sentinel, or a plain product name
+// that has since been folded into a Personalized Kit bundle) won't match any option built above —
+// Select then renders that row BLANK, making already-saved emergency data look like it vanished.
+// Inject a fallback option for the row's current value so it keeps displaying (and stays editable/
+// removable) even though it's no longer offered as a option for NEW selections.
+const ensureCurrentValueOption = (options, currentValue, products) => {
+  if (!currentValue || options.some((o) => o.value === currentValue)) return options;
+  if (currentValue === '__kit__') {
+    return [...options, { value: '__kit__', label: 'Kit (All Products) — legacy', isKit: true }];
+  }
+  if (typeof currentValue === 'string' && currentValue.startsWith('__sepkit__:')) {
+    const kKey = currentValue.slice('__sepkit__:'.length);
+    const p = (Array.isArray(products) ? products : []).find((p) => String(p.kitId || p.kitName || p.kitType) === kKey);
+    return [...options, { value: currentValue, label: `Separate Kit — ${p?.kitName || p?.kitType || kKey}`, isKit: true }];
+  }
+  return [...options, { value: currentValue, label: currentValue }];
+};
+
+// True total quantity a dropdown selection represents (used to auto-fill the Qty field): a kit
+// selection resolves to that kit's overallQty (from kitOrders); a standalone product resolves to
+// its own qty.
+const emergencySelectionTotalQty = (value, products, kitOrders) => {
+  const list = Array.isArray(products) ? products : [];
+  const kitOrdersList = Array.isArray(kitOrders) ? kitOrders : [];
+  if (value === '__personalized__') {
+    const kitItem = list.find((p) => p.category === ORDER_CATEGORIES.PERSONALIZED && (p.isKit || p.kitType));
+    const cfg = kitOrdersList.find((k) => String(k?.kitId) === String(kitItem?.kitId)) || kitOrdersList.find((k) => k.category === ORDER_CATEGORIES.PERSONALIZED);
+    return Number(cfg?.overallQty) || Number(kitItem?.overallQty) || 0;
+  }
+  if (typeof value === 'string' && value.startsWith('__sepkit__:')) {
+    const kKey = value.slice('__sepkit__:'.length);
+    const cfg = kitOrdersList.find((k) => String(k?.kitId) === kKey);
+    if (cfg) return Number(cfg.overallQty) || 0;
+    const p = list.find((p) => String(p.kitId || p.kitName || p.kitType) === kKey);
+    return Number(p?.overallQty) || Number(p?.qty) || 0;
+  }
+  const p = list.find((p) => (p.name || p.itemName) === value);
+  return Number(p?.qty) || 0;
 };
 
 // productType may hold the new 3-category values, the legacy 2-value set, or a single string.
@@ -997,6 +1085,9 @@ const MULTI_ATTR_KEYS = new Set(['fragrance', 'color', 'material', 'packingMater
 // Attribute keys that are always Yes/No decisions (both in Inventory add-item and Lead spec),
 // used for generic/unrecognized product types whose attributes come straight from productAttributes.
 const YES_NO_ATTR_KEYS = new Set(['sticker', 'logo', 'printing', 'stickerPrinting']);
+// Sticker/Printing are mutually exclusive per product — choosing one auto-clears the other to 'NO'
+// so an item can never route to both the Sticker team and a packing-material team at once.
+const STICKER_LIKE_KEYS = new Set(['sticker', 'stickerPrinting']);
 
 // Per-product-type attribute fields — kept in sync with Inventory's PRODUCT_FIELD_DEFS so the
 // lead form shows exactly the attributes that inventory collects for each product type. The
@@ -1591,6 +1682,17 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 const opts = isYesNo
                   ? fd.options
                   : (invOpts.length ? invOpts.map((v) => ({ value: v, label: v })) : (fd.options || []));
+                // Sticker and Printing are mutually exclusive: picking Yes on one auto-sets the
+                // other (if this product type has one) to No, so an item never carries sticker=YES
+                // and printing=YES at once (which would otherwise leave its Ops routing ambiguous).
+                const stickerSiblingKey = STICKER_LIKE_KEYS.has(fd.key)
+                  ? dynamicFieldDefs.find((d) => d.key === 'printing')?.key
+                  : fd.key === 'printing'
+                    ? dynamicFieldDefs.find((d) => STICKER_LIKE_KEYS.has(d.key))?.key
+                    : null;
+                const handleStickerPrintingChange = stickerSiblingKey
+                  ? (val) => { if (val === 'YES') form.setFieldValue([fieldName, name, stickerSiblingKey], 'NO'); }
+                  : undefined;
                 return (
                   <div key={fd.key} style={{ flex: '1 1 120px', minWidth: 100 }}>
                     <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fd.label}</span>} style={{ marginBottom: 0 }}>
@@ -1605,7 +1707,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                         disabled={isItemDisabled || (!isYesNo && !invItem)}
                         size="small"
                         options={opts}
-
+                        onChange={handleStickerPrintingChange}
                         notFoundContent={isYesNo ? undefined : 'No values in inventory for this spec'}
                       />
                     </Form.Item>
@@ -2974,10 +3076,13 @@ export default function Sales() {
   const watchedStatus = Form.useWatch('status', leadForm);
   const watchedSoftwareInterest = Form.useWatch('interestedInSoftware', leadForm);
   const watchedOrderProducts = Form.useWatch('products', orderForm);
+  const watchedOrderKitOrders = Form.useWatch('kitOrders', orderForm) || [];
+  const watchedOrderPackagingIncludes = Form.useWatch('packagingIncludes', orderForm) || [];
   const watchedLeadProducts = Form.useWatch('products', leadForm);
   const watchedNegotiationProducts = Form.useWatch('products', negotiationForm);
   const watchedOrderEditSelKits = Form.useWatch('selectedKits', orderEditForm) || [];
   const watchedOrderEditKitOrds = Form.useWatch('kitOrders', orderEditForm) || [];
+  const watchedOrderEditPackagingIncludes = Form.useWatch('packagingIncludes', orderEditForm) || [];
   const watchedOrderEditProds = Form.useWatch('editProducts', orderEditForm) || [];
   const watchedOrderEditProductType = Form.useWatch('productType', orderEditForm);
   const watchedNegRoundValue = Form.useWatch('useRoundedTotal', negotiationForm);
@@ -3276,13 +3381,45 @@ export default function Sales() {
   const [assignLeadMutation] = useAssignLeadMutation();
   const [createSalesQuotationMutation] = useCreateSalesQuotationMutation();
   const [updateSalesQuotationMutation] = useUpdateSalesQuotationMutation();
+  const [deleteSalesQuotationMutation] = useDeleteSalesQuotationMutation();
   const [convertToNegotiationMutation] = useConvertToNegotiationMutation();
   const [convertLeadToNegotiationMutation] = useConvertLeadToNegotiationMutation();
   const [updateNegotiationMutation] = useUpdateNegotiationMutation();
+  const [deleteNegotiationMutation] = useDeleteNegotiationMutation();
   const [convertToOrderMutation] = useConvertToOrderMutation();
   const [createSalesOrderMutation] = useCreateSalesOrderMutation();
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
   const [updateSalesOrderStatusMutation] = useUpdateSalesOrderStatusMutation();
+  const [deleteSalesOrderMutation] = useDeleteSalesOrderMutation();
+
+  // Soft-delete only — the record moves to Settings → Deleted Records (full snapshot
+  // kept there) and can be brought back at any time via Restore, nothing is ever
+  // permanently removed from here.
+  const handleDeleteLead = async (record) => {
+    try {
+      await deleteLeadMutation(record._id || record.key).unwrap();
+      enqueueSnackbar(`Lead "${record.hotelName || ''}" moved to Deleted Records`, { variant: 'success' });
+    } catch { enqueueSnackbar('Failed to delete lead', { variant: 'error' }); }
+  };
+  const handleDeleteQuotation = async (record) => {
+    try {
+      await deleteSalesQuotationMutation(record._id || record.key).unwrap();
+      enqueueSnackbar(`Quotation ${record.qid || ''} moved to Deleted Records`, { variant: 'success' });
+    } catch { enqueueSnackbar('Failed to delete quotation', { variant: 'error' }); }
+  };
+  const handleDeleteNegotiation = async (record) => {
+    try {
+      await deleteNegotiationMutation(record._id || record.key).unwrap();
+      enqueueSnackbar(`Negotiation ${record.nid || ''} moved to Deleted Records`, { variant: 'success' });
+    } catch { enqueueSnackbar('Failed to delete negotiation', { variant: 'error' }); }
+  };
+  const handleDeleteOrder = async (record) => {
+    try {
+      await deleteSalesOrderMutation(record._id || record.key).unwrap();
+      enqueueSnackbar(`Order ${record.oid || ''} moved to Deleted Records`, { variant: 'success' });
+    } catch { enqueueSnackbar('Failed to delete order', { variant: 'error' }); }
+  };
+
   const [createComplaintMutation] = useCreateComplaintMutation();
   const [updateComplaintStatusMutation] = useUpdateComplaintStatusMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
@@ -4379,6 +4516,8 @@ export default function Sales() {
         selectedKit: lead.selectedKit,
         selectedKits: lead.selectedKits || [],
         kitOrders: lead.kitOrders || [],
+        packagingIncludes: lead.packagingIncludes || [],
+        packagingIncludesQty: lead.packagingIncludesQty || {},
         kitSize: lead.kitSize,
         kitSticker: lead.kitSticker || undefined,
         kitLogo: lead.kitLogo || undefined,
@@ -4819,6 +4958,13 @@ export default function Sales() {
       kitOverallQty: q.kitOverallQty != null ? Number(q.kitOverallQty) : undefined,
       selectedKits: q.selectedKits || [],
       kitOrders: q.kitOrders || [],
+      // "Included in Kit Packaging" — which separate kit(s)/product(s) physically ship inside
+      // the Personalized Kit's box. Dropped here before: convertToNegotiation and the
+      // Negotiation→Order backend conversion both carry this field, but this direct
+      // Quotation→Order path didn't, so orders created this way silently lost it and Dispatch
+      // could never fold the included product into the kit's single photo pair.
+      packagingIncludes: q.packagingIncludes || [],
+      packagingIncludesQty: q.packagingIncludesQty || {},
       // Carry all contact + billing + delivery fields through
       hotelName: q.hotelName || q.clientName,
       billingName: q.billingName,
@@ -4919,6 +5065,8 @@ export default function Sales() {
         selectedKit: order.selectedKit,
         selectedKits: order.selectedKits || [],
         kitOrders: order.kitOrders || [],
+        packagingIncludes: order.packagingIncludes || [],
+        packagingIncludesQty: order.packagingIncludesQty || {},
         kitSize: order.kitSize,
         kitSticker: order.kitSticker || undefined,
         kitLogo: order.kitLogo || undefined,
@@ -5038,6 +5186,11 @@ export default function Sales() {
       // Persist per-kit config so Operations can route EACH kit to its own packaging tab
       // (multi-kit orders) instead of a single order-level display unit.
       kitOrders: normalizeKitOrdersForSave(values.kitOrders || [], values.productType),
+      // "Included in Kit Packaging" — dropped here before, so a product marked as packed
+      // inside the Personalized Kit's box still showed up as its own Separate Product row
+      // (with its own required Open/Closed photos) in Dispatch. See buildOrderPayloadFromQuotation.
+      packagingIncludes: values.packagingIncludes || [],
+      packagingIncludesQty: values.packagingIncludesQty || {},
       kitDisplayUnit: values.kitDisplayUnit || values.displayUnit,
       kitSize: values.kitSize,
       deliveryType: hasPartial ? 'Partial' : 'Full',
@@ -5389,6 +5542,17 @@ export default function Sales() {
               </>
             );
           })()}
+          <Popconfirm
+            title="Delete this lead?"
+            description="It will move to Settings → Deleted Records and can be restored anytime."
+            onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteLead(r); }}
+            onCancel={(e) => e?.stopPropagation?.()}
+            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+          >
+            <Tooltip title="Delete">
+              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -5455,6 +5619,17 @@ export default function Sales() {
               → Order
             </Button>
           </Tooltip>
+          <Popconfirm
+            title="Delete this negotiation?"
+            description="It will move to Settings → Deleted Records and can be restored anytime."
+            onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteNegotiation(r); }}
+            onCancel={(e) => e?.stopPropagation?.()}
+            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+          >
+            <Tooltip title="Delete">
+              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -5538,6 +5713,17 @@ export default function Sales() {
               → Order
             </Button>
           </Tooltip>
+          <Popconfirm
+            title="Delete this quotation?"
+            description="It will move to Settings → Deleted Records and can be restored anytime."
+            onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteQuotation(r); }}
+            onCancel={(e) => e?.stopPropagation?.()}
+            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+          >
+            <Tooltip title="Delete">
+              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -5589,7 +5775,13 @@ export default function Sales() {
           : leadsData.find(l => String(l.key) === String(r.leadId?._id || r.leadId));
         const linkedQuot = findLinkedQuotation(r);
         const bestPC = bestLeadPaymentCollection(r, oLinkedLead, linkedQuot);
-        const compTotal = r2(computeCompositionGrandTotal({ ...(oLinkedLead || r), paymentCollection: bestPC }, kits));
+        // The order is self-contained (products/kitOrders/kitPrice copied onto it at conversion
+        // time and kept up to date by saveOrderEdit) — prefer it over the linked lead's snapshot,
+        // which goes stale the moment the order is edited directly (rate change, added products).
+        // Only fall back to the lead for legacy orders that never got their own composition data.
+        const oHasOwnComposition = (r.products?.length > 0) || (r.kitOrders?.length > 0) || Number(r.kitPrice) > 0;
+        const compBase = oHasOwnComposition ? r : (oLinkedLead || r);
+        const compTotal = r2(computeCompositionGrandTotal({ ...compBase, paymentCollection: bestPC }, kits));
         return <Text strong style={{ fontSize: 13 }}>₹{(compTotal || v || 0).toLocaleString()}</Text>;
       },
     },
@@ -5623,7 +5815,10 @@ export default function Sales() {
           : leadsData.find(l => String(l.key) === String(r.leadId?._id || r.leadId));
         const effectivePaid = Math.max(Number(r.paidAmount) || 0, Number(linkedNeg?.paidAmount) || 0, Number(linkedQuot?.paidAmount) || 0, Number(oLinkedLead?.paidAmount) || 0);
         const bestPC = bestLeadPaymentCollection(r, oLinkedLead, linkedQuot);
-        const compTotal = r2(computeCompositionGrandTotal({ ...(oLinkedLead || r), paymentCollection: bestPC }, kits));
+        // Same self-contained-order preference as the Amount column above — see comment there.
+        const oHasOwnComposition = (r.products?.length > 0) || (r.kitOrders?.length > 0) || Number(r.kitPrice) > 0;
+        const compBase = oHasOwnComposition ? r : (oLinkedLead || r);
+        const compTotal = r2(computeCompositionGrandTotal({ ...compBase, paymentCollection: bestPC }, kits));
         const effectiveTotal = compTotal || r.totalAmount || 0;
         const effectiveStatus = effectiveTotal > 0 && effectivePaid >= effectiveTotal ? 'Paid'
           : effectivePaid > 0 ? 'Partially Paid'
@@ -5642,7 +5837,13 @@ export default function Sales() {
         );
       },
     },
-    { title: 'Order Status', dataIndex: 'status', width: 130, render: (v) => <Tag color={STATUS_COLORS[v]} style={{ fontSize: 13 }}>{v}</Tag> },
+    {
+      title: 'Order Status', dataIndex: 'status', width: 130,
+      render: (v, r) => {
+        const { label, color } = getOrderStatusDisplay(r);
+        return <Tag color={color} style={{ fontSize: 13 }}>{label}</Tag>;
+      },
+    },
     {
       title: 'Created At', dataIndex: 'createdAt', width: 145, responsive: ['md'],
       render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTime(v)}</Text>,
@@ -5700,6 +5901,17 @@ export default function Sales() {
             }
             return null;
           })()}
+          <Popconfirm
+            title="Delete this order?"
+            description="It will move to Settings → Deleted Records and can be restored anytime."
+            onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteOrder(r); }}
+            onCancel={(e) => e?.stopPropagation?.()}
+            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+          >
+            <Tooltip title="Delete">
+              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -7183,7 +7395,11 @@ export default function Sales() {
         kitPrice: o.kitPrice || oLeadForTotal?.kitPrice,
         kitOverallQty: o.kitOverallQty || oLeadForTotal?.kitOverallQty,
       };
-      const oKitAwareTotal = r2(computeCompositionGrandTotal(oLeadForTotal || oRecForTotal, kits)) || r2(computeRecordGrandTotal(oRecForTotal));
+      // oRecForTotal already prefers the order's OWN kitOrders/kitPrice/kitOverallQty (falling back
+      // to the lead only per-field when the order lacks them) — use it directly instead of the raw
+      // lead, otherwise edits made directly on the order (rate/products) never show up here since
+      // the linked lead document is untouched by order edits.
+      const oKitAwareTotal = r2(computeCompositionGrandTotal(oRecForTotal, kits)) || r2(computeRecordGrandTotal(oRecForTotal));
       const oTotal = oKitAwareTotal > 0 ? oKitAwareTotal : (oSubtotal + oGstAmount);
       const oHasKitProducts = (o.products || []).some(p => p && (p.isKit || p.kitType));
       // Enriched rec for CategoryTotalsBreakdown in Payment Summary (uses same data as oKitAwareTotal)
@@ -7321,7 +7537,7 @@ export default function Sales() {
                   )}
                   <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{o.oid}</Tag>
                 </Space>
-                <Tag color={STATUS_COLORS[o.status] || 'blue'} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{o.status}</Tag>
+                <Tag color={getOrderStatusDisplay(o).color} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{getOrderStatusDisplay(o).label}</Tag>
                 <Space>
                   <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>{o.billType === 'GST' ? 'GST Bill' : 'Non-GST'}</Tag>
                   {detailExpectedDelivery && <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>Delivery: {detailExpectedDelivery}</Tag>}
@@ -7973,7 +8189,7 @@ export default function Sales() {
             <Col xs={24} lg={8}>
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><StarOutlined style={{ color: '#52c41a' }} /><span>Order Status</span></Space>}>
-                <Tag color={STATUS_COLORS[o.status] || 'blue'} style={{ borderRadius: 20, fontSize: 14, padding: '6px 18px', fontWeight: 600 }}>{o.status}</Tag>
+                <Tag color={getOrderStatusDisplay(o).color} style={{ borderRadius: 20, fontSize: 14, padding: '6px 18px', fontWeight: 600 }}>{getOrderStatusDisplay(o).label}</Tag>
               </Card>
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><BankOutlined style={{ color: '#1890ff' }} /><span>Billing Details</span></Space>}>
@@ -8312,7 +8528,11 @@ export default function Sales() {
                         </Col>
                         <Col xs={8} sm={4}>
                           <Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}>
-                            <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                            <Select
+                              allowClear placeholder="Sticker?"
+                              onChange={(val) => { if (val === 'YES') orderEditForm.setFieldValue('kitPrinting', 'NO'); }}
+                              options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]}
+                            />
                           </Form.Item>
                         </Col>
                         <Col xs={8} sm={4}>
@@ -8322,7 +8542,11 @@ export default function Sales() {
                         </Col>
                         <Col xs={8} sm={4}>
                           <Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}>
-                            <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                            <Select
+                              allowClear placeholder="Printing?"
+                              onChange={(val) => { if (val === 'YES') orderEditForm.setFieldValue('kitSticker', 'NO'); }}
+                              options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]}
+                            />
                           </Form.Item>
                         </Col>
                       </Row>
@@ -8534,7 +8758,11 @@ export default function Sales() {
                             </Col>
                             <Col xs={12} sm={4}>
                               <Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}>
-                                <Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                <Select
+                                  allowClear placeholder="Sticker?"
+                                  onChange={(val) => { if (val === 'YES') orderEditForm.setFieldValue(['kitOrders', kitIndex, 'printing'], 'NO'); }}
+                                  options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]}
+                                />
                               </Form.Item>
                             </Col>
                             <Col xs={12} sm={4}>
@@ -8544,7 +8772,11 @@ export default function Sales() {
                             </Col>
                             <Col xs={12} sm={4}>
                               <Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}>
-                                <Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                <Select
+                                  allowClear placeholder="Printing?"
+                                  onChange={(val) => { if (val === 'YES') orderEditForm.setFieldValue(['kitOrders', kitIndex, 'sticker'], 'NO'); }}
+                                  options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]}
+                                />
                               </Form.Item>
                             </Col>
                           </Row>
@@ -8789,20 +9021,20 @@ export default function Sales() {
                                 <Form.Item {...rest} name={[name, 'product']} label="Product" style={{ marginBottom: 6 }}>
                                   <Select
                                     size="small"
-                                    placeholder="Select product"
+                                    placeholder="Select composition"
                                     allowClear
                                     onChange={(val) => {
-                                      const matched = (Array.isArray(watchedOrderEditProds) ? watchedOrderEditProds : [])
-                                        .find(p => (p.name || p.itemName || p.kitType) === val);
-                                      if (matched?.qty) orderEditForm.setFieldValue(['splitDates', name, 'qty'], matched.qty);
+                                      const totalQty = emergencySelectionTotalQty(val, watchedOrderEditProds, watchedOrderEditKitOrds);
+                                      if (totalQty) orderEditForm.setFieldValue(['splitDates', name, 'qty'], totalQty);
                                     }}
                                   >
-                                    {(Array.isArray(watchedOrderEditProds) ? watchedOrderEditProds : [])
-                                      .filter(p => p?.name || p?.itemName || p?.kitType)
-                                      .map((p, i) => {
-                                        const label = p.name || p.itemName || p.kitType;
-                                        return <Option key={i} value={label}>{label}{p.isKit || p.kitType ? ' (Kit)' : ''}</Option>;
-                                      })}
+                                    {ensureCurrentValueOption(
+                                      buildEmergencySelectionOptions(watchedOrderEditProds, watchedOrderEditPackagingIncludes),
+                                      orderEditForm.getFieldValue(['splitDates', name, 'product']),
+                                      watchedOrderEditProds,
+                                    ).map((o) => (
+                                      <Option key={o.value} value={o.value} style={o.isKit ? { fontWeight: 600, color: '#722ed1' } : undefined}>{o.label}</Option>
+                                    ))}
                                   </Select>
                                 </Form.Item>
                               </Col>
@@ -9588,9 +9820,9 @@ export default function Sales() {
                               }}
                             </Form.Item>
                             <Col xs={12} sm={4}><Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}><Input placeholder="e.g. 2.5cm x 2.5cm" /></Form.Item></Col>
-                            <Col xs={8} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" onChange={(val) => { if (val === 'YES') quotationForm.setFieldValue('kitPrinting', 'NO'); }} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                             <Col xs={8} sm={4}><Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                            <Col xs={8} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" onChange={(val) => { if (val === 'YES') quotationForm.setFieldValue('kitSticker', 'NO'); }} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                           </Row>
                           <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
                             {({ getFieldValue: gfv }) => {
@@ -9678,9 +9910,9 @@ export default function Sales() {
                                             }}
                                           </Form.Item>
                                           <Col xs={12} sm={4}><Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 0 }}><Input placeholder="e.g. 2.5cm" /></Form.Item></Col>
-                                          <Col xs={8} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" onChange={(val) => { if (val === 'YES') quotationForm.setFieldValue(['kitOrders', kitIndex, 'printing'], 'NO'); }} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                                           <Col xs={8} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                                          <Col xs={8} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" onChange={(val) => { if (val === 'YES') quotationForm.setFieldValue(['kitOrders', kitIndex, 'sticker'], 'NO'); }} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                                         </Row>
                                         <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
                                           {({ getFieldValue: gfv3 }) => {
@@ -9838,9 +10070,9 @@ export default function Sales() {
                               }}
                             </Form.Item>
                             <Col xs={12} sm={4}><Form.Item label="Size" name="kitSize" style={{ marginBottom: 0 }}><Input placeholder="e.g. 2.5cm x 2.5cm" /></Form.Item></Col>
-                            <Col xs={8} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" onChange={(val) => { if (val === 'YES') negotiationForm.setFieldValue('kitPrinting', 'NO'); }} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                             <Col xs={8} sm={4}><Form.Item label="Logo" name="kitLogo" style={{ marginBottom: 0 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                            <Col xs={8} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                            <Col xs={8} sm={4}><Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" onChange={(val) => { if (val === 'YES') negotiationForm.setFieldValue('kitSticker', 'NO'); }} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                           </Row>
                           <Form.Item noStyle shouldUpdate={(p, c) => p.kitDisplayUnit !== c.kitDisplayUnit}>
                             {({ getFieldValue: gfv }) => {
@@ -9928,9 +10160,9 @@ export default function Sales() {
                                             }}
                                           </Form.Item>
                                           <Col xs={12} sm={4}><Form.Item label="Size" name={['kitOrders', kitIndex, 'size']} style={{ marginBottom: 0 }}><Input placeholder="e.g. 2.5cm" /></Form.Item></Col>
-                                          <Col xs={8} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Sticker?" onChange={(val) => { if (val === 'YES') negotiationForm.setFieldValue(['kitOrders', kitIndex, 'printing'], 'NO'); }} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                                           <Col xs={8} sm={4}><Form.Item label="Logo" name={['kitOrders', kitIndex, 'logo']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Logo?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
-                                          <Col xs={8} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
+                                          <Col xs={8} sm={4}><Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}><Select allowClear placeholder="Printing?" onChange={(val) => { if (val === 'YES') negotiationForm.setFieldValue(['kitOrders', kitIndex, 'sticker'], 'NO'); }} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} /></Form.Item></Col>
                                         </Row>
                                         <Form.Item noStyle shouldUpdate={(p, c) => p.kitOrders?.[kitIndex]?.displayUnit !== c.kitOrders?.[kitIndex]?.displayUnit}>
                                           {({ getFieldValue: gfv3 }) => {
@@ -10116,28 +10348,19 @@ export default function Sales() {
                                 <Form.Item {...rest} name={[name, 'product']} label="Product" style={{ marginBottom: 6 }}>
                                   <Select
                                     size="small"
-                                    placeholder="Select product"
+                                    placeholder="Select composition"
                                     allowClear
                                     onChange={(val) => {
-                                      if (val === '__kit__') {
-                                        const kitProds = (Array.isArray(watchedOrderProducts) ? watchedOrderProducts : [])
-                                          .filter(p => p?.isKit || p?.kitType);
-                                        const qtys = kitProds.map(p => Number(p.qty) || 0).filter(q => q > 0);
-                                        if (qtys.length > 0) orderForm.setFieldValue(['splitDates', name, 'qty'], Math.min(...qtys));
-                                      } else {
-                                        const matched = (Array.isArray(watchedOrderProducts) ? watchedOrderProducts : [])
-                                          .find(p => (p.name || p.kitType) === val);
-                                        if (matched?.qty) orderForm.setFieldValue(['splitDates', name, 'qty'], matched.qty);
-                                      }
+                                      const totalQty = emergencySelectionTotalQty(val, watchedOrderProducts, watchedOrderKitOrders);
+                                      if (totalQty) orderForm.setFieldValue(['splitDates', name, 'qty'], totalQty);
                                     }}
                                   >
-                                    {(Array.isArray(watchedOrderProducts) ? watchedOrderProducts : []).some(p => p?.isKit || p?.kitType) && (
-                                      <Option value="__kit__" style={{ fontWeight: 600, color: '#722ed1' }}>
-                                        Kit (All Products)
-                                      </Option>
-                                    )}
-                                    {(Array.isArray(watchedOrderProducts) ? watchedOrderProducts : []).filter(p => p?.name || p?.kitType).map((p, i) => (
-                                      <Option key={i} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
+                                    {ensureCurrentValueOption(
+                                      buildEmergencySelectionOptions(watchedOrderProducts, watchedOrderPackagingIncludes),
+                                      orderForm.getFieldValue(['splitDates', name, 'product']),
+                                      watchedOrderProducts,
+                                    ).map((o) => (
+                                      <Option key={o.value} value={o.value} style={o.isKit ? { fontWeight: 600, color: '#722ed1' } : undefined}>{o.label}</Option>
                                     ))}
                                   </Select>
                                 </Form.Item>
@@ -11527,7 +11750,12 @@ export default function Sales() {
                           </Col>
                           <Col xs={8} sm={4}>
                             <Form.Item label="Sticker" name="kitSticker" style={{ marginBottom: 0 }}>
-                              <Select allowClear placeholder="Sticker?" disabled={watchedKitPrinting === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              <Select
+                                allowClear placeholder="Sticker?"
+                                disabled={watchedKitPrinting === 'YES'}
+                                onChange={(val) => { if (val === 'YES') leadForm.setFieldValue('kitPrinting', 'NO'); }}
+                                options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]}
+                              />
                             </Form.Item>
                           </Col>
                           <Col xs={8} sm={4}>
@@ -11537,7 +11765,12 @@ export default function Sales() {
                           </Col>
                           <Col xs={8} sm={4}>
                             <Form.Item label="Printing" name="kitPrinting" style={{ marginBottom: 0 }}>
-                              <Select allowClear placeholder="Printing?" disabled={watchedKitSticker === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                              <Select
+                                allowClear placeholder="Printing?"
+                                disabled={watchedKitSticker === 'YES'}
+                                onChange={(val) => { if (val === 'YES') leadForm.setFieldValue('kitSticker', 'NO'); }}
+                                options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]}
+                              />
                             </Form.Item>
                           </Col>
                         </Row>
@@ -12456,7 +12689,12 @@ export default function Sales() {
                             </Col>
                             <Col xs={8} sm={4}>
                               <Form.Item label="Sticker" name={['kitOrders', kitIndex, 'sticker']} style={{ marginBottom: 0 }}>
-                                <Select allowClear placeholder="Sticker?" disabled={watchedKitOrders?.[kitIndex]?.printing === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                <Select
+                                  allowClear placeholder="Sticker?"
+                                  disabled={watchedKitOrders?.[kitIndex]?.printing === 'YES'}
+                                  onChange={(val) => { if (val === 'YES') leadForm.setFieldValue(['kitOrders', kitIndex, 'printing'], 'NO'); }}
+                                  options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]}
+                                />
                               </Form.Item>
                             </Col>
                             <Col xs={8} sm={4}>
@@ -12466,7 +12704,12 @@ export default function Sales() {
                             </Col>
                             <Col xs={8} sm={4}>
                               <Form.Item label="Printing" name={['kitOrders', kitIndex, 'printing']} style={{ marginBottom: 0 }}>
-                                <Select allowClear placeholder="Printing?" disabled={watchedKitOrders?.[kitIndex]?.sticker === 'YES'} options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]} />
+                                <Select
+                                  allowClear placeholder="Printing?"
+                                  disabled={watchedKitOrders?.[kitIndex]?.sticker === 'YES'}
+                                  onChange={(val) => { if (val === 'YES') leadForm.setFieldValue(['kitOrders', kitIndex, 'sticker'], 'NO'); }}
+                                  options={[{ value: 'YES', label: 'Yes' }, { value: 'NO', label: 'No' }]}
+                                />
                               </Form.Item>
                             </Col>
                           </Row>
@@ -13173,24 +13416,19 @@ export default function Sales() {
                                           <Form.Item {...prodRest} name={[prodName, 'product']} label="Product" style={{ marginBottom: 0 }}>
                                             <Select
                                               size="small"
-                                              placeholder="Select product"
+                                              placeholder="Select composition"
                                               allowClear
                                               onChange={(val) => {
-                                                if (val === '__kit__') {
-                                                  const kitProds = (Array.isArray(watchedLeadProducts) ? watchedLeadProducts : [])
-                                                    .filter(p => p?.isKit || p?.kitType);
-                                                  const qtys = kitProds.map(p => Number(p.qty) || 0).filter(q => q > 0);
-                                                  if (qtys.length > 0) leadForm.setFieldValue(['splitDates', dateName, 'products', prodName, 'qty'], Math.min(...qtys));
-                                                }
+                                                const totalQty = emergencySelectionTotalQty(val, watchedLeadProducts, watchedKitOrders);
+                                                if (totalQty) leadForm.setFieldValue(['splitDates', dateName, 'products', prodName, 'qty'], totalQty);
                                               }}
                                             >
-                                              {(Array.isArray(watchedLeadProducts) ? watchedLeadProducts : []).some(p => p?.isKit || p?.kitType) && (
-                                                <Option value="__kit__" style={{ fontWeight: 600, color: '#722ed1' }}>
-                                                  Kit (All Products)
-                                                </Option>
-                                              )}
-                                              {(Array.isArray(watchedLeadProducts) ? watchedLeadProducts : []).filter(p => p?.name || p?.kitType).map((p, pi) => (
-                                                <Option key={pi} value={p.name || p.kitType}>{p.name || p.kitType}</Option>
+                                              {ensureCurrentValueOption(
+                                                buildEmergencySelectionOptions(watchedLeadProducts, watchedPackagingIncludes),
+                                                leadForm.getFieldValue(['splitDates', dateName, 'products', prodName, 'product']),
+                                                watchedLeadProducts,
+                                              ).map((o) => (
+                                                <Option key={o.value} value={o.value} style={o.isKit ? { fontWeight: 600, color: '#722ed1' } : undefined}>{o.label}</Option>
                                               ))}
                                             </Select>
                                           </Form.Item>

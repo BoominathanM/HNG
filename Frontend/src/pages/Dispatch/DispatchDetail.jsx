@@ -1391,7 +1391,7 @@ export default function DispatchDetail() {
                                 <Upload
                                   showUploadList={false}
                                   accept="image/*"
-                                  disabled={openCount >= 1 || openUploading || noKitTarget}
+                                  disabled={openCount >= 20 || openUploading || noKitTarget || dispatched}
                                   customRequest={uploadFn}
                                 >
                                   <Button size="small" icon={openUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
@@ -1404,7 +1404,7 @@ export default function DispatchDetail() {
                                 <Upload
                                   showUploadList={false}
                                   accept="image/*"
-                                  disabled={closeCount >= 1 || closeUploading || noKitTarget}
+                                  disabled={closeCount >= 20 || closeUploading || noKitTarget || dispatched}
                                   customRequest={uploadFnClose}
                                 >
                                   <Button size="small" icon={closeUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
@@ -1455,21 +1455,45 @@ export default function DispatchDetail() {
                         },
                         {
                           title: 'Dispatched', key: 'dispatched',
-                          render: (_, r) => (
-                            <Space direction="vertical" size={0}>
-                              {(r.kits || []).map((k, i) => (
-                                <Text key={`k-${i}`} style={{ fontSize: 12 }}>
-                                  {k.category === 'personalized' ? 'Personalized Kit' : 'Separate Kit'} — {k.kitName}: <b>{k.dispatchedQty}</b>
-                                </Text>
-                              ))}
-                              {(r.products || []).map((p, i) => (
-                                <Text key={`p-${i}`} style={{ fontSize: 12 }}>
-                                  Product — {p.itemName}: <b>{p.dispatchedQty}</b>
-                                </Text>
-                              ))}
-                              {!(r.kits?.length || r.products?.length) && <Text type="secondary" style={{ fontSize: 12 }}>—</Text>}
-                            </Space>
-                          ),
+                          render: (_, r) => {
+                            // Small round-trip thumbnails — openBoxPhotos/closeBoxPhotos here are a
+                            // snapshot taken when THIS round was confirmed (see confirmDispatch),
+                            // so they show exactly what evidence existed for this round even after
+                            // later rounds add more photos to the live item/kit record.
+                            const roundThumbs = (photos, color) => (photos || []).slice(-3).map((url, i) => (
+                              <Image
+                                key={`${url}-${i}`}
+                                src={url}
+                                width={18}
+                                height={18}
+                                style={{ objectFit: 'cover', borderRadius: 3, border: `1px solid ${color}`, marginLeft: 3 }}
+                                preview={{ src: url }}
+                              />
+                            ));
+                            return (
+                              <Space direction="vertical" size={2}>
+                                {(r.kits || []).map((k, i) => (
+                                  <Space key={`k-${i}`} size={0} align="center">
+                                    <Text style={{ fontSize: 12 }}>
+                                      {k.category === 'personalized' ? 'Personalized Kit' : 'Separate Kit'} — {k.kitName}: <b>{k.dispatchedQty}</b>
+                                    </Text>
+                                    {roundThumbs(k.openBoxPhotos, '#52c41a')}
+                                    {roundThumbs(k.closeBoxPhotos, '#1677ff')}
+                                  </Space>
+                                ))}
+                                {(r.products || []).map((p, i) => (
+                                  <Space key={`p-${i}`} size={0} align="center">
+                                    <Text style={{ fontSize: 12 }}>
+                                      Product — {p.itemName}: <b>{p.dispatchedQty}</b>
+                                    </Text>
+                                    {roundThumbs(p.openBoxPhotos, '#52c41a')}
+                                    {roundThumbs(p.closeBoxPhotos, '#1677ff')}
+                                  </Space>
+                                ))}
+                                {!(r.kits?.length || r.products?.length) && <Text type="secondary" style={{ fontSize: 12 }}>—</Text>}
+                              </Space>
+                            );
+                          },
                         },
                         { title: 'Transport', dataIndex: 'transportName', width: 120, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
                         { title: 'Weight', dataIndex: 'weight', width: 90, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },

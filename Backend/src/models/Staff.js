@@ -12,6 +12,7 @@ const staffSchema = new mongoose.Schema({
   loginPasswordHash: { type: String, select: false },
   accessDescription: String,
   deletedAt: Date,
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

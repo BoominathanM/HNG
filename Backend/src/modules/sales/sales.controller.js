@@ -7,6 +7,7 @@ const Party = require('../../models/Party');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const MaterialStock = require('../../models/MaterialStock');
+const DispatchRecord = require('../../models/DispatchRecord');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -291,6 +292,15 @@ exports.updateQuotation = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: quotation });
 });
 
+exports.deleteQuotation = asyncHandler(async (req, res, next) => {
+  const quotation = await Quotation.findOne({ _id: req.params.id, deletedAt: null });
+  if (!quotation) return next(new AppError('Quotation not found', 404));
+  quotation.deletedAt = Date.now();
+  quotation.deletedBy = req.user._id;
+  await quotation.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, message: 'Quotation deleted' });
+});
+
 exports.convertToNegotiation = asyncHandler(async (req, res, next) => {
   const quotation = await Quotation.findById(req.params.id);
   if (!quotation) return next(new AppError('Quotation not found', 404));
@@ -473,8 +483,17 @@ exports.updateNegotiation = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: negotiation });
 });
 
+exports.deleteNegotiation = asyncHandler(async (req, res, next) => {
+  const negotiation = await Negotiation.findOne({ _id: req.params.id, deletedAt: null });
+  if (!negotiation) return next(new AppError('Negotiation not found', 404));
+  negotiation.deletedAt = Date.now();
+  negotiation.deletedBy = req.user._id;
+  await negotiation.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, message: 'Negotiation deleted' });
+});
+
 exports.getNegotiations = asyncHandler(async (req, res) => {
-  const filter = {};
+  const filter = { deletedAt: null };
   if (req.query.leadId) filter.leadId = req.query.leadId;
   const negotiations = await Negotiation.find(filter).sort('-createdAt');
   const convertedNegIds = await Order.distinct('negotiationId', { deletedAt: null, negotiationId: { $ne: null } });
@@ -822,6 +841,28 @@ exports.createDirectOrder = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: order });
 });
 
+// An order's `status` never records the in-between "some items already went out,
+// some haven't" state — the Dispatch module deliberately leaves it untouched on a
+// Partial Dispatch checkpoint and only flips it to 'Dispatched' once everything has
+// shipped (see dispatch.controller.js confirmDispatch). Sales still needs to show
+// that in-progress state on the Orders tab, so resolve it here as a read-only
+// `dispatchStage` field (not persisted on Order) from the linked DispatchRecord,
+// instead of repurposing `status` itself and risking every place that keys off it
+// (Task Management's dispatch gating, Sales' lead-exclusion filters, Operations, etc).
+async function attachDispatchStage(orders) {
+  const ids = orders.map((o) => o._id).filter(Boolean);
+  if (!ids.length) return orders.map((o) => (o.toObject ? o.toObject() : o));
+  const dispatches = await DispatchRecord.find({ orderId: { $in: ids } })
+    .select('orderId dispatchType')
+    .lean();
+  const stageByOrder = new Map(dispatches.map((d) => [String(d.orderId), d.dispatchType]));
+  return orders.map((o) => {
+    const obj = o.toObject ? o.toObject() : o;
+    obj.dispatchStage = stageByOrder.get(String(o._id)) === 'Partial Dispatch' ? 'Partial Dispatch' : null;
+    return obj;
+  });
+}
+
 exports.getOrders = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.status) filter.status = req.query.status;
@@ -846,7 +887,8 @@ exports.getOrders = asyncHandler(async (req, res) => {
     Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').populate('leadId', 'leadType hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rowsInHotel generalOccupancy branch pocDesignation deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders packagingIncludes packagingIncludesQty kitSticker kitLogo kitPrinting kitPrice kitOverallQty productType products items splitDates isEmergency isUrgent status paymentCollection paidAmount advancePaid').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     Order.countDocuments(filter),
   ]);
-  res.status(200).json({ success: true, total, page, data: orders });
+  const data = await attachDispatchStage(orders);
+  res.status(200).json({ success: true, total, page, data });
 });
 
 exports.getOrder = asyncHandler(async (req, res, next) => {
@@ -857,7 +899,8 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
     .populate('negotiationId', 'negCode')
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));
-  res.status(200).json({ success: true, data: order });
+  const [data] = await attachDispatchStage([order]);
+  res.status(200).json({ success: true, data });
 });
 
 exports.updateOrder = asyncHandler(async (req, res, next) => {
@@ -885,6 +928,15 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
     await syncOrderTasksPayment(order._id).catch(() => {});
   }
   res.status(200).json({ success: true, data: order });
+});
+
+exports.deleteOrder = asyncHandler(async (req, res, next) => {
+  const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
+  if (!order) return next(new AppError('Order not found', 404));
+  order.deletedAt = Date.now();
+  order.deletedBy = req.user._id;
+  await order.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, message: 'Order deleted' });
 });
 
 exports.updateOrderStatus = asyncHandler(async (req, res, next) => {

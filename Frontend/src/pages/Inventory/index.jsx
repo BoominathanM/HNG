@@ -570,7 +570,7 @@ export default function Inventory() {
   const filteredMaterialStocks = useMemo(() => {
     const q = materialStockSearch.toLowerCase();
     return materialStocksList.filter(s => {
-      const matchSearch = !q || s.packingMaterial.toLowerCase().includes(q) || (s.size || '').toLowerCase().includes(q) || (s.vendor || '').toLowerCase().includes(q);
+      const matchSearch = !q || s.packingMaterial.toLowerCase().includes(q) || (s.size || '').toLowerCase().includes(q) || (s.vendor || '').toLowerCase().includes(q) || (s.hotelName || '').toLowerCase().includes(q);
       if (!matchSearch) return false;
       if (materialStockDateRange) {
         const d = s.purchaseDate ? s.purchaseDate.slice(0, 10) : '';
@@ -604,6 +604,7 @@ export default function Inventory() {
         stockCount: item.stockCount,
         purchaseDate: item.purchaseDate ? dayjs(item.purchaseDate) : null,
         vendor: item.vendor,
+        hotelName: item.hotelName,
         notes: item.notes,
       });
     }
@@ -1779,7 +1780,7 @@ export default function Inventory() {
                   extra={
                     <Space size={8}>
                       <Input
-                        placeholder="Search material, size, vendor…"
+                        placeholder="Search material, size, vendor, hotel…"
                         prefix={<SearchOutlined style={{ color: '#aaa' }} />}
                         value={materialStockSearch}
                         onChange={e => setMaterialStockSearch(e.target.value)}
@@ -1831,6 +1832,11 @@ export default function Inventory() {
                       {
                         title: 'Vendor',
                         dataIndex: 'vendor',
+                        render: v => v || <Text type="secondary">—</Text>,
+                      },
+                      {
+                        title: 'Hotel Name',
+                        dataIndex: 'hotelName',
                         render: v => v || <Text type="secondary">—</Text>,
                       },
                       {
@@ -2029,6 +2035,9 @@ export default function Inventory() {
               options={materialStockVendorOptions}
               notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No vendors yet — add one in Vendors & Suppliers</span>}
             />
+          </Form.Item>
+          <Form.Item label="Hotel Name" name="hotelName">
+            <Input placeholder="e.g. Taj, Marriott…" style={{ borderRadius: 8 }} />
           </Form.Item>
           <Form.Item label="Notes" name="notes">
             <Input.TextArea rows={2} placeholder="Optional notes…" style={{ borderRadius: 8 }} />

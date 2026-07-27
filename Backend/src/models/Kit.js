@@ -25,6 +25,7 @@ const kitSchema = new mongoose.Schema({
   kitAttributes: { type: mongoose.Schema.Types.Mixed, default: {} },
   products: [kitItemSchema],
   deletedAt: Date,
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

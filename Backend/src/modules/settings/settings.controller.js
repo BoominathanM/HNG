@@ -252,6 +252,8 @@ const DELETED_SOURCES = {
   leads: { model: 'Lead', module: 'Sales Team', label: (d) => d.hotelName || d.clientName },
   orders: { model: 'Order', module: 'Sales Team', label: (d) => d.orderCode || d.clientName },
   quotations: { model: 'Quotation', module: 'Sales Team', label: (d) => d.quotCode || d.clientName },
+  negotiations: { model: 'Negotiation', module: 'Sales Team', label: (d) => d.negCode || d.clientName },
+  invoices: { model: 'Invoice', module: 'Billing', label: (d) => d.invoiceNumber },
   inventory: { model: 'InventoryItem', module: 'Inventory', label: (d) => d.name },
   kits: { model: 'Kit', module: 'Inventory', label: (d) => d.name },
   vendors: { model: 'Vendor', module: 'Vendors', label: (d) => d.name },
@@ -271,26 +273,34 @@ const getModel = (name) => {
 const syncDeletedRecords = async () => {
   const liveKeys = new Set();
   for (const [type, cfg] of Object.entries(DELETED_SOURCES)) {
-    const Model = getModel(cfg.model);
-    if (!Model) continue;
-    const docs = await Model.find({ deletedAt: { $ne: null } })
-      .populate({ path: 'deletedBy', select: 'fullName' })
-      .lean();
-    for (const d of docs) {
-      liveKeys.add(`${type}:${d._id}`);
-      await DeletedRecord.findOneAndUpdate(
-        { type, refId: d._id },
-        {
-          type,
-          module: cfg.module,
-          name: cfg.label(d) || '—',
-          refId: d._id,
-          snapshot: d,
-          deletedBy: d.deletedBy?._id || d.deletedBy || null,
-          deletedAt: d.deletedAt || Date.now(),
-        },
-        { upsert: true, setDefaultsOnInsert: true }
-      );
+    // Isolated per type: a single misbehaving model (e.g. missing the `deletedBy`
+    // schema path, which makes populate() below throw under strictPopulate) must
+    // never abort the whole reconcile and blank out every other module's entries —
+    // it previously did, which is why newly-deleted records stopped appearing here.
+    try {
+      const Model = getModel(cfg.model);
+      if (!Model) continue;
+      const docs = await Model.find({ deletedAt: { $ne: null } })
+        .populate({ path: 'deletedBy', select: 'fullName' })
+        .lean();
+      for (const d of docs) {
+        liveKeys.add(`${type}:${d._id}`);
+        await DeletedRecord.findOneAndUpdate(
+          { type, refId: d._id },
+          {
+            type,
+            module: cfg.module,
+            name: cfg.label(d) || '—',
+            refId: d._id,
+            snapshot: d,
+            deletedBy: d.deletedBy?._id || d.deletedBy || null,
+            deletedAt: d.deletedAt || Date.now(),
+          },
+          { upsert: true, setDefaultsOnInsert: true }
+        );
+      }
+    } catch (err) {
+      console.error(`[deleted-records] sync failed for type "${type}":`, err.message);
     }
   }
   // Purge archive entries whose original is no longer soft-deleted (restored).

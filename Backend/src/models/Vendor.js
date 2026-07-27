@@ -27,6 +27,7 @@ const vendorSchema = new mongoose.Schema({
   aiSummary: String,
   aiSummaryDate: Date,
   deletedAt: Date,
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

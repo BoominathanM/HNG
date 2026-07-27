@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
   Typography, Space, Divider, InputNumber, Tabs, Tooltip, Modal, DatePicker, TimePicker, Upload, Checkbox, Radio,
+  Popconfirm,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -9,7 +10,7 @@ import {
   CheckCircleOutlined, LeftOutlined, UserOutlined,
   SearchOutlined, WhatsAppOutlined,
   FileDoneOutlined, EditOutlined, BellOutlined, SafetyCertificateOutlined,
-  AlertFilled, ExperimentOutlined, HistoryOutlined,
+  AlertFilled, ExperimentOutlined, HistoryOutlined, DeleteOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -30,6 +31,8 @@ import {
   useGetInvoicePaymentsQuery,
   useConvertQuotationToInvoiceMutation,
   useUpdateInvoiceGstMutation,
+  useDeleteInvoiceMutation,
+  useDeleteSalesQuotationMutation,
   useGetBillingPartyLedgerQuery,
   useGetCompanySettingsQuery,
   useGetSalesOrdersQuery,
@@ -230,10 +233,27 @@ export default function Billing() {
   const [recordPaymentMutation] = useRecordPaymentMutation();
   const [convertQuotationMutation] = useConvertQuotationToInvoiceMutation();
   const [updateInvoiceGstMutation] = useUpdateInvoiceGstMutation();
+  const [deleteInvoiceMutation] = useDeleteInvoiceMutation();
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
   const [updateSalesQuotationMutation] = useUpdateSalesQuotationMutation();
+  const [deleteSalesQuotationMutation] = useDeleteSalesQuotationMutation();
   const [updateLeadMutation] = useUpdateLeadMutation();
   const [updateNegotiationMutation] = useUpdateNegotiationMutation();
+
+  // Soft-delete only — moves to Settings → Deleted Records (full snapshot kept) and can
+  // be restored anytime; nothing is permanently removed from either action.
+  const handleDeleteInvoice = async (record) => {
+    try {
+      await deleteInvoiceMutation(record.key).unwrap();
+      enqueueSnackbar(`Invoice ${record.inv || ''} moved to Deleted Records`, { variant: 'success' });
+    } catch { enqueueSnackbar('Failed to delete invoice', { variant: 'error' }); }
+  };
+  const handleDeleteQuotationInProcess = async (record) => {
+    try {
+      await deleteSalesQuotationMutation(record.key).unwrap();
+      enqueueSnackbar(`Quotation ${record.quot || ''} moved to Deleted Records`, { variant: 'success' });
+    } catch { enqueueSnackbar('Failed to delete quotation', { variant: 'error' }); }
+  };
 
   // Map each lead id → its converted sales order (the order carries the resolved kitPrice
   // that produces the "Amount to Pay" Sales shows; the lead's kitPrice is often stale).
@@ -1185,6 +1205,14 @@ export default function Billing() {
           {r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
             <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
           )}
+          <Popconfirm
+            title="Delete this invoice?"
+            description="It will move to Settings → Deleted Records and can be restored anytime."
+            onConfirm={() => handleDeleteInvoice(r)}
+            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+          >
+            <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} /></Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -1246,6 +1274,16 @@ export default function Billing() {
                 <Button size="small" icon={<EyeOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff44', fontSize: 12 }} onClick={() => { setProofQuot(r); setProofOpen(true); }}>View Proof</Button>
                 <Button size="small" icon={<SafetyCertificateOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', fontSize: 12 }} onClick={() => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); }}>Verify</Button>
               </>
+            )}
+            {!isOrder && (
+              <Popconfirm
+                title="Delete this quotation?"
+                description="It will move to Settings → Deleted Records and can be restored anytime."
+                onConfirm={() => handleDeleteQuotationInProcess(r)}
+                okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+              >
+                <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} /></Tooltip>
+              </Popconfirm>
             )}
           </Space>
         );

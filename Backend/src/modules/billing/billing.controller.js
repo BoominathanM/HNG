@@ -79,7 +79,7 @@ exports.getPartyLedger = asyncHandler(async (req, res, next) => {
 
 // ─── INVOICES ─────────────────────────────────────────────────────────────────
 exports.getInvoices = asyncHandler(async (req, res) => {
-  const filter = {};
+  const filter = { deletedAt: null };
   if (req.query.status) filter.status = req.query.status;
   if (req.query.partyId) filter.partyId = req.query.partyId;
   if (req.query.orderId) filter.orderId = req.query.orderId;
@@ -109,9 +109,18 @@ exports.getInvoices = asyncHandler(async (req, res) => {
 });
 
 exports.getInvoice = asyncHandler(async (req, res, next) => {
-  const invoice = await Invoice.findById(req.params.id).populate('partyId').populate('orderId');
+  const invoice = await Invoice.findOne({ _id: req.params.id, deletedAt: null }).populate('partyId').populate('orderId');
   if (!invoice) return next(new AppError('Invoice not found', 404));
   res.status(200).json({ success: true, data: invoice });
+});
+
+exports.deleteInvoice = asyncHandler(async (req, res, next) => {
+  const invoice = await Invoice.findOne({ _id: req.params.id, deletedAt: null });
+  if (!invoice) return next(new AppError('Invoice not found', 404));
+  invoice.deletedAt = Date.now();
+  invoice.deletedBy = req.user._id;
+  await invoice.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, message: 'Invoice deleted' });
 });
 
 exports.createInvoice = asyncHandler(async (req, res, next) => {

@@ -381,6 +381,8 @@ export default function OperationDetail() {
     kitSize: o.kitSize || o.leadId?.kitSize || '',
     selectedKits: o.selectedKits || o.leadId?.selectedKits || [],
     kitOrders: o.kitOrders || o.leadId?.kitOrders || [],
+    kitOverallQty: o.kitOverallQty ?? o.leadId?.kitOverallQty ?? 0,
+    packagingIncludes: (o.packagingIncludes?.length ? o.packagingIncludes : (o.leadId?.packagingIncludes || [])) || [],
     displayUnitTab: o.displayUnitTab || o.leadId?.displayUnitTab || '',
     logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
     logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
@@ -528,7 +530,7 @@ export default function OperationDetail() {
   // Kit Packing modal — Task Breakdown by Quantity (mirrors the main Assign Task modal
   // so Personalized/Separate Kit packing can also be split across multiple assignees).
   const [kitSubTasks, setKitSubTasks] = useState([]);
-  const addKitSubTask = () => setKitSubTasks((prev) => [...prev, { id: nextSubTaskId(), description: '', qty: '', assignee: '' }]);
+  const addKitSubTask = () => setKitSubTasks((prev) => [...prev, { id: nextSubTaskId(), description: '', qty: '', assignees: [] }]);
   const removeKitSubTask = (id) => setKitSubTasks((prev) => prev.filter((t) => t.id !== id));
   const updateKitSubTask = (id, field, value) => setKitSubTasks((prev) => prev.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
 
@@ -578,58 +580,78 @@ export default function OperationDetail() {
 
   // Build map: lowercase productName → { date, qty } from splitDates.
   // qty is the emergency delivery quantity; if not specified, null means all items of that name are emergency.
-  // When product is '__kit__', expands to all kit items proportionally by kit count.
+  // '__kit__' / '__personalized__' / '__sepkit__:<key>' expand to more than one item — see the
+  // matching (and more heavily commented) implementation in Operations/data.js's
+  // getEmergencyProductQtyMap, which this mirrors so the list view and this detail view agree.
   const emergencyProductMap = useMemo(() => {
     const map = {};
+    // order.items here already carries `requiredQty` (see the allOrders mapping above) — the
+    // kit-component's TRUE total (kitOverallQty), not the per-kit qty=1 stored on the raw item.
+    // Using requiredQty instead of qty is what makes the proportional split below correct for
+    // Personalized Kit orders where a kit component's raw qty is always ~1.
+    const effQty = (it) => Number(it.requiredQty) || Number(it.qty) || 0;
+    const includeSet = new Set((order?.packagingIncludes || []).map(String));
+    const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName));
 
-    const expandKit = (kitEmergencyQty, sdDate) => {
-      const kitItems = (order?.items || []).filter((it) => it.isKit || it.kitType);
-      if (kitItems.length === 0) return;
+    const expandGroup = (items, groupTotalQty, kitEmergencyQty, sdDate) => {
+      if (items.length === 0) return;
       if (kitEmergencyQty === null) {
-        kitItems.forEach((it) => {
+        items.forEach((it) => {
           const key = (it.product || it.itemName || '').toLowerCase();
           if (key && !map[key]) map[key] = { date: sdDate, qty: null };
         });
         return;
       }
-      const itemQtys = kitItems.map((it) => Number(it.qty) || 0).filter((q) => q > 0);
-      if (itemQtys.length === 0) return;
-      const totalKits = Math.min(...itemQtys);
-      kitItems.forEach((it) => {
+      if (!groupTotalQty) return;
+      items.forEach((it) => {
         const key = (it.product || it.itemName || '').toLowerCase();
         if (!key || map[key]) return;
-        const itemQty = Number(it.qty) || 0;
-        const pQty = Math.min(Math.round((kitEmergencyQty / totalKits) * itemQty), itemQty);
+        const itemQty = effQty(it);
+        const pQty = Math.min(Math.round((kitEmergencyQty / groupTotalQty) * itemQty), itemQty);
         map[key] = { date: sdDate, qty: pQty };
       });
     };
 
+    const expandLegacyKit = (kitEmergencyQty, sdDate) => {
+      const items = (order?.items || []).filter((it) => it.isKit || it.kitType);
+      const groupTotalQty = items.length ? Math.max(...items.map(effQty)) : 0;
+      expandGroup(items, groupTotalQty, kitEmergencyQty, sdDate);
+    };
+
+    const expandPersonalized = (kitEmergencyQty, sdDate) => {
+      const items = (order?.items || []).filter((it) => it.category === 'personalized' || it.isIncludedInPersonalized || isBundled(it));
+      const kitItemsInGroup = items.filter((it) => it.isKit || it.kitType);
+      const groupTotalQty = kitItemsInGroup.length ? Math.max(...kitItemsInGroup.map(effQty)) : (Number(order?.kitOverallQty) || 0);
+      expandGroup(items, groupTotalQty, kitEmergencyQty, sdDate);
+    };
+
+    const expandSeparateKit = (kitKey, kitEmergencyQty, sdDate) => {
+      const items = (order?.items || []).filter((it) => !isBundled(it) && String(it.kitId || it.kitName || it.kitType) === kitKey);
+      const groupTotalQty = items.length ? Math.max(...items.map(effQty)) : 0;
+      expandGroup(items, groupTotalQty, kitEmergencyQty, sdDate);
+    };
+
+    const handleEntry = (product, qty, sdDate) => {
+      if (!product) return;
+      if (product === '__kit__') { expandLegacyKit(qty, sdDate); return; }
+      if (product === '__personalized__') { expandPersonalized(qty, sdDate); return; }
+      if (typeof product === 'string' && product.startsWith('__sepkit__:')) {
+        expandSeparateKit(product.slice('__sepkit__:'.length), qty, sdDate);
+        return;
+      }
+      const key = product.toLowerCase();
+      if (!map[key] || (sdDate && sdDate < map[key].date)) {
+        map[key] = { date: sdDate, qty };
+      }
+    };
+
     (order?.splitDates || []).forEach((sd) => {
       const sdDate = sd.date || null;
-      (sd.products || []).forEach((ep) => {
-        if (!ep.product) return;
-        if (ep.product === '__kit__') {
-          expandKit(ep.qty != null ? Number(ep.qty) : null, sdDate);
-        } else {
-          const key = ep.product.toLowerCase();
-          if (!map[key] || (sdDate && sdDate < map[key].date)) {
-            map[key] = { date: sdDate, qty: ep.qty != null ? Number(ep.qty) : null };
-          }
-        }
-      });
-      if (sd.product) {
-        if (sd.product === '__kit__') {
-          expandKit(sd.qty != null ? Number(sd.qty) : null, sdDate);
-        } else {
-          const key = sd.product.toLowerCase();
-          if (!map[key] || (sdDate && sdDate < map[key].date)) {
-            map[key] = { date: sdDate, qty: sd.qty != null ? Number(sd.qty) : null };
-          }
-        }
-      }
+      (sd.products || []).forEach((ep) => handleEntry(ep.product, ep.qty != null ? Number(ep.qty) : null, sdDate));
+      handleEntry(sd.product, sd.qty != null ? Number(sd.qty) : null, sdDate);
     });
     return map;
-  }, [order?.splitDates, order?.items]);
+  }, [order?.splitDates, order?.items, order?.packagingIncludes, order?.kitOverallQty]);
 
   // Sort items: emergency products first (by emergency date), then regular products
   const sortedOrderItems = useMemo(() => {
@@ -962,14 +984,14 @@ export default function OperationDetail() {
 
     // No top-level Task Name/Assign To anymore — require at least one filled task below,
     // same as the main Assign Task modal.
-    const filledKitSubTasks = kitSubTasks.filter((t) => t.description || t.qty || t.assignee);
+    const filledKitSubTasks = kitSubTasks.filter((t) => t.description || t.qty || (t.assignees && t.assignees.length));
     if (filledKitSubTasks.length === 0) {
-      enqueueSnackbar('Please add at least one task with a task name and assignee', { variant: 'warning' });
+      enqueueSnackbar('Please add at least one task with a task name and at least one assignee', { variant: 'warning' });
       return;
     }
-    const invalidKitSubTask = filledKitSubTasks.find((t) => !t.description || !t.assignee);
+    const invalidKitSubTask = filledKitSubTasks.find((t) => !t.description || !(t.assignees && t.assignees.length));
     if (invalidKitSubTask) {
-      enqueueSnackbar('Each task must have a Task Name and an assignee', { variant: 'warning' });
+      enqueueSnackbar('Each task must have a Task Name and at least one assignee', { variant: 'warning' });
       return;
     }
 
@@ -981,7 +1003,10 @@ export default function OperationDetail() {
     let successCount = 0;
     const rowErrors = [];
     for (const t of filledKitSubTasks) {
-      const u = taskManagementUsers.find((x) => x._id === t.assignee);
+      // Multiple assignees on ONE task: everyone selected shares the same task record
+      // (not split into separate tasks) so it shows up in every selected user's login
+      // and Task Management lists all of them against a single task.
+      const assigneeUsers = (t.assignees || []).map((aid) => taskManagementUsers.find((x) => x._id === aid)).filter(Boolean);
       const rowQty = Number(t.qty) || 0;
       const rowEstimate = estimateSecFor(timeConfigs, { taskName: t.description }, rowQty);
       const payload = {
@@ -991,8 +1016,10 @@ export default function OperationDetail() {
         product,
         qty: rowQty,
         requiredQty: kitReqQty,
-        assignedTo: u?._id,
-        assigneeName: u?.fullName,
+        assignedTo: assigneeUsers[0]?._id,
+        assigneeName: assigneeUsers[0]?.fullName,
+        assignedToMany: assigneeUsers.map((u) => u._id),
+        assigneeNames: assigneeUsers.map((u) => u.fullName),
         clientName: order?.hotelName,
         description: vals.description,
         status: 'Pending',
@@ -3115,12 +3142,14 @@ export default function OperationDetail() {
                         <div style={{ flex: 1.4 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
                           <Select
-                            placeholder="Select"
-                            value={task.assignee || undefined}
-                            onChange={(val) => updateKitSubTask(task.id, 'assignee', val)}
+                            mode="multiple"
+                            placeholder="Select one or more"
+                            value={task.assignees || []}
+                            onChange={(val) => updateKitSubTask(task.id, 'assignees', val)}
                             style={{ width: '100%' }}
                             showSearch
                             optionFilterProp="label"
+                            maxTagCount="responsive"
                             options={taskManagementUsers.map((u) => ({ value: u._id, label: `${u.fullName} — ${u.role}` }))}
                           />
                         </div>

@@ -25,11 +25,13 @@ router.post('/leads/:id/convert-negotiation', ctrl.convertLeadToNegotiation);
 router.get('/quotations', ctrl.getQuotations);
 router.post('/quotations', ctrl.createQuotation);
 router.put('/quotations/:id', ctrl.updateQuotation);
+router.delete('/quotations/:id', ctrl.deleteQuotation);
 router.post('/quotations/:id/convert-negotiation', ctrl.convertToNegotiation);
 
 // Negotiations
 router.get('/negotiations', ctrl.getNegotiations);
 router.put('/negotiations/:id', ctrl.updateNegotiation);
+router.delete('/negotiations/:id', ctrl.deleteNegotiation);
 router.post('/negotiations/:id/convert-order', ctrl.convertToOrder);
 
 // Orders
@@ -38,6 +40,7 @@ router.get('/orders', ctrl.getOrders);
 router.post('/orders', ctrl.createDirectOrder);
 router.get('/orders/:id', ctrl.getOrder);
 router.put('/orders/:id', ctrl.updateOrder);
+router.delete('/orders/:id', ctrl.deleteOrder);
 router.patch('/orders/:id/status', ctrl.updateOrderStatus);
 
 // Complaints

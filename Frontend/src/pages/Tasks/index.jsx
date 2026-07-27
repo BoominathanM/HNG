@@ -190,7 +190,17 @@ export default function Tasks() {
     return map;
   }, [tasksData]);
 
-  const taskList = useMemo(() => (tasksData?.data || []).map((t) => ({
+  const taskList = useMemo(() => (tasksData?.data || []).map((t) => {
+    // Personalized/Separate Kit Packing tasks can carry MULTIPLE assignees
+    // (assignedToMany/assigneeNames) — everyone selected shares one task record.
+    // Every other task type still has exactly one assignee, so this list is a
+    // single-item array for them and renders identically to before.
+    const assigneeNameList = (Array.isArray(t.assigneeNames) && t.assigneeNames.length)
+      ? t.assigneeNames
+      : (Array.isArray(t.assignedToMany) && t.assignedToMany.length)
+        ? t.assignedToMany.map((u) => u?.fullName).filter(Boolean)
+        : [t.assignedTo?.fullName || t.assigneeName].filter(Boolean);
+    return {
     key: t._id,
     id: t.taskCode,
     type: t.taskType || 'Packing',
@@ -203,8 +213,9 @@ export default function Tasks() {
     deliveryDate: t.orderId?.expectedDeliveryDate ? t.orderId.expectedDeliveryDate.slice(0, 10) : null,
     client: t.orderId?.clientName || t.clientName || '—',
     product: t.product || '—',
-    assignedTo: t.assignedTo?.fullName || t.assigneeName || '—',
-    assignee: t.assignedTo?.fullName || t.assigneeName || '',
+    assignedTo: assigneeNameList.join(', ') || '—',
+    assignee: assigneeNameList.join(', ') || '',
+    assigneeList: assigneeNameList,
     assigneeRole: t.assignedTo?.role || '',
     // Backend stores 'Done'; the UI keys everything off 'Completed'. Normalize for display.
     status: t.status === 'Done' ? 'Completed' : t.status,
@@ -239,7 +250,8 @@ export default function Tasks() {
     efficiencyPct: t.efficiencyPct ?? null,
     feedback: t.feedback || '',
     createdAt: t.createdAt,
-  })), [tasksData]);
+    };
+  }), [tasksData]);
   const [searchText, setSearchText] = useState('');
   const [filterType, setFilterType] = useState(null);
   const [filterPriority, setFilterPriority] = useState(null);
@@ -689,8 +701,14 @@ export default function Tasks() {
     },
     {
       title: 'Assignee', dataIndex: 'assignee', responsive: ['md'], width: 170,
-      render: (v) => v
-        ? <Space><Avatar size={24} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{v}</Space>
+      render: (v, r) => (r.assigneeList && r.assigneeList.length)
+        ? (
+          <Space direction="vertical" size={2}>
+            {r.assigneeList.map((name, i) => (
+              <Space key={i} size={4}><Avatar size={20} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />{name}</Space>
+            ))}
+          </Space>
+        )
         : <Tag color="default" style={{ color: '#999', fontSize: 11 }}>Unassigned</Tag>,
     },
     { title: 'Priority', dataIndex: 'priority', responsive: ['sm'], render: (v) => <Tag color={priorityColor[v]}>{v}</Tag> },
@@ -1801,11 +1819,19 @@ export default function Tasks() {
                   <Descriptions.Item label="Priority"><Tag color={priorityColor[selectedTask.priority]}>{selectedTask.priority}</Tag></Descriptions.Item>
                   <Descriptions.Item label="Status"><Tag color={statusColor[selectedTask.status]}>{selectedTask.status}</Tag></Descriptions.Item>
                   <Descriptions.Item label="Assigned To" span={2}>
-                    <Space>
-                      <Avatar size={20} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />
-                      <Text strong>{selectedTask.assignee || 'Unassigned'}</Text>
-                      {selectedTask.assigneeRole && <Tag color="default" style={{ fontSize: 11 }}>{selectedTask.assigneeRole}</Tag>}
-                    </Space>
+                    {(selectedTask.assigneeList && selectedTask.assigneeList.length)
+                      ? (
+                        <Space wrap size={[12, 4]}>
+                          {selectedTask.assigneeList.map((name, i) => (
+                            <Space key={i} size={4}>
+                              <Avatar size={20} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />
+                              <Text strong>{name}</Text>
+                              {i === 0 && selectedTask.assigneeRole && <Tag color="default" style={{ fontSize: 11 }}>{selectedTask.assigneeRole}</Tag>}
+                            </Space>
+                          ))}
+                        </Space>
+                      )
+                      : <Text strong>Unassigned</Text>}
                   </Descriptions.Item>
                   <Descriptions.Item label="Due Date">{selectedTask.due || '—'}</Descriptions.Item>
                   {selectedTask.printingType && (

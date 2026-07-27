@@ -6,6 +6,7 @@ const materialStockSchema = new mongoose.Schema({
   stockCount: { type: Number, required: true, default: 0 },
   purchaseDate: { type: Date, default: Date.now },
   vendor: { type: String, default: '' },
+  hotelName: { type: String, default: '' },
   notes: { type: String, default: '' },
   invoiceFile: {
     name: { type: String, default: '' },

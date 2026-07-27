@@ -275,57 +275,102 @@ const STICKER_MOVED_ON_STATUSES = new Set(['In Process', 'Printing', 'Dispatch',
 // Statuses that mean an emergency item's production is fully complete.
 const EMERGENCY_COMPLETE_STATUSES = new Set(['Done', 'Received', 'Closed']);
 
+// Effective TOTAL quantity of an order item. Kit-component items (Paste/Brush inside a Dental
+// kit, etc.) store their PER-KIT quantity in `qty` (almost always 1) — the real total across every
+// kit unit lives in `overallQty` / the matching kitOrders[] entry's overallQty / the order-level
+// kitOverallQty (mirrors the "Effective Required Qty" pattern already used in OperationDetail.jsx).
+// Standalone (non-kit) items already store their real total directly in `qty`. Without this, a
+// proportional emergency split treats a kit component's qty=1 as if it were the WHOLE quantity,
+// capping its emergency share at 1 instead of the true per-kit-multiplied amount.
+const effectiveItemQty = (it, order, kitCfgById) => {
+  if (!(it.isKit || it.kitType)) return Number(it.qty) || 0;
+  const kitCfg = kitCfgById[String(it.kitId)] || null;
+  return Number(it.overallQty) || Number(kitCfg?.overallQty) || Number(order.kitOverallQty) || Number(it.qty) || 0;
+};
+
 // Returns a Map of lowercase product name → emergency qty (number) or null if no qty specified.
 // When qty is present, only the order item with that exact qty should be marked emergency.
 // When qty is null, all items with that product name are emergency (legacy / no-qty entries).
-// '__kit__' (the "Kit (All Products)" split-date option) is expanded to each kit product's own
-// key, proportional to the kit-level emergency qty — mirrors OperationDetail.jsx's expandKit so
-// Personalized Kit orders get the same per-product emergency/gating treatment in the shared
-// Sticker/Box/Frosted/Butter queues (previously '__kit__' never matched any real product name,
-// so every item silently stayed isEmergencyGated=true forever — designing team saw everything disabled).
+// Three split-date "product" values expand to more than one order item:
+//  '__kit__'         legacy "Kit (All Products)" — every kit-flagged item in the order, scoped to
+//                     the largest kit's overallQty. Kept for orders saved before the category split
+//                     below existed; new selections use the more precise keys.
+//  '__personalized__' the Personalized Kit bundle — every item categorised 'personalized' PLUS
+//                     anything packed inside it via packagingIncludes (a Separate Kit/Product bundled
+//                     into the personalized outer unit is part of the SAME physical unit).
+//  '__sepkit__:<key>' a single standalone kit (kitId, or kitName/kitType as fallback) that is NOT
+//                     bundled into a personalized order, scoped to that kit's own overallQty.
+// mirrors OperationDetail.jsx's expandKit so Personalized Kit orders get the same per-product
+// emergency/gating treatment in the shared Sticker/Box/Frosted/Butter queues (previously '__kit__'
+// never matched any real product name, so every item silently stayed isEmergencyGated=true forever).
 export const getEmergencyProductQtyMap = (order) => {
   const map = new Map();
+  const kitCfgById = Object.fromEntries(
+    (order.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]),
+  );
+  const includeSet = new Set((order.packagingIncludes || []).map(String));
+  const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName));
 
-  const expandKit = (kitEmergencyQty) => {
-    const kitItems = (order.items || []).filter((it) => it.isKit || it.kitType);
-    if (kitItems.length === 0) return;
+  // Proportionally splits `kitEmergencyQty` units of demand across `items`, whose shared "kit count"
+  // denominator is `groupTotalQty` — each item's share is (kitEmergencyQty / groupTotalQty) times
+  // that item's OWN effective total, capped at its own total so rounding can't over-allocate.
+  const expandGroup = (items, groupTotalQty, kitEmergencyQty) => {
+    if (items.length === 0) return;
     if (kitEmergencyQty === null) {
-      kitItems.forEach((it) => {
+      items.forEach((it) => {
         const key = (it.product || it.itemName || '').toLowerCase();
         if (key && !map.has(key)) map.set(key, null);
       });
       return;
     }
-    const itemQtys = kitItems.map((it) => Number(it.qty) || 0).filter((q) => q > 0);
-    if (itemQtys.length === 0) return;
-    const totalKits = Math.min(...itemQtys);
-    kitItems.forEach((it) => {
+    if (!groupTotalQty) return;
+    items.forEach((it) => {
       const key = (it.product || it.itemName || '').toLowerCase();
       if (!key || map.has(key)) return;
-      const itemQty = Number(it.qty) || 0;
-      const qty = Math.min(Math.round((kitEmergencyQty / totalKits) * itemQty), itemQty);
+      const itemQty = effectiveItemQty(it, order, kitCfgById);
+      const qty = Math.min(Math.round((kitEmergencyQty / groupTotalQty) * itemQty), itemQty);
       map.set(key, qty);
     });
   };
 
-  (order.splitDates || []).forEach((sd) => {
-    (sd.products || []).forEach((ep) => {
-      if (!ep.product) return;
-      if (ep.product === '__kit__') {
-        expandKit(ep.qty != null ? Number(ep.qty) : null);
-      } else {
-        const key = ep.product.toLowerCase();
-        if (!map.has(key)) map.set(key, ep.qty != null ? Number(ep.qty) : null);
-      }
-    });
-    if (sd.product) {
-      if (sd.product === '__kit__') {
-        expandKit(sd.qty != null ? Number(sd.qty) : null);
-      } else {
-        const key = sd.product.toLowerCase();
-        if (!map.has(key)) map.set(key, sd.qty != null ? Number(sd.qty) : null);
-      }
+  const expandLegacyKit = (kitEmergencyQty) => {
+    const items = (order.items || []).filter((it) => it.isKit || it.kitType);
+    const groupTotalQty = items.length ? Math.max(...items.map((it) => effectiveItemQty(it, order, kitCfgById))) : 0;
+    expandGroup(items, groupTotalQty, kitEmergencyQty);
+  };
+
+  const expandPersonalized = (kitEmergencyQty) => {
+    const items = (order.items || []).filter((it) => it.category === 'personalized' || isBundled(it));
+    const kitItemsInGroup = items.filter((it) => it.isKit || it.kitType);
+    const groupTotalQty = kitItemsInGroup.length
+      ? Math.max(...kitItemsInGroup.map((it) => effectiveItemQty(it, order, kitCfgById)))
+      : (Number(order.kitOverallQty) || 0);
+    expandGroup(items, groupTotalQty, kitEmergencyQty);
+  };
+
+  const expandSeparateKit = (kitKey, kitEmergencyQty) => {
+    const items = (order.items || []).filter(
+      (it) => !isBundled(it) && String(it.kitId || it.kitName || it.kitType) === kitKey,
+    );
+    const groupTotalQty = items.length ? Math.max(...items.map((it) => effectiveItemQty(it, order, kitCfgById))) : 0;
+    expandGroup(items, groupTotalQty, kitEmergencyQty);
+  };
+
+  const handleEntry = (product, qty) => {
+    if (!product) return;
+    if (product === '__kit__') { expandLegacyKit(qty); return; }
+    if (product === '__personalized__') { expandPersonalized(qty); return; }
+    if (typeof product === 'string' && product.startsWith('__sepkit__:')) {
+      expandSeparateKit(product.slice('__sepkit__:'.length), qty);
+      return;
     }
+    const key = product.toLowerCase();
+    if (!map.has(key)) map.set(key, qty);
+  };
+
+  (order.splitDates || []).forEach((sd) => {
+    (sd.products || []).forEach((ep) => handleEntry(ep.product, ep.qty != null ? Number(ep.qty) : null));
+    handleEntry(sd.product, sd.qty != null ? Number(sd.qty) : null);
   });
   return map;
 };

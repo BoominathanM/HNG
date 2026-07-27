@@ -67,6 +67,7 @@ const quotationSchema = new mongoose.Schema({
   items: [quotationItemSchema],
   note: String,
   deletedAt: Date,
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true, strict: false });
 

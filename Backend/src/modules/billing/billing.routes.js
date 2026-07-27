@@ -16,6 +16,7 @@ router.get('/parties/:id/ledger', ctrl.getPartyLedger);
 router.get('/invoices', ctrl.getInvoices);
 router.post('/invoices', ctrl.createInvoice);
 router.get('/invoices/:id', ctrl.getInvoice);
+router.delete('/invoices/:id', ctrl.deleteInvoice);
 router.patch('/invoices/:id/gst', ctrl.updateInvoiceGst);
 router.post('/invoices/:id/payment', ctrl.recordPayment);
 router.get('/invoices/:id/payments', ctrl.getInvoicePayments);

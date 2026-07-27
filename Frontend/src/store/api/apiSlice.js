@@ -128,7 +128,7 @@ export const apiSlice = createApi({
     }),
     deleteStaff: builder.mutation({
       query: (id) => ({ url: `/staff/${id}`, method: 'delete' }),
-      invalidatesTags: ['Staff'],
+      invalidatesTags: ['Staff', 'DeletedRecords'],
     }),
     updateCredentials: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/staff/${id}/credentials`, method: 'patch', data }),
@@ -169,7 +169,7 @@ export const apiSlice = createApi({
     }),
     deleteVendor: builder.mutation({
       query: (id) => ({ url: `/vendors/${id}`, method: 'delete' }),
-      invalidatesTags: ['Vendors'],
+      invalidatesTags: ['Vendors', 'DeletedRecords'],
     }),
     getVendorHistory: builder.query({
       query: (id) => ({ url: `/vendors/${id}/history` }),
@@ -358,7 +358,7 @@ export const apiSlice = createApi({
     }),
     deleteItem: builder.mutation({
       query: (id) => ({ url: `/inventory/${id}`, method: 'delete' }),
-      invalidatesTags: ['Inventory'],
+      invalidatesTags: ['Inventory', 'DeletedRecords'],
     }),
     sellStockRequest: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/inventory/${id}/sell-request`, method: 'post', data }),
@@ -403,7 +403,7 @@ export const apiSlice = createApi({
     }),
     deleteKit: builder.mutation({
       query: (id) => ({ url: `/inventory/kits/${id}`, method: 'delete' }),
-      invalidatesTags: ['Kits'],
+      invalidatesTags: ['Kits', 'DeletedRecords'],
     }),
     // Material Stocks (packing materials purchased & stored)
     getMaterialStocks: builder.query({
@@ -522,7 +522,7 @@ export const apiSlice = createApi({
     }),
     deleteLead: builder.mutation({
       query: (id) => ({ url: `/sales/leads/${id}`, method: 'delete' }),
-      invalidatesTags: ['Leads'],
+      invalidatesTags: ['Leads', 'DeletedRecords'],
     }),
     updateLeadStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/sales/leads/${id}/status`, method: 'patch', data: { status } }),
@@ -546,6 +546,12 @@ export const apiSlice = createApi({
       // updateQuotation) — invalidate Orders/Operations so Sales/Operations refetch too.
       invalidatesTags: ['Quotations', 'Orders', 'Operations'],
     }),
+    deleteSalesQuotation: builder.mutation({
+      query: (id) => ({ url: `/sales/quotations/${id}`, method: 'delete' }),
+      // getQuotationsInProcess (Billing's Quotations tab) also provides 'Quotations',
+      // so this invalidates both Sales' and Billing's Quotations tabs at once.
+      invalidatesTags: ['Quotations', 'DeletedRecords'],
+    }),
     convertToNegotiation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/quotations/${id}/convert-negotiation`, method: 'post', data }),
       invalidatesTags: ['Quotations', 'Negotiations', 'Leads'],
@@ -561,6 +567,10 @@ export const apiSlice = createApi({
     updateNegotiation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/negotiations/${id}`, method: 'put', data }),
       invalidatesTags: ['Negotiations'],
+    }),
+    deleteNegotiation: builder.mutation({
+      query: (id) => ({ url: `/sales/negotiations/${id}`, method: 'delete' }),
+      invalidatesTags: ['Negotiations', 'DeletedRecords'],
     }),
     convertToOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/negotiations/${id}/convert-order`, method: 'post', data }),
@@ -589,6 +599,10 @@ export const apiSlice = createApi({
     updateSalesOrderStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/sales/orders/${id}/status`, method: 'patch', data: { status } }),
       invalidatesTags: ['Orders', 'Leads', 'Reports'],
+    }),
+    deleteSalesOrder: builder.mutation({
+      query: (id) => ({ url: `/sales/orders/${id}`, method: 'delete' }),
+      invalidatesTags: ['Orders', 'Reports', 'DeletedRecords'],
     }),
     getComplaints: builder.query({
       query: (params) => ({ url: '/sales/complaints', params }),
@@ -643,7 +657,7 @@ export const apiSlice = createApi({
     }),
     deleteBillingParty: builder.mutation({
       query: (id) => ({ url: `/billing/parties/${id}`, method: 'delete' }),
-      invalidatesTags: ['BillingParties'],
+      invalidatesTags: ['BillingParties', 'DeletedRecords'],
     }),
     getBillingPartyLedger: builder.query({
       query: (id) => ({ url: `/billing/parties/${id}/ledger` }),
@@ -666,6 +680,10 @@ export const apiSlice = createApi({
     updateInvoiceGst: builder.mutation({
       query: ({ id, gstAmount }) => ({ url: `/billing/invoices/${id}/gst`, method: 'patch', data: { gstAmount } }),
       invalidatesTags: ['Invoices', 'Reports'],
+    }),
+    deleteInvoice: builder.mutation({
+      query: (id) => ({ url: `/billing/invoices/${id}`, method: 'delete' }),
+      invalidatesTags: ['Invoices', 'Reports', 'DeletedRecords'],
     }),
     recordPayment: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/billing/invoices/${id}/payment`, method: 'post', data }),
@@ -980,7 +998,7 @@ export const apiSlice = createApi({
     }),
     deleteUser: builder.mutation({
       query: (id) => ({ url: `/settings/users/${id}`, method: 'delete' }),
-      invalidatesTags: ['Users'],
+      invalidatesTags: ['Users', 'DeletedRecords'],
     }),
     updatePermissions: builder.mutation({
       query: ({ id, permissions }) => ({ url: `/settings/users/${id}/permissions`, method: 'put', data: { permissions } }),
@@ -997,7 +1015,7 @@ export const apiSlice = createApi({
       invalidatesTags: [
         'DeletedRecords',
         'Parties', 'BillingParties', 'PartyLedger',
-        'Leads', 'Sales', 'Orders', 'Quotations',
+        'Leads', 'Sales', 'Orders', 'Quotations', 'Negotiations', 'Invoices', 'Billing',
         'Inventory', 'Kits', 'Vendors', 'Staff', 'Users',
       ],
     }),
@@ -1030,7 +1048,7 @@ export const apiSlice = createApi({
     }),
     deleteParty: builder.mutation({
       query: (id) => ({ url: `/parties/${id}`, method: 'delete' }),
-      invalidatesTags: ['Parties'],
+      invalidatesTags: ['Parties', 'DeletedRecords'],
     }),
     getCustomersLedger: builder.query({
       query: () => ({ url: '/parties/customers-ledger' }),
@@ -1353,10 +1371,12 @@ export const {
   useGetSalesQuotationsQuery,
   useCreateSalesQuotationMutation,
   useUpdateSalesQuotationMutation,
+  useDeleteSalesQuotationMutation,
   useConvertToNegotiationMutation,
   useConvertLeadToNegotiationMutation,
   useGetNegotiationsQuery,
   useUpdateNegotiationMutation,
+  useDeleteNegotiationMutation,
   useConvertToOrderMutation,
   useGetSalesOrdersQuery,
   useGetOrdersByHotelNameQuery,
@@ -1364,6 +1384,7 @@ export const {
   useCreateSalesOrderMutation,
   useUpdateSalesOrderMutation,
   useUpdateSalesOrderStatusMutation,
+  useDeleteSalesOrderMutation,
   useGetComplaintsQuery,
   useCreateComplaintMutation,
   useUpdateComplaintStatusMutation,
@@ -1377,6 +1398,7 @@ export const {
   useGetInvoiceQuery,
   useCreateInvoiceMutation,
   useUpdateInvoiceGstMutation,
+  useDeleteInvoiceMutation,
   useRecordPaymentMutation,
   useGetInvoicePaymentsQuery,
   useConvertQuotationToInvoiceMutation,

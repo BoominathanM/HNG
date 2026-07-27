@@ -183,7 +183,8 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
     orderId,
     createdBy: req.user._id,
   });
-  notifyRoles({ modules: ['Task Management'], userIds: [task.assignedTo], type: 'task', title: 'Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} assigned`, link: '/tasks' }).catch(() => {});
+  const recipients = (task.assignedToMany && task.assignedToMany.length) ? task.assignedToMany : [task.assignedTo].filter(Boolean);
+  notifyRoles({ modules: ['Task Management'], userIds: recipients, type: 'task', title: 'Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} assigned`, link: '/tasks' }).catch(() => {});
   res.status(201).json({ success: true, data: task });
 });
 

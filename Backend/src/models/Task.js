@@ -11,6 +11,13 @@ const taskSchema = new mongoose.Schema({
   qty: Number,
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   assigneeName: String,
+  // Multi-assignee support — Personalized Kit / Separate Kit packing tasks only
+  // (OperationDetail.jsx Kit Packing modal). `assignedTo`/`assigneeName` above still
+  // hold the first selected user for code that expects a single assignee; these two
+  // carry the full list so every selected user sees the task and Task Management can
+  // display them all.
+  assignedToMany: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  assigneeNames: [String],
   clientName: String,
   priority: { type: String, enum: ['Normal', 'Medium', 'High', 'Urgent'], default: 'Normal' },
   paymentStatus: { type: String, enum: ['Pending', 'Partial', 'Paid'], default: 'Pending' },

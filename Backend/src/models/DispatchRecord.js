@@ -40,8 +40,10 @@ const dispatchRecordSchema = new mongoose.Schema({
   partialWeight: String,
   partialBoxes: Number,
   // Per-kit dispatch progress — Personalized Kit / Separate Kit are dispatched as one
-  // unit (one count, one open/close photo pair), separate from Order.kitOrders which is
-  // just the static order-time definition (kitId/kitName/category/overallQty). Seeded
+  // unit (one count, up to 20 open/close photos each — enforced in uploadKitBoxPhotos —
+  // so a Partial Dispatch round and a later Full Dispatch round can each add fresh
+  // evidence), separate from Order.kitOrders which is just the static order-time
+  // definition (kitId/kitName/category/overallQty). Seeded
   // from order.kitOrders when the DispatchRecord is created (see tasks.controller.js
   // forwardOrderToDispatch); dispatchedQty accumulates across partial/full confirm rounds.
   kitDispatch: [{
@@ -62,8 +64,11 @@ const dispatchRecordSchema = new mongoose.Schema({
     transportName: String,
     weight: String,
     boxes: Number,
-    kits: [{ kitName: String, category: String, dispatchedQty: Number }],
-    products: [{ itemName: String, dispatchedQty: Number }],
+    // openBoxPhotos/closeBoxPhotos here are a snapshot of what was on file for this
+    // kit/item AT THE TIME this round was confirmed — not a live reference — so the
+    // history trail keeps showing this round's evidence even after later rounds add more.
+    kits: [{ kitName: String, category: String, dispatchedQty: Number, openBoxPhotos: [String], closeBoxPhotos: [String] }],
+    products: [{ itemName: String, dispatchedQty: Number, openBoxPhotos: [String], closeBoxPhotos: [String] }],
     confirmedByName: String,
   }],
   items: [{
@@ -74,7 +79,7 @@ const dispatchRecordSchema = new mongoose.Schema({
     verified: { type: Boolean, default: false },
     boxPhotoUrl: String,
     // Per-product open/closed box photos — required before this item can be
-    // verified (max 5 each, enforced in uploadItemBoxPhotos).
+    // verified (max 20 each, enforced in uploadItemBoxPhotos).
     openBoxPhotos: { type: [String], default: [] },
     closeBoxPhotos: { type: [String], default: [] },
     boxes: Number,

@@ -45,6 +45,8 @@ const invoiceSchema = new mongoose.Schema({
     kitIncludes: [mongoose.Schema.Types.Mixed],
   }, { strict: false })],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  deletedAt: Date,
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
 invoiceSchema.index({ partyId: 1 });

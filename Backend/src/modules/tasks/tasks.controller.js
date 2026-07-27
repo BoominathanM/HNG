@@ -12,6 +12,12 @@ const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
 const aiService = require('../../services/aiService');
 
+// Notification recipients for a task — every assignee when it has multiple
+// (Personalized/Separate Kit Packing tasks), else just the single assignedTo.
+function taskRecipients(task) {
+  return (task.assignedToMany && task.assignedToMany.length) ? task.assignedToMany : [task.assignedTo].filter(Boolean);
+}
+
 // Resolve the time-management fields for a task being created, from its configured
 // per-unit time × qty. plannedStartTime defaults to now (the assignment time);
 // plannedEndTime is start + estimate. Returns only the fields we want to set.
@@ -105,6 +111,7 @@ exports.getTasks = asyncHandler(async (req, res) => {
       filter.$or = [
         { createdBy: req.user._id },
         { assignedTo: req.user._id },
+        { assignedToMany: req.user._id },
         { 'subTasks.assignedTo': req.user._id },
       ];
     }
@@ -119,6 +126,7 @@ exports.getTasks = asyncHandler(async (req, res) => {
         populate: { path: 'leadId', select: 'leadType' },
       })
       .populate('assignedTo', 'fullName role')
+      .populate('assignedToMany', 'fullName role')
       .sort('-createdAt')
       .skip((page - 1) * limit)
       .limit(limit)
@@ -392,7 +400,8 @@ exports.getTask = asyncHandler(async (req, res, next) => {
       select: 'orderCode clientName orderCategory leadId items status expectedDeliveryDate',
       populate: { path: 'leadId', select: 'leadType' },
     })
-    .populate('assignedTo', 'fullName role');
+    .populate('assignedTo', 'fullName role')
+    .populate('assignedToMany', 'fullName role');
   if (!task) return next(new AppError('Task not found', 404));
 
   // Enrich with the product master (Brand, Packing Material, Material Category) for this task's product.
@@ -473,7 +482,7 @@ exports.createTask = asyncHandler(async (req, res, next) => {
     ? { paymentStatus: await resolveOrderPaymentStatus(orderId).catch(() => 'Pending') }
     : {};
   const task = await Task.create({ ...req.body, ...timeFields, ...paymentFields, taskCode, createdBy: req.user._id });
-  notifyRoles({ modules: ['Task Management'], userIds: [task.assignedTo], type: 'task', title: 'New Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} for ${task.clientName || 'order'}`, link: '/tasks' }).catch(() => {});
+  notifyRoles({ modules: ['Task Management'], userIds: taskRecipients(task), type: 'task', title: 'New Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} for ${task.clientName || 'order'}`, link: '/tasks' }).catch(() => {});
   res.status(201).json({ success: true, data: task });
 });
 
@@ -543,10 +552,10 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
     }
   }
   if (status === 'Done') {
-    notifyRoles({ modules: ['Task Management'], userIds: [task.assignedTo], type: 'task', title: 'Task Completed', message: `Task ${task.taskCode} (${task.taskName || task.product || 'Task'}) marked as Done`, link: '/tasks' }).catch(() => {});
+    notifyRoles({ modules: ['Task Management'], userIds: taskRecipients(task), type: 'task', title: 'Task Completed', message: `Task ${task.taskCode} (${task.taskName || task.product || 'Task'}) marked as Done`, link: '/tasks' }).catch(() => {});
   }
   if (status === 'Emergency') {
-    notifyRoles({ modules: ['Task Management', 'Operations'], userIds: [task.assignedTo], type: 'task', title: 'Emergency Task', message: `Task ${task.taskCode} flagged as Emergency — needs approval`, link: '/tasks' }).catch(() => {});
+    notifyRoles({ modules: ['Task Management', 'Operations'], userIds: taskRecipients(task), type: 'task', title: 'Emergency Task', message: `Task ${task.taskCode} flagged as Emergency — needs approval`, link: '/tasks' }).catch(() => {});
   }
   if (orderForwarded) {
     notifyRoles({ modules: ['Dispatch Team', 'Operations'], type: 'dispatch', title: 'Order Ready for Dispatch', message: `All tasks complete — order is now Dispatch Ready`, link: '/dispatch' }).catch(() => {});
@@ -618,7 +627,7 @@ exports.approveEmergency = asyncHandler(async (req, res, next) => {
     { new: true }
   );
   if (!task) return next(new AppError('Task not found', 404));
-  notifyRoles({ modules: ['Task Management', 'Operations'], userIds: [task.assignedTo], type: 'task', title: 'Emergency Task Approved', message: `Task ${task.taskCode} emergency status approved — proceed immediately`, link: '/tasks' }).catch(() => {});
+  notifyRoles({ modules: ['Task Management', 'Operations'], userIds: taskRecipients(task), type: 'task', title: 'Emergency Task Approved', message: `Task ${task.taskCode} emergency status approved — proceed immediately`, link: '/tasks' }).catch(() => {});
   res.status(200).json({ success: true, data: task });
 });
 
@@ -774,7 +783,7 @@ exports.approveEmergencyOps = asyncHandler(async (req, res, next) => {
 
   notifyRoles({
     modules: ['Task Management', 'Operations', 'Dispatch'],
-    userIds: [task.assignedTo],
+    userIds: taskRecipients(task),
     type: 'task',
     title: 'Emergency Dispatch Fully Approved',
     message: `Task ${task.taskCode} — Sales + Ops approved. Order forwarded to Dispatch.`,

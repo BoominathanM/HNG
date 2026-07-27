@@ -976,14 +976,14 @@ export default function Operations() {
           return (value || 0).toLocaleString();
         },
       },
-      {
+      ...(isStickerTab ? [{
         title: 'Sticker Printing',
         dataIndex: 'stickerPrinting',
         render: (val, record) => {
           if (record.isKitChild) return <Text type="secondary">—</Text>;
           return <Tag color={val === 'Yes' ? 'blue' : 'default'}>{val || '—'}</Tag>;
         },
-      },
+      }] : []),
       ...(isStickerTab ? [{
         title: 'After Approval',
         dataIndex: 'packagingType',

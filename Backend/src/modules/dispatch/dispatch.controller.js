@@ -298,7 +298,14 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
     const delta = Math.max(0, Math.min(dispatchNow, kd.overallQty - kd.dispatchedQty));
     if (delta <= 0) continue;
     kd.dispatchedQty += delta;
-    historyKits.push({ kitName: kd.kitName, category: kd.category, dispatchedQty: delta });
+    // Snapshot whatever open/close photos are on file for this kit AT THIS ROUND — the
+    // fields on kd itself keep accumulating across rounds, so without a snapshot here a
+    // later round's history entry would have no way to show what evidence existed when
+    // THIS round was confirmed.
+    historyKits.push({
+      kitName: kd.kitName, category: kd.category, dispatchedQty: delta,
+      openBoxPhotos: [...(kd.openBoxPhotos || [])], closeBoxPhotos: [...(kd.closeBoxPhotos || [])],
+    });
     // Every component of this kit ships proportionally — decrement each by its
     // per-kit-unit share (component's total ordered qty / kit's overall qty) × delta.
     const components = orderItems.filter((it) => it.kitId && String(it.kitId) === String(kd.kitId));
@@ -316,14 +323,51 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
     const delta = Math.max(0, Math.min(dispatchNow, (item.qtyOrdered || 0) - (item.qtyDispatched || 0)));
     if (delta <= 0) continue;
     item.qtyDispatched = (item.qtyDispatched || 0) + delta;
-    historyProducts.push({ itemName: item.itemName, dispatchedQty: delta });
+    historyProducts.push({
+      itemName: item.itemName, dispatchedQty: delta,
+      openBoxPhotos: [...(item.openBoxPhotos || [])], closeBoxPhotos: [...(item.closeBoxPhotos || [])],
+    });
     await decrementStock(item.itemId, delta);
+  }
+
+  // Kits/products packed INSIDE a Personalized Kit's box ("Select Kit(s) to Include" on the
+  // order) ship as part of that kit's single dispatch unit — the Dispatch Verification table
+  // folds them into the Personalized Kit's row and gives them no Dispatch Now input of their
+  // own (see dispatchGrouping.js buildDispatchGroupedProducts), so their kitDispatch/item
+  // progress can never be submitted from the UI. Excluded here the same way the frontend
+  // excludes them from its dispatchable row list, or they'd permanently keep "fullyDispatched"
+  // stuck at false — every row showing "Fully Dispatched" in the table, yet the Finished
+  // Dispatch step staying disabled forever.
+  const orderKitOrders = orderDoc?.kitOrders || [];
+  const personalizedKitOrder = orderKitOrders.find((ko) => (ko?.category || 'separate_kit') === 'personalized');
+  const piRaw = orderDoc?.packagingIncludes || [];
+  const includedIds = new Set(
+    (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null)
+      ? piRaw.map((p) => String(p.id))
+      : piRaw.map((id) => String(id))
+  );
+  const includedKitIds = new Set();
+  const includedItemIds = new Set();
+  if (personalizedKitOrder && includedIds.size > 0) {
+    orderKitOrders.forEach((ko) => {
+      if (!ko || ko === personalizedKitOrder) return;
+      if ((ko.category || 'separate_kit') === 'personalized') return;
+      if (ko.kitId && includedIds.has(String(ko.kitId))) includedKitIds.add(String(ko.kitId));
+    });
+    dispatch.items.forEach((it) => {
+      if (it.isKit || it.kitId) return;
+      if (it.itemName && includedIds.has(it.itemName)) includedItemIds.add(String(it._id));
+    });
   }
 
   // ─── Determine completion — server-computed from actual progress, not the client's
   // say-so — so it can't be spoofed and always matches what's really been dispatched.
-  const fullyDispatched = dispatch.kitDispatch.every((kd) => kd.dispatchedQty >= kd.overallQty)
-    && dispatch.items.filter((it) => !it.isKit).every((it) => (it.qtyDispatched || 0) >= (it.qtyOrdered || 0));
+  const fullyDispatched = dispatch.kitDispatch
+    .filter((kd) => !includedKitIds.has(String(kd.kitId)))
+    .every((kd) => kd.dispatchedQty >= kd.overallQty)
+    && dispatch.items
+      .filter((it) => !it.isKit && !includedItemIds.has(String(it._id)))
+      .every((it) => (it.qtyDispatched || 0) >= (it.qtyOrdered || 0));
   dispatch.dispatchType = fullyDispatched ? 'Full Dispatch' : 'Partial Dispatch';
 
   // Log this round in the history trail — only when something was actually dispatched
@@ -596,8 +640,11 @@ exports.updatePickupOrder = asyncHandler(async (req, res, next) => {
 });
 
 // Upload open/close box photos for a single dispatch line item (field 'photos',
-// body/query ?type=open|close). Capped at 5 photos per field per item — only the
-// first N files that fit under the remaining slots are accepted.
+// body/query ?type=open|close). Capped at 20 photos per field per item — same
+// generous ceiling as the order-level "All Closed Box Photos" upload — so a second
+// (Full Dispatch) round can always add fresh evidence on top of what a prior
+// Partial Dispatch round already uploaded, rather than getting stuck once a photo
+// exists. Only the first N files that fit under the remaining slots are accepted.
 exports.uploadItemBoxPhotos = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id);
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
@@ -606,7 +653,7 @@ exports.uploadItemBoxPhotos = asyncHandler(async (req, res, next) => {
   const type = req.body.type || req.query.type;
   const field = type === 'close' ? 'closeBoxPhotos' : 'openBoxPhotos';
   const existing = item[field] || [];
-  const remaining = Math.max(0, 5 - existing.length);
+  const remaining = Math.max(0, 20 - existing.length);
   const urls = (req.files || []).slice(0, remaining).map((f) => f.path);
   item[field] = [...existing, ...urls];
   await dispatch.save({ validateBeforeSave: false });
@@ -614,8 +661,10 @@ exports.uploadItemBoxPhotos = asyncHandler(async (req, res, next) => {
 });
 
 // Upload open/close box photos for a single kit (Personalized Kit / Separate Kit are
-// dispatched — and photographed — as one unit, not per component). Capped at 1 photo
-// per field: "one common photo is enough" for the whole kit.
+// dispatched — and photographed — as one unit, not per component). Capped at 20 photos
+// per field, same as uploadItemBoxPhotos — a kit that ships across a Partial Dispatch
+// round and then a Full Dispatch round needs fresh evidence for each round, not just
+// the single "one common photo" the original cap of 1 allowed.
 exports.uploadKitBoxPhotos = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id);
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
@@ -624,7 +673,7 @@ exports.uploadKitBoxPhotos = asyncHandler(async (req, res, next) => {
   const type = req.body.type || req.query.type;
   const field = type === 'close' ? 'closeBoxPhotos' : 'openBoxPhotos';
   const existing = kit[field] || [];
-  const remaining = Math.max(0, 1 - existing.length);
+  const remaining = Math.max(0, 20 - existing.length);
   const urls = (req.files || []).slice(0, remaining).map((f) => f.path);
   kit[field] = [...existing, ...urls];
   await dispatch.save({ validateBeforeSave: false });

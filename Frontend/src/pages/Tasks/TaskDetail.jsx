@@ -50,6 +50,17 @@ export default function TaskDetail() {
 
   const t = taskData?.data;
 
+  // Personalized/Separate Kit Packing tasks can have MULTIPLE assignees
+  // (assignedToMany/assigneeNames); every other task type still has exactly one.
+  const assigneeNameList = useMemo(() => {
+    if (!t) return [];
+    if (Array.isArray(t.assigneeNames) && t.assigneeNames.length) return t.assigneeNames;
+    if (Array.isArray(t.assignedToMany) && t.assignedToMany.length) {
+      return t.assignedToMany.map((u) => u?.fullName).filter(Boolean);
+    }
+    return [t.assignedTo?.fullName || t.assigneeName].filter(Boolean);
+  }, [t]);
+
   const orderId = t?.orderId?._id?.toString() || (typeof t?.orderId === 'string' ? t.orderId : null);
   const isSample = t?.orderId?.orderCategory === 'SAMPLE' || t?.orderId?.leadId?.leadType === 'SAMPLE';
   const displayStatus = t?.status === 'Done' ? 'Completed' : t?.status;
@@ -61,15 +72,22 @@ export default function TaskDetail() {
         const sOrdId = (typeof s.orderId === 'object' ? s.orderId?._id : s.orderId)?.toString();
         return sOrdId === orderId && s._id !== id;
       })
-      .map((s) => ({
-        key: s._id,
-        id: s.taskCode,
-        type: s.taskType || 'Packing',
-        product: s.product || '—',
-        assignee: s.assignedTo?.fullName || s.assigneeName || '—',
-        status: s.status === 'Done' ? 'Completed' : s.status,
-        due: s.dueDate ? s.dueDate.slice(0, 10) : '—',
-      }));
+      .map((s) => {
+        const names = (Array.isArray(s.assigneeNames) && s.assigneeNames.length)
+          ? s.assigneeNames
+          : (Array.isArray(s.assignedToMany) && s.assignedToMany.length)
+            ? s.assignedToMany.map((u) => u?.fullName).filter(Boolean)
+            : [s.assignedTo?.fullName || s.assigneeName].filter(Boolean);
+        return {
+          key: s._id,
+          id: s.taskCode,
+          type: s.taskType || 'Packing',
+          product: s.product || '—',
+          assignee: names.join(', ') || '—',
+          status: s.status === 'Done' ? 'Completed' : s.status,
+          due: s.dueDate ? s.dueDate.slice(0, 10) : '—',
+        };
+      });
   }, [allTasksData, orderId, id]);
 
   const pendingCount = siblingTasks.filter((s) => s.status === 'Pending' || s.status === 'In Progress').length;
@@ -183,11 +201,19 @@ export default function TaskDetail() {
                 <Tag color={statusColor[displayStatus]}>{displayStatus}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Assigned To" span={2}>
-                <Space>
-                  <Avatar size={22} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />
-                  <Text strong>{t.assignedTo?.fullName || t.assigneeName || 'Unassigned'}</Text>
-                  {t.assignedTo?.role && <Tag style={{ fontSize: 11 }}>{t.assignedTo.role}</Tag>}
-                </Space>
+                {assigneeNameList.length
+                  ? (
+                    <Space wrap size={[12, 4]}>
+                      {assigneeNameList.map((name, i) => (
+                        <Space key={i} size={4}>
+                          <Avatar size={22} icon={<UserOutlined />} style={{ background: '#B11E6A' }} />
+                          <Text strong>{name}</Text>
+                          {i === 0 && t.assignedTo?.role && <Tag style={{ fontSize: 11 }}>{t.assignedTo.role}</Tag>}
+                        </Space>
+                      ))}
+                    </Space>
+                  )
+                  : <Text strong>Unassigned</Text>}
               </Descriptions.Item>
               {t.printingType && (
                 <Descriptions.Item label="Printing Type">{t.printingType}</Descriptions.Item>
