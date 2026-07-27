@@ -3,8 +3,10 @@ const LedgerEntry = require('../../models/LedgerEntry');
 const Invoice = require('../../models/Invoice');
 const Payment = require('../../models/Payment');
 const Order = require('../../models/Order');
+const Kit = require('../../models/Kit');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
+const { computeCompositionGrandTotal } = require('../../utils/orderCalc');
 
 exports.createParty = asyncHandler(async (req, res) => {
   const { name, phone, type = 'Customer', gstNumber, panNumber, contactPerson, city, state, pincode, street } = req.body;
@@ -43,8 +45,14 @@ exports.getParties = asyncHandler(async (req, res) => {
       { clientName: { $in: partyNames.map((n) => new RegExp(`^${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) } },
     ],
   })
-    .select('clientPartyId clientName total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection items products')
+    .select('clientPartyId clientName total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection items products kitOrders kitPrice kitOverallQty forwardingCharge forwardingChargeAmount packagingIncludes packagingIncludesQty')
     .lean();
+
+  // Only needed for orders using "Select Kit(s) to Include" (packagingIncludes) — fetched once
+  // up front rather than per-order.
+  const kitsData = allOrders.some((o) => (o.packagingIncludes || []).length > 0)
+    ? await Kit.find().lean()
+    : [];
 
   const ordersByPartyId = {};
   const ordersByName = {};
@@ -71,15 +79,13 @@ exports.getParties = asyncHandler(async (req, res) => {
     const partyOrders = [...byId, ...byNameOnly];
 
     if (partyOrders.length > 0) {
-      // Customer party: derive amounts from Sales Orders
-      const totalSales = partyOrders.reduce((s, o) => {
-        const _items = o.items?.length ? o.items : (o.products || []);
-        const _sub = _items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
-        const _gstFromItems = _items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
-        const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(o.gstAmount) || 0);
-        const t = _sub > 0 ? Math.round((_sub + _gst) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
-        return s + t;
-      }, 0);
+      // Customer party: derive amounts from Sales Orders, recomputed via the same kit-aware
+      // formula the frontend uses (computeCompositionGrandTotal, which itself falls back to
+      // the plain computeRecordGrandTotal buckets when packagingIncludes isn't used) — see
+      // computeOrderTotal below for why trusting the stored Order.total/amount fields directly
+      // is unsafe (they're written at whatever save happened last, and can predate a pricing
+      // fix or a payment-only update).
+      const totalSales = partyOrders.reduce((s, o) => s + computeCompositionGrandTotal(o, kitsData), 0);
       const received = partyOrders.reduce((s, o) => {
         const collTotal = (o.paymentCollection || []).reduce((cs, e) => cs + Number(e.paidAmount || 0), 0);
         const paid = collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
@@ -120,15 +126,16 @@ exports.getParties = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, total, page, data: withTotals });
 });
 
-// Same kit-aware-ish total/paid calc used by getParties, kept identical so the
-// party list totals and the ledger detail totals never disagree.
-const computeOrderTotal = (o) => {
-  const items = o.items?.length ? o.items : (o.products || []);
-  const sub = items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
-  const gstFromItems = items.reduce((acc, p) => acc + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
-  const gst = gstFromItems > 0 ? gstFromItems : (Number(o.gstAmount) || 0);
-  return sub > 0 ? Math.round((sub + gst) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
-};
+// Same kit-aware total/paid calc used by getParties, kept identical so the party list
+// totals and the ledger detail totals never disagree.
+//
+// Recomputes from the order's own products/kitOrders/forwardingCharge/packagingIncludes via
+// the backend port of the frontend's canonical computeCompositionGrandTotal (utils/orderCalc.js)
+// rather than trusting the stored Order.total/amount fields — those are only as fresh as
+// whatever save wrote them last (a payment-only update, or an older save that predates a
+// pricing fix, can leave them stale/wrong), and this function is used specifically for orders
+// that have no Invoice/LedgerEntry yet, so there's no other authoritative figure to fall back to.
+const computeOrderTotal = (o, kitsData = []) => computeCompositionGrandTotal(o, kitsData);
 const computeOrderPaid = (o) => {
   const collTotal = (o.paymentCollection || []).reduce((cs, e) => cs + Number(e.paidAmount || 0), 0);
   return collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
@@ -224,9 +231,14 @@ const buildPartyLedger = async (party) => {
     return !(inv && invoicedNumbersInLedger.has(inv.invoiceNumber));
   });
 
+  // Only needed for orders using "Select Kit(s) to Include" (packagingIncludes).
+  const kitsData = unbilledOrders.some((o) => (o.packagingIncludes || []).length > 0)
+    ? await Kit.find().lean()
+    : [];
+
   const synthetic = [];
   unbilledOrders.forEach((o) => {
-    const total = computeOrderTotal(o);
+    const total = computeOrderTotal(o, kitsData);
     const paid = computeOrderPaid(o);
     if (total > 0) synthetic.push({ entryDate: o.createdAt, type: 'Order', docRef: o.orderCode, debit: total, credit: 0 });
     if (paid > 0) synthetic.push({ entryDate: o.updatedAt || o.createdAt, type: 'Payment', docRef: o.orderCode, debit: 0, credit: paid });

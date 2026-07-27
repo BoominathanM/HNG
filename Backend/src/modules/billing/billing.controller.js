@@ -9,6 +9,8 @@ const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
+const { computeRecordBuckets, computeCompositionGrandTotal } = require('../../utils/orderCalc');
+const Kit = require('../../models/Kit');
 
 // ─── PARTIES ─────────────────────────────────────────────────────────────────
 exports.getParties = asyncHandler(async (req, res) => {
@@ -195,7 +197,20 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
     previousBalance = lastEntry ? lastEntry.balance : 0;
   }
 
-  const invoiceTotal = amount || quotation.total;
+  // Recompute the kit-aware total/subtotal/gst server-side from the linked order (preferred —
+  // it carries the resolved kitPrice) or the quotation itself, rather than trusting
+  // quotation.total/amount/gstAmount directly: those are snapshots taken at quotation-save
+  // time and can predate a kit-price edit or pricing fix made afterwards. Explicit values in
+  // the request body (Billing's own kit-aware display figures) still take priority when present.
+  const calcSource = linkedOrder || quotation;
+  const buckets = computeRecordBuckets(calcSource);
+  // When "Select Kit(s) to Include" (packagingIncludes) is used, the plain category buckets
+  // above don't understand the outer-packaging nesting and undercount the total — the
+  // composition-aware total is the correct one in that case (falls back to the plain buckets'
+  // grand total automatically when packagingIncludes is empty).
+  const kitsData = (calcSource.packagingIncludes || []).length > 0 ? await Kit.find().lean() : [];
+  const compositionTotal = computeCompositionGrandTotal(calcSource, kitsData);
+  const invoiceTotal = amount || (compositionTotal > 0 ? compositionTotal : quotation.total);
   const advanceFromCollection = (quotation.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
   const advanceAmount = advanceFromCollection || Number(quotation.paidAmount) || Number(quotation.advancePaid) || 0;
 
@@ -216,8 +231,8 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
   // quotation-save time from the raw product rows only and don't include kit-price buckets,
   // so they routinely under-count taxable value and GST for kit orders and drift from
   // `invoiceTotal` (e.g. amount was manually adjusted, or previous due was folded in).
-  const subtotal = req.body.subtotal !== undefined ? Number(req.body.subtotal) || 0 : Number(quotation.amount) || 0;
-  const gstAmount = req.body.gstAmount !== undefined ? Number(req.body.gstAmount) || 0 : Number(quotation.gstAmount) || 0;
+  const subtotal = req.body.subtotal !== undefined ? Number(req.body.subtotal) || 0 : (buckets.taxable > 0 ? buckets.taxable : Number(quotation.amount) || 0);
+  const gstAmount = req.body.gstAmount !== undefined ? Number(req.body.gstAmount) || 0 : (buckets.gst > 0 ? buckets.gst : Number(quotation.gstAmount) || 0);
 
   const invoice = await Invoice.create({
     invoiceNumber: invCode,
@@ -234,6 +249,30 @@ exports.convertQuotationToInvoice = asyncHandler(async (req, res, next) => {
     items: mappedItems,
     createdBy: req.user._id,
   });
+
+  // Create ledger entry (debit) — mirrors createInvoice's block above. Without this,
+  // buildPartyLedger (parties.controller.js) can't find a real 'Invoice' LedgerEntry for
+  // this invoice's order and falls back to a synthetic Dr computed from the Order model,
+  // which ignores kit pricing and can read a stale Order.total instead of the authoritative
+  // Invoice.total. Re-reads the party's actual last ledger balance here rather than reusing
+  // `previousBalance` above — that variable is only populated when includePreviousDue was
+  // requested (it drives the invoice's displayed "previous due" line), so it's 0 in the
+  // common case and would silently break the running-balance chain.
+  if (req.body.partyId) {
+    const lastLedgerEntry = await LedgerEntry.findOne({ partyId: req.body.partyId }).sort('-createdAt');
+    const ledgerPreviousBalance = lastLedgerEntry ? lastLedgerEntry.balance : 0;
+    const newBalance = ledgerPreviousBalance + invoice.total;
+    await LedgerEntry.create({
+      partyId: req.body.partyId,
+      type: 'Invoice',
+      docRef: invoice.invoiceNumber,
+      debit: invoice.total,
+      credit: 0,
+      balance: newBalance,
+      createdBy: req.user._id,
+    });
+    await Party.findByIdAndUpdate(req.body.partyId, { runningBalance: newBalance });
+  }
 
   // Sync any carried-over advance/paid status onto the linked order's tasks.
   if (invoice.orderId || linkedOrder?._id) {

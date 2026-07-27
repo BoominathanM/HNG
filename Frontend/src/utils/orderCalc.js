@@ -67,8 +67,46 @@ export function sumCourierCharges(rec = {}) {
   return r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
 }
 
+// Sum of round-off adjustments recorded via payments (Record Payment In) — same treatment
+// as courier charges: an extra amount owed on top of the order, entered per-payment.
+export function sumRoundOff(rec = {}) {
+  return r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
+}
+
+// taxable/GST split for one kit order — mirrors kitOrderValue's category rule exactly, but
+// keeps the pre-tax base and the tax amount separate instead of summing them. A kit's own
+// kitPrice is assumed tax-inclusive only if the kit order carries its own gst/gstPercent/
+// taxRate field (rare — most kits have no separate tax on the assembly fee itself, all tax
+// coming from the component rows).
+export function kitOrderTaxSplit(ko, kitRows = []) {
+  const price = Number(ko?.kitPrice) || 0;
+  const qty = Number(ko?.overallQty) || 0;
+  const priceGstPct = Number(ko?.gst || ko?.gstPercent || ko?.taxRate) || 0;
+  const priceTaxable = priceGstPct > 0 ? price / (1 + priceGstPct / 100) : price;
+  const priceGst = price - priceTaxable;
+
+  const rows = kitRows.filter(p => p && p.kitId === ko?.kitId);
+  const rowsTaxable = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
+  const rowsGst = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+
+  if (koCategory(ko) === ORDER_CATEGORIES.SEPARATE_KIT) {
+    return { taxable: r2((priceTaxable + rowsTaxable) * (qty || 1)), gst: r2((priceGst + rowsGst) * (qty || 1)) };
+  }
+  if (price > 0) return { taxable: r2(priceTaxable * (qty || 1)), gst: r2(priceGst * (qty || 1)) };
+  return { taxable: r2(rowsTaxable * (qty || 1)), gst: r2(rowsGst * (qty || 1)) };
+}
+
+// taxable/GST split for a (non-kit) product row set — the pre-tax/tax halves of sumProductRows.
+export function taxSplitProductRows(rows = []) {
+  const taxable = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0), 0);
+  const gst = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
+  return { taxable: r2(taxable), gst: r2(gst) };
+}
+
 // Single source of truth for category buckets.
-// Returns { personalized (A), separateKit (B), separateProduct (C), fwd, courier, grand }.
+// Returns { personalized (A), separateKit (B), separateProduct (C), fwd, courier, roundOff,
+// taxable, gst, grand }. taxable/gst cover ONLY the taxed line items (personalized +
+// separateKit + separateProduct) — forwarding/courier/round-off are untaxed charge lines.
 export function computeRecordBuckets(rec = {}) {
   const prods = (rec.products || []).filter(Boolean);
   const kitOrders = (rec.kitOrders || []).filter(Boolean);
@@ -80,9 +118,14 @@ export function computeRecordBuckets(rec = {}) {
 
   let personalizedKit = 0;
   let separateKit = 0;
+  let taxable = 0;
+  let gst = 0;
   if (kitOrders.length) {
     kitOrders.forEach(ko => {
       const val = kitOrderValue(ko, kitRows);
+      const split = kitOrderTaxSplit(ko, kitRows);
+      taxable += split.taxable;
+      gst += split.gst;
       if (koCategory(ko) === ORDER_CATEGORIES.PERSONALIZED) personalizedKit += val;
       else separateKit += val;
     });
@@ -90,15 +133,29 @@ export function computeRecordBuckets(rec = {}) {
     // Legacy records (no kitOrders): value kit rows as one standalone-kit bucket.
     const topPrice = Number(rec.kitPrice) || 0;
     const topQty = Number(rec.kitOverallQty) || 0;
-    separateKit += topPrice > 0 ? r2(topPrice * (topQty || 1)) : sumProductRows(kitRows);
+    if (topPrice > 0) {
+      separateKit += r2(topPrice * (topQty || 1));
+      taxable += r2(topPrice * (topQty || 1));
+    } else {
+      separateKit += sumProductRows(kitRows);
+      const split = taxSplitProductRows(kitRows);
+      taxable += split.taxable;
+      gst += split.gst;
+    }
   }
+
+  const persSplit = taxSplitProductRows(persProdRows);
+  const sepSplit = taxSplitProductRows(sepProdRows);
+  taxable = r2(taxable + persSplit.taxable + sepSplit.taxable);
+  gst = r2(gst + persSplit.gst + sepSplit.gst);
 
   const personalized = personalizedKit + sumProductRows(persProdRows);
   const separateProduct = sumProductRows(sepProdRows);
   const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
   const courier = sumCourierCharges(rec);
-  const grand = r2(personalized + separateKit + separateProduct + fwd + courier);
-  return { personalized, separateKit, separateProduct, fwd, courier, grand };
+  const roundOff = sumRoundOff(rec);
+  const grand = r2(personalized + separateKit + separateProduct + fwd + courier + roundOff);
+  return { personalized, separateKit, separateProduct, fwd, courier, roundOff, taxable, gst, grand };
 }
 
 // Backward-compatible scalar grand total.

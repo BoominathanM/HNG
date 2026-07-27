@@ -1,16 +1,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Input, Select, Typography,
-  Space, Tabs, DatePicker, Spin, Descriptions
+  Space, Tabs, DatePicker, Spin
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
   SearchOutlined, EyeOutlined, LeftOutlined,
   BookOutlined, ShopOutlined, ArrowUpOutlined,
   WalletOutlined, TeamOutlined, DollarOutlined,
-  PhoneOutlined, MailOutlined, EnvironmentOutlined,
-  FileTextOutlined, PrinterOutlined, DownloadOutlined, DeleteOutlined, UserOutlined,
-  BankOutlined, HistoryOutlined, CreditCardOutlined, IdcardOutlined, GiftOutlined
+  PhoneOutlined, MailOutlined,
+  PrinterOutlined, DownloadOutlined, DeleteOutlined, UserOutlined,
+  BankOutlined, HistoryOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -21,7 +21,6 @@ import dayjs from 'dayjs';
 import {
   useGetPartiesQuery,
   useGetPartyLedgerQuery,
-  useGetPartyOrdersQuery,
   useDeletePartyMutation,
   useLazyVerifyGstinQuery,
   useGetVendorsQuery,
@@ -34,308 +33,6 @@ const { Option } = Select;
 
 const PRIMARY = '#B11E6A';
 const FONT_SIZE = 13;
-
-// Render saved per-product / per-kit attachments as image thumbnails or file tags.
-function PartyAttachmentLinks({ files }) {
-  const list = (Array.isArray(files) ? files : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
-  if (!list.length) return null;
-  return (
-    <Space wrap size={6}>
-      {list.map((a, i) => {
-        const url = typeof a === 'string' ? a : a.url;
-        const nm = typeof a === 'string' ? (url.split('/').pop()) : (a.name || `File ${i + 1}`);
-        const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)(\?|$)/i.test(url || '');
-        return (
-          <a key={i} href={url} target="_blank" rel="noreferrer" title={nm} style={{ display: 'inline-block' }}>
-            {isImg
-              ? <img src={url} alt={nm} style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 6, border: '1px solid rgba(0,0,0,0.12)' }} />
-              : <Tag icon={<FileTextOutlined />} color="blue" style={{ borderRadius: 12, fontSize: 11, margin: 0, cursor: 'pointer' }}>{nm}</Tag>}
-          </a>
-        );
-      })}
-    </Space>
-  );
-}
-
-// Keys shown as their own labelled tags / handled separately — excluded from the generic spec sweep.
-const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-
-const PARTY_SPEC_SKIP = new Set([
-  'itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent',
-  'unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory',
-  'hsnCode','discountPercent','discount','logo','sticker','brand','size','defaultSize',
-  'specs','displayType','itemId','_id','key','amount','rateValue','total','inventoryStock',
-  'printing','stickerPrinting','product','category','isEmergencyProduct','isEmergencyGated',
-  'productAttributes','attachments','kitIncludes','kitIncludesQty','verified','specification','otherSpecs',
-]);
-const prettyPartyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, (s) => s.toUpperCase()).trim();
-
-// Lists every order placed by the party, each with full product + kit specifications,
-// notes and attachments — mirrors the richness of the Sales / Operations detail views.
-function PartyOrdersSection({ orders = [], isDark, cardBg }) {
-  const [orderHistoryDateRange, setOrderHistoryDateRange] = useState(null);
-  if (!orders.length) return null;
-  const filteredOrders = orders.filter((o) => {
-    if (orderHistoryDateRange) {
-      const d = o.createdAt ? String(o.createdAt).slice(0, 10) : '';
-      if (d < orderHistoryDateRange[0] || d > orderHistoryDateRange[1]) return false;
-    }
-    return true;
-  });
-  const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
-  const specTags = (src) => {
-    const flat = Object.entries(src || {}).filter(([k, v]) => !PARTY_SPEC_SKIP.has(k) && v != null && v !== '' && typeof v !== 'object');
-    const nested = (src?.productAttributes && typeof src.productAttributes === 'object' && !Array.isArray(src.productAttributes))
-      ? Object.entries(src.productAttributes).filter(([k, v]) => !PARTY_SPEC_SKIP.has(k) && v != null && v !== '' && typeof v !== 'object')
-      : [];
-    return [...new Map([...nested, ...flat]).entries()];
-  };
-  return (
-    <Card
-      style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-      title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ fontSize: FONT_SIZE }}>Orders & Products ({orders.length})</span></Space>}
-      extra={
-        <DatePicker.RangePicker
-          size="small"
-          style={{ borderRadius: 8 }}
-          onChange={(dates) => setOrderHistoryDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
-          allowClear
-        />
-      }
-    >
-      <Space direction="vertical" size={14} style={{ width: '100%' }}>
-        {filteredOrders.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>No orders in selected date range.</Text>}
-        {filteredOrders.map((o) => {
-          // Prefer o.products — it carries the full product specifications (shape, fragrance,
-          // size, color, specification, productAttributes) entered on the Lead. o.items can be
-          // spec-less on orders created before the quotation items map was fixed, so it's only a
-          // fallback for legacy orders that stored items but no products.
-          const items = (Array.isArray(o.products) && o.products.length ? o.products : (o.items || [])).filter(Boolean);
-          const kitOrders = Array.isArray(o.kitOrders) ? o.kitOrders : [];
-          // Kit-aware total: kitPrice×overallQty per kit, else items subtotal+GST, else stored total
-          const koTotal = kitOrders.reduce((s, ko) => {
-            const p = Number(ko.kitPrice) || 0;
-            const q = Number(ko.overallQty) || 0;
-            return p > 0 ? s + r2(p * (q || 1)) : s;
-          }, 0);
-          const fwd = o.forwardingCharge ? (Number(o.forwardingChargeAmount) || 0) : 0;
-          const itemSub = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0), 0);
-          const itemGst = items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0) * ((Number(p.gst) || 0) / 100), 0);
-          const displayTotal = koTotal > 0 ? r2(koTotal + fwd) : (itemSub > 0 ? r2(itemSub + itemGst + fwd) : (Number(o.totalAmount) || Number(o.total) || 0));
-          return (
-            <div key={o._id} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`, borderRadius: 12, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '10px 14px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.04)' }}>
-                <Space size={8} wrap>
-                  <Text strong style={{ fontSize: 14, color: PRIMARY }}>{o.orderCode || 'Order'}</Text>
-                  {o.status && <Tag color="blue" style={{ borderRadius: 10 }}>{o.status}</Tag>}
-                  {o.orderCategory === 'SAMPLE' && <Tag color="purple" style={{ borderRadius: 10 }}>Sample</Tag>}
-                  {o.createdAt && <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(o.createdAt).format('DD MMM YYYY')}</Text>}
-                </Space>
-                {displayTotal > 0 && <Text strong style={{ fontSize: 15, color: PRIMARY }}>₹{displayTotal.toLocaleString()}</Text>}
-              </div>
-              <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {kitOrders.map((ko, ki) => {
-                  const atts = (Array.isArray(ko.attachments) ? ko.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
-                  const kitIncludes = Array.isArray(ko.kitIncludes) ? ko.kitIncludes : [];
-                  return (
-                    <div key={ko.kitId || ki} style={{ padding: '10px 12px', background: isDark ? 'rgba(114,46,209,0.1)' : 'rgba(114,46,209,0.05)', borderRadius: 10, border: '1px solid rgba(114,46,209,0.18)' }}>
-                      <Space wrap size={6}>
-                        <Text strong style={{ color: '#722ed1', fontSize: 13 }}>{ko.kitName || ko.kitType || `Kit ${ki + 1}`}</Text>
-                        {ko.displayUnit && <Tag color="purple" style={{ borderRadius: 12 }}>{String(ko.displayUnit).replace(/_/g, ' ')}</Tag>}
-                        {ko.displayUnitType && <Tag color="magenta" style={{ borderRadius: 12 }}>{ko.displayUnitType}</Tag>}
-                        {ko.size && <Tag color="geekblue" style={{ borderRadius: 12 }}>{ko.size}</Tag>}
-                        {Number(ko.overallQty) > 0 && <Tag color="blue" style={{ borderRadius: 12 }}>Qty: {ko.overallQty}</Tag>}
-                        {ko.sticker && <Tag color={yn(ko.sticker) ? 'green' : 'default'} style={{ borderRadius: 12 }}>Sticker: {yn(ko.sticker) ? 'Yes' : 'No'}</Tag>}
-                        {ko.logo && <Tag color={yn(ko.logo) ? 'cyan' : 'default'} style={{ borderRadius: 12 }}>Logo: {yn(ko.logo) ? 'Yes' : 'No'}</Tag>}
-                        {ko.printing && <Tag color={yn(ko.printing) ? 'magenta' : 'default'} style={{ borderRadius: 12 }}>Printing: {yn(ko.printing) ? 'Yes' : 'No'}</Tag>}
-                        {ko.lamination && <Tag color={yn(ko.lamination) ? 'gold' : 'default'} style={{ borderRadius: 12 }}>Lamination: {yn(ko.lamination) ? 'Yes' : 'No'}</Tag>}
-                        {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 12 }}>₹{Number(ko.kitPrice).toLocaleString()}{Number(ko.overallQty) > 0 ? ` × ${ko.overallQty} = ₹${r2(Number(ko.kitPrice) * Number(ko.overallQty)).toLocaleString()}` : ''}</Tag>}
-                      </Space>
-                      {ko.specification && <div style={{ marginTop: 6, fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Specification: </Text>{ko.specification}</div>}
-                      {kitIncludes.length > 0 && (
-                        <div style={{ marginTop: 6 }}>
-                          <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 4 }}>INCLUDED IN KIT</Text>
-                          <Space wrap size={4}>
-                            {kitIncludes.map((v, i) => {
-                              const id = typeof v === 'object' ? v.id : v;
-                              const qty = typeof v === 'object' ? v.qty : null;
-                              return (
-                                <Tag key={i} color="purple" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>
-                                  {id}{qty && qty > 1 ? ` ×${qty}` : ''}
-                                </Tag>
-                              );
-                            })}
-                          </Space>
-                        </div>
-                      )}
-                      {atts.length > 0 && <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Kit Files</Text><PartyAttachmentLinks files={atts} /></div>}
-                    </div>
-                  );
-                })}
-                {items.map((it, idx) => {
-                  const tags = specTags(it);
-                  const atts = (Array.isArray(it.attachments) ? it.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
-                  const nm = it.itemName || it.name || it.kitType || `Item ${idx + 1}`;
-                  const hasChips = tags.length > 0 || it.size || it.packingMaterial || it.packaging || it.materialCategory || it.material || it.brand || it.sticker || it.printing || it.logo;
-                  return (
-                    <div key={it._id || idx} style={{ padding: '10px 12px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fafafa', borderRadius: 10, border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'}` }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                        <Space size={6} wrap>
-                          <Text strong style={{ fontSize: 13 }}>{nm}</Text>
-                          {(it.isKit || it.kitType) && <Tag color="purple" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>KIT</Tag>}
-                        </Space>
-                        <Text type="secondary" style={{ fontSize: 12 }}>{Number(it.qty) || 0} × ₹{Number(it.price || it.rate) || 0}</Text>
-                      </div>
-                      {hasChips && (
-                        <Space wrap size={4} style={{ marginTop: 6 }}>
-                          {it.size && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Size: {it.size}</Tag>}
-                          {(it.packingMaterial || it.packaging) && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Packing: {it.packingMaterial || it.packaging}</Tag>}
-                          {(it.materialCategory || it.material) && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Material: {it.materialCategory || it.material}</Tag>}
-                          {it.brand && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Brand: {it.brand}</Tag>}
-                          {it.sticker && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Sticker: {yn(it.sticker) ? 'Yes' : String(it.sticker)}</Tag>}
-                          {it.printing && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Printing: {yn(it.printing) ? 'Yes' : String(it.printing)}</Tag>}
-                          {it.logo && <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Logo: {yn(it.logo) ? 'Yes' : String(it.logo)}</Tag>}
-                          {tags.map(([k, v]) => <Tag key={k} style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{prettyPartyKey(k)}: {Array.isArray(v) ? v.join(', ') : String(v)}</Tag>)}
-                        </Space>
-                      )}
-                      {it.specification && <div style={{ marginTop: 6, fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Specification: </Text>{it.specification}</div>}
-                      {atts.length > 0 && <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Files</Text><PartyAttachmentLinks files={atts} /></div>}
-                    </div>
-                  );
-                })}
-                {items.length === 0 && kitOrders.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>No product details recorded on this order.</Text>}
-              </div>
-            </div>
-          );
-        })}
-      </Space>
-    </Card>
-  );
-}
-
-const BILL_STATUS_COLOR = { Paid: 'green', 'Partial Paid': 'orange', 'Partially Paid': 'orange', Unpaid: 'red', Pending: 'red' };
-
-// Lists every bill raised against this vendor — merging PurchaseOrder and LocalPurchase,
-// the two separate collections vendor spend is split across — with full item detail
-// and each bill's own payment history, mirroring PartyOrdersSection for customers.
-function VendorBillsSection({ bills = [], isDark, cardBg }) {
-  const [vendorBillDateRange, setVendorBillDateRange] = useState(null);
-  if (!bills.length) return null;
-  const filteredBills = bills.filter((b) => {
-    if (vendorBillDateRange) {
-      const d = b.date ? String(b.date).slice(0, 10) : '';
-      if (d < vendorBillDateRange[0] || d > vendorBillDateRange[1]) return false;
-    }
-    return true;
-  });
-  return (
-    <Card
-      style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-      title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span style={{ fontSize: FONT_SIZE }}>Bills & Purchases ({bills.length})</span></Space>}
-      extra={
-        <DatePicker.RangePicker
-          size="small"
-          style={{ borderRadius: 8 }}
-          onChange={(dates) => setVendorBillDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
-          allowClear
-        />
-      }
-    >
-      <Space direction="vertical" size={14} style={{ width: '100%' }}>
-        {filteredBills.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>No bills in selected date range.</Text>}
-        {filteredBills.map((b) => (
-          <div key={b._id} style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`, borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '10px 14px', background: isDark ? 'rgba(177,30,106,0.08)' : 'rgba(177,30,106,0.04)' }}>
-              <Space size={8} wrap>
-                <Text strong style={{ fontSize: 14, color: PRIMARY }}>{b.billNo || b.code}</Text>
-                <Tag color={b.source === 'PurchaseOrder' ? 'blue' : 'geekblue'} style={{ borderRadius: 10 }}>{b.source === 'PurchaseOrder' ? 'Purchase Order' : 'Local Purchase'}</Tag>
-                {b.status && <Tag color={BILL_STATUS_COLOR[b.status] || 'default'} style={{ borderRadius: 10 }}>{b.status}</Tag>}
-                {b.date && <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(b.date).format('DD MMM YYYY')}</Text>}
-              </Space>
-              <Text strong style={{ fontSize: 15, color: PRIMARY }}>₹{Number(b.amount || 0).toLocaleString()}</Text>
-            </div>
-            <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {(b.items || []).map((it, idx) => (
-                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: isDark ? 'rgba(255,255,255,0.02)' : '#fafafa', borderRadius: 10, border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'}` }}>
-                  <Text strong style={{ fontSize: 13 }}>{it.itemName || `Item ${idx + 1}`}</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>{Number(it.qty) || 0} {it.unit || ''}</Text>
-                </div>
-              ))}
-              {(!b.items || b.items.length === 0) && <Text type="secondary" style={{ fontSize: 12 }}>No item details recorded on this bill.</Text>}
-              <Space size={16} style={{ marginTop: 2 }}>
-                <Text style={{ fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Paid: </Text><Text strong style={{ color: '#52c41a' }}>₹{Number(b.paidAmount || 0).toLocaleString()}</Text></Text>
-                <Text style={{ fontSize: 12 }}><Text type="secondary" style={{ fontSize: 11 }}>Balance: </Text><Text strong style={{ color: b.balance > 0 ? '#ff4d4f' : '#52c41a' }}>₹{Number(b.balance || 0).toLocaleString()}</Text></Text>
-              </Space>
-              {b.invoiceFileUrl && <a href={b.invoiceFileUrl} target="_blank" rel="noreferrer"><Tag icon={<FileTextOutlined />} color="blue" style={{ borderRadius: 12, fontSize: 11 }}>View Invoice</Tag></a>}
-              {(b.paymentHistory || []).length > 0 && (
-                <div style={{ marginTop: 4, paddingTop: 8, borderTop: `1px dashed ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}` }}>
-                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 4 }}>PAYMENTS ON THIS BILL</Text>
-                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                    {b.paymentHistory.map((p, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                        <Text type="secondary">{p.paidDate ? dayjs(p.paidDate).format('DD MMM YYYY') : ''} {p.paidBy ? `· ${p.paidBy}` : ''}</Text>
-                        <Text strong style={{ color: '#52c41a' }}>₹{Number(p.amount || 0).toLocaleString()}</Text>
-                      </div>
-                    ))}
-                  </Space>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </Space>
-    </Card>
-  );
-}
-
-// Every payment recorded against this vendor, across every bill, in one chronological
-// feed — the "all payment records" view distinct from the per-bill breakdown above.
-function VendorPaymentsSection({ payments = [], cardBg }) {
-  const [vendorPaymentDateRange, setVendorPaymentDateRange] = useState(null);
-  if (!payments.length) return null;
-  const filteredPayments = payments.filter((p) => {
-    if (vendorPaymentDateRange) {
-      const d = p.paidDate ? String(p.paidDate).slice(0, 10) : '';
-      if (d < vendorPaymentDateRange[0] || d > vendorPaymentDateRange[1]) return false;
-    }
-    return true;
-  });
-  const columns = [
-    { title: 'Date', dataIndex: 'paidDate', width: 110, render: (v) => <Text style={{ fontSize: FONT_SIZE }}>{v ? dayjs(v).format('DD MMM YYYY') : '—'}</Text> },
-    {
-      title: 'Bill', key: 'bill', width: 160,
-      render: (_, r) => (
-        <Space size={4}>
-          <Text style={{ fontSize: FONT_SIZE, fontWeight: 600, color: PRIMARY }}>{r.billNo || r.billCode}</Text>
-          <Tag style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>{r.billSource === 'PurchaseOrder' ? 'PO' : 'Local'}</Tag>
-        </Space>
-      )
-    },
-    { title: 'Amount', dataIndex: 'amount', align: 'right', width: 120, render: (v) => <Text strong style={{ color: '#52c41a', fontSize: FONT_SIZE }}>₹{Number(v || 0).toLocaleString()}</Text> },
-    { title: 'Paid By', dataIndex: 'paidBy', render: (v) => <Text style={{ fontSize: FONT_SIZE }}>{v || <Text type="secondary">—</Text>}</Text> },
-    { title: 'Note', dataIndex: 'note', render: (v) => <Text style={{ fontSize: FONT_SIZE }}>{v || <Text type="secondary">—</Text>}</Text> },
-    {
-      title: 'Proof', key: 'proof', width: 90,
-      render: (_, r) => r.proofUrl ? <a href={r.proofUrl} target="_blank" rel="noreferrer">View</a> : <Text type="secondary">—</Text>
-    },
-  ];
-  return (
-    <Card
-      style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-      title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><WalletOutlined style={{ color: '#52c41a' }} /><span style={{ fontSize: FONT_SIZE }}>Payment History — All Records ({payments.length})</span></Space>}
-      extra={
-        <DatePicker.RangePicker
-          size="small"
-          style={{ borderRadius: 8 }}
-          onChange={(dates) => setVendorPaymentDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
-          allowClear
-        />
-      }
-    >
-      <Table size="small" dataSource={filteredPayments} columns={columns} rowKey={(r, i) => `${r.billId}-${i}`} pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }} scroll={{ x: 'max-content' }} locale={{ emptyText: 'No payments in selected date range.' }} />
-    </Card>
-  );
-}
 
 // Backend ledger rows (both /parties/:id/ledger and /vendors/:id/ledger) share the
 // same shape — entryDate/type/docRef/debit/credit/balance — so one mapper covers
@@ -449,12 +146,6 @@ export default function PartiesLedger() {
     const raw = isVendorView ? (vendorLedgerData?.ledger || []) : (ledgerData?.data || []);
     return raw.map(mapLedgerEntry);
   }, [isVendorView, vendorLedgerData, ledgerData]);
-  const vendorBills = vendorLedgerData?.bills || [];
-  const vendorPayments = vendorLedgerData?.payments || [];
-
-  // RTK Query — load this party's orders (with full product/kit specs + attachments)
-  const { data: partyOrdersData } = useGetPartyOrdersQuery(viewParty?.key, { skip: !viewParty || isVendorView });
-  const partyOrders = partyOrdersData?.data || [];
 
   const deleteParty = async (party) => {
     try {
@@ -752,97 +443,6 @@ export default function PartiesLedger() {
           </div>
         </div>
 
-        {/* Party Information Card */}
-        <Card
-          style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-          title={
-            <Space>
-              <div style={{ width: 4, height: 20, background: PRIMARY, borderRadius: 2, display: 'inline-block' }} />
-              <IdcardOutlined style={{ color: PRIMARY }} />
-              <span style={{ fontSize: FONT_SIZE }}>Party Information</span>
-            </Space>
-          }
-        >
-          <Descriptions size="small" column={{ xs: 1, sm: 2, md: 3 }} labelStyle={{ color: '#888', fontSize: 12, fontWeight: 500 }} contentStyle={{ fontSize: 13, fontWeight: 600, color: textColor }}>
-            <Descriptions.Item label="Party Name">{viewParty.name}</Descriptions.Item>
-            <Descriptions.Item label="Party Type">
-              <Tag style={{ borderRadius: 10, background: isSupplier ? 'rgba(24,144,255,0.08)' : 'rgba(114,46,209,0.08)', color: isSupplier ? '#1890ff' : '#722ed1', border: 'none', fontWeight: 600 }}>
-                {viewParty.type}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Contact Person">
-              <Space size={4}><UserOutlined style={{ color: '#888' }} />{viewParty.contactPerson || <Text type="secondary">—</Text>}</Space>
-            </Descriptions.Item>
-            <Descriptions.Item label="Phone">
-              <Space size={4}><PhoneOutlined style={{ color: PRIMARY }} />{viewParty.phone || <Text type="secondary">—</Text>}</Space>
-            </Descriptions.Item>
-            <Descriptions.Item label="Email">
-              {viewParty.email
-                ? <Space size={4}><MailOutlined style={{ color: PRIMARY }} /><a href={`mailto:${viewParty.email}`} style={{ color: PRIMARY }}>{viewParty.email}</a></Space>
-                : <Text type="secondary">—</Text>}
-            </Descriptions.Item>
-            <Descriptions.Item label="Address">
-              <Space size={4}><EnvironmentOutlined style={{ color: '#888' }} />{viewParty.address || <Text type="secondary">—</Text>}</Space>
-            </Descriptions.Item>
-            {isVendorView && viewParty.vendorCode && (
-              <Descriptions.Item label="Vendor Code">
-                <Text style={{ fontFamily: 'monospace', fontWeight: 700, color: PRIMARY }}>{viewParty.vendorCode}</Text>
-              </Descriptions.Item>
-            )}
-            {isVendorView && viewParty.taxId && (
-              <Descriptions.Item label="Tax ID">
-                <Text style={{ fontFamily: 'monospace', fontWeight: 600 }}>{viewParty.taxId}</Text>
-              </Descriptions.Item>
-            )}
-            {isVendorView && viewParty.vendorType && (
-              <Descriptions.Item label="Vendor Type">
-                <Tag style={{ borderRadius: 10 }}>{viewParty.vendorType === 'raw_material' ? 'Raw Material' : 'Printing'}</Tag>
-              </Descriptions.Item>
-            )}
-            {isVendorView && viewParty.status && (
-              <Descriptions.Item label="Status">
-                <Tag color={viewParty.status === 'Active' ? 'green' : viewParty.status === 'Blacklisted' ? 'red' : 'default'} style={{ borderRadius: 10 }}>{viewParty.status}</Tag>
-              </Descriptions.Item>
-            )}
-            {isVendorView && viewParty.bankDetails && (viewParty.bankDetails.accountNo || viewParty.bankDetails.upiId) && (
-              <Descriptions.Item label={viewParty.bankDetails.method === 'upi' ? 'UPI' : 'Bank Account'}>
-                <Text style={{ fontFamily: 'monospace' }}>
-                  {viewParty.bankDetails.method === 'upi'
-                    ? (viewParty.bankDetails.upiId || viewParty.bankDetails.upiNumber)
-                    : `${viewParty.bankDetails.accountNo || ''}${viewParty.bankDetails.ifsc ? ' · ' + viewParty.bankDetails.ifsc : ''}`}
-                </Text>
-              </Descriptions.Item>
-            )}
-            {viewParty.gst && (
-              <Descriptions.Item label="GST Number">
-                <Space size={4}><BankOutlined style={{ color: '#722ed1' }} /><Text style={{ fontFamily: 'monospace', color: '#722ed1', fontWeight: 700 }}>{viewParty.gst}</Text></Space>
-              </Descriptions.Item>
-            )}
-            {viewParty.pan && (
-              <Descriptions.Item label="PAN">
-                <Space size={4}><CreditCardOutlined style={{ color: '#888' }} /><Text style={{ fontFamily: 'monospace', fontWeight: 600 }}>{viewParty.pan}</Text></Space>
-              </Descriptions.Item>
-            )}
-            {viewParty.creditLimit > 0 && (
-              <Descriptions.Item label="Credit Limit">
-                <Text style={{ color: '#fa8c16', fontWeight: 700 }}>₹{Number(viewParty.creditLimit).toLocaleString()}</Text>
-              </Descriptions.Item>
-            )}
-            {viewParty.creditPeriod && (
-              <Descriptions.Item label="Credit Period">
-                <Text style={{ color: '#fa8c16', fontWeight: 600 }}>{viewParty.creditPeriod} days</Text>
-              </Descriptions.Item>
-            )}
-            {viewParty.openingBalance !== 0 && viewParty.openingBalance !== undefined && (
-              <Descriptions.Item label="Opening Balance">
-                <Text style={{ color: PRIMARY, fontWeight: 700 }}>
-                  ₹{Math.abs(Number(viewParty.openingBalance || 0)).toLocaleString()} {viewParty.openingBalDir || 'Dr'}
-                </Text>
-              </Descriptions.Item>
-            )}
-          </Descriptions>
-        </Card>
-
         {/* GST API Details Card */}
         {viewParty.gst && (
           <Card
@@ -919,17 +519,6 @@ export default function PartiesLedger() {
               </div>
             )}
           </Card>
-        )}
-
-        {/* Orders/Bills placed by or with this party — full specs, kit personalization,
-            attachments (customers) or item/payment breakdown per bill (vendors) */}
-        {isVendorView ? (
-          <>
-            <VendorBillsSection bills={vendorBills} isDark={isDark} cardBg={cardBg} />
-            <VendorPaymentsSection payments={vendorPayments} cardBg={cardBg} />
-          </>
-        ) : (
-          <PartyOrdersSection orders={partyOrders} isDark={isDark} cardBg={cardBg} />
         )}
 
         {/* Summary Stats */}

@@ -19,6 +19,7 @@ import dayjs from 'dayjs';
 import html2pdf from 'html2pdf.js';
 import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
+import { computeRecordBuckets, computeRecordGrandTotal } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
@@ -70,74 +71,17 @@ const itemsToProducts = (items = []) =>
     category: i.category || '',
   }));
 
-const rowCategory = (p, kitOrders = []) => {
-  if (!p) return 'separate_product';
-  if (p.category) return p.category;
-  if (p.isKit || p.kitType) {
-    const ko = (kitOrders || []).find(o => o && o.kitId && String(o.kitId) === String(p.kitId));
-    return ko?.category || 'separate_kit';
-  }
-  return 'separate_product';
-};
-
-// Kit-aware grand total — mirrors computeRecordGrandTotal / computeRecordBuckets in Sales/index.jsx.
-// Uses products[] + kitOrders[] from the quotation/order document.
+// Kit-aware grand total — delegates to utils/orderCalc's computeRecordGrandTotal, the single
+// source of truth also used by Sales and OperationDetail. (Previously this had its own
+// hand-duplicated copy that, unlike orderCalc's kitOrderValue, priced a Separate Kit as
+// EITHER its assembly price OR its component rows — never both — silently undercounting
+// every Separate Kit order by its component cost × quantity.)
 // Returns 0 when no composition data is present so callers can fall back to the stored total.
 const computeKitAwareTotal = (rec) => {
   const products = (rec.products || []).filter(Boolean);
   const kitOrders = (rec.kitOrders || []).filter(Boolean);
   if (!products.length && !kitOrders.length) return 0;
-
-  const catOf = (p) => rowCategory(p, kitOrders);
-
-  // GST-inclusive subtotal of non-kit product rows.
-  // Accepts both 'rate' (Sales form field) and 'price' (quotation item schema field).
-  const sumProds = (rows) => r2(rows.reduce((s, p) => {
-    const qty = Number(p.qty) || 0;
-    const rate = Number(p.rate) || Number(p.price) || 0;
-    const gst = Number(p.gst) || 0;
-    return s + qty * rate + qty * rate * gst / 100;
-  }, 0));
-
-  const kitRowsAll = products.filter(p => p.isKit || p.kitType);
-  const nonKitProds = products.filter(p => !(p.isKit || p.kitType));
-  const persProds = nonKitProds.filter(p => catOf(p) === 'personalized');
-  const sepProds = nonKitProds.filter(p => catOf(p) === 'separate_product');
-
-  // Value of one kit order — mirrors Sales kitOrderValue exactly:
-  // kitPrice × overallQty when a price is set, else component-row subtotal × overallQty.
-  const kitVal = (ko) => {
-    const price = Number(ko.kitPrice) || 0;
-    const qty = Number(ko.overallQty) || 0;
-    if (price > 0) return r2(price * (qty || 1));
-    const rows = kitRowsAll.filter(r => String(r.kitId || '') === String(ko.kitId || ''));
-    const sub = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || Number(p.price) || 0), 0);
-    const gst = rows.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || Number(p.price) || 0) * ((Number(p.gst) || 0) / 100), 0);
-    return r2((sub + gst) * (qty || 1));
-  };
-
-  let personalizedKit = 0, separateKit = 0;
-  if (kitOrders.length) {
-    kitOrders.forEach(ko => {
-      const val = kitVal(ko);
-      if ((ko.category || 'separate_kit') === 'personalized') personalizedKit += val;
-      else separateKit += val;
-    });
-  } else if (kitRowsAll.length) {
-    // Legacy: no kitOrders array — use top-level kitPrice if set
-    const topPrice = Number(rec.kitPrice) || 0;
-    const topQty = Number(rec.kitOverallQty) || 0;
-    separateKit = topPrice > 0 ? r2(topPrice * (topQty || 1)) : sumProds(kitRowsAll);
-  }
-
-  const personalized = r2(personalizedKit + sumProds(persProds));
-  const separateProduct = sumProds(sepProds);
-  const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
-  // Courier/shipping charge and round off recorded via Record Payment In — both are extra
-  // amounts owed on top of the order, entered per-payment rather than stored on the record.
-  const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
-  const roundOffTotal = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
-  return r2(personalized + separateKit + separateProduct + fwd + courier + roundOffTotal);
+  return computeRecordGrandTotal(rec);
 };
 
 function computeCompositionGrandTotal(formData = {}, kitsData = []) {
@@ -153,34 +97,18 @@ function computeCompositionGrandTotal(formData = {}, kitsData = []) {
   return computeKitAwareTotal(formData);
 }
 
+// Delegates to utils/orderCalc's computeRecordBuckets for the taxable/GST split. (Previously
+// this guessed between "flat kit price" and "raw product rows" totals and picked whichever was
+// bigger — for a Separate Kit with a small assembly fee relative to its components, that guess
+// always lost, so it silently used the wrong base: e.g. component rows summed at their
+// PER-KIT quantity as if that were the order's TOTAL quantity, instead of correctly scaling by
+// the kit's overallQty. computeRecordBuckets applies the real category rule instead of guessing.)
 const computeKitTaxable = (rec) => {
   const products = (rec.products || []).filter(Boolean);
   const kitOrders = (rec.kitOrders || []).filter(Boolean);
-  const productTaxable = products.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0), 0);
-  const productGst = products.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.rate || p.price) || 0) * ((Number(p.gst || p.taxRate) || 0) / 100), 0);
-  if (!kitOrders.length) return { taxable: r2(productTaxable), gst: r2(productGst) };
-  // For kits priced as a flat bundle (kitPrice set, no per-component pricing), the GST
-  // baked into that price must be split out here too — otherwise a kit-priced order with
-  // un-itemized components ends up with gst:0 (from productGst above) even though
-  // pricedKitTaxable below correctly strips tax out of kitPrice, so CGST/SGST silently
-  // don't show on the invoice despite the order being taxable.
-  let pricedKitTaxable = 0, pricedKitGst = 0;
-  kitOrders.forEach((ko) => {
-    const price = Number(ko.kitPrice) || 0;
-    const qty = Number(ko.overallQty || ko.qty) || 1;
-    if (price <= 0) return;
-    const gstPct = Number(ko.gst || ko.gstPercent || ko.taxRate) || 0;
-    const taxable = gstPct > 0 ? price / (1 + gstPct / 100) : price;
-    pricedKitTaxable += taxable * qty;
-    pricedKitGst += (price - taxable) * qty;
-  });
-  // taxable picks whichever base is larger (itemized components vs flat kit price) to avoid
-  // double-counting; gst must follow the SAME base so it stays consistent with taxable.
-  const useKitPricing = pricedKitTaxable > productTaxable;
-  return {
-    taxable: r2(useKitPricing ? pricedKitTaxable : productTaxable),
-    gst: r2(useKitPricing ? pricedKitGst : productGst),
-  };
+  if (!products.length && !kitOrders.length) return { taxable: 0, gst: 0 };
+  const b = computeRecordBuckets(rec);
+  return { taxable: b.taxable, gst: b.gst };
 };
 
 const sumPaid = (...sources) => {

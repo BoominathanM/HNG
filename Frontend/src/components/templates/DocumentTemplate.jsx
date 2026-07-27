@@ -259,10 +259,16 @@ function computeDocSections(data) {
       return { name: r.itemName || r.name || '—', perKit: r._q, qty: totalQty, unit: r.unit || 'PCS', rate, gstRate, taxAmt, amount };
     });
     const kitName = ko.kitName || rawRows[0]?.kitName || rawRows[0]?.kitType || '—';
-    // kitPrice (when set) wins; otherwise sum the (already qty-scaled) component amounts
-    const kitTotal = price > 0
-      ? r2d(price * qty)
-      : r2d(components.reduce((s, r) => s + r.amount, 0));
+    const componentsTotal = r2d(components.reduce((s, r) => s + r.amount, 0));
+    // Separate Kit (category B) always counts BOTH the kit's own assembly price AND its
+    // included products' price — neither is skipped (mirrors orderCalc.js's kitOrderValue).
+    // Personalized (A) keeps the original behavior: trust a stored kitPrice, falling back to
+    // the component sum only when it's empty. Using "price wins" for BOTH categories (as this
+    // used to) silently dropped every Separate Kit's component cost from the invoice total.
+    const category = ko.category || 'separate_kit';
+    const kitTotal = category === 'separate_kit'
+      ? r2d(price * qty + componentsTotal)
+      : (price > 0 ? r2d(price * qty) : componentsTotal);
     return { ...ko, qty, price, kitName, components, kitTotal };
   };
 
