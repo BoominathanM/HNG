@@ -24,6 +24,7 @@ import {
   useGetTasksQuery,
   useGetSuggestedTasksQuery,
   useLazyGetSuggestedTasksInsightQuery,
+  useGetLatestTaskInsightQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useDispatchTaskOrderMutation,
@@ -71,6 +72,27 @@ const normTaskName = (v) => (v || '').trim().toLowerCase();
 // same shape OperationDetail reads: order.items / order.kitOrders / order.kitDisplayUnit / order.qty).
 function deriveKitGroups(order) {
   if (!order) return { separateKitGroups: [], personalizedKitGroups: [] };
+
+  // Items packed inside a personalized outer bundle (order.packagingIncludes, configured in
+  // Sales as "kits and products packed inside the personalized kit") need to be tagged
+  // isIncludedInPersonalized so the personalizedKitGroups closure below routes them into the
+  // Personalized Kit card instead of leaving them as disconnected standalone checklist cards.
+  // This mirrors the derivation OperationDetail.jsx/Operations/index.jsx already do from the
+  // same source fields — this page never computed it, so the field read below was always
+  // undefined here, and a bundled separate product (e.g. a Comb added alongside a Dental Kit)
+  // never made it into "Included in kit", only its own disconnected card further down.
+  const ptArr = Array.isArray(order.productType) ? order.productType : (order.productType ? [order.productType] : []);
+  const isPersonalizedOrder = ptArr.includes('personalized') || ptArr.includes('PERSONALIZED_KIT');
+  const includesList = (order.packagingIncludes?.length ? order.packagingIncludes : (order.leadId?.packagingIncludes || [])) || [];
+  const includeSet = new Set(includesList.map(String));
+  order = {
+    ...order,
+    items: (order.items || []).map((it) => ({
+      ...it,
+      isIncludedInPersonalized: isPersonalizedOrder
+        && (includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName))),
+    })),
+  };
 
   const separateKitGroups = (() => {
     const kitItems = (order.items || []).filter((it) => it.isKit && it.category === 'separate_kit');
@@ -204,11 +226,25 @@ export default function Tasks() {
   const { data: suggestedData } = useGetSuggestedTasksQuery();
   const suggestedList = suggestedData?.data || [];
   const [fetchTaskInsight, { isFetching: taskInsightLoading }] = useLazyGetSuggestedTasksInsightQuery();
-  const [taskInsight, setTaskInsight] = useState(null);
+  // Restores the last persisted "Get AI Insight" run on page load — no AI call, just
+  // reads what the last run saved (see getLatestTaskInsight/TaskInsight on the backend).
+  const { data: latestInsightData } = useGetLatestTaskInsightQuery();
+  // null = nothing manually (re-)generated yet THIS session, so fall back to the last
+  // persisted run. Once the user clicks "Get AI Insight" this session's result wins,
+  // even though the persisted copy was also just updated to match it.
+  const [manualInsight, setManualInsight] = useState(null);
+  const [manualProductTasks, setManualProductTasks] = useState(null);
+  const taskInsight = manualInsight !== null ? manualInsight : (latestInsightData?.data?.insight ?? null);
+  // Per-product AI task recommendations from the last analysis, keyed by
+  // `${orderCode}::${product}` (lowercased) — highlights the matching Suggested Tasks
+  // chip on that product's own card instead of leaving the recommendation buried in the
+  // summary text above.
+  const aiProductTasks = manualProductTasks !== null ? manualProductTasks : (latestInsightData?.data?.productTasks ?? {});
   const handleGetTaskInsight = async () => {
     try {
       const res = await fetchTaskInsight().unwrap();
-      setTaskInsight(res?.data?.insight || '');
+      setManualInsight(res?.data?.insight || '');
+      setManualProductTasks(res?.data?.productTasks || {});
     } catch (err) {
       enqueueSnackbar(err?.data?.error || err?.data || 'AI insight failed.', { variant: 'error' });
     }
@@ -717,6 +753,16 @@ export default function Tasks() {
     const isStickerTaskName = presetTaskName && /stick|label/i.test(presetTaskName);
     if (isStickerTaskName && s.designType === 'Sticker' && s.stickerPrintingReady === false) {
       enqueueSnackbar(`Stickering blocked for "${s.product}" — Printing Status must be Received/Closed first.`, { variant: 'warning' });
+      return;
+    }
+    // Same defense-in-depth, for the pack/fill chip when this product's packing material
+    // (box/ziplock/bottle/etc., tracked in Inventory > Material Stocks) is short — already
+    // disabled in the UI, this only fires for a pack/fill-named preset.
+    const isPackFillTaskName = presetTaskName && /pack|fill/i.test(presetTaskName);
+    if (isPackFillTaskName && s.materialStockReady === false) {
+      const sf = s.materialShortfall;
+      const detail = sf ? ` — ${sf.material}${sf.size ? ` (${sf.size})` : ''}: ${sf.available} available, ${sf.needed} needed.` : '.';
+      enqueueSnackbar(`Packing material not available for "${s.product}"${detail}`, { variant: 'warning' });
       return;
     }
     setAssignTarget(s);
@@ -1431,6 +1477,11 @@ export default function Tasks() {
                             // every other task for the same product (Filling, Packing, etc.) and the
                             // general "Assign Task" button stay fully usable, same as before.
                             const stickerBlocked = s.designType === 'Sticker' && s.stickerPrintingReady === false;
+                            // Packing-material gate: a Personalized Kit Packing / Filling task can't be
+                            // assigned until this product's own packing material (box/ziplock/bottle/etc.,
+                            // tracked in Inventory > Material Stocks) has enough stock. Blocks ONLY the
+                            // matching pack/fill chip below — same shape as the Stickering gate above.
+                            const materialBlocked = s.materialStockReady === false;
                             return (
                               <Col xs={24} md={12} lg={8} key={s.id}>
                                 <motion.div whileHover={{ y: -2 }}>
@@ -1470,37 +1521,71 @@ export default function Tasks() {
                                       message={readyText}
                                       style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
                                     />
+                                    {materialBlocked && (
+                                      <Alert
+                                        type="error"
+                                        showIcon
+                                        message={s.materialShortfall
+                                          ? `Packing Material Not Available — ${s.materialShortfall.material}${s.materialShortfall.size ? ` (${s.materialShortfall.size})` : ''}: ${s.materialShortfall.available} available, ${s.materialShortfall.needed} needed.`
+                                          : 'Packing Material Not Available for this product.'}
+                                        style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
+                                      />
+                                    )}
                                     {/* Suggested Tasks — quick-assign chips, filtered to only the configured
                                         task names that actually fit THIS product/order spec (see
                                         getRelevantTaskOptions): explicit per-product configs, or general
                                         configs matched by product-name/sticker/print/pack keywords.
-                                        Only the Stickering chip itself turns red/disabled when
-                                        stickerBlocked — every other chip for this product stays clickable. */}
+                                        Only the Stickering chip turns red/disabled when stickerBlocked, and
+                                        only pack/fill-named chips turn red/disabled when materialBlocked
+                                        (packing material out of stock) — every other chip for this product
+                                        stays clickable. When the last "Get AI Insight" run recommended
+                                        task(s) for THIS exact product (matched via aiProductTasks, keyed by
+                                        orderCode::product), that chip is moved first and highlighted gold
+                                        with a robot icon — the AI's product-wise call, not just the
+                                        summary paragraph above. */}
                                     {(() => {
                                       const relevantOptions = s.stockReady ? getRelevantTaskOptions(s) : [];
-                                      return relevantOptions.length > 0 && (
+                                      if (relevantOptions.length === 0) return null;
+                                      const aiKey = `${s.orderCode}::${s.product}`.toLowerCase();
+                                      const aiTasks = (aiProductTasks[aiKey] || []).map((t) => String(t).toLowerCase());
+                                      const sortedOptions = aiTasks.length
+                                        ? [...relevantOptions].sort((a, b) => {
+                                            const rank = (opt) => {
+                                              const i = aiTasks.indexOf(opt.value.toLowerCase());
+                                              return i === -1 ? aiTasks.length : i;
+                                            };
+                                            return rank(a) - rank(b);
+                                          })
+                                        : relevantOptions;
+                                      return (
                                         <div style={{ marginBottom: 12 }}>
                                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Suggested Tasks</Text>
                                           <Space size={4} wrap>
-                                            {relevantOptions.map((opt) => {
+                                            {sortedOptions.map((opt) => {
                                               const isStickerOption = /stick|label/i.test(opt.value);
-                                              const optBlocked = stickerBlocked && isStickerOption;
+                                              const isPackFillOption = /pack|fill/i.test(opt.value);
+                                              const optStickerBlocked = stickerBlocked && isStickerOption;
+                                              const optMaterialBlocked = materialBlocked && isPackFillOption;
+                                              const optBlocked = optStickerBlocked || optMaterialBlocked;
+                                              const isAiRecommended = !optBlocked && aiTasks.includes(opt.value.toLowerCase());
+                                              const tooltipTitle = optStickerBlocked
+                                                ? `Blocked — Printing Status is "${s.itemPrintingStatus || 'not set'}". Needs Received/Closed first.`
+                                                : optMaterialBlocked
+                                                  ? `Blocked — Packing material not available${s.materialShortfall ? ` (${s.materialShortfall.material}${s.materialShortfall.size ? ` ${s.materialShortfall.size}` : ''}: ${s.materialShortfall.available}/${s.materialShortfall.needed})` : ''}.`
+                                                  : (isAiRecommended ? 'AI recommended — from the last "Get AI Insight" analysis' : '');
                                               return (
-                                                <Tooltip
-                                                  key={opt.value}
-                                                  title={optBlocked ? `Blocked — Printing Status is "${s.itemPrintingStatus || 'not set'}". Needs Received/Closed first.` : ''}
-                                                >
+                                                <Tooltip key={opt.value} title={tooltipTitle}>
                                                   <Tag
                                                     style={{
                                                       cursor: optBlocked ? 'not-allowed' : 'pointer',
                                                       borderRadius: 10,
-                                                      borderColor: optBlocked ? '#ff4d4f' : '#B11E6A66',
-                                                      background: optBlocked ? (isDark ? '#2d1516' : '#fff1f0') : undefined,
-                                                      color: optBlocked ? '#ff4d4f' : '#B11E6A',
+                                                      borderColor: optBlocked ? '#ff4d4f' : (isAiRecommended ? '#faad14' : '#B11E6A66'),
+                                                      background: optBlocked ? (isDark ? '#2d1516' : '#fff1f0') : (isAiRecommended ? (isDark ? '#2b2111' : '#fffbe6') : undefined),
+                                                      color: optBlocked ? '#ff4d4f' : (isAiRecommended ? '#ad6800' : '#B11E6A'),
                                                     }}
                                                     onClick={() => !optBlocked && handleAssignSuggested(s, opt.value)}
                                                   >
-                                                    + {opt.label}
+                                                    {isAiRecommended && <RobotOutlined style={{ marginRight: 4 }} />}+ {opt.label}
                                                   </Tag>
                                                 </Tooltip>
                                               );

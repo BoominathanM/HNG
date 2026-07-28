@@ -668,6 +668,10 @@ export default function Inventory() {
   const productTypeKey = useMemo(() => getProductTypeKey(watchedItemName), [watchedItemName]);
   const productFieldDefs = PRODUCT_FIELD_DEFS[productTypeKey] || [];
   const watchedPackingMaterial = Form.useWatch(['productAttrs', 'packingMaterial'], addItemForm);
+  // Bottle-type products (shampoo/moisturizer/shower gel) have no packingMaterial field —
+  // their sticker toggle is 'stickerPrinting' — so Bottle Sticker Size below is gated on
+  // this instead of showStickerSizeFor(packingMaterial) like Box/Ziplock/Butter Paper are.
+  const watchedStickerPrinting = Form.useWatch(['productAttrs', 'stickerPrinting'], addItemForm);
 
   /* ── Category & Kit expand ── */
   const [expandedCategory, setExpandedCategory] = useState(null);
@@ -2710,6 +2714,10 @@ export default function Inventory() {
               .filter(Boolean)
               .map((v) => String(v).toLowerCase());
             const showStickerSizeFor = (needle) => selectedPackingMaterials.some((v) => v.includes(needle));
+            // Bottle types (shampoo/moisturizer/shower gel) — Sticker Printing = Yes shows
+            // Bottle Sticker Size, same pattern as Box/Ziplock/Butter Paper above.
+            const hasStickerPrinting = activeDefs.some((fd) => fd.key === 'stickerPrinting');
+            const showBottleStickerSize = hasStickerPrinting && String(watchedStickerPrinting || '').toLowerCase() === 'yes';
             return (
               <>
                 <Divider style={{ margin: '4px 0 12px' }}>
@@ -2755,6 +2763,13 @@ export default function Inventory() {
                   {hasPackingMaterial && showStickerSizeFor('butter') && (
                     <Col xs={24} sm={12}>
                       <Form.Item label="Butter Paper Sticker Size" name={['productAttrs', 'butterPaperStickerSize']}>
+                        <Input placeholder="e.g. 3in x 2in" allowClear />
+                      </Form.Item>
+                    </Col>
+                  )}
+                  {showBottleStickerSize && (
+                    <Col xs={24} sm={12}>
+                      <Form.Item label="Bottle Sticker Size" name={['productAttrs', 'bottleStickerSize']}>
                         <Input placeholder="e.g. 3in x 2in" allowClear />
                       </Form.Item>
                     </Col>

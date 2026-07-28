@@ -36,7 +36,7 @@ export const apiSlice = createApi({
     'Reports', 'Notifications', 'Settings', 'Users', 'DeletedRecords',
     'Parties', 'PartyLedger', 'Expenses', 'Tasks', 'Operations', 'Stickers',
     'Dashboard', 'Kits', 'Options',
-    'Reminders', 'Transport', 'Pickups', 'HotelDesigns', 'SuggestedTasks',
+    'Reminders', 'Transport', 'Pickups', 'HotelDesigns', 'SuggestedTasks', 'TaskInsight',
     'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
     'GstConfig', 'TaskTimeConfig',
     'MaterialStocks', 'PackagingInvoices',
@@ -755,9 +755,16 @@ export const apiSlice = createApi({
       providesTags: ['SuggestedTasks', 'Tasks', 'Inventory'],
     }),
     // Button-triggered AI summary on top of Today's Checklist — use the lazy hook so it
-    // only fires on demand, not on every poll/refetch of getSuggestedTasks.
+    // only fires on demand, not on every poll/refetch of getSuggestedTasks. Persisted
+    // server-side, so it invalidates 'TaskInsight' for getLatestTaskInsight below.
     getSuggestedTasksInsight: builder.query({
       query: () => ({ url: '/tasks/suggested/insight' }),
+      invalidatesTags: ['TaskInsight'],
+    }),
+    // Restores the last persisted AI insight run on page load/refresh — no AI call.
+    getLatestTaskInsight: builder.query({
+      query: () => ({ url: '/tasks/suggested/insight/latest' }),
+      providesTags: ['TaskInsight'],
     }),
     getEmergencyRequests: builder.query({
       query: () => ({ url: '/tasks/emergency-requests' }),
@@ -1317,6 +1324,7 @@ export const {
   useLazyLookupHotelQuery,
   useGetSuggestedTasksQuery,
   useLazyGetSuggestedTasksInsightQuery,
+  useGetLatestTaskInsightQuery,
   useAssignTasksPerProductMutation,
   useSetOrderEmergencyMutation,
   useSplitPartialDeliveryMutation,

@@ -1109,7 +1109,7 @@ const YES_NO_ATTR_KEYS = new Set(['sticker', 'logo', 'printing', 'stickerPrintin
 const STICKER_LIKE_KEYS = new Set(['sticker', 'stickerPrinting']);
 // Internal per-packing-material sticker size keys stored on the inventory item — resolved into a
 // single "Sticker Size" field rather than shown as their own raw dropdowns (Inventory + Lead).
-const STICKER_SIZE_ATTR_KEYS = new Set(['boxStickerSize', 'ziplockStickerSize', 'butterPaperStickerSize']);
+const STICKER_SIZE_ATTR_KEYS = new Set(['boxStickerSize', 'ziplockStickerSize', 'butterPaperStickerSize', 'bottleStickerSize']);
 
 // Per-product-type attribute fields — kept in sync with Inventory's PRODUCT_FIELD_DEFS so the
 // lead form shows exactly the attributes that inventory collects for each product type. The
@@ -1134,6 +1134,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'fragrance', label: 'Fragrance', field: 'shampoo_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'shampoo_color', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'shampoo_stickerPrinting', options: _YES_NO },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'shampoo_stickerSize', options: [], showIf: 'stickerPrinting', inputType: 'readonly' },
   ],
   moisturizer: [
     { key: 'bottleType', label: 'Bottle Type', field: 'moisturizer_bottleType', options: _BOTTLE_TYPES },
@@ -1142,6 +1143,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'fragrance', label: 'Fragrance', field: 'moisturizer_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'moisturizer_color', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'moisturizer_stickerPrinting', options: _YES_NO },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'moisturizer_stickerSize', options: [], showIf: 'stickerPrinting', inputType: 'readonly' },
   ],
   shower_gel: [
     { key: 'bottleType', label: 'Bottle Type', field: 'shower_gel_bottleType', options: _BOTTLE_TYPES },
@@ -1150,6 +1152,7 @@ const PRODUCT_FIELD_DEFS_LEAD = {
     { key: 'fragrance', label: 'Fragrance', field: 'shower_gel_fragrance', options: [] },
     { key: 'color', label: 'Color', field: 'shower_gel_color', options: [] },
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'shower_gel_stickerPrinting', options: _YES_NO },
+    { key: 'stickerSize', label: 'Sticker Size', field: 'shower_gel_stickerSize', options: [], showIf: 'stickerPrinting', inputType: 'readonly' },
   ],
   brush: [
     { key: 'brushType', label: 'Brush Type', field: 'brush_brushType', options: _BRUSH_TYPES },
@@ -1415,18 +1418,26 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
 
   // Auto-fetch Sticker Size from the selected inventory item's per-packing-material size
   // (Box/Ziplock/Butter Paper) once Sticker is Yes — read-only, kept live as the packing
-  // material or the selected inventory item changes.
-  const activeStickerFlag = productTypeKey === 'soap' ? stickerPrintingVal : stickerVal;
+  // material or the selected inventory item changes. Bottle-type products (shampoo/
+  // moisturizer/shower gel) have no packing material at all — their sticker toggle is
+  // Sticker Printing, and Bottle Sticker Size is resolved directly (not per packing material).
+  const isBottleType = productTypeKey === 'shampoo' || productTypeKey === 'moisturizer' || productTypeKey === 'shower_gel';
+  const activeStickerFlag = (productTypeKey === 'soap' || isBottleType) ? stickerPrintingVal : stickerVal;
   React.useEffect(() => {
     if (activeStickerFlag !== 'YES') return;
-    const pm = String(packingMaterialVal || '').toLowerCase();
     const attrs = invItem?.productAttributes || {};
-    const resolved = pm.includes('box') ? attrs.boxStickerSize
-      : pm.includes('ziplock') ? attrs.ziplockStickerSize
-      : pm.includes('butter') ? attrs.butterPaperStickerSize
-      : '';
+    let resolved = '';
+    if (isBottleType) {
+      resolved = attrs.bottleStickerSize;
+    } else {
+      const pm = String(packingMaterialVal || '').toLowerCase();
+      resolved = pm.includes('box') ? attrs.boxStickerSize
+        : pm.includes('ziplock') ? attrs.ziplockStickerSize
+        : pm.includes('butter') ? attrs.butterPaperStickerSize
+        : '';
+    }
     form.setFieldValue([fieldName, name, 'stickerSize'], resolved || '');
-  }, [activeStickerFlag, packingMaterialVal, invItem, fieldName, name, form]);
+  }, [activeStickerFlag, isBottleType, packingMaterialVal, invItem, fieldName, name, form]);
 
   return (
     <div
@@ -13173,6 +13184,93 @@ export default function Sales() {
                 </Card>
               )}
 
+              {/* ── Urgent / Emergency Deliveries (Partial) — always editable, matching Order Edit ── */}
+              {(isAddLead || isAddCustomer || (isDetail && editingSection === 'delivery')) && (
+                <Card
+                  style={{ borderRadius: 14, marginBottom: 16, border: '1px solid rgba(255,77,79,0.25)', boxShadow: '0 2px 12px rgba(255,77,79,0.08)', background: cardBg }}
+                  title={<Space><div style={{ width: 4, height: 20, background: '#ff4d4f', borderRadius: 2, display: 'inline-block' }} /><WarningOutlined style={{ color: '#ff4d4f' }} /><span style={{ color: '#ff4d4f', fontWeight: 600 }}>Urgent / Emergency Deliveries (Partial)</span></Space>}
+                >
+                  <Form.List name="splitDates">
+                    {(dateFields, { add: addDate, remove: removeDate }) => (
+                      <div>
+                        {dateFields.map(({ key: dateKey, name: dateName, ...dateRest }) => (
+                          <div key={dateKey} style={{ background: isDark ? 'rgba(255,77,79,0.05)' : 'rgba(255,77,79,0.03)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
+                            <Row gutter={[8, 0]} align="middle" style={{ marginBottom: 8 }}>
+                              <Col xs={24} sm={10}>
+                                <Form.Item {...dateRest} name={[dateName, 'date']} label="Partial Delivery Date" style={{ marginBottom: 0 }}>
+                                  <DatePicker style={{ width: '100%' }} size="small" />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={14} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', paddingBottom: 2 }}>
+                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => removeDate(dateName)}>
+                                  Remove Entry
+                                </Button>
+                              </Col>
+                            </Row>
+
+                            <Form.List name={[dateName, 'products']}>
+                              {(prodFields, { add: addProd, remove: removeProd }) => (
+                                <div>
+                                  {prodFields.map(({ key: prodKey, name: prodName, ...prodRest }) => (
+                                    <div key={prodKey} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fff', borderRadius: 8, padding: '8px 10px', marginBottom: 6, border: '1px solid rgba(255,77,79,0.12)' }}>
+                                      <Row gutter={[8, 0]} align="middle">
+                                        <Col xs={24} sm={8}>
+                                          <Form.Item {...prodRest} name={[prodName, 'product']} label="Product" style={{ marginBottom: 0 }}>
+                                            <Select
+                                              size="small"
+                                              placeholder="Select composition"
+                                              allowClear
+                                              onChange={(val) => {
+                                                const totalQty = emergencySelectionTotalQty(val, watchedLeadProducts, watchedKitOrders);
+                                                if (totalQty) leadForm.setFieldValue(['splitDates', dateName, 'products', prodName, 'qty'], totalQty);
+                                              }}
+                                            >
+                                              {ensureCurrentValueOption(
+                                                buildEmergencySelectionOptions(watchedLeadProducts, watchedPackagingIncludes, watchedKitOrders),
+                                                leadForm.getFieldValue(['splitDates', dateName, 'products', prodName, 'product']),
+                                                watchedLeadProducts,
+                                              ).map((o) => (
+                                                <Option key={o.value} value={o.value} style={o.isKit ? { fontWeight: 600, color: '#722ed1' } : undefined}>{o.label}</Option>
+                                              ))}
+                                            </Select>
+                                          </Form.Item>
+                                        </Col>
+                                        <Col xs={24} sm={4}>
+                                          <Form.Item {...prodRest} name={[prodName, 'qty']} label="Qty" style={{ marginBottom: 0 }}>
+                                            <InputNumber size="small" style={{ width: '100%' }} min={1} placeholder="Qty" />
+                                          </Form.Item>
+                                        </Col>
+                                        <Col xs={24} sm={9}>
+                                          <Form.Item {...prodRest} name={[prodName, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
+                                            <Input size="small" placeholder="e.g. First batch 500 units" />
+                                          </Form.Item>
+                                        </Col>
+                                        <Col xs={24} sm={3} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 20 }}>
+                                          <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addProd()} style={{ color: '#ff4d4f', padding: '0 4px' }} title="Add product row" />
+                                          <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => removeProd(prodName)} style={{ padding: '0 4px' }} />
+                                        </Col>
+                                      </Row>
+                                    </div>
+                                  ))}
+                                  {prodFields.length === 0 && (
+                                    <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addProd()} block style={{ borderColor: '#ff4d4f55', color: '#ff4d4f', marginBottom: 4 }}>
+                                      + Add Product
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
+                            </Form.List>
+                          </div>
+                        ))}
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addDate({ products: [{}] })} block style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>
+                          Add Urgent / Emergency Delivery (Partial)
+                        </Button>
+                      </div>
+                    )}
+                  </Form.List>
+                </Card>
+              )}
+
               {/* ── Delivery & Payment — unified card ────────── */}
               {(isAddLead || isAddCustomer || isDetail) && (
                 <Card
@@ -13456,92 +13554,6 @@ export default function Sales() {
                       </Form.Item>
                     </Col>
                   </Row>
-
-                  {/* Urgent / Emergency Deliveries (Partial) */}
-                  <Divider style={{ margin: '16px 0 12px', fontSize: 12, color: '#ff4d4f', borderColor: 'rgba(255,77,79,0.2)' }}>
-                    <Space>
-                      <WarningOutlined style={{ color: '#ff4d4f' }} />
-                      <span style={{ color: '#ff4d4f', fontWeight: 600 }}>Urgent / Emergency Deliveries (Partial)</span>
-                    </Space>
-                  </Divider>
-                  <Form.List name="splitDates">
-                    {(dateFields, { add: addDate, remove: removeDate }) => (
-                      <div>
-                        {dateFields.map(({ key: dateKey, name: dateName, ...dateRest }) => (
-                          <div key={dateKey} style={{ background: isDark ? 'rgba(255,77,79,0.05)' : 'rgba(255,77,79,0.03)', border: '1px solid rgba(255,77,79,0.2)', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
-                            <Row gutter={[8, 0]} align="middle" style={{ marginBottom: 8 }}>
-                              <Col xs={24} sm={10}>
-                                <Form.Item {...dateRest} name={[dateName, 'date']} label="Partial Delivery Date" style={{ marginBottom: 0 }}>
-                                  <DatePicker style={{ width: '100%' }} size="small" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={14} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', paddingBottom: 2 }}>
-                                <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => removeDate(dateName)}>
-                                  Remove Entry
-                                </Button>
-                              </Col>
-                            </Row>
-
-                            <Form.List name={[dateName, 'products']}>
-                              {(prodFields, { add: addProd, remove: removeProd }) => (
-                                <div>
-                                  {prodFields.map(({ key: prodKey, name: prodName, ...prodRest }) => (
-                                    <div key={prodKey} style={{ background: isDark ? 'rgba(255,255,255,0.03)' : '#fff', borderRadius: 8, padding: '8px 10px', marginBottom: 6, border: '1px solid rgba(255,77,79,0.12)' }}>
-                                      <Row gutter={[8, 0]} align="middle">
-                                        <Col xs={24} sm={8}>
-                                          <Form.Item {...prodRest} name={[prodName, 'product']} label="Product" style={{ marginBottom: 0 }}>
-                                            <Select
-                                              size="small"
-                                              placeholder="Select composition"
-                                              allowClear
-                                              onChange={(val) => {
-                                                const totalQty = emergencySelectionTotalQty(val, watchedLeadProducts, watchedKitOrders);
-                                                if (totalQty) leadForm.setFieldValue(['splitDates', dateName, 'products', prodName, 'qty'], totalQty);
-                                              }}
-                                            >
-                                              {ensureCurrentValueOption(
-                                                buildEmergencySelectionOptions(watchedLeadProducts, watchedPackagingIncludes, watchedKitOrders),
-                                                leadForm.getFieldValue(['splitDates', dateName, 'products', prodName, 'product']),
-                                                watchedLeadProducts,
-                                              ).map((o) => (
-                                                <Option key={o.value} value={o.value} style={o.isKit ? { fontWeight: 600, color: '#722ed1' } : undefined}>{o.label}</Option>
-                                              ))}
-                                            </Select>
-                                          </Form.Item>
-                                        </Col>
-                                        <Col xs={24} sm={4}>
-                                          <Form.Item {...prodRest} name={[prodName, 'qty']} label="Qty" style={{ marginBottom: 0 }}>
-                                            <InputNumber size="small" style={{ width: '100%' }} min={1} placeholder="Qty" />
-                                          </Form.Item>
-                                        </Col>
-                                        <Col xs={24} sm={9}>
-                                          <Form.Item {...prodRest} name={[prodName, 'notes']} label="Notes" style={{ marginBottom: 0 }}>
-                                            <Input size="small" placeholder="e.g. First batch 500 units" />
-                                          </Form.Item>
-                                        </Col>
-                                        <Col xs={24} sm={3} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 20 }}>
-                                          <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addProd()} style={{ color: '#ff4d4f', padding: '0 4px' }} title="Add product row" />
-                                          <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => removeProd(prodName)} style={{ padding: '0 4px' }} />
-                                        </Col>
-                                      </Row>
-                                    </div>
-                                  ))}
-                                  {prodFields.length === 0 && (
-                                    <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addProd()} block style={{ borderColor: '#ff4d4f55', color: '#ff4d4f', marginBottom: 4 }}>
-                                      + Add Product
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
-                            </Form.List>
-                          </div>
-                        ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addDate({ products: [{}] })} block style={{ borderColor: '#ff4d4f55', color: '#ff4d4f' }}>
-                          Add Urgent / Emergency Delivery (Partial)
-                        </Button>
-                      </div>
-                    )}
-                  </Form.List>
 
                   {(watchedLeadType || record.leadType) !== 'SAMPLE' && <DeliveryPaymentFields showUpload />}
 

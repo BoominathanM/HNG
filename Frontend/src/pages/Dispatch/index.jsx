@@ -60,6 +60,17 @@ const isToday = (dateStr) => {
   return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
 };
 
+// Order.destination is a legacy field that's almost never populated now that Lead/Order
+// carry a dedicated shipping address (shippingCity/shippingState) — reading it directly
+// left the Destination column blank for most orders. Compose from the shipping address
+// first (falling back to the billing city/state, then the legacy destination field).
+const resolveDestination = (o) => {
+  const city = o?.shippingCity || o?.city;
+  const state = o?.shippingState || o?.state;
+  if (city && state) return `${city}, ${state}`;
+  return city || state || o?.destination || '—';
+};
+
 // Escapes a value for CSV — wraps in quotes (and doubles any inner quotes) whenever
 // the field itself could contain a comma, e.g. the combined address string below.
 const csvCell = (v) => {
@@ -196,7 +207,7 @@ export default function Dispatch() {
       // panel below tell an assigned product/kit apart from one nobody's picked up yet.
       tasks: d.tasks || [],
       // Customer / address fields (now populated from the order)
-      destination: d.orderId?.destination || '—',
+      destination: resolveDestination(d.orderId),
       salesPerson: d.orderId?.assignedTo?.fullName || '—',
       contactPerson: d.orderId?.contactPerson || d.orderId?.clientName || '—',
       phone: d.orderId?.clientPhone || d.orderId?.phone || '—',
@@ -230,7 +241,7 @@ export default function Dispatch() {
       status: t.status || 'In Transit',
       // Dispatch details joined in from the linked Order/DispatchRecord (see
       // getTransports) — previously these columns had no data source at all.
-      destination: t.orderId?.destination || '—',
+      destination: resolveDestination(t.orderId),
       contactPerson: t.orderId?.contactPerson || '—',
       phone: t.orderId?.clientPhone || '—',
       salesPerson: t.orderId?.assignedTo?.fullName || t.orderId?.salesPerson || '—',

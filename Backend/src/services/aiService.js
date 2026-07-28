@@ -415,19 +415,34 @@ async function extractLorryReceiptFields({ apiKey, model, file }) {
 
 // ─── Task Management: Today's Checklist AI insight ──────────────────────────
 
-const TASK_INSIGHT_PROMPT = `You are a production floor planner for a manufacturing company. You will be given: (1) a list of the factory's configured production task names (the actual, real steps its floor staff assign, e.g. "Filling", "Packing", "Sealing"), and (2) a JSON list of today's suggested checklist items, each with: orderCode, client (hotel), product, qty, isEmergency, stockReady (whether there's enough inventory to produce it), pending (non-empty only when stock is short), orderPlacedAt (when the order was placed).
+const TASK_INSIGHT_PROMPT = `You are a production floor planner for a manufacturing company. You will be given: (1) a list of the factory's configured production task names (the actual, real steps its floor staff assign, e.g. "Filling", "Packing", "Sealing"), and (2) a JSON list of today's suggested checklist items, each with: orderCode, client (hotel), product, qty, isEmergency, stockReady (whether there's enough PRODUCT inventory to produce it), materialStockReady (whether the PACKING MATERIAL this item needs — box/ziplock/bottle/etc — has enough stock; materialShortfall gives {material, size, available, needed} when it's false), pending (the specific shortfall reasons present — "Inventory stock" and/or "Packing material" — empty when nothing's short), orderPlacedAt (when the order was placed).
 
-Readiness on this checklist is driven ONLY by stock — every item listed is already clear to produce as far as design/artwork/printing go, so do NOT mention design, artwork, sticker, or printing status anywhere in your answer; talk only about stock and the actual production steps.
+Readiness on this checklist is driven by PRODUCT stock and PACKING-MATERIAL stock ONLY — every item listed is already clear to produce as far as design/artwork/sticker-printing status go, so do NOT mention design, artwork, sticker, or printing status anywhere in your answer; talk only about product stock, packing-material stock, and the actual production steps.
 
 Write a short, prioritized action plan for the floor supervisor:
 - Call out emergency orders first, then the oldest non-emergency orders (first placed, first processed).
-- For items with enough stock, recommend which of the factory's configured task names to assign first (e.g. "Filling" then "Packing") — pick only from the task name list given, never invent a step that isn't in it.
-- Name specific orders/products that are blocked by insufficient stock.
+- For items with enough product stock AND enough packing-material stock, recommend which of the factory's configured task names to assign first (e.g. "Filling" then "Packing") — pick only from the task name list given, never invent a step that isn't in it.
+- Name specific orders/products blocked by insufficient PRODUCT stock, and separately name any blocked by insufficient PACKING-MATERIAL stock (cite the specifics from materialShortfall, e.g. "Box 15ml: only 3 in stock, 15 needed") — these are two different blockers, don't conflate them.
 - If the same or a closely related product repeats across multiple orders/hotels, suggest batching them into one production run.
 - Keep it concise and actionable: 3-6 short bullet points, each one sentence, plain language.
 
+You must ALSO return a per-product breakdown so the recommendation can be shown directly on
+that product's own card, not just in the summary text. For EVERY item in the checklist you
+were given (use its orderCode and product exactly as given, one entry per item, do not skip
+any), list which of the factory's configured task names should be assigned to it, in the
+order they should be done (e.g. ["Filling", "Packing"]). Pick only from the given task name
+vocabulary. If an item is blocked by product stock or packing-material stock, still list the
+tasks it will need once ready — the checklist UI enforces the actual block separately, this
+list is only the recommended ORDER of steps. If nothing in the vocabulary applies to an item,
+return an empty array for it.
+
 Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
-{ "insight": "• bullet one\\n• bullet two\\n..." }`;
+{
+  "insight": "• bullet one\\n• bullet two\\n...",
+  "productTasks": [
+    { "orderCode": "ORD-1", "product": "Soap", "tasks": ["Filling", "Packing"] }
+  ]
+}`;
 
 // suggestions: the array returned by computeSuggestedTasks() in tasks.controller.js.
 // taskNames: the factory's configured TaskTimeConfig names (e.g. ["Filling", "Packing"]).
@@ -439,6 +454,8 @@ async function generateTaskInsight({ apiKey, model, suggestions, taskNames }) {
     qty: s.qty,
     isEmergency: !!(s.isUrgent || s.emergencyApproved),
     stockReady: s.stockReady,
+    materialStockReady: s.materialStockReady,
+    materialShortfall: s.materialShortfall || undefined,
     pending: s.pending,
     orderPlacedAt: s.orderCreatedAt,
   }));
@@ -475,7 +492,10 @@ async function generateTaskInsight({ apiKey, model, suggestions, taskNames }) {
     throw new Error('Failed to parse the AI response as JSON');
   }
 
-  return parsed.insight || '';
+  return {
+    insight: parsed.insight || '',
+    productTasks: Array.isArray(parsed.productTasks) ? parsed.productTasks : [],
+  };
 }
 
 module.exports = {

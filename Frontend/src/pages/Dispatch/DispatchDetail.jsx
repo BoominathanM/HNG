@@ -32,12 +32,36 @@ import {
   useUploadFilesMutation,
   useScanDispatchLRMutation,
 } from '../../store/api/apiSlice';
-import { buildDocComposition } from '../../utils/docComposition';
+import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
+import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDispatchGroupedProducts, summarizeDispatchVerification, getRowPendingQty } from '../../utils/dispatchGrouping';
 
 const { Title, Text } = Typography;
+
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Kit-aware grand total for a (possibly dispatch-filtered) products/kitOrders set —
+// mirrors Billing's computeCompositionGrandTotal (Billing/index.jsx) exactly, so the
+// Dispatch-printed invoice total is computed the same way Billing computes its own
+// live total instead of trusting the Invoice document's frozen `total` snapshot, which
+// is what caused the two printed totals to drift apart after an order edit.
+function computeCompositionGrandTotal(rec = {}, kitsData = []) {
+  if ((rec.packagingIncludes || []).length > 0 && kitsData.length > 0) {
+    const comp = computePersonalizedComposition(rec, kitsData);
+    const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
+    const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    const roundOffTotal = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
+    const separateKit = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
+    const separateProduct = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
+    return r2(comp.totalPersonalized + separateKit + separateProduct + fwd + courier + roundOffTotal);
+  }
+  const products = (rec.products || []).filter(Boolean);
+  const kitOrders = (rec.kitOrders || []).filter(Boolean);
+  if (!products.length && !kitOrders.length) return 0;
+  return computeRecordGrandTotal(rec);
+}
 
 const statusColor = {
   'Ready to Dispatch': '#C94F8A',
@@ -169,8 +193,10 @@ export default function DispatchDetail() {
   // Shared by Print Invoice and the WhatsApp "Dispatch Notify" send — builds the same
   // invoice data shape DocumentTemplate expects from the Billing invoice linked to this order.
   // filterVerified=true (the default — used everywhere except the explicit "Full Invoice"
-  // button once fully dispatched) drops any product/kit line whose dispatch item isn't
-  // verified, so the printed invoice only ever shows what's actually been checked and boxed.
+  // button once fully dispatched) drops any product/kit line that hasn't actually been
+  // dispatched yet, scaled by count (see effectiveKitOverallQty/effectivePackagingIncludes
+  // below), so the printed invoice's product/kit + count based total is computed the exact
+  // same way (buildDocComposition/computeCompositionGrandTotal) as the Billing invoice.
   const buildInvoiceData = async (inv, filterVerified = true) => {
     const halfGst = Math.round((inv.gstAmount || 0) / 2 * 100) / 100;
 
@@ -181,22 +207,27 @@ export default function DispatchDetail() {
       : (linkedOrder?.items?.length ? linkedOrder.items : []);
     let srcKitOrders = linkedOrder?.kitOrders || [];
 
+    // Built unconditionally (not just inside the filterVerified branch below) — also needed
+    // further down to scale the personalized kit's OWN overall qty and its packagingIncludes,
+    // which otherwise bypass the products/kitOrders filtering entirely (see comment below).
+    const kitDispatchByKitId = new Map((order?.kitDispatch || []).map((kd) => [String(kd.kitId), kd]));
+    const isKitDispatched = (kitId) => {
+      const kd = kitId ? kitDispatchByKitId.get(String(kitId)) : null;
+      return !!(kd && (kd.dispatchedQty || 0) > 0);
+    };
+
     if (filterVerified) {
       // dispatch items (order.items) line up positionally with the order's own
       // products/items array — same fallback convention dispatchGrouping.js and the
       // emergency-badge lookup below already rely on — so "actually dispatched" state at
       // index i applies to srcProds[i]. Kit-linked items are dispatched as one unit via
-      // kitDispatch (dispatchedQty > 0 for that kit); plain items use their own
-      // qtyDispatched — replaces the old per-item verified flag.
+      // kitDispatch (dispatchedQty > 0 for that kit); plain items use their own qtyDispatched.
       const dispatchItemsList = order?.items || [];
-      const kitDispatchByKitId = new Map((order?.kitDispatch || []).map((kd) => [String(kd.kitId), kd]));
       const dispatchedIndexSet = new Set(
         dispatchItemsList
           .map((it, i) => {
             if (!it?._id) return -1;
-            const isDispatched = it.kitId
-              ? (kitDispatchByKitId.get(String(it.kitId))?.dispatchedQty || 0) > 0
-              : (it.qtyDispatched || 0) > 0;
+            const isDispatched = it.kitId ? isKitDispatched(it.kitId) : (it.qtyDispatched || 0) > 0;
             return isDispatched ? i : -1;
           })
           .filter((i) => i >= 0)
@@ -206,18 +237,63 @@ export default function DispatchDetail() {
       srcProds = filteredProds;
     }
 
-    // Pre-built personalized composition (outer packaging folded into Section A's total,
-    // included kits/products broken out, remaining in B/C) so the printed invoice matches the
-    // Billing invoice exactly. Null when there is no personalized packaging → flat fallback.
-    const composition = buildDocComposition({
+    // The personalized kit's OWN overall qty (kitOverallQty) and its packagingIncludes list
+    // feed computePersonalizedComposition's "outer packaging" and "included kit/product" totals
+    // DIRECTLY — independent of the products/kitOrders arrays just filtered above — so without
+    // scaling these too, the dispatched-only invoice kept showing the FULL personalized-kit qty
+    // (and everything packed inside it) even when only part (or none) of it had been dispatched.
+    let effectiveKitOverallQty = linkedOrder?.kitOverallQty || 0;
+    let effectivePackagingIncludes = linkedOrder?.packagingIncludes || [];
+    if (filterVerified) {
+      const personalizedKo = (linkedOrder?.kitOrders || []).find((ko) => (ko.category || 'separate_kit') === 'personalized');
+      effectiveKitOverallQty = isKitDispatched(personalizedKo?.kitId)
+        ? (kitDispatchByKitId.get(String(personalizedKo.kitId))?.dispatchedQty || 0)
+        : 0;
+
+      // Name lookup for included SEPARATE PRODUCTS (packagingIncludes can reference a
+      // product name, not just a kit id) — same positional fallback as the item filter above.
+      const itemByLowerName = new Map(
+        (order?.items || []).map((it, i) => {
+          const fallback = (order?.orderRawItems || [])[i] || {};
+          const nm = (it.product || it.itemName || fallback.product || fallback.itemName || fallback.name || '').toLowerCase();
+          return [nm, it];
+        })
+      );
+      const isIncludedTargetDispatched = (idOrName) => {
+        if (isKitDispatched(idOrName)) return true;
+        const it = itemByLowerName.get(String(idOrName || '').toLowerCase());
+        return (it?.qtyDispatched || 0) > 0;
+      };
+      const piRaw = linkedOrder?.packagingIncludes || [];
+      effectivePackagingIncludes = (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null)
+        ? piRaw.filter((p) => isIncludedTargetDispatched(p.id))
+        : piRaw.filter((pid) => isIncludedTargetDispatched(pid));
+    }
+
+    // Shared composition input — reused for both the display composition (below) and the
+    // live grand total (next), so both are always computed from the exact same item set.
+    const compositionRec = {
       products: srcProds,
       kitOrders: srcKitOrders,
       kitPrice: linkedOrder?.kitPrice,
-      kitOverallQty: linkedOrder?.kitOverallQty,
-      packagingIncludes: linkedOrder?.packagingIncludes || [],
+      kitOverallQty: effectiveKitOverallQty,
+      packagingIncludes: effectivePackagingIncludes,
       packagingIncludesQty: linkedOrder?.packagingIncludesQty || {},
-    }, kits);
-    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      forwardingCharge: order?.forwardingCharge || false,
+      forwardingChargeAmount: order?.forwardingChargeAmount || 0,
+      paymentCollection: linkedOrder?.paymentCollection || [],
+    };
+
+    // Pre-built personalized composition (outer packaging folded into Section A's total,
+    // included kits/products broken out, remaining in B/C) so the printed invoice matches the
+    // Billing invoice exactly. Null when there is no personalized packaging → flat fallback.
+    const composition = buildDocComposition(compositionRec, kits);
+    // Live kit-aware grand total for this exact item set — mirrors Billing's own total
+    // calculation instead of trusting Invoice.total, which is frozen at invoice-creation
+    // time and drifts once kit prices are edited or (for the dispatched-only print) once
+    // only a subset of the order's items are actually going out. Falls back to the stored
+    // invoice total only when there's no product/kit data to compute from at all.
+    const liveTotal = computeCompositionGrandTotal(compositionRec, kits);
 
     const customerName = inv.partyId?.name || order?.client || '—';
     const pendingDue = await fetchHotelPendingDue({
@@ -231,7 +307,7 @@ export default function DispatchDetail() {
       pendingDue,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       type: inv.invoiceType || 'GST',
-      total: inv.total || 0,
+      total: liveTotal > 0 ? liveTotal : (inv.total || 0),
       gst: composition ? composition.gst : (inv.gstAmount || 0),
       taxableAmount: composition ? composition.taxable : (inv.subtotal || 0),
       cgst: composition ? r2(composition.gst / 2) : halfGst,
@@ -649,13 +725,20 @@ export default function DispatchDetail() {
   const handleConfirmDispatch = async () => {
     enqueueSnackbar('Confirming dispatch...', { variant: 'info' });
     try {
+      // The real invoice number/date live on the Billing invoice already linked to this
+      // order (shown as the green tag next to "Invoice" below) — there's no separate
+      // "Invoice Number" input on this form, so pull it from there rather than a form
+      // field that doesn't exist (which used to silently send '' and left the Transport
+      // tab's Invoice No. column blank for every dispatch).
+      const rawInvoices = orderInvoicesData?.data || [];
+      const linkedInvoice = rawInvoices[0];
+
       // WhatsApp checkbox is on: the "Dispatch Notify" template requires a document
       // header, so generate the Billing invoice as a PDF and upload it first — the
       // resulting URL rides along on the confirm request as invoiceDocumentUrl.
       let invoiceDocumentUrl = '';
       let invoiceDocumentFilename = '';
       if (notifyWhatsApp) {
-        const rawInvoices = orderInvoicesData?.data || [];
         if (rawInvoices.length === 0) {
           enqueueSnackbar('No invoice found for this order — create one in Billing first, or uncheck the WhatsApp notify option.', { variant: 'warning' });
         } else {
@@ -692,11 +775,11 @@ export default function DispatchDetail() {
       formData.append('kitCounts', JSON.stringify(kitCounts));
       formData.append('productCounts', JSON.stringify(productCounts));
       formData.append('dispatchType', willFullyComplete ? 'Full Dispatch' : 'Partial Dispatch');
-      formData.append('invoiceNumber', vals.invoiceNumber || '');
+      formData.append('invoiceNumber', linkedInvoice?.invoiceNumber || order.storedInvoiceNumber || '');
       // Persist a forwarding-charge override raised here — otherwise the edit only
       // lives in local state and reverts to the original amount on reload.
       if (order.forwardingCharge) formData.append('forwardingChargeAmount', effectiveFwdAmount);
-      if (vals.invoiceDate) formData.append('invoiceDate', vals.invoiceDate.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate);
+      if (linkedInvoice?.invoiceDate) formData.append('invoiceDate', new Date(linkedInvoice.invoiceDate).toISOString().slice(0, 10));
       // Backend reads sendWhatsapp (FormData sends it as a string) — single checkbox now
       // governs whether the "Dispatch Notify" WhatsApp message goes out. It only actually
       // sends when an invoice document URL was successfully prepared above.
@@ -738,11 +821,14 @@ export default function DispatchDetail() {
       const lrVals = lrForm.getFieldsValue();
       const trackVals = trackingForm.getFieldsValue();
       const lrFileUrl = lrFileList?.[0]?.url || lrFileList?.[0]?.response?.url || undefined;
+      // Same reasoning as handleConfirmDispatch — there's no "Invoice Number" form field,
+      // so pull it from the Billing invoice already linked to this order.
+      const linkedInvoice = orderInvoicesData?.data?.[0];
       await saveAsDraft({
         id,
         dispatchType: order.storedDispatchType || undefined,
-        invoiceNumber: vals.invoiceNumber || undefined,
-        invoiceDate: vals.invoiceDate?.format ? vals.invoiceDate.format('YYYY-MM-DD') : vals.invoiceDate,
+        invoiceNumber: linkedInvoice?.invoiceNumber || order.storedInvoiceNumber || undefined,
+        invoiceDate: linkedInvoice?.invoiceDate ? new Date(linkedInvoice.invoiceDate).toISOString().slice(0, 10) : undefined,
         transportName: lrVals.transportName || vals.transport || undefined,
         weight: lrVals.weight || vals.weight || undefined,
         boxes: vals.boxes ?? undefined,

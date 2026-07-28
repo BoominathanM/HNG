@@ -178,15 +178,39 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, total: sortedIds.length, emergencyCount, page, data: dispatches });
 });
 
-// Today's dispatches — dispatch records whose linked order has expectedDeliveryDate = today.
+// Today's dispatches — dispatch records whose linked order has expectedDeliveryDate = today,
+// PLUS any order actually dispatched (fully or partially, any round) today regardless of its
+// tentative delivery date — e.g. tentative date is tomorrow but the team ships it today, so it
+// still needs to show up here rather than only surfacing in "All Orders".
 exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  // Find all orders whose expected delivery date falls today.
-  const todayFilter = { expectedDeliveryDate: { $gte: start, $lte: end } };
+  const todayRange = { $gte: start, $lte: end };
   const visibleIds = await visibleOrderIds(req.user);
-  if (visibleIds) todayFilter._id = { $in: visibleIds };
-  const todayOrderIds = await Order.find(todayFilter).distinct('_id');
+
+  // Orders whose tentative delivery date falls today.
+  const tentativeFilter = { expectedDeliveryDate: todayRange };
+  if (visibleIds) tentativeFilter._id = { $in: visibleIds };
+  const tentativeTodayIds = await Order.find(tentativeFilter).distinct('_id');
+
+  // Orders with a dispatch round (full confirm, partial checkpoint, or a finished
+  // dispatchHistory round) that happened today, regardless of tentative delivery date.
+  const dispatchedTodayIds = await DispatchRecord.find({
+    $or: [
+      { dispatchedAt: todayRange },
+      { partialDispatchAt: todayRange },
+      { 'dispatchHistory.date': todayRange },
+    ],
+  }).distinct('orderId');
+
+  const idMap = new Map();
+  [...tentativeTodayIds, ...dispatchedTodayIds].forEach((id) => { if (id) idMap.set(String(id), id); });
+  let todayOrderIds = [...idMap.values()];
+  if (visibleIds) {
+    const visibleSet = new Set(visibleIds.map(String));
+    todayOrderIds = todayOrderIds.filter((id) => visibleSet.has(String(id)));
+  }
+
   const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
     .populate({
       path: 'orderId',
@@ -254,8 +278,11 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
 
   dispatch.status = 'Confirmed';
-  dispatch.invoiceNumber = req.body.invoiceNumber;
-  dispatch.invoiceDate = req.body.invoiceDate;
+  // Guard against blanking an already-stored invoice number/date on a later round (e.g. a
+  // Full Dispatch confirm that follows an earlier Partial Dispatch round) when this
+  // particular request doesn't carry one.
+  if (req.body.invoiceNumber) dispatch.invoiceNumber = req.body.invoiceNumber;
+  if (req.body.invoiceDate) dispatch.invoiceDate = req.body.invoiceDate;
   // Single checkbox on the frontend now governs the WhatsApp dispatch notification.
   // FormData sends booleans as strings; treat 'false' (string or boolean) as disabled.
   const sendWhatsapp = req.body.sendWhatsapp !== false && req.body.sendWhatsapp !== 'false';
@@ -401,7 +428,8 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
 
   // Log this round in the history trail — only when something was actually dispatched
   // (an empty/no-op confirm shouldn't clutter the log).
-  if (historyKits.length || historyProducts.length) {
+  const dispatchedSomethingThisRound = historyKits.length || historyProducts.length;
+  if (dispatchedSomethingThisRound) {
     dispatch.dispatchHistory.push({
       date: Date.now(),
       dispatchType: dispatch.dispatchType,
@@ -412,6 +440,29 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
       products: historyProducts,
       confirmedByName: req.user?.fullName || req.user?.name || '',
     });
+  }
+
+  // Give THIS round its own Transport row the moment it's confirmed — not only when
+  // "Finished Dispatch" (uploadLR) is later clicked for it. A dispatcher can confirm
+  // several rounds back-to-back (Partial, Partial, Full) without ever clicking "Finished
+  // Dispatch" in between each one — the Confirm button isn't gated on the previous
+  // round being finished — so relying solely on uploadLR to create the Transport doc
+  // meant only whichever round eventually got "Finished Dispatch" clicked ever got a row;
+  // every earlier round's shipment silently never appeared in the Transport tab. Keyed on
+  // (dispatchId, roundIndex) — same key uploadLR uses — so uploadLR later just adds
+  // LR/tracking details on top of this row instead of creating a duplicate.
+  if (dispatchedSomethingThisRound) {
+    const roundIndex = dispatch.dispatchHistory.length - 1;
+    await Transport.findOneAndUpdate(
+      { dispatchId: dispatch._id, roundIndex },
+      {
+        dispatchId: dispatch._id, roundIndex, orderId: orderDoc?._id, orderCode: orderDoc?.orderCode,
+        clientName: orderDoc?.clientName, transportCompany: dispatch.transportName,
+        weight: dispatch.weight, boxes: dispatch.boxes,
+        dispatchedAt: Date.now(), status: 'In Transit', createdBy: req.user._id,
+      },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
   }
 
   // "Partial Dispatch" is a checkpoint, not a completion: stock for whatever was entered
@@ -585,12 +636,18 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
 
   await dispatch.save({ validateBeforeSave: false });
 
-  // Create/refresh a Transport record for the Transport tab.
+  // Create/refresh a Transport record for the Transport tab — keyed on (dispatchId,
+  // roundIndex) rather than dispatchId alone, so an order shipped across several rounds
+  // (Partial Dispatch finished, then later Full Dispatch finished) gets its OWN Transport
+  // row per round instead of the later round's LR/transport details silently overwriting
+  // the earlier round's row (same dispatchId, single upsert target). roundIndex mirrors
+  // the dispatchHistory entry this round just stamped above.
   const o = dispatch.orderId;
+  const roundIndex = Math.max(0, dispatch.dispatchHistory.length - 1);
   await Transport.findOneAndUpdate(
-    { dispatchId: dispatch._id },
+    { dispatchId: dispatch._id, roundIndex },
     {
-      dispatchId: dispatch._id, orderId: o?._id, orderCode: o?.orderCode, clientName: o?.clientName,
+      dispatchId: dispatch._id, roundIndex, orderId: o?._id, orderCode: o?.orderCode, clientName: o?.clientName,
       transportCompany: dispatch.transportName, lrNumber: dispatch.lrNumber, trackingUrl: dispatch.trackingUrl,
       fromCity: dispatch.fromCity, toCity: dispatch.toCity, weight: dispatch.weight,
       boxes: dispatch.boxes || Number(dispatch.packages) || undefined,
