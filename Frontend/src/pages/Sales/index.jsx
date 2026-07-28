@@ -8215,7 +8215,7 @@ export default function Sales() {
                     </div>
                   )}
                   <div style={{ marginTop: 14 }}>
-                    <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('order', oEnrichedForBreakdown)}>
+                    <Button icon={<PlusOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }} onClick={() => openPayEntry('order', oEnrichedForBreakdown, { precomputedTotal: oTotal, precomputedPaid: totalCollected })}>
                       Add Payment Entry
                     </Button>
                   </div>

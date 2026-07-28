@@ -218,7 +218,7 @@ async function computeSuggestedTasks() {
   // Only orders still awaiting production — once forwarded to Dispatch Ready the order
   // has already left this workflow, so it shouldn't keep resurfacing here.
   const orders = await Order.find({ deletedAt: null, status: 'In Production' })
-    .select('orderCode clientName items printingStatus printingStatusOverrides isUrgent isEmergency emergencyApproved displayUnitTab createdAt').lean();
+    .select('orderCode clientName items kitOrders printingStatus printingStatusOverrides isUrgent isEmergency emergencyApproved displayUnitTab createdAt').lean();
   // Same task NAME can be split across multiple tasks (different assignees), and a product
   // can independently need SEVERAL different task names (e.g. "Filling" then "Packing"),
   // each covering the full required qty on its own — see checkTaskQuantityOverflow /
@@ -252,7 +252,23 @@ async function computeSuggestedTasks() {
     (o.items || []).forEach((it, idx) => {
       const productKey = it.product || it.itemName || it.kitName || '';
       const isKitItem = !!(it.isKit || it.kitType || it.kitName);
-      const requiredQty = it.overallQty || it.qty || 0;
+      // A kit-component item's own `qty` (e.g. Brush/Paste inside "Dental kit") is only the
+      // PER-KIT ratio — Sales' applyKitsToForm seeds it straight from the Kit catalog
+      // definition ("1 brush per kit") and never multiplies it by the overall kit quantity
+      // chosen for this order. The real production requirement is that ratio × however many
+      // kits this order actually needs (order.kitOrders[].overallQty), same total the
+      // frontend's Kit Packing Task Assignment card computes. Without this, a 10-kit order
+      // shows "1" for Brush/Paste instead of "10".
+      const kitOrderMatch = isKitItem
+        ? (o.kitOrders || []).find((k) =>
+            (it.kitId && k.kitId && String(k.kitId) === String(it.kitId))
+            || (k.kitName && it.kitName && k.kitName.toLowerCase() === it.kitName.toLowerCase())
+            || (k.kitType && it.kitType && k.kitType.toLowerCase() === it.kitType.toLowerCase()))
+        : null;
+      const kitOverallQty = Number(kitOrderMatch?.overallQty) || Number(it.overallQty) || 0;
+      const requiredQty = isKitItem && kitOverallQty > 0
+        ? (Number(it.qty) || 0) * kitOverallQty
+        : (Number(it.overallQty) || Number(it.qty) || 0);
 
       // ── Stock readiness ──
       let stock;
@@ -265,7 +281,10 @@ async function computeSuggestedTasks() {
             const compStock = stockByName[(c.productName || '').toLowerCase()] ?? 0;
             return Math.floor(compStock / (c.qty || 1));
           }));
-          stockReady = stock >= requiredQty;
+          // `stock` is a count of KITS buildable, so it must be compared against kits
+          // NEEDED (kitOverallQty), not the per-product unit total in `requiredQty` — a
+          // >1 per-kit ratio would otherwise compare mismatched units.
+          stockReady = stock >= (kitOverallQty || requiredQty);
         } else {
           // Kit not found in the Kit catalog (legacy/unregistered) — can't verify components,
           // so don't falsely block on an unrelated/zero match.
@@ -343,7 +362,9 @@ async function computeSuggestedTasks() {
       suggestions.push({
         id: `${o._id}-${idx}`,
         orderId: o._id, orderCode: o.orderCode, client: o.clientName,
-        product: it.itemName, qty: it.qty, logoType: it.logoType,
+        // `qty` is the real production total (requiredQty), not the raw per-kit ratio
+        // stored on kit-component items — see the requiredQty comment above.
+        product: it.itemName, qty: requiredQty, logoType: it.logoType,
         isUrgent: isEmergencyOrder,
         emergencyApproved: !!o.emergencyApproved,
         orderCreatedAt: o.createdAt,

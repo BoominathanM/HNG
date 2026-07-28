@@ -242,7 +242,11 @@ const buildItemCostIndex = async (dateFilter = {}) => {
     if (!r.product || !r.qty) return;
     const key = r.product.trim().toLowerCase();
     if (!acc[key]) acc[key] = { amount: 0, qty: 0 };
-    acc[key].amount += r.inv_value;
+    // Excl-GST (taxable), not inv_value (GST-inclusive) — this index is compared against
+    // excl-GST product sales figures in Product-wise/Bill-wise P&L (Invoice.items prices are
+    // taxable, pre-GST), so averaging in the GST-inclusive invoice value here previously
+    // overstated per-unit COGS and understated Gross Profit for every item priced off history.
+    acc[key].amount += r.taxable;
     acc[key].qty += r.qty;
   });
   const index = {};
@@ -383,7 +387,11 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
       .populate('orderId', `kitOrders kitOverallQty orderCategory ${ORDER_MONEY_FIELDS}`)
       .populate('quotationId', 'kitOrders kitOverallQty'),
-    PurchaseOrder.find(poDateFilter),
+    // itemId/items.itemId gstPercent populated so COGS can be split into taxable + GST
+    // below (explodePurchaseOrderItems needs it) — same population as getMonthlyGst.
+    PurchaseOrder.find(poDateFilter)
+      .populate('itemId', 'gstPercent')
+      .populate('items.itemId', 'gstPercent'),
     LocalPurchase.find(poDateFilter),
     // Expenses are dated by expenseDate, not createdAt — filtering by createdAt would
     // exclude/include the wrong entries whenever an expense is backdated.
@@ -402,8 +410,33 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
 
   const totalSales = invRows.reduce((s, r) => s + r.taxable, 0);
   const totalSalesGst = invRows.reduce((s, r) => s + r.gstAmt, 0);
-  const totalCogs = purchaseOrders.reduce((s, o) => s + (Number(o.amount) || 0), 0)
-    + localPurchases.reduce((s, l) => s + (Number(l.totalAmount) || 0), 0);
+
+  // COGS must be excl-GST (taxable) to be comparable with totalSales above, which is also
+  // excl-GST (resolveInvoiceMoney's `taxable`, same as every other Invoice-sourced report
+  // tab). Summing raw PurchaseOrder.amount here (GST-inclusive, per explodePurchaseOrderItems'
+  // own comment) previously subtracted a GST-inclusive cost from a GST-exclusive revenue
+  // figure, understating Gross Profit by the purchase-side GST — and the frontend's "Incl. GST"
+  // toggle then added cogsGst back on top of that already-inclusive cogs, double-counting it.
+  // Split each PO's amount into taxable/GST per line item (same explode+split the Purchase
+  // Report / Monthly GST report already do) so cogs/cogsGst below are real excl-GST + GST parts.
+  let totalCogs = 0;
+  let totalCogsGst = 0;
+  const poCostRows = [];
+  purchaseOrders.forEach((po) => {
+    explodePurchaseOrderItems(po).forEach((it) => {
+      const gstRate = it.gstPercent ?? 18;
+      const taxable = gstRate > 0 ? it.amount / (1 + gstRate / 100) : it.amount;
+      const gstAmt = it.amount - taxable;
+      totalCogs += taxable;
+      totalCogsGst += gstAmt;
+      poCostRows.push({ createdAt: po.createdAt, taxable, gstAmt });
+    });
+  });
+  // No GST captured on local/informal purchases (see explodeLocalPurchaseItems) — taxable
+  // spend only, same convention as Purchase Report/Monthly GST.
+  localPurchases.forEach((l) => { totalCogs += Number(l.totalAmount) || 0; });
+  totalCogs = r2(totalCogs);
+  totalCogsGst = r2(totalCogsGst);
   const grossProfit = totalSales - totalCogs;
 
   // Paid vs pending straight off Invoice.advanceAmount/balanceDue — the exact fields
@@ -441,12 +474,14 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     monthlyMap[key].paidGst += r2(r.gstAmt * ratio);
     monthlyMap[key].pendingGst += r2(r.gstAmt * (1 - ratio));
   });
-  purchaseOrders.forEach((po) => {
-    const key = po.createdAt?.toLocaleString('default', { month: 'short' }) || '';
+  // Reuses the per-line taxable/GST split computed above (poCostRows) instead of re-deriving
+  // it from raw po.amount with a hardcoded 18% guess — keeps monthly cogs/cogsGst consistent
+  // with totalCogs/totalCogsGst and with each item's real GST rate.
+  poCostRows.forEach((r) => {
+    const key = r.createdAt?.toLocaleString('default', { month: 'short' }) || '';
     if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
-    const amt = Number(po.amount) || 0;
-    monthlyMap[key].cogs += amt;
-    monthlyMap[key].cogsGst += r2(amt - amt / 1.18);
+    monthlyMap[key].cogs += r.taxable;
+    monthlyMap[key].cogsGst += r.gstAmt;
   });
   localPurchases.forEach((lp) => {
     const key = lp.createdAt?.toLocaleString('default', { month: 'short' }) || '';

@@ -75,11 +75,19 @@ function deriveKitGroups(order) {
   const separateKitGroups = (() => {
     const kitItems = (order.items || []).filter((it) => it.isKit && it.category === 'separate_kit');
     if (kitItems.length === 0) return [];
-    const seen = new Set();
-    return kitItems.reduce((acc, it) => {
+    // Group ALL sibling rows sharing the same kit identity together — Sales' applyKitsToForm
+    // creates ONE order-item row PER kit product (e.g. Brush, Paste), each marked isKit:true
+    // and sharing the same kitId/kitName, not one row for the kit with an embedded product
+    // list. Deduping to just the first occurrence (as this used to) silently dropped every
+    // other component from the breakdown, showing only 1 product (or none) per kit.
+    const groups = new Map();
+    kitItems.forEach((it) => {
       const gKey = it.kitId || it.kitName || it.kitType || it.name || it.itemName || 'sep_kit';
-      if (seen.has(gKey)) return acc;
-      seen.add(gKey);
+      if (!groups.has(gKey)) groups.set(gKey, []);
+      groups.get(gKey).push(it);
+    });
+    return Array.from(groups.entries()).map(([gKey, groupItems]) => {
+      const it = groupItems[0];
       const itKitNameLow = (it.kitName || it.kitType || '').toLowerCase();
       const ko = (order.kitOrders || []).find((k) =>
         (it.kitId && k.kitId && String(k.kitId) === String(it.kitId))
@@ -108,17 +116,21 @@ function deriveKitGroups(order) {
           );
           return { id: incId, perKitQty: incQty, ...(matched || {}) };
         });
-      } else {
+      } else if (derivedItems.length > 0) {
         kitItems2 = derivedItems.map((p) => {
           const totalQty = Number(p.requiredQty) || Number(p.qty) || 1;
           const perKitQty = overallQty > 0 ? Math.max(1, Math.round(totalQty / overallQty)) : totalQty;
           return { ...p, id: p.itemName || p.name || '', perKitQty };
         });
+      } else {
+        // No kitIncludes config and no separate isKit:false member rows — the group's own
+        // isKit:true sibling rows (Brush, Paste, …) ARE the kit's component products, each
+        // already carrying its own per-kit qty.
+        kitItems2 = groupItems.map((p) => ({ ...p, id: p.itemName || p.kitType || p.name || '', perKitQty: Number(p.qty) || 1 }));
       }
       const kitIncludes = kitItems2.map((p) => ({ id: p.id || p.itemName || p.name || '', qty: p.perKitQty || 1 }));
-      acc.push({ key: gKey, kitName: it.kitName || it.kitType || 'Separate Kit', kitId: it.kitId || '', kitIncludes, kitItems: kitItems2, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' });
-      return acc;
-    }, []);
+      return { key: gKey, kitName: it.kitName || it.kitType || 'Separate Kit', kitId: it.kitId || '', kitIncludes, kitItems: kitItems2, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' };
+    });
   })();
 
   const personalizedKitGroups = (() => {
@@ -135,11 +147,17 @@ function deriveKitGroups(order) {
       });
       return [{ key: 'personalized', kitName: outerDU || 'Personalized Kit', kitIncludes: kitItems.map((p) => ({ id: p.id, qty: p.perKitQty })), kitItems, overallQty: kitCount, displayUnit: outerDU }];
     }
-    const seen = new Set();
-    return personalizedKitItems.reduce((acc, it) => {
+    // Same grouping fix as separateKitGroups above — group sibling isKit:true rows
+    // (Brush, Paste, …) sharing the same kit identity, instead of dropping all but the
+    // first on a name-only dedup.
+    const groups = new Map();
+    personalizedKitItems.forEach((it) => {
       const gKey = it.kitId || it.kitName || 'pers_kit';
-      if (seen.has(gKey)) return acc;
-      seen.add(gKey);
+      if (!groups.has(gKey)) groups.set(gKey, []);
+      groups.get(gKey).push(it);
+    });
+    return Array.from(groups.entries()).map(([gKey, groupItems]) => {
+      const it = groupItems[0];
       const itKitNameLow = (it.kitName || it.kitType || '').toLowerCase();
       const ko = (order.kitOrders || []).find((k) =>
         (it.kitId && k.kitId && String(k.kitId) === String(it.kitId))
@@ -150,18 +168,24 @@ function deriveKitGroups(order) {
       const configIncludes = Array.isArray(ko?.kitIncludes) && ko.kitIncludes.length > 0
         ? ko.kitIncludes
         : (Array.isArray(it.kitIncludes) && it.kitIncludes.length > 0 ? it.kitIncludes : []);
-      const kitItems = configIncludes.map((inc) => {
-        const incId = typeof inc === 'object' ? String(inc.id ?? inc) : String(inc);
-        const incQty = typeof inc === 'object' ? (Number(inc.qty) || 1) : 1;
-        const matched = (order.items || []).find((p) =>
-          !p.isKit && (p.itemName || p.name || '').toLowerCase() === incId.toLowerCase()
-        );
-        return { id: incId, perKitQty: incQty, ...(matched || {}) };
-      });
+      let kitItems;
+      if (configIncludes.length > 0) {
+        kitItems = configIncludes.map((inc) => {
+          const incId = typeof inc === 'object' ? String(inc.id ?? inc) : String(inc);
+          const incQty = typeof inc === 'object' ? (Number(inc.qty) || 1) : 1;
+          const matched = (order.items || []).find((p) =>
+            !p.isKit && (p.itemName || p.name || '').toLowerCase() === incId.toLowerCase()
+          );
+          return { id: incId, perKitQty: incQty, ...(matched || {}) };
+        });
+      } else {
+        // No kitIncludes config — the group's own isKit:true sibling rows ARE the kit's
+        // component products, each already carrying its own per-kit qty.
+        kitItems = groupItems.map((p) => ({ ...p, id: p.itemName || p.kitType || p.name || '', perKitQty: Number(p.qty) || 1 }));
+      }
       const kitIncludes = kitItems.map((p) => ({ id: p.id, qty: p.perKitQty || 1 }));
-      acc.push({ key: gKey, kitName: it.kitName || it.kitType || 'Personalized Kit', kitId: it.kitId || '', kitIncludes, kitItems, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' });
-      return acc;
-    }, []);
+      return { key: gKey, kitName: it.kitName || it.kitType || 'Personalized Kit', kitId: it.kitId || '', kitIncludes, kitItems, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' };
+    });
   })();
 
   return { separateKitGroups, personalizedKitGroups };
@@ -496,13 +520,14 @@ export default function Tasks() {
   // Rich spec cards for items included in a kit — shows name, qty/kit, type/size/logo/printing.
   // Mirrors OperationDetail.jsx's renderKitProductSpecs so the composition looks identical
   // wherever it's shown.
-  const renderKitProductSpecs = (kitItems, tagColor) => {
+  const renderKitProductSpecs = (kitItems, tagColor, overallQty) => {
     if (!kitItems?.length) return (
       <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic', display: 'block', marginTop: 6 }}>
         No products configured for this kit.
       </Text>
     );
     const border = tagColor === 'magenta' ? 'rgba(235,47,150,0.2)' : 'rgba(24,144,255,0.2)';
+    const kitCount = Number(overallQty) || 0;
     return (
       <div style={{ marginTop: 8 }}>
         <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#8c8c8c', display: 'block', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -512,6 +537,10 @@ export default function Tasks() {
           {kitItems.map((item, i) => {
             const name = item.id || item.itemName || item.name || '';
             const perKitQty = item.perKitQty || item.qty || 1;
+            // Actual production quantity needed for THIS product is the per-kit ratio
+            // multiplied across every kit in the order (e.g. 1/kit × 10 kits = 10 total) —
+            // showing only the per-kit ratio understates what packing staff actually need.
+            const totalQty = kitCount > 0 ? perKitQty * kitCount : null;
             const type = item.type || item.variant || item.colour || '';
             const size = item.size || '';
             const logo = item.logo || (item.logoRequired ? 'Yes' : '');
@@ -526,7 +555,12 @@ export default function Tasks() {
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hasSpecs ? 6 : 0 }}>
                   <Text strong style={{ fontSize: 13 }}>{String(name)}</Text>
-                  <Tag color={tagColor} style={{ margin: 0, fontWeight: 700, minWidth: 52, textAlign: 'center' }}>× {perKitQty} / kit</Tag>
+                  <Space size={4}>
+                    {totalQty != null && (
+                      <Tag color={tagColor} style={{ margin: 0, fontWeight: 700, textAlign: 'center' }}>{totalQty} total</Tag>
+                    )}
+                    <Tag style={{ margin: 0, fontWeight: 600, minWidth: 52, textAlign: 'center' }}>× {perKitQty} / kit</Tag>
+                  </Space>
                 </div>
                 {hasSpecs && (
                   <Space wrap size={4}>
@@ -1304,7 +1338,7 @@ export default function Tasks() {
                                           </Tag>
                                         )}
                                       </Space>
-                                      {renderKitProductSpecs(kg.kitItems, 'blue')}
+                                      {renderKitProductSpecs(kg.kitItems, 'blue', kg.overallQty)}
                                       {existingKitTasks.separate && (
                                         <Space wrap>
                                           <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>Separate Kit Task Assigned</Tag>
@@ -1355,7 +1389,7 @@ export default function Tasks() {
                                             style={{ borderRadius: 8, fontSize: 12 }}
                                           />
                                         )}
-                                        {renderKitProductSpecs(kg.kitItems, 'magenta')}
+                                        {renderKitProductSpecs(kg.kitItems, 'magenta', kg.overallQty)}
                                         {existingKitTasks.personalized && (
                                           <Space wrap>
                                             <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>Personalized Kit Task Assigned</Tag>
@@ -2184,6 +2218,7 @@ export default function Tasks() {
             {renderKitProductSpecs(
               kitPackingModalKitCfg.kitItems,
               kitPackingModalCategory === 'personalized' ? 'magenta' : 'blue',
+              kitPackingModalKitCfg.overallQty,
             )}
           </div>
         )}

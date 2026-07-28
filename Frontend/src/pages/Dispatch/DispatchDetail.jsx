@@ -614,6 +614,12 @@ export default function DispatchDetail() {
 
   const handlePrintDispatchDetails = () => {
     if (!order) return;
+    // Before dispatch is confirmed, Transport/Weight only live in the form (liveTransport/
+    // liveWeight) — order.transport/order.weight stay blank until the confirm submit
+    // persists them to the DispatchRecord. Mirror the same fallback the on-page
+    // Descriptions above already use so the print reflects what's currently entered.
+    const printTransport = liveTransport || order.storedTransportName || order.transport || '—';
+    const printWeight = liveWeight || order.storedWeight || order.weight || '—';
     const win = window.open('', '_blank', 'width=600,height=800');
     win.document.write(`<!DOCTYPE html><html><head><title>Dispatch Details — ${order.id}</title>
 <style>
@@ -631,8 +637,8 @@ export default function DispatchDetail() {
   <tr><th>Phone</th><td>${order.phone}</td><th>Email</th><td>${order.email}</td></tr>
   <tr><th>Destination</th><td>${order.destination || '—'}</td><th>Expected Delivery</th><td>${order.expectedDeliveryDate ? new Date(order.expectedDeliveryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td></tr>
   <tr><th>Address</th><td colspan="3">${order.shippingAddress}, ${order.shippingCity}, ${order.shippingState} — ${order.shippingPincode}</td></tr>
-  <tr><th>Product</th><td>${order.product || '—'}</td><th>Weight</th><td>${order.weight || '—'}</td></tr>
-  <tr><th>Transport</th><td>${order.transport || '—'}</td><th>Sales Person</th><td>${order.salesPerson || '—'}</td></tr>
+  <tr><th>Product</th><td>${order.product || '—'}</td><th>Weight</th><td>${printWeight}</td></tr>
+  <tr><th>Transport</th><td>${printTransport}</td><th>Sales Person</th><td>${order.salesPerson || '—'}</td></tr>
   <tr><th>Payment</th><td>${order.payment}</td><th>Status</th><td>${order.status}</td></tr>
 </table>
 </body></html>`);
