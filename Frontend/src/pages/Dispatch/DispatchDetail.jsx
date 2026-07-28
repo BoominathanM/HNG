@@ -392,6 +392,9 @@ export default function DispatchDetail() {
       kitOverallQty: o.kitOverallQty || 0,
       storedPartialDispatchConfirmed: !!d.partialDispatchConfirmed,
       storedPartialDispatchAt: d.partialDispatchAt || null,
+      // Whether the CURRENT round (partial or full) already had its Finished Dispatch
+      // (LR/notify) step done — server resets this on every fresh confirm round.
+      storedLastRoundFinished: !!d.lastRoundFinished,
       storedPartialTransportName: d.partialTransportName || '',
       storedPartialWeight: d.partialWeight || '',
       storedPartialBoxes: d.partialBoxes || 0,
@@ -547,8 +550,10 @@ export default function DispatchDetail() {
       }
     }
 
-    // Finished dispatch state
-    if (order.status === 'Dispatched' && order.storedLrNumber) {
+    // Finished dispatch state — lastRoundFinished tracks whether the CURRENT round
+    // (partial or full) already had its LR/notify step done; a fresh confirm round
+    // resets it server-side, so this always reflects only the latest round.
+    if (order.storedLastRoundFinished) {
       setFinishedDispatch(true);
     }
 
@@ -699,11 +704,14 @@ export default function DispatchDetail() {
       if (invoiceFile) formData.append('invoice', invoiceFile);
       const result = await confirmDispatch({ id, formData }).unwrap();
       setDispatchNowCounts({});
+      // A brand-new round was just confirmed (partial or full) — it needs its own
+      // Finished Dispatch (LR/notify) step, even if a previous round already did theirs.
+      setFinishedDispatch(false);
       if (result?.partial) {
         // This round didn't cover everything — keep the button active so the
         // remaining pending counts can go out as a later, final confirm.
         setPartialConfirmed(true);
-        enqueueSnackbar('Partial Dispatch confirmed. Confirm the remaining items once ready.', { variant: 'success' });
+        enqueueSnackbar('Partial Dispatch confirmed. You can now send the Partial Finished notification below, or continue confirming the remaining items.', { variant: 'success' });
       } else {
         setDispatched(true);
         enqueueSnackbar(
@@ -831,9 +839,10 @@ export default function DispatchDetail() {
         freight: lrVals.freight || '',
         estimatedDelivery: lrVals.estimatedDelivery || '',
       };
-      await uploadLR(payload).unwrap();
+      const res = await uploadLR(payload).unwrap();
       setFinishedDispatch(true);
-      enqueueSnackbar(`Dispatch Finished! Notifications sent to Sales (${order.salesPerson}) and Customer (${order.client}) via WhatsApp.`, { variant: 'success' });
+      const finishLabel = res?.finishedType || (dispatched ? 'Fully Finished' : 'Partial Finished');
+      enqueueSnackbar(`${finishLabel}! Notifications sent to Sales (${order.salesPerson}) and Customer (${order.client}) via WhatsApp.`, { variant: 'success' });
     } catch {
       enqueueSnackbar('Failed to finish dispatch.', { variant: 'error' });
     }
@@ -1517,6 +1526,18 @@ export default function DispatchDetail() {
                         { title: 'Weight', dataIndex: 'weight', width: 90, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
                         { title: 'Boxes', dataIndex: 'boxes', width: 70, render: (v) => <Text style={{ fontSize: 12 }}>{v ?? '—'}</Text> },
                         { title: 'Confirmed By', dataIndex: 'confirmedByName', width: 130, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                        {
+                          // finishedType/lrNumber are stamped by the "Finished Dispatch" LR/notify
+                          // step (see uploadLR) onto whichever round was the latest at that time —
+                          // so this shows whether/when THIS round's shipment actually went out.
+                          title: 'Finished', key: 'finished', width: 150,
+                          render: (_, r) => r.finishedType ? (
+                            <Space direction="vertical" size={0}>
+                              <Tag color={r.finishedType === 'Fully Finished' ? 'green' : 'gold'} style={{ borderRadius: 12, fontSize: 11 }}>{r.finishedType}</Tag>
+                              {r.lrNumber && <Text style={{ fontSize: 11, color: '#999' }}>LR: {r.lrNumber}</Text>}
+                            </Space>
+                          ) : <Tag style={{ borderRadius: 12, fontSize: 11 }}>Not sent yet</Tag>,
+                        },
                       ]}
                     />
                   </div>
@@ -2005,41 +2026,49 @@ export default function DispatchDetail() {
                 </Form>
               </div>
 
-              {/* ── Finished Dispatch ── */}
-              <div style={{ background: finishedDispatch ? '#52c41a15' : isDark ? '#1a1a2a' : '#fff9fb', border: `1.5px solid ${finishedDispatch ? '#52c41a44' : '#B11E6A44'}`, borderRadius: 12, padding: 16 }}>
-                <div style={{ marginBottom: 10 }}>
-                  <Text strong style={{ color: textColor, fontSize: 13 }}>
-                    <BellOutlined style={{ color: finishedDispatch ? '#52c41a' : '#B11E6A', marginRight: 6 }} />
-                    Finished Dispatch — Final Notification
-                  </Text>
-                  <div style={{ marginTop: 6, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>
-                    Clicking this will notify <strong>{order.salesPerson}</strong> (Sales) and <strong>{order.client}</strong> (Customer) that the order has been dispatched and is on the way.
-                  </div>
-                  {!dispatched && !finishedDispatch && (
-                    <div style={{ marginTop: 6, fontSize: 12, color: '#fa8c16' }}>
-                      Confirm Dispatch above first to enable this step.
+              {/* ── Finished Dispatch ── enabled after EITHER a Partial Dispatch checkpoint
+                  or the real Full Dispatch confirm, since each round needs its own LR/notify
+                  step — label and copy switch to reflect which one this round actually is. */}
+              {(() => {
+                const canFinish = dispatched || partialConfirmed;
+                const finishLabel = dispatched ? 'Fully Finished' : 'Partial Finished';
+                return (
+                  <div style={{ background: finishedDispatch ? '#52c41a15' : isDark ? '#1a1a2a' : '#fff9fb', border: `1.5px solid ${finishedDispatch ? '#52c41a44' : '#B11E6A44'}`, borderRadius: 12, padding: 16 }}>
+                    <div style={{ marginBottom: 10 }}>
+                      <Text strong style={{ color: textColor, fontSize: 13 }}>
+                        <BellOutlined style={{ color: finishedDispatch ? '#52c41a' : '#B11E6A', marginRight: 6 }} />
+                        {finishLabel} — Final Notification
+                      </Text>
+                      <div style={{ marginTop: 6, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>
+                        Clicking this will notify <strong>{order.salesPerson}</strong> (Sales) and <strong>{order.client}</strong> (Customer) that {dispatched ? 'the order has been dispatched and is on the way' : 'this partial shipment has gone out'}.
+                      </div>
+                      {!canFinish && !finishedDispatch && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#fa8c16' }}>
+                          Confirm Dispatch above first to enable this step.
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                {finishedDispatch ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#52c41a', fontWeight: 600 }}>
-                    <CheckCircleOutlined />
-                    Notifications sent to Sales ({order.salesPerson}) &amp; Customer ({order.client})
+                    {finishedDispatch ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#52c41a', fontWeight: 600 }}>
+                        <CheckCircleOutlined />
+                        {finishLabel} — notifications sent to Sales ({order.salesPerson}) &amp; Customer ({order.client})
+                      </div>
+                    ) : (
+                      <Button
+                        type="primary"
+                        size="large"
+                        block
+                        icon={<WhatsAppOutlined />}
+                        disabled={!canFinish}
+                        style={{ background: canFinish ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14 }}
+                        onClick={handleFinishedDispatch}
+                      >
+                        {finishLabel} — Notify Sales &amp; Customer
+                      </Button>
+                    )}
                   </div>
-                ) : (
-                  <Button
-                    type="primary"
-                    size="large"
-                    block
-                    icon={<WhatsAppOutlined />}
-                    disabled={!dispatched}
-                    style={{ background: dispatched ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14 }}
-                    onClick={handleFinishedDispatch}
-                  >
-                    Finished Dispatch — Notify Sales &amp; Customer
-                  </Button>
-                )}
-              </div>
+                );
+              })()}
 
             </Card>
           </motion.div>

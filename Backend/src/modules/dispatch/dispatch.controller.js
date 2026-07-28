@@ -395,6 +395,9 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
       .filter((it) => !it.isKit && !includedItemIds.has(String(it._id)))
       .every((it) => (it.qtyDispatched || 0) >= (it.qtyOrdered || 0));
   dispatch.dispatchType = fullyDispatched ? 'Full Dispatch' : 'Partial Dispatch';
+  // A fresh round (partial or full) just got confirmed — it hasn't had its own
+  // "Finished Dispatch" LR/notify step yet, even if a PREVIOUS round already did.
+  dispatch.lastRoundFinished = false;
 
   // Log this round in the history trail — only when something was actually dispatched
   // (an empty/no-op confirm shouldn't clutter the log).
@@ -548,19 +551,39 @@ exports.scanLorryReceipt = asyncHandler(async (req, res, next) => {
 });
 
 exports.uploadLR = asyncHandler(async (req, res, next) => {
-  const update = {
-    lrNumber: req.body.lrNumber || req.body.trackingLR,
-    trackingUrl: req.body.trackingUrl,
-    status: 'Dispatched',
-  };
+  const dispatch = await DispatchRecord.findById(req.params.id).populate('orderId', 'orderCode clientName assignedTo clientPhone');
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+
+  // A full confirm round (dispatchedAt set in confirmDispatch) makes THIS finish the
+  // real "Fully Finished" close-out; otherwise it's finishing a Partial Dispatch round
+  // that still leaves items pending for a later round.
+  const finishedType = dispatch.dispatchedAt ? 'Fully Finished' : 'Partial Finished';
+
+  dispatch.lrNumber = req.body.lrNumber || req.body.trackingLR;
+  dispatch.trackingUrl = req.body.trackingUrl;
+  // Only the real Full Dispatch close-out should flip the record to 'Dispatched' —
+  // finishing a Partial round keeps it 'Confirmed' since items are still pending.
+  if (finishedType === 'Fully Finished') dispatch.status = 'Dispatched';
   // Carry through any extra tracking details the client provides.
   ['lrDate', 'transportName', 'fromCity', 'toCity', 'weight', 'freight', 'packages', 'estimatedDelivery'].forEach((k) => {
-    if (req.body[k] !== undefined && req.body[k] !== '') update[k] = req.body[k];
+    if (req.body[k] !== undefined && req.body[k] !== '') dispatch[k] = req.body[k];
   });
-  if (req.file) update.lrFileUrl = req.file.path;
-  else if (req.body.lrFileUrl) update.lrFileUrl = req.body.lrFileUrl;
-  const dispatch = await DispatchRecord.findByIdAndUpdate(req.params.id, update, { new: true }).populate('orderId', 'orderCode clientName assignedTo clientPhone');
-  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  if (req.file) dispatch.lrFileUrl = req.file.path;
+  else if (req.body.lrFileUrl) dispatch.lrFileUrl = req.body.lrFileUrl;
+  dispatch.lastRoundFinished = true;
+
+  // Stamp the most recent dispatchHistory entry (this round's confirm) with the LR/notify
+  // details, so the history trail shows exactly which round was Partial vs Fully Finished.
+  const latestRound = dispatch.dispatchHistory[dispatch.dispatchHistory.length - 1];
+  if (latestRound) {
+    latestRound.finishedType = finishedType;
+    latestRound.finishedAt = Date.now();
+    latestRound.lrNumber = dispatch.lrNumber;
+    latestRound.trackingUrl = dispatch.trackingUrl;
+    latestRound.lrFileUrl = dispatch.lrFileUrl;
+  }
+
+  await dispatch.save({ validateBeforeSave: false });
 
   // Create/refresh a Transport record for the Transport tab.
   const o = dispatch.orderId;
@@ -568,23 +591,25 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
     { dispatchId: dispatch._id },
     {
       dispatchId: dispatch._id, orderId: o?._id, orderCode: o?.orderCode, clientName: o?.clientName,
-      transportCompany: update.transportName, lrNumber: update.lrNumber, trackingUrl: update.trackingUrl,
-      fromCity: update.fromCity, toCity: update.toCity, weight: dispatch.weight || update.weight,
-      boxes: dispatch.boxes || Number(update.packages) || undefined,
-      freight: Number(update.freight) || undefined, estimatedDelivery: update.estimatedDelivery,
+      transportCompany: dispatch.transportName, lrNumber: dispatch.lrNumber, trackingUrl: dispatch.trackingUrl,
+      fromCity: dispatch.fromCity, toCity: dispatch.toCity, weight: dispatch.weight,
+      boxes: dispatch.boxes || Number(dispatch.packages) || undefined,
+      freight: Number(dispatch.freight) || undefined, estimatedDelivery: dispatch.estimatedDelivery,
       dispatchedAt: Date.now(), status: 'In Transit', createdBy: req.user._id,
     },
     { upsert: true, setDefaultsOnInsert: true }
   );
 
-  // Finished-dispatch notification to sales + customer.
-  const msg = `Order ${o?.orderCode || dispatch.dispatchCode} is on the way. LR ${update.lrNumber || ''}${update.trackingUrl ? ` — track: ${update.trackingUrl}` : ''}`;
+  // Finished-dispatch notification to sales + customer — wording reflects whether this
+  // shipment closes out the whole order or is one of several partial rounds.
+  const title = finishedType === 'Fully Finished' ? 'Dispatch Finished' : 'Partial Shipment Dispatched';
+  const msg = `Order ${o?.orderCode || dispatch.dispatchCode} ${finishedType === 'Fully Finished' ? 'is on the way' : 'has a partial shipment on the way'}. LR ${dispatch.lrNumber || ''}${dispatch.trackingUrl ? ` — track: ${dispatch.trackingUrl}` : ''}`;
   await notifyMany([
-    { userId: o?.assignedTo, type: 'dispatch', title: 'Dispatch Finished', message: msg, whatsapp: true, phone: o?.clientPhone },
-    { type: 'dispatch', title: 'Dispatch Finished', message: msg, whatsapp: true, phone: o?.clientPhone },
+    { userId: o?.assignedTo, type: 'dispatch', title, message: msg, whatsapp: true, phone: o?.clientPhone },
+    { type: 'dispatch', title, message: msg, whatsapp: true, phone: o?.clientPhone },
   ]);
 
-  res.status(200).json({ success: true, data: dispatch });
+  res.status(200).json({ success: true, data: dispatch, finishedType });
 });
 
 // ─── TRANSPORT ────────────────────────────────────────────────────────────────

@@ -508,8 +508,13 @@ export default function Operations() {
         .map((it) => ({
           // Force isKit so the queue routes this copy by its display-unit tab (the personalized
           // outer unit) regardless of whether the included item is itself a kit or a product.
+          // underlyingIsKit preserves the item's REAL kind (before the isKit override) so
+          // mustPrintBeforePackaging (data.js) can still gate a bundled STANDALONE product with
+          // its own sticker=YES behind its sticker step, instead of letting the forced isKit
+          // exempt it and show it in the packaging tab at the same time it's in the Sticker tab.
           ...it,
           isKit: true,
+          underlyingIsKit: !!(it.isKit || it.kitType),
           category: 'personalized',
           displayUnit: persDU,
           displayUnitTab: persTab,

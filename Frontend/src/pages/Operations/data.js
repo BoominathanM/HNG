@@ -107,9 +107,13 @@ export const designerCredentials = {
   portal: 'Internal design portal — share only with authorized design staff',
 };
 
+// Returns a product-specific default size ONLY when the product name matches a known
+// SIZE_MAP entry. Returns '' (no fabricated value) for unrecognized products (e.g. Comb)
+// so the Sticker Queue shows the item's real (blank) size instead of a coincidental
+// hardcoded default that reads like leaked data from an unrelated product.
 export const getDefaultSize = (product) => {
   const key = Object.keys(SIZE_MAP).find((item) => product.toLowerCase().includes(item.toLowerCase()));
-  return key ? SIZE_MAP[key] : '2cm x 3cm';
+  return key ? SIZE_MAP[key] : '';
 };
 
 export const getProgressFromChecks = (checks) => {
@@ -203,15 +207,27 @@ const itemNeedsPrintStep = (item) => itemNeedsSticker(item) || itemNeedsPrinting
 
 // Whether an item must pass through the Sticker/Print tab BEFORE it appears in its
 // box/ziplock/butter packaging tab.
-//   • KITS (separate + personalized): NEVER — a kit always routes DIRECTLY to its display-unit
-//     tab (Box/Ziplock/Butter); any sticker/printing is a sub-step done within that tab.
-//   • Standalone products: only Sticker=Yes routes through the Sticker tab — but a Sticker=Yes
-//     product's destination IS the sticker tab (it never reaches a packaging queue), so in the
-//     packaging queues this is effectively always false. A Printing=Yes (Sticker=No) product
-//     with box/ziplock/butter packing goes DIRECTLY to that packaging tab.
+//   • GENUINE KITS (separate + personalized): NEVER — a kit always routes DIRECTLY to its
+//     display-unit tab (Box/Ziplock/Butter); any sticker/printing is a sub-step done within
+//     that tab.
+//   • Standalone products (including a standalone product's synthesized "personalized packing"
+//     copy — see isPersonalizedPacking/underlyingIsKit in index.jsx): only Sticker=Yes routes
+//     through the Sticker tab — but a Sticker=Yes product's destination IS the sticker tab (it
+//     never reaches a packaging queue), so in the packaging queues this is effectively always
+//     false. A Printing=Yes (Sticker=No) product with box/ziplock/butter packing goes DIRECTLY
+//     to that packaging tab.
+// A "personalized packing" copy has isKit forced to true so it routes by the outer unit's
+// display-unit tab (see index.jsx), regardless of whether the underlying included item is
+// itself a kit or a standalone product — so that forced flag alone can't be used here to
+// decide gate-exemption. underlyingIsKit records the item's REAL kind before that override,
+// so a bundled standalone product (e.g. a Comb with its own sticker=YES) still has to clear
+// its own sticker step before its personalized-packing copy shows in the packaging tab,
+// instead of leaking into Box/Ziplock/Butter at the same time it's awaiting sticker approval.
 const mustPrintBeforePackaging = (item) => {
-  const isKitItem = !!(item.isKit || item.kitType);
-  if (isKitItem) return false;
+  const isGenuineKit = item.isPersonalizedPacking
+    ? !!item.underlyingIsKit
+    : !!(item.isKit || item.kitType);
+  if (isGenuineKit) return false;
   return itemNeedsSticker(item);
 };
 

@@ -32,6 +32,11 @@ const dispatchRecordSchema = new mongoose.Schema({
   // items to go out later as "Full Dispatch" (which is what actually finalizes the order).
   partialDispatchConfirmed: { type: Boolean, default: false },
   partialDispatchAt: Date,
+  // Whether the CURRENT round (partial or full) has already had its "Finished Dispatch"
+  // LR-upload/notify step done. confirmDispatch resets this to false on every fresh
+  // confirm round (partial or full) so the Finished Dispatch button re-activates for
+  // each new round instead of only ever unlocking once for the whole order.
+  lastRoundFinished: { type: Boolean, default: false },
   // Snapshot of transport/weight/boxes AT THE MOMENT the Partial Dispatch checkpoint was
   // confirmed — the main transportName/weight/boxes fields get overwritten when the
   // second Full Dispatch confirm happens, so without this snapshot the partial round's
@@ -70,6 +75,14 @@ const dispatchRecordSchema = new mongoose.Schema({
     kits: [{ kitName: String, category: String, dispatchedQty: Number, openBoxPhotos: [String], closeBoxPhotos: [String] }],
     products: [{ itemName: String, dispatchedQty: Number, openBoxPhotos: [String], closeBoxPhotos: [String] }],
     confirmedByName: String,
+    // Stamped by uploadLR when this round's "Finished Dispatch" (LR/notify) step is
+    // done — 'Partial Finished' | 'Fully Finished'. Left unset while the round's
+    // shipment hasn't actually gone out yet.
+    finishedType: String,
+    finishedAt: Date,
+    lrNumber: String,
+    trackingUrl: String,
+    lrFileUrl: String,
   }],
   items: [{
     itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },

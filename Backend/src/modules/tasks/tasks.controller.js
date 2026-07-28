@@ -218,7 +218,7 @@ async function computeSuggestedTasks() {
   // Only orders still awaiting production — once forwarded to Dispatch Ready the order
   // has already left this workflow, so it shouldn't keep resurfacing here.
   const orders = await Order.find({ deletedAt: null, status: 'In Production' })
-    .select('orderCode clientName items printingStatus isUrgent isEmergency emergencyApproved displayUnitTab createdAt').lean();
+    .select('orderCode clientName items printingStatus printingStatusOverrides isUrgent isEmergency emergencyApproved displayUnitTab createdAt').lean();
   // Same task NAME can be split across multiple tasks (different assignees), and a product
   // can independently need SEVERAL different task names (e.g. "Filling" then "Packing"),
   // each covering the full required qty on its own — see checkTaskQuantityOverflow /
@@ -291,6 +291,19 @@ async function computeSuggestedTasks() {
       const needsPrintStep = normYN(it.printing) === 'YES';
       const printingReady = !needsPrintStep || !o.printingStatus || ['Closed', 'Received'].includes(o.printingStatus);
 
+      // ── Stickering readiness — a Sticker-routed product can only have its Stickering
+      // task assigned once THIS product's own Printing Status (the same value shown in
+      // Operations' Product Specifications table) reaches Received/Closed. This is a
+      // separate field from `it.printing`/`printingReady` above (that gate covers a
+      // different print-step flag and hides the card entirely) — this one is per-item,
+      // doesn't hide the card, and only applies when the product is Sticker-routed.
+      // Resolution mirrors OperationDetail.jsx's Product Specifications column: the
+      // item's own `printingStatus` first, then the order-level override map by product name.
+      const overridesMap = o.printingStatusOverrides || {};
+      const itemPrintingStatus = it.printingStatus || overridesMap[productKey.toLowerCase()] || '';
+      const isStickerRouted = designType === 'Sticker';
+      const stickerPrintingReady = !isStickerRouted || ['Closed', 'Received'].includes(itemPrintingStatus);
+
       // Printing completion is a hard blocker — there is no physical task to assign until
       // the print step is actually done, so those items don't belong on today's checklist
       // at all (they'll reappear here once printing closes).
@@ -343,6 +356,10 @@ async function computeSuggestedTasks() {
         needsDesign: !!designType,
         needsPrinting: needsPrintStep,
         stockReady, stickerReady, printingReady,
+        // Stickering-only gate — see stickerPrintingReady comment above. itemPrintingStatus
+        // is passed through so the UI can show the actual status in its red indicator.
+        itemPrintingStatus,
+        stickerPrintingReady,
         fullyReady: stockReady, // ready-to-assign now means "stock available" — design/print no longer factor in
         pending, // stock shortfall only (task is still shown either way)
       });

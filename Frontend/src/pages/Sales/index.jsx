@@ -203,24 +203,43 @@ const CATEGORY_META = {
 // Value scheme consumed by Operations/data.js's getEmergencyProductQtyMap (and its
 // OperationDetail.jsx mirror): '__personalized__', `__sepkit__:<kitId|kitName>`, or the product's
 // own name (unchanged, matches existing stored records).
-const buildEmergencySelectionOptions = (products, packagingIncludes) => {
+// `kitOrders` is a defensive fallback: normally every kit product row carries its own
+// isKit/kitId/category tags, but if a row ever loses that tagging (stale cache, legacy data,
+// a save that dropped it) the per-kit config in kitOrders is a smaller, more reliable surface
+// to detect "this record HAS a Personalized/Separate Kit" from, so the option doesn't silently
+// vanish and leave only its loose product rows behind.
+const buildEmergencySelectionOptions = (products, packagingIncludes, kitOrders) => {
   const list = (Array.isArray(products) ? products : []).filter((p) => p && (p.name || p.itemName || p.kitType));
+  const kitOrdersList = (Array.isArray(kitOrders) ? kitOrders : []).filter((ko) => ko && ko.kitId);
   const includeSet = new Set((packagingIncludes || []).map(String));
   const isBundled = (p) => includeSet.has(String(p.kitId)) || includeSet.has(String(p.name || p.itemName));
-  const isPersonalized = (p) => p.category === ORDER_CATEGORIES.PERSONALIZED || isBundled(p);
+  const koById = new Map(kitOrdersList.map((ko) => [String(ko.kitId), ko]));
+  const koForRow = (p) => (p.kitId != null ? koById.get(String(p.kitId)) : undefined);
+  const isPersonalized = (p) => p.category === ORDER_CATEGORIES.PERSONALIZED || koForRow(p)?.category === ORDER_CATEGORIES.PERSONALIZED || isBundled(p);
+  const isKitRow = (p) => p.isKit || p.kitType || !!koForRow(p);
 
   const options = [];
-  if (list.some(isPersonalized)) {
+  const hasPersonalizedKitOrder = kitOrdersList.some((ko) => ko.category === ORDER_CATEGORIES.PERSONALIZED || includeSet.has(String(ko.kitId)));
+  if (list.some(isPersonalized) || hasPersonalizedKitOrder) {
     options.push({ value: '__personalized__', label: 'Personalized Kit', isKit: true });
   }
   const seenKits = new Set();
-  list.filter((p) => !isPersonalized(p) && (p.isKit || p.kitType)).forEach((p) => {
+  list.filter((p) => !isPersonalized(p) && isKitRow(p)).forEach((p) => {
     const kKey = String(p.kitId || p.kitName || p.kitType);
     if (seenKits.has(kKey)) return;
     seenKits.add(kKey);
     options.push({ value: `__sepkit__:${kKey}`, label: `Separate Kit — ${p.kitName || p.kitType}`, isKit: true });
   });
-  list.filter((p) => !isPersonalized(p) && !(p.isKit || p.kitType)).forEach((p) => {
+  // Kits whose own config exists (kitOrders) but that have no matching tagged product row —
+  // still offer them as a Separate Kit choice instead of dropping them silently.
+  kitOrdersList.filter((ko) => ko.category !== ORDER_CATEGORIES.PERSONALIZED && !includeSet.has(String(ko.kitId))).forEach((ko) => {
+    const kKey = String(ko.kitId);
+    if (seenKits.has(kKey)) return;
+    seenKits.add(kKey);
+    const matchingRow = list.find((p) => String(p.kitId) === kKey);
+    options.push({ value: `__sepkit__:${kKey}`, label: `Separate Kit — ${ko.kitName || matchingRow?.kitName || kKey}`, isKit: true });
+  });
+  list.filter((p) => !isPersonalized(p) && !isKitRow(p)).forEach((p) => {
     options.push({ value: p.name || p.itemName, label: `Separate Product — ${p.name || p.itemName}` });
   });
   return options;
@@ -9086,7 +9105,7 @@ export default function Sales() {
                                     }}
                                   >
                                     {ensureCurrentValueOption(
-                                      buildEmergencySelectionOptions(watchedOrderEditProds, watchedOrderEditPackagingIncludes),
+                                      buildEmergencySelectionOptions(watchedOrderEditProds, watchedOrderEditPackagingIncludes, watchedOrderEditKitOrds),
                                       orderEditForm.getFieldValue(['splitDates', name, 'product']),
                                       watchedOrderEditProds,
                                     ).map((o) => (
@@ -10413,7 +10432,7 @@ export default function Sales() {
                                     }}
                                   >
                                     {ensureCurrentValueOption(
-                                      buildEmergencySelectionOptions(watchedOrderProducts, watchedOrderPackagingIncludes),
+                                      buildEmergencySelectionOptions(watchedOrderProducts, watchedOrderPackagingIncludes, watchedOrderKitOrders),
                                       orderForm.getFieldValue(['splitDates', name, 'product']),
                                       watchedOrderProducts,
                                     ).map((o) => (
@@ -13481,7 +13500,7 @@ export default function Sales() {
                                               }}
                                             >
                                               {ensureCurrentValueOption(
-                                                buildEmergencySelectionOptions(watchedLeadProducts, watchedPackagingIncludes),
+                                                buildEmergencySelectionOptions(watchedLeadProducts, watchedPackagingIncludes, watchedKitOrders),
                                                 leadForm.getFieldValue(['splitDates', dateName, 'products', prodName, 'product']),
                                                 watchedLeadProducts,
                                               ).map((o) => (

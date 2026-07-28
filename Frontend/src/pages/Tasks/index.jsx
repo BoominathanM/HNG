@@ -11,7 +11,7 @@ import {
   PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
   FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
   EditOutlined, DeleteOutlined, FieldTimeOutlined, RobotOutlined, TeamOutlined,
-  InfoCircleOutlined,
+  InfoCircleOutlined, GiftOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -63,6 +63,109 @@ const kanbanCols = [
 // summed across different names (e.g. "Filling" and "Packing" each need the full
 // required qty independently, they don't split it between them).
 const normTaskName = (v) => (v || '').trim().toLowerCase();
+
+// Separate Kit / Personalized Kit composition — mirrors Operations' separateKitGroups/
+// personalizedKitGroups memos (OperationDetail.jsx) so Today's Checklist can show the same
+// "which products are included" breakdown and offer the same kit packing task assignment,
+// without touching the Operations page itself. Takes a raw Order doc (from useGetSalesOrdersQuery,
+// same shape OperationDetail reads: order.items / order.kitOrders / order.kitDisplayUnit / order.qty).
+function deriveKitGroups(order) {
+  if (!order) return { separateKitGroups: [], personalizedKitGroups: [] };
+
+  const separateKitGroups = (() => {
+    const kitItems = (order.items || []).filter((it) => it.isKit && it.category === 'separate_kit');
+    if (kitItems.length === 0) return [];
+    const seen = new Set();
+    return kitItems.reduce((acc, it) => {
+      const gKey = it.kitId || it.kitName || it.kitType || it.name || it.itemName || 'sep_kit';
+      if (seen.has(gKey)) return acc;
+      seen.add(gKey);
+      const itKitNameLow = (it.kitName || it.kitType || '').toLowerCase();
+      const ko = (order.kitOrders || []).find((k) =>
+        (it.kitId && k.kitId && String(k.kitId) === String(it.kitId))
+        || (k.kitName && itKitNameLow && k.kitName.toLowerCase() === itKitNameLow)
+        || (k.kitType && itKitNameLow && k.kitType.toLowerCase() === itKitNameLow)
+      );
+      const overallQty = Number(ko?.overallQty) || Number(it.overallQty) || Number(it.requiredQty) || Number(it.qty) || 0;
+      const configIncludes = Array.isArray(ko?.kitIncludes) && ko.kitIncludes.length > 0
+        ? ko.kitIncludes
+        : (Array.isArray(it.kitIncludes) && it.kitIncludes.length > 0 ? it.kitIncludes : []);
+      const derivedItems = (order.items || []).filter((p) => {
+        if (p.isKit === true) return false;
+        if (p.isIncludedInPersonalized) return false;
+        if (it.kitId && p.kitId) return String(p.kitId) === String(it.kitId);
+        const pKitRefLow = (p.kitName || p.kitType || '').toLowerCase();
+        if (pKitRefLow && itKitNameLow && pKitRefLow === itKitNameLow) return true;
+        return p.category === 'separate_kit';
+      });
+      let kitItems2;
+      if (configIncludes.length > 0) {
+        kitItems2 = configIncludes.map((inc) => {
+          const incId = typeof inc === 'object' ? String(inc.id ?? inc) : String(inc);
+          const incQty = typeof inc === 'object' ? (Number(inc.qty) || 1) : 1;
+          const matched = (order.items || []).find((p) =>
+            !p.isKit && (p.itemName || p.name || '').toLowerCase() === incId.toLowerCase()
+          );
+          return { id: incId, perKitQty: incQty, ...(matched || {}) };
+        });
+      } else {
+        kitItems2 = derivedItems.map((p) => {
+          const totalQty = Number(p.requiredQty) || Number(p.qty) || 1;
+          const perKitQty = overallQty > 0 ? Math.max(1, Math.round(totalQty / overallQty)) : totalQty;
+          return { ...p, id: p.itemName || p.name || '', perKitQty };
+        });
+      }
+      const kitIncludes = kitItems2.map((p) => ({ id: p.id || p.itemName || p.name || '', qty: p.perKitQty || 1 }));
+      acc.push({ key: gKey, kitName: it.kitName || it.kitType || 'Separate Kit', kitId: it.kitId || '', kitIncludes, kitItems: kitItems2, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' });
+      return acc;
+    }, []);
+  })();
+
+  const personalizedKitGroups = (() => {
+    const personalizedKitItems = (order.items || []).filter((it) => (it.isKit || it.kitType) && it.category === 'personalized');
+    const includedItems = (order.items || []).filter((it) => it.isIncludedInPersonalized);
+    if (personalizedKitItems.length === 0 && includedItems.length === 0) return [];
+    if (includedItems.length > 0) {
+      const outerDU = order.kitDisplayUnit || '';
+      const kitCount = (order.kitOrders || []).reduce((max, ko) => Math.max(max, Number(ko.overallQty) || 0), 0) || Number(order.qty) || 0;
+      const kitItems = includedItems.map((it) => {
+        const totalQty = Number(it.requiredQty) || Number(it.qty) || 1;
+        const perKitQty = kitCount > 0 ? Math.max(1, Math.round(totalQty / kitCount)) : totalQty;
+        return { ...it, id: it.itemName || it.name || '', perKitQty };
+      });
+      return [{ key: 'personalized', kitName: outerDU || 'Personalized Kit', kitIncludes: kitItems.map((p) => ({ id: p.id, qty: p.perKitQty })), kitItems, overallQty: kitCount, displayUnit: outerDU }];
+    }
+    const seen = new Set();
+    return personalizedKitItems.reduce((acc, it) => {
+      const gKey = it.kitId || it.kitName || 'pers_kit';
+      if (seen.has(gKey)) return acc;
+      seen.add(gKey);
+      const itKitNameLow = (it.kitName || it.kitType || '').toLowerCase();
+      const ko = (order.kitOrders || []).find((k) =>
+        (it.kitId && k.kitId && String(k.kitId) === String(it.kitId))
+        || (k.kitName && itKitNameLow && k.kitName.toLowerCase() === itKitNameLow)
+        || (k.kitType && itKitNameLow && k.kitType.toLowerCase() === itKitNameLow)
+      );
+      const overallQty = Number(ko?.overallQty) || Number(it.overallQty) || Number(it.requiredQty) || 0;
+      const configIncludes = Array.isArray(ko?.kitIncludes) && ko.kitIncludes.length > 0
+        ? ko.kitIncludes
+        : (Array.isArray(it.kitIncludes) && it.kitIncludes.length > 0 ? it.kitIncludes : []);
+      const kitItems = configIncludes.map((inc) => {
+        const incId = typeof inc === 'object' ? String(inc.id ?? inc) : String(inc);
+        const incQty = typeof inc === 'object' ? (Number(inc.qty) || 1) : 1;
+        const matched = (order.items || []).find((p) =>
+          !p.isKit && (p.itemName || p.name || '').toLowerCase() === incId.toLowerCase()
+        );
+        return { id: incId, perKitQty: incQty, ...(matched || {}) };
+      });
+      const kitIncludes = kitItems.map((p) => ({ id: p.id, qty: p.perKitQty || 1 }));
+      acc.push({ key: gKey, kitName: it.kitName || it.kitType || 'Personalized Kit', kitId: it.kitId || '', kitIncludes, kitItems, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' });
+      return acc;
+    }, []);
+  })();
+
+  return { separateKitGroups, personalizedKitGroups };
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 export default function Tasks() {
@@ -286,6 +389,164 @@ export default function Tasks() {
   const removeAssignSubTask = (rid) => setAssignSubTasks((prev) => prev.filter((t) => t.id !== rid));
   const updateAssignSubTask = (rid, field, value) => setAssignSubTasks((prev) => prev.map((t) => (t.id === rid ? { ...t, [field]: value } : t)));
 
+  // Kit Packing Task Assignment (Separate Kit / Personalized Kit) — same multi-assignee
+  // pattern as Operations' Kit Packing modal (OperationDetail.jsx), surfaced here on
+  // Today's Checklist so kit tasks can be assigned without leaving Task Management.
+  const [kitPackingModalOpen, setKitPackingModalOpen] = useState(false);
+  const [kitPackingModalCategory, setKitPackingModalCategory] = useState(null); // 'separate_kit' | 'personalized'
+  const [kitPackingModalKitCfg, setKitPackingModalKitCfg] = useState(null);
+  const [kitPackingModalOrder, setKitPackingModalOrder] = useState(null);
+  const [kitSubTasks, setKitSubTasks] = useState([]);
+  const addKitSubTask = () => setKitSubTasks((prev) => [...prev, { id: nextSubTaskId(), description: '', qty: '', assignees: [] }]);
+  const removeKitSubTask = (id) => setKitSubTasks((prev) => prev.filter((t) => t.id !== id));
+  const updateKitSubTask = (id, field, value) => setKitSubTasks((prev) => prev.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
+
+  const openKitPackingModal = (kitGroup, category, orderDoc) => {
+    if (!requireAccess('add')) return;
+    setKitPackingModalCategory(category);
+    setKitPackingModalKitCfg(kitGroup);
+    setKitPackingModalOrder(orderDoc);
+    setKitSubTasks([]);
+    setKitPackingModalOpen(true);
+  };
+
+  // Existing Separate/Personalized Kit Packing task per order — same "already assigned"
+  // detection Operations does per-order (orderTasksData filtered by taskType), computed
+  // once here across the full task list so every order card can check it by id.
+  const kitPackingTasksByOrder = useMemo(() => {
+    const map = {};
+    (tasksData?.data || []).forEach((t) => {
+      const oid = (typeof t.orderId === 'object' ? t.orderId?._id : t.orderId)?.toString();
+      if (!oid) return;
+      if (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') {
+        map[oid] = { ...(map[oid] || {}), separate: t };
+      } else if (t.taskType === 'Personalized Kit Packing') {
+        map[oid] = { ...(map[oid] || {}), personalized: t };
+      }
+    });
+    return map;
+  }, [tasksData]);
+
+  const submitKitPackingTask = async () => {
+    const kitCfg = kitPackingModalKitCfg;
+    const orderDoc = kitPackingModalOrder;
+    const isPersonalized = kitPackingModalCategory === 'personalized';
+    const taskTypeName = isPersonalized ? 'Personalized Kit Packing' : 'Separate Kit Packing';
+    const plannedStartTime = dayjs().toISOString();
+
+    const filledKitSubTasks = kitSubTasks.filter((t) => t.description || t.qty || (t.assignees && t.assignees.length));
+    if (filledKitSubTasks.length === 0) {
+      enqueueSnackbar('Please add at least one task with a task name and at least one assignee', { variant: 'warning' });
+      return;
+    }
+    const invalidKitSubTask = filledKitSubTasks.find((t) => !t.description || !(t.assignees && t.assignees.length));
+    if (invalidKitSubTask) {
+      enqueueSnackbar('Each task must have a Task Name and at least one assignee', { variant: 'warning' });
+      return;
+    }
+
+    const product = kitCfg?.kitName || (isPersonalized ? 'Personalized Kit' : 'Separate Kit');
+    const kitReqQty = kitCfg?.overallQty || 0;
+
+    // Multiple assignees on ONE task: everyone selected shares the same task record
+    // (mirrors Operations' submitKitPackingTask) so it shows up for every selected user.
+    let successCount = 0;
+    const rowErrors = [];
+    for (const t of filledKitSubTasks) {
+      const assigneeUsers = (t.assignees || []).map((aid) => assignableUsers.find((x) => x._id === aid)).filter(Boolean);
+      const rowQty = Number(t.qty) || 0;
+      const rowEstimate = estimateSecFor(timeConfigs, { taskName: t.description }, rowQty);
+      const payload = {
+        orderId: orderDoc?._id,
+        taskName: t.description,
+        taskType: taskTypeName,
+        product,
+        qty: rowQty,
+        requiredQty: kitReqQty,
+        assignedTo: assigneeUsers[0]?._id,
+        assigneeName: assigneeUsers[0]?.fullName,
+        assignedToMany: assigneeUsers.map((u) => u._id),
+        assigneeNames: assigneeUsers.map((u) => u.fullName),
+        clientName: orderDoc?.clientName,
+        status: 'Pending',
+        kitCategory: kitPackingModalCategory,
+        plannedStartTime,
+        ...(rowEstimate.matched ? { estimatedDurationSec: rowEstimate.estimatedSec } : {}),
+      };
+      try {
+        await createTask(payload).unwrap(); // eslint-disable-line no-await-in-loop
+        successCount += 1;
+      } catch (e) {
+        rowErrors.push(`${t.description}: ${e?.data?.message || e?.data || 'failed'}`);
+      }
+    }
+    if (successCount > 0) {
+      enqueueSnackbar(`${successCount} ${isPersonalized ? 'Personalized' : 'Separate'} Kit Packing task${successCount > 1 ? 's' : ''} assigned`, { variant: 'success' });
+      setKitPackingModalOpen(false);
+      setKitPackingModalKitCfg(null);
+      setKitPackingModalCategory(null);
+      setKitPackingModalOrder(null);
+      setKitSubTasks([]);
+    }
+    if (rowErrors.length > 0) {
+      enqueueSnackbar(rowErrors.join(' | '), { variant: 'error' });
+    }
+  };
+
+  // Rich spec cards for items included in a kit — shows name, qty/kit, type/size/logo/printing.
+  // Mirrors OperationDetail.jsx's renderKitProductSpecs so the composition looks identical
+  // wherever it's shown.
+  const renderKitProductSpecs = (kitItems, tagColor) => {
+    if (!kitItems?.length) return (
+      <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic', display: 'block', marginTop: 6 }}>
+        No products configured for this kit.
+      </Text>
+    );
+    const border = tagColor === 'magenta' ? 'rgba(235,47,150,0.2)' : 'rgba(24,144,255,0.2)';
+    return (
+      <div style={{ marginTop: 8 }}>
+        <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#8c8c8c', display: 'block', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Included in 1 Kit ({kitItems.length} item{kitItems.length !== 1 ? 's' : ''})
+        </Text>
+        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+          {kitItems.map((item, i) => {
+            const name = item.id || item.itemName || item.name || '';
+            const perKitQty = item.perKitQty || item.qty || 1;
+            const type = item.type || item.variant || item.colour || '';
+            const size = item.size || '';
+            const logo = item.logo || (item.logoRequired ? 'Yes' : '');
+            const printing = item.printing || '';
+            const sticker = item.sticker || '';
+            const hasSpecs = type || size || logo || printing || sticker;
+            return (
+              <div key={i} style={{
+                padding: '8px 12px', borderRadius: 8,
+                border: `1px solid ${border}`,
+                background: isDark ? 'rgba(255,255,255,0.03)' : (i % 2 === 0 ? '#fafafa' : '#fff'),
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hasSpecs ? 6 : 0 }}>
+                  <Text strong style={{ fontSize: 13 }}>{String(name)}</Text>
+                  <Tag color={tagColor} style={{ margin: 0, fontWeight: 700, minWidth: 52, textAlign: 'center' }}>× {perKitQty} / kit</Tag>
+                </div>
+                {hasSpecs && (
+                  <Space wrap size={4}>
+                    {type && <Tag style={{ fontSize: 10, margin: 0, borderRadius: 6 }}>Type: {type}</Tag>}
+                    {size && <Tag style={{ fontSize: 10, margin: 0, borderRadius: 6 }}>Size: {size}</Tag>}
+                    {logo && <Tag color={String(logo).toLowerCase() === 'yes' ? 'green' : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 6 }}>Logo: {logo}</Tag>}
+                    {printing && <Tag color={String(printing).toLowerCase() === 'yes' ? 'cyan' : 'default'} style={{ fontSize: 10, margin: 0, borderRadius: 6 }}>Print: {printing}</Tag>}
+                    {sticker && String(sticker).toLowerCase() !== 'no' && String(sticker).toLowerCase() !== 'none' && (
+                      <Tag color="orange" style={{ fontSize: 10, margin: 0, borderRadius: 6 }}>Sticker: {sticker}</Tag>
+                    )}
+                  </Space>
+                )}
+              </div>
+            );
+          })}
+        </Space>
+      </div>
+    );
+  };
+
   // Group suggestedList: { hotelName: { orderCode: [items] } }
   const hotelGroups = useMemo(() => {
     const map = {};
@@ -416,6 +677,14 @@ export default function Tasks() {
   // "Filling") — pre-fills the first breakdown row so the user doesn't retype it.
   const handleAssignSuggested = (s, presetTaskName) => {
     if (!requireAccess('add')) return;
+    // Defense in depth for the Stickering chip only (it's already disabled in the UI) —
+    // every other task for this product must stay assignable even while Stickering itself
+    // is blocked on Printing Status, so this only fires for a sticker-named preset.
+    const isStickerTaskName = presetTaskName && /stick|label/i.test(presetTaskName);
+    if (isStickerTaskName && s.designType === 'Sticker' && s.stickerPrintingReady === false) {
+      enqueueSnackbar(`Stickering blocked for "${s.product}" — Printing Status must be Received/Closed first.`, { variant: 'warning' });
+      return;
+    }
     setAssignTarget(s);
     assignForm.resetFields();
     assignForm.setFieldsValue({
@@ -998,6 +1267,120 @@ export default function Tasks() {
                           {items.some((i) => i.isUrgent) && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
                           {items.every((i) => i.fullyReady) && <Tag color="green" style={{ fontSize: 11 }}>All Ready</Tag>}
                         </div>
+
+                        {/* Kit Packing Task Assignment — Separate Kit / Personalized Kit composition
+                            + multi-assignee task assignment, mirroring Operations (OperationDetail.jsx). */}
+                        {(() => {
+                          const orderIdForGroup = items[0]?.orderId;
+                          const orderDoc = ordersList.find((o) => String(o._id) === String(orderIdForGroup));
+                          const { separateKitGroups, personalizedKitGroups } = deriveKitGroups(orderDoc);
+                          if (separateKitGroups.length === 0 && personalizedKitGroups.length === 0) return null;
+                          const existingKitTasks = kitPackingTasksByOrder[String(orderIdForGroup)] || {};
+                          return (
+                            <Card
+                              size="small"
+                              title={
+                                <Space>
+                                  <GiftOutlined style={{ color: '#722ed1' }} />
+                                  <Text strong style={{ color: '#722ed1', fontSize: 13 }}>Kit Packing Task Assignment</Text>
+                                </Space>
+                              }
+                              style={{ borderRadius: 12, border: 'none', marginBottom: 16, background: cardBg, boxShadow: '0 4px 20px rgba(114,46,209,0.06)' }}
+                            >
+                              <Space direction="vertical" size={14} style={{ width: '100%' }}>
+                                {separateKitGroups.map((kg) => (
+                                  <div
+                                    key={kg.key}
+                                    style={{ padding: 14, borderRadius: 10, border: '1px solid rgba(24,144,255,0.25)', background: isDark ? 'rgba(24,144,255,0.07)' : 'rgba(24,144,255,0.04)' }}
+                                  >
+                                    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                                      <Space wrap>
+                                        <Tag color="blue" style={{ borderRadius: 12, fontWeight: 600, fontSize: 12 }}>Separate Kit</Tag>
+                                        <Text strong style={{ fontSize: 13 }}>{kg.kitName}</Text>
+                                        {kg.overallQty > 0 && <Tag color="geekblue">Total: {kg.overallQty} kits</Tag>}
+                                        {kg.kitItems?.length > 0 && (
+                                          <Tag color="blue" style={{ borderRadius: 10 }}>
+                                            {kg.kitItems.length} product{kg.kitItems.length !== 1 ? 's' : ''} / kit
+                                          </Tag>
+                                        )}
+                                      </Space>
+                                      {renderKitProductSpecs(kg.kitItems, 'blue')}
+                                      {existingKitTasks.separate && (
+                                        <Space wrap>
+                                          <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>Separate Kit Task Assigned</Tag>
+                                          <Text type="secondary" style={{ fontSize: 12 }}>{existingKitTasks.separate.taskName}</Text>
+                                        </Space>
+                                      )}
+                                      <Button
+                                        size="small"
+                                        type="primary"
+                                        icon={<TeamOutlined />}
+                                        style={{ background: 'linear-gradient(135deg,#1677ff,#69b1ff)', border: 'none', borderRadius: 8 }}
+                                        onClick={() => openKitPackingModal(kg, 'separate_kit', orderDoc)}
+                                      >
+                                        {existingKitTasks.separate ? 'Add Another Task' : 'Assign Separate Kit Task'}
+                                      </Button>
+                                    </Space>
+                                  </div>
+                                ))}
+
+                                {personalizedKitGroups.map((kg) => {
+                                  const separateDone = separateKitGroups.length === 0 || !!existingKitTasks.separate;
+                                  return (
+                                    <div
+                                      key={kg.key}
+                                      style={{
+                                        padding: 14, borderRadius: 10,
+                                        border: '1px solid rgba(177,30,106,0.25)',
+                                        background: isDark ? 'rgba(177,30,106,0.07)' : 'rgba(177,30,106,0.04)',
+                                        opacity: separateDone ? 1 : 0.6,
+                                      }}
+                                    >
+                                      <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                                        <Space wrap>
+                                          <Tag color="magenta" style={{ borderRadius: 12, fontWeight: 600, fontSize: 12 }}>Personalized Kit</Tag>
+                                          <Text strong style={{ fontSize: 13 }}>{kg.kitName}</Text>
+                                          {kg.overallQty > 0 && <Tag color="purple">Total: {kg.overallQty} kits</Tag>}
+                                          {kg.kitItems?.length > 0 && (
+                                            <Tag color="magenta" style={{ borderRadius: 10 }}>
+                                              {kg.kitItems.length} product{kg.kitItems.length !== 1 ? 's' : ''} / kit
+                                            </Tag>
+                                          )}
+                                        </Space>
+                                        {!separateDone && (
+                                          <Alert
+                                            type="warning"
+                                            showIcon
+                                            message="Complete separate kit packing tasks first before assigning personalized kit tasks."
+                                            style={{ borderRadius: 8, fontSize: 12 }}
+                                          />
+                                        )}
+                                        {renderKitProductSpecs(kg.kitItems, 'magenta')}
+                                        {existingKitTasks.personalized && (
+                                          <Space wrap>
+                                            <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>Personalized Kit Task Assigned</Tag>
+                                            <Text type="secondary" style={{ fontSize: 12 }}>{existingKitTasks.personalized.taskName}</Text>
+                                          </Space>
+                                        )}
+                                        <Button
+                                          size="small"
+                                          type="primary"
+                                          disabled={!separateDone}
+                                          icon={<TeamOutlined />}
+                                          style={separateDone ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 } : { borderRadius: 8 }}
+                                          onClick={() => separateDone && openKitPackingModal(kg, 'personalized', orderDoc)}
+                                        >
+                                          {existingKitTasks.personalized ? 'Add Another Task' : 'Assign Personalized Kit Task'}
+                                        </Button>
+                                      </Space>
+                                    </div>
+                                  );
+                                })}
+                              </Space>
+                            </Card>
+                          );
+                        })()}
+
                         <Row gutter={[16, 16]}>
                           {items.map((s) => {
                             // Design/printing are hard-gated server-side — every item reaching this
@@ -1007,6 +1390,13 @@ export default function Tasks() {
                             const readyText = s.stockReady
                               ? 'All resources ready — safe to assign and start production.'
                               : 'Stock Not Available — insufficient inventory to fully produce this item.';
+                            // Stickering-only gate: a Sticker-routed product can't have its Stickering
+                            // task assigned until THIS product's own Printing Status (Operations →
+                            // Product Specifications table) reaches Received/Closed. This blocks ONLY
+                            // the Stickering suggested-task chip below (shown with a red border/background) —
+                            // every other task for the same product (Filling, Packing, etc.) and the
+                            // general "Assign Task" button stay fully usable, same as before.
+                            const stickerBlocked = s.designType === 'Sticker' && s.stickerPrintingReady === false;
                             return (
                               <Col xs={24} md={12} lg={8} key={s.id}>
                                 <motion.div whileHover={{ y: -2 }}>
@@ -1049,22 +1439,38 @@ export default function Tasks() {
                                     {/* Suggested Tasks — quick-assign chips, filtered to only the configured
                                         task names that actually fit THIS product/order spec (see
                                         getRelevantTaskOptions): explicit per-product configs, or general
-                                        configs matched by product-name/sticker/print/pack keywords. */}
+                                        configs matched by product-name/sticker/print/pack keywords.
+                                        Only the Stickering chip itself turns red/disabled when
+                                        stickerBlocked — every other chip for this product stays clickable. */}
                                     {(() => {
                                       const relevantOptions = s.stockReady ? getRelevantTaskOptions(s) : [];
                                       return relevantOptions.length > 0 && (
                                         <div style={{ marginBottom: 12 }}>
                                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Suggested Tasks</Text>
                                           <Space size={4} wrap>
-                                            {relevantOptions.map((opt) => (
-                                              <Tag
-                                                key={opt.value}
-                                                style={{ cursor: 'pointer', borderRadius: 10, borderColor: '#B11E6A66', color: '#B11E6A' }}
-                                                onClick={() => handleAssignSuggested(s, opt.value)}
-                                              >
-                                                + {opt.label}
-                                              </Tag>
-                                            ))}
+                                            {relevantOptions.map((opt) => {
+                                              const isStickerOption = /stick|label/i.test(opt.value);
+                                              const optBlocked = stickerBlocked && isStickerOption;
+                                              return (
+                                                <Tooltip
+                                                  key={opt.value}
+                                                  title={optBlocked ? `Blocked — Printing Status is "${s.itemPrintingStatus || 'not set'}". Needs Received/Closed first.` : ''}
+                                                >
+                                                  <Tag
+                                                    style={{
+                                                      cursor: optBlocked ? 'not-allowed' : 'pointer',
+                                                      borderRadius: 10,
+                                                      borderColor: optBlocked ? '#ff4d4f' : '#B11E6A66',
+                                                      background: optBlocked ? (isDark ? '#2d1516' : '#fff1f0') : undefined,
+                                                      color: optBlocked ? '#ff4d4f' : '#B11E6A',
+                                                    }}
+                                                    onClick={() => !optBlocked && handleAssignSuggested(s, opt.value)}
+                                                  >
+                                                    + {opt.label}
+                                                  </Tag>
+                                                </Tooltip>
+                                              );
+                                            })}
                                           </Space>
                                         </div>
                                       );
@@ -1721,6 +2127,188 @@ export default function Tasks() {
             </Button>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* ── Kit Packing Task Assignment Modal (Separate Kit / Personalized Kit) ──
+          Mirrors Operations' Kit Packing modal (OperationDetail.jsx): shows the kit's
+          product composition, then a Task Breakdown by Quantity where each row's
+          "Assign To" is a multi-select — everyone picked shares that one task record. */}
+      <Modal
+        open={kitPackingModalOpen}
+        onCancel={() => {
+          setKitPackingModalOpen(false);
+          setKitPackingModalKitCfg(null);
+          setKitPackingModalCategory(null);
+          setKitPackingModalOrder(null);
+        }}
+        title={
+          <Space>
+            <ExperimentOutlined style={{ color: '#B11E6A' }} />
+            <span>
+              {kitPackingModalCategory === 'personalized'
+                ? 'Assign Personalized Kit Packing Task'
+                : kitPackingModalCategory === 'separate_kit'
+                ? 'Assign Separate Kit Packing Task'
+                : 'Assign Kit Packing Task'}
+            </span>
+            {kitPackingModalKitCfg?.kitName && (
+              <Tag color={kitPackingModalCategory === 'personalized' ? 'magenta' : 'blue'}>
+                {kitPackingModalKitCfg.kitName}
+              </Tag>
+            )}
+          </Space>
+        }
+        footer={null}
+        width={Math.min(680, window.innerWidth - 32)}
+        destroyOnClose
+        styles={{ body: { maxHeight: '75vh', overflowY: 'auto', paddingRight: 4 } }}
+      >
+        {/* Kit contents — rich spec cards for each included product */}
+        {kitPackingModalKitCfg && (
+          <div style={{ marginBottom: 16, marginTop: 8 }}>
+            <Space style={{ marginBottom: 6 }} wrap>
+              <Text strong style={{ fontSize: 12 }}>
+                Included in 1 {kitPackingModalCategory === 'personalized' ? 'Personalized' : 'Separate'} Kit:
+              </Text>
+              {kitPackingModalKitCfg.overallQty > 0 && (
+                <Tag color={kitPackingModalCategory === 'personalized' ? 'magenta' : 'blue'} style={{ margin: 0 }}>
+                  {kitPackingModalKitCfg.overallQty} kits total
+                </Tag>
+              )}
+              {kitPackingModalKitCfg.kitItems?.length > 0 && (
+                <Tag color={kitPackingModalCategory === 'personalized' ? 'magenta' : 'blue'} style={{ margin: 0 }}>
+                  {kitPackingModalKitCfg.kitItems.length} product{kitPackingModalKitCfg.kitItems.length !== 1 ? 's' : ''} / kit
+                </Tag>
+              )}
+            </Space>
+            {renderKitProductSpecs(
+              kitPackingModalKitCfg.kitItems,
+              kitPackingModalCategory === 'personalized' ? 'magenta' : 'blue',
+            )}
+          </div>
+        )}
+
+        {/* Task Breakdown by Quantity — each task below is independent: its own Task
+            Name, its own Qty, and its own duration shown right on its card. */}
+        {(() => {
+          const kitReqQty = kitPackingModalKitCfg?.overallQty || 0;
+          return (
+            <>
+              <Divider orientation="left" style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A30' }}>
+                Task Breakdown by Quantity
+              </Divider>
+              <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
+              <Space direction="vertical" style={{ width: '100%', minWidth: 460 }} size={8}>
+                {kitSubTasks.map((task, idx) => {
+                  const rowEstimate = estimateSecFor(timeConfigs, { taskName: task.description }, Number(task.qty) || 0);
+                  const sameNameRows = task.description
+                    ? kitSubTasks.filter((t) => normTaskName(t.description) === normTaskName(task.description))
+                    : [];
+                  const groupTotal = sameNameRows.reduce((sum, t) => sum + (Number(t.qty) || 0), 0);
+                  const otherSameNameTotal = groupTotal - (Number(task.qty) || 0);
+                  const groupMax = kitReqQty > 0 ? Math.max(0, kitReqQty - otherSameNameTotal) : undefined;
+                  const groupMet = kitReqQty > 0 && groupTotal >= kitReqQty;
+                  return (
+                  <div
+                    key={task.id}
+                    style={{
+                      display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 12px', borderRadius: 8,
+                      background: isDark ? '#161622' : '#fafafa', border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`,
+                    }}
+                  >
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                      <div style={{ flex: 2 }}>
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task {idx + 1} — Task Name</Text>
+                        <Select
+                          placeholder="Select task"
+                          showSearch
+                          optionFilterProp="label"
+                          allowClear
+                          value={task.description || undefined}
+                          onChange={(val) => updateKitSubTask(task.id, 'description', val)}
+                          style={{ width: '100%' }}
+                          notFoundContent={configTaskNameOptions.length ? 'No match' : 'No tasks configured — add one in Time Management'}
+                          options={configTaskNameOptions}
+                        />
+                      </div>
+                      <div style={{ width: 90 }}>
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
+                        <InputNumber
+                          min={0}
+                          max={groupMax}
+                          placeholder="0"
+                          value={task.qty || undefined}
+                          onChange={(val) => updateKitSubTask(task.id, 'qty', val || 0)}
+                          style={{ width: '100%', borderRadius: 6 }}
+                        />
+                      </div>
+                      <div style={{ flex: 1.4 }}>
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
+                        <Select
+                          mode="multiple"
+                          placeholder="Select one or more"
+                          value={task.assignees || []}
+                          onChange={(val) => updateKitSubTask(task.id, 'assignees', val)}
+                          style={{ width: '100%' }}
+                          showSearch
+                          optionFilterProp="label"
+                          maxTagCount="responsive"
+                          options={assignableUsers.map((u) => ({ value: u._id, label: `${u.fullName} — ${u.role}` }))}
+                        />
+                      </div>
+                      {kitSubTasks.length > 1 && (
+                        <Button type="text" danger icon={<DeleteOutlined />} onClick={() => removeKitSubTask(task.id)} style={{ marginBottom: 0, flexShrink: 0 }} />
+                      )}
+                    </div>
+                    <Space size={4} wrap>
+                      {task.description && Number(task.qty) > 0 && (
+                        <Tag
+                          color={rowEstimate.matched ? 'purple' : 'default'}
+                          style={{ fontSize: 10, margin: 0 }}
+                        >
+                          {rowEstimate.matched
+                            ? `≈ ${secToHuman(rowEstimate.estimatedSec)} (${perUnitLabel(rowEstimate.perUnitSec)} × ${task.qty})`
+                            : 'No time standard configured for this task'}
+                        </Tag>
+                      )}
+                      {task.description && kitReqQty > 0 && (
+                        <Tag color={groupMet ? 'success' : 'default'} style={{ fontSize: 10, margin: 0 }}>
+                          {task.description}: {groupTotal.toLocaleString()} / {kitReqQty.toLocaleString()} units
+                        </Tag>
+                      )}
+                    </Space>
+                  </div>
+                  );
+                })}
+              </Space>
+              </div>
+              <Button
+                type="dashed"
+                icon={<PlusOutlined />}
+                onClick={addKitSubTask}
+                style={{ width: '100%', marginTop: 10, borderColor: '#B11E6A', color: '#B11E6A' }}
+              >
+                Add Task
+              </Button>
+            </>
+          );
+        })()}
+
+        <div style={{ marginTop: 16 }}>
+          <Button
+            type="primary"
+            block
+            style={{
+              height: 42, borderRadius: 10,
+              background: 'linear-gradient(135deg,#B11E6A,#D85C9E)',
+              border: 'none', fontWeight: 600,
+              boxShadow: '0 4px 15px rgba(177,30,106,0.3)',
+            }}
+            onClick={submitKitPackingTask}
+          >
+            Create and Assign {kitPackingModalCategory === 'personalized' ? 'Personalized' : 'Separate'} Kit Packing Task
+          </Button>
+        </div>
       </Modal>
 
       {/* ── Time Management Config Modal ──────────────────────────────────────── */}

@@ -56,7 +56,26 @@ const resolveInvoiceMoney = (inv, order) => {
   const { taxable, gstAmt } = reconcileTaxable(inv.subtotal, inv.gstAmount, coreTotal);
   return { invValue: r2(invValue), taxable, gstAmt, extras };
 };
-const ORDER_MONEY_FIELDS = 'total amount gstAmount forwardingCharge forwardingChargeAmount paymentCollection';
+const ORDER_MONEY_FIELDS = 'total amount gstAmount forwardingCharge forwardingChargeAmount paymentCollection paidAmount';
+
+// Live Paid/Partially Paid/Pending status for an invoice, reconciled against its linked
+// order the same way resolveOrderPaymentStatus (utils/syncOrderPayment.js) and
+// getHotelPendingDue (parties.controller) already do: a payment recorded straight onto the
+// Order (e.g. Sales/Negotiation's own payment-entry flow) does not always sync back onto
+// Invoice.advanceAmount/status, so trusting inv.status alone can show "Pending" here for an
+// invoice Billing already displays as Paid. Take the larger of Invoice vs Order paid against
+// `invValue` (already the larger of Invoice vs Order total, from resolveInvoiceMoney).
+const resolveInvoiceStatus = (inv, order, invValue) => {
+  if (inv.isComplementary) return 'Paid';
+  const orderPaid = order
+    ? ((order.paymentCollection || []).reduce((s, e) => s + (Number(e?.paidAmount) || 0), 0) || Number(order.paidAmount) || 0)
+    : 0;
+  const paid = Math.max(Number(inv.advanceAmount) || 0, orderPaid);
+  if (invValue <= 0) return inv.status || 'Pending';
+  if (paid >= invValue) return 'Paid';
+  if (paid > 0) return 'Partially Paid';
+  return 'Pending';
+};
 
 // A kit's product rows (Order/Quotation/Invoice `items[]` with isKit:true) store `qty` as the
 // component quantity PER KIT (see Kit.products), not the order's total — the real quantity
@@ -576,7 +595,7 @@ exports.getBillPL = asyncHandler(async (req, res) => {
       cogs: r2(cogs),
       input_gst: r2(inputGst),
       gross_profit: r2(grossProfit),
-      status: inv.status,
+      status: resolveInvoiceStatus(inv, order, invValue),
     };
   });
 
