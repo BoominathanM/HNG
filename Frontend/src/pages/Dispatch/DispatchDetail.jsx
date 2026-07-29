@@ -211,23 +211,41 @@ export default function DispatchDetail() {
     // further down to scale the personalized kit's OWN overall qty and its packagingIncludes,
     // which otherwise bypass the products/kitOrders filtering entirely (see comment below).
     const kitDispatchByKitId = new Map((order?.kitDispatch || []).map((kd) => [String(kd.kitId), kd]));
-    const isKitDispatched = (kitId) => {
+    // This round's not-yet-confirmed "Dispatch Now" counts, keyed the same way as the
+    // verification table rows (see `products` above). Print Invoice can be opened BEFORE
+    // Confirm Partial/Full Dispatch runs — at that point qtyDispatched/kitDispatch.dispatchedQty
+    // are still whatever the PREVIOUS round left them (0 for a brand-new order), so filtering on
+    // those alone made the very first Print Invoice preview drop every row and fall back to the
+    // frozen, un-composed invoice.items (blank Per Kit/Overall Qty, 0% tax). Folding in the
+    // pending counts lets the preview show exactly what's about to go out.
+    const kitDispatchNowByKitId = new Map(
+      (products || []).filter((p) => p.type === 'kit_header' && p.kitId).map((p) => [String(p.kitId), dispatchNowCounts[p.key] || 0])
+    );
+    const productDispatchNowByItemId = new Map(
+      (products || []).filter((p) => p.type === 'product' && p.itemId).map((p) => [String(p.itemId), dispatchNowCounts[p.key] || 0])
+    );
+    const dispatchedOrPendingQtyForKit = (kitId) => {
       const kd = kitId ? kitDispatchByKitId.get(String(kitId)) : null;
-      return !!(kd && (kd.dispatchedQty || 0) > 0);
+      const confirmed = kd?.dispatchedQty || 0;
+      return confirmed > 0 ? confirmed : (kitDispatchNowByKitId.get(String(kitId)) || 0);
     };
+    const isKitDispatched = (kitId) => dispatchedOrPendingQtyForKit(kitId) > 0;
 
     if (filterVerified) {
       // dispatch items (order.items) line up positionally with the order's own
       // products/items array — same fallback convention dispatchGrouping.js and the
       // emergency-badge lookup below already rely on — so "actually dispatched" state at
       // index i applies to srcProds[i]. Kit-linked items are dispatched as one unit via
-      // kitDispatch (dispatchedQty > 0 for that kit); plain items use their own qtyDispatched.
+      // kitDispatch (dispatchedQty > 0 for that kit); plain items use their own qtyDispatched,
+      // falling back to this round's pending Dispatch Now count for either.
       const dispatchItemsList = order?.items || [];
       const dispatchedIndexSet = new Set(
         dispatchItemsList
           .map((it, i) => {
             if (!it?._id) return -1;
-            const isDispatched = it.kitId ? isKitDispatched(it.kitId) : (it.qtyDispatched || 0) > 0;
+            const isDispatched = it.kitId
+              ? isKitDispatched(it.kitId)
+              : (it.qtyDispatched || 0) > 0 || (productDispatchNowByItemId.get(String(it._id)) || 0) > 0;
             return isDispatched ? i : -1;
           })
           .filter((i) => i >= 0)
@@ -242,13 +260,15 @@ export default function DispatchDetail() {
     // DIRECTLY — independent of the products/kitOrders arrays just filtered above — so without
     // scaling these too, the dispatched-only invoice kept showing the FULL personalized-kit qty
     // (and everything packed inside it) even when only part (or none) of it had been dispatched.
-    let effectiveKitOverallQty = linkedOrder?.kitOverallQty || 0;
+    // Same legacy-field gap as the Emergency Order banner (order.kitOverallQty is 0 for
+    // orders saved with kitOrders instead of the old single-kit field) — prefer the
+    // personalized kitOrders entry's own overallQty before falling back.
+    const personalizedKoDefault = (linkedOrder?.kitOrders || []).find((ko) => ko && ko.category === 'personalized');
+    let effectiveKitOverallQty = Number(personalizedKoDefault?.overallQty) || Number(linkedOrder?.kitOverallQty) || 0;
     let effectivePackagingIncludes = linkedOrder?.packagingIncludes || [];
     if (filterVerified) {
       const personalizedKo = (linkedOrder?.kitOrders || []).find((ko) => (ko.category || 'separate_kit') === 'personalized');
-      effectiveKitOverallQty = isKitDispatched(personalizedKo?.kitId)
-        ? (kitDispatchByKitId.get(String(personalizedKo.kitId))?.dispatchedQty || 0)
-        : 0;
+      effectiveKitOverallQty = dispatchedOrPendingQtyForKit(personalizedKo?.kitId);
 
       // Name lookup for included SEPARATE PRODUCTS (packagingIncludes can reference a
       // product name, not just a kit id) — same positional fallback as the item filter above.
@@ -262,7 +282,7 @@ export default function DispatchDetail() {
       const isIncludedTargetDispatched = (idOrName) => {
         if (isKitDispatched(idOrName)) return true;
         const it = itemByLowerName.get(String(idOrName || '').toLowerCase());
-        return (it?.qtyDispatched || 0) > 0;
+        return (it?.qtyDispatched || 0) > 0 || (productDispatchNowByItemId.get(String(it?._id)) || 0) > 0;
       };
       const piRaw = linkedOrder?.packagingIncludes || [];
       effectivePackagingIncludes = (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null)
@@ -452,6 +472,11 @@ export default function DispatchDetail() {
       // dispatchGrouping.js to nest those under the Personalized Kit header instead of
       // showing them as their own Separate Kit/Product row.
       packagingIncludes: o.packagingIncludes || [],
+      // How much of each packagingIncludes-listed row is actually packed inside the
+      // personalized kit (vs. the rest shipping as its own standalone Separate
+      // Kit/Product) — see emergencyByTarget below, which needs this to avoid marking a
+      // bundled item's FULL order qty emergency when only its bundled portion is.
+      packagingIncludesQty: o.packagingIncludesQty || {},
       // Per-kit dispatch progress (overallQty/dispatchedQty/photos per kit, dispatched
       // as one unit) — see dispatchGrouping.js.
       kitDispatch: d.kitDispatch || [],
@@ -465,7 +490,16 @@ export default function DispatchDetail() {
       // A personalized kit's own count (e.g. "25 kits") — the split-date option "Kit (All
       // Products)" is stored as product '__kit__' and its qty is measured against THIS, not
       // against the kit's individual component item quantities (those are per-kit amounts).
-      kitOverallQty: o.kitOverallQty || 0,
+      // Prefer the matching kitOrders entry's overallQty (current multi-kit source of truth,
+      // same pattern deductInventoryForOrder/computeRecordBuckets use) and only fall back to
+      // the legacy order-level kitOverallQty field for pre-kitOrders records — reading
+      // o.kitOverallQty alone left this at 0 for every order saved with kitOrders instead,
+      // which is what made the Emergency Order banner show "N of 0 units".
+      kitOverallQty: (() => {
+        const kitOrdersList = Array.isArray(o.kitOrders) ? o.kitOrders : [];
+        const personalizedKo = kitOrdersList.find((ko) => ko && ko.category === 'personalized') || kitOrdersList[0];
+        return Number(personalizedKo?.overallQty) || Number(o.kitOverallQty) || 0;
+      })(),
       storedPartialDispatchConfirmed: !!d.partialDispatchConfirmed,
       storedPartialDispatchAt: d.partialDispatchAt || null,
       // Whether the CURRENT round (partial or full) already had its Finished Dispatch
@@ -506,37 +540,118 @@ export default function DispatchDetail() {
     };
   }, [dispatchData]);
 
-  // Emergency split, keyed per target (lowercase product name, or the literal '__kit__'
-  // Sales uses for its "Kit (All Products)" split-date option) → { emergencyQty, totalQty }.
-  // Summed directly from order.splitDates with no clamping, so it always matches exactly
-  // what's entered in the "Urgent / Emergency Deliveries (Partial)" card on the Order
-  // (Sales/index.jsx) — that card is the source of truth for these numbers, not the item
-  // verification table. '__kit__' is measured against the personalized kit's OWN overall
-  // qty (order.kitOverallQty, e.g. "25 kits"), never against its component items' qty —
-  // Paste/Brush carry a PER-KIT quantity (e.g. 1 each), not the kit's own count, so summing
-  // them instead of using kitOverallQty previously produced the wrong total.
+  // Emergency split, keyed per target (lowercase product name, the literal '__kit__'
+  // composite key for the Personalized Kit header, or `__sepkit__:<kitId>` for a standalone
+  // Separate Kit header) → { emergencyQty, totalQty }. '__kit__' is measured against the
+  // personalized kit's OWN overall qty (order.kitOverallQty, e.g. "25 kits"), never against
+  // its component items' qty — Paste/Brush carry a PER-KIT quantity (e.g. 1 each), not the
+  // kit's own count.
+  //
+  // Sales' emergency dropdown (buildEmergencySelectionOptions, Sales/index.jsx) saves
+  // '__personalized__' / '__sepkit__:<kitId>' as the splitDate's product value (the legacy
+  // '__kit__' sentinel is only still interpreted for records saved before that rename). Both
+  // are EXPANDED here into their real component/bundled-row entries too (Paste/Brush, and
+  // any Separate Product/Kit partially packed into the personalized kit via
+  // packagingIncludes) so each of THOSE rows also gets the right badge, not just the kit
+  // header. A bundled row's contribution is capped at packagingIncludesQty (the bundled
+  // portion) rather than its full order qty — a Separate Product ordered at 20 with only 5
+  // packed into the kit must show 5, not 20, as emergency purely because the kit bundling
+  // it is fully emergency (mirrors the Operations/data.js getEmergencyProductQtyMap fix for
+  // the same bug). `map.topLevelKeys` marks which entries are RAW splitDates targets (as
+  // opposed to ones produced by this expansion) so the page-level emergency-units banner
+  // below can sum only those — otherwise a kit header and the components it expands into
+  // would double-count the same physical units.
   const emergencyByTarget = useMemo(() => {
     const map = new Map();
+    const topLevelKeys = new Set();
+    const rawItems = order?.orderRawItems || [];
+
+    const kitCfgById = new Map((order?.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]));
+    const includeSet = new Set((order?.packagingIncludes || []).map(String));
+    const piQty = order?.packagingIncludesQty || {};
+    const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName || it.product));
+    const bundledQtyFor = (it) => {
+      const key = it.kitId ? String(it.kitId) : String(it.name || it.itemName || it.product);
+      return includeSet.has(key) ? (Number(piQty[key]) || 0) : null;
+    };
+    const resolveKitCount = (it) => Number(kitCfgById.get(String(it.kitId))?.overallQty) || Number(order?.kitOverallQty) || 0;
+    const effectiveQty = (it) => {
+      if (!(it.isKit || it.kitType)) return Number(it.qty) || 0;
+      const perUnit = Number(it.qty) || 0;
+      const count = resolveKitCount(it);
+      return count > 0 ? perUnit * count : (Number(it.overallQty) || perUnit || 0);
+    };
+
+    // Name -> TRUE total qty (not the per-kit ratio a kit component's own `.qty` stores) —
+    // must use effectiveQty here, or a component like Brush (2/kit) shows totalQty=2 instead
+    // of its real 10-of-10-kits total, making its informational badge read as "5 of 2".
     const itemQtyByName = new Map();
-    (order?.orderRawItems || []).forEach((it) => {
-      const key = (it.product || it.itemName || '').toLowerCase();
-      if (key) itemQtyByName.set(key, (itemQtyByName.get(key) || 0) + (Number(it.qty) || 0));
+    rawItems.forEach((it) => {
+      const key = (it.product || it.itemName || it.name || '').toLowerCase();
+      if (key) itemQtyByName.set(key, (itemQtyByName.get(key) || 0) + effectiveQty(it));
     });
+
+    const addToMap = (key, qty, total) => {
+      const existing = map.get(key) || { emergencyQty: 0, totalQty: total };
+      existing.emergencyQty += Number(qty) || 0;
+      map.set(key, existing);
+    };
+
+    const expandGroup = (items, groupTotalQty, kitEmergencyQty, qtyResolver) => {
+      const resolveQty = qtyResolver || effectiveQty;
+      if (!items.length || !groupTotalQty || kitEmergencyQty == null) return;
+      items.forEach((it) => {
+        const key = (it.product || it.itemName || it.name || '').toLowerCase();
+        if (!key) return;
+        const itemQty = resolveQty(it);
+        const qty = Math.min(Math.round((kitEmergencyQty / groupTotalQty) * itemQty), itemQty);
+        addToMap(key, qty, itemQtyByName.get(key) || itemQty);
+      });
+    };
+
+    const expandPersonalized = (kitEmergencyQty) => {
+      topLevelKeys.add('__kit__');
+      addToMap('__kit__', kitEmergencyQty, order?.kitOverallQty || 0);
+      const items = rawItems.filter((it) => it.category === 'personalized' || isBundled(it));
+      const kitItems = items.filter((it) => it.isKit || it.kitType);
+      const groupTotalQty = kitItems.length ? Math.max(...kitItems.map(resolveKitCount)) : (Number(order?.kitOverallQty) || 0);
+      const qtyResolver = (it) => {
+        if (it.category !== 'personalized') {
+          const bundled = bundledQtyFor(it);
+          if (bundled != null) return bundled;
+        }
+        return effectiveQty(it);
+      };
+      expandGroup(items, groupTotalQty, kitEmergencyQty, qtyResolver);
+    };
+
+    const expandSeparateKit = (kitKey, kitEmergencyQty) => {
+      const items = rawItems.filter((it) => !isBundled(it) && String(it.kitId || it.kitName || it.kitType) === kitKey);
+      const groupTotalQty = items.length ? Math.max(...items.map(resolveKitCount)) : 0;
+      topLevelKeys.add(`__sepkit__:${kitKey}`);
+      addToMap(`__sepkit__:${kitKey}`, kitEmergencyQty, groupTotalQty);
+      expandGroup(items, groupTotalQty, kitEmergencyQty);
+    };
+
+    const handleEntry = (product, qty) => {
+      if (!product) return;
+      if (product === '__kit__' || product === '__personalized__') { expandPersonalized(qty); return; }
+      if (typeof product === 'string' && product.startsWith('__sepkit__:')) {
+        expandSeparateKit(product.slice('__sepkit__:'.length), qty);
+        return;
+      }
+      const key = product.toLowerCase();
+      topLevelKeys.add(key);
+      addToMap(key, qty, itemQtyByName.get(key) || 0);
+    };
+
     (order?.splitDates || []).forEach((sd) => {
       const productList = (sd.products && sd.products.length > 0)
         ? sd.products
         : (sd.product ? [{ product: sd.product, qty: sd.qty }] : []);
-      productList.forEach((p) => {
-        if (!p.product) return;
-        const key = p.product.toLowerCase();
-        const existing = map.get(key) || {
-          emergencyQty: 0,
-          totalQty: key === '__kit__' ? (order?.kitOverallQty || 0) : (itemQtyByName.get(key) || 0),
-        };
-        existing.emergencyQty += Number(p.qty) || 0;
-        map.set(key, existing);
-      });
+      productList.forEach((p) => handleEntry(p.product, p.qty != null ? Number(p.qty) : null));
     });
+    map.topLevelKeys = topLevelKeys;
     return map;
   }, [order]);
 
@@ -973,6 +1088,7 @@ export default function DispatchDetail() {
     boxes: order?.boxes,
     kitDispatch: order?.kitDispatch,
     packagingIncludes: order?.packagingIncludes,
+    packagingIncludesQty: order?.packagingIncludesQty,
     tasks: order?.tasks,
   });
   const verifySummary = summarizeDispatchVerification(products);
@@ -1034,13 +1150,17 @@ export default function DispatchDetail() {
   // every row — purely for display (the backend recomputes this authoritatively).
   const willFullyComplete = products.every((p) => (dispatchNowCounts[p.key] || 0) >= getRowPendingQty(p));
 
-  // Exact emergency count for the page-level banner — summed directly from
-  // emergencyByTarget (i.e. straight from order.splitDates, each target's total already
-  // resolved to kitOverallQty for '__kit__' or the matching item's own qty otherwise) rather
-  // than reconstructed from matched rows, so it can never under/over-count relative to what
-  // the "Urgent / Emergency Deliveries (Partial)" card on the Order shows.
+  // Exact emergency count for the page-level banner — summed directly from the RAW
+  // splitDates targets only (emergencyByTarget.topLevelKeys), each target's total already
+  // resolved to kitOverallQty for '__kit__'/'__personalized__' or the matching item's own
+  // qty otherwise, so it can never under/over-count relative to what the "Urgent / Emergency
+  // Deliveries (Partial)" card on the Order shows. emergencyByTarget also contains entries
+  // produced by EXPANDING a kit target into its components/bundled rows (for per-row
+  // badges) — summing those too would double-count the same physical units.
   let emergencyTotals = { emergencyQty: 0, totalQty: 0 };
-  emergencyByTarget.forEach((v) => {
+  (emergencyByTarget.topLevelKeys || []).forEach((key) => {
+    const v = emergencyByTarget.get(key);
+    if (!v) return;
     emergencyTotals.emergencyQty += v.emergencyQty;
     emergencyTotals.totalQty += v.totalQty;
   });

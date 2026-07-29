@@ -384,13 +384,23 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   }
 
   // Kits/products packed INSIDE a Personalized Kit's box ("Select Kit(s) to Include" on the
-  // order) ship as part of that kit's single dispatch unit — the Dispatch Verification table
-  // folds them into the Personalized Kit's row and gives them no Dispatch Now input of their
-  // own (see dispatchGrouping.js buildDispatchGroupedProducts), so their kitDispatch/item
-  // progress can never be submitted from the UI. Excluded here the same way the frontend
-  // excludes them from its dispatchable row list, or they'd permanently keep "fullyDispatched"
-  // stuck at false — every row showing "Fully Dispatched" in the table, yet the Finished
-  // Dispatch step staying disabled forever.
+  // order) ship as part of that kit's single dispatch unit. A whole Separate KIT folded in
+  // this way still has NO independent Dispatch Now input in the UI (dispatchGrouping.js
+  // fully absorbs its components into the personalized kit's children either way) — so it
+  // stays fully excluded here exactly as before, regardless of packagingIncludesQty; there's
+  // no way for the dispatcher to satisfy a partial requirement for it, and requiring one
+  // would strand the order permanently in Partial Dispatch. A Separate PRODUCT is different:
+  // dispatchGrouping.js now (see that file) keeps its REMAINING unbundled qty as its own
+  // dispatchable Separate Product row, so a product's required qty CAN correctly be reduced
+  // to just that remainder instead of excluded wholesale — e.g. a Separate Product ordered
+  // at 20 with only 5 packed into the kit still needs its other 15 units confirmed via their
+  // own Dispatch Now count; a prior version excluded it entirely the moment it appeared
+  // anywhere in packagingIncludes, so those 15 units could never be required and an order
+  // could be marked "fully dispatched" without ever confirming they'd actually shipped.
+  // packagingIncludesQty holds the bundled qty (product qty, keyed by name); a name present
+  // in packagingIncludes but with NO packagingIncludesQty entry predates that field and is
+  // treated as fully bundled (0 required), preserving prior behavior for legacy records
+  // instead of retroactively demanding a dispatch count no UI was ever built to collect.
   const orderKitOrders = orderDoc?.kitOrders || [];
   const personalizedKitOrder = orderKitOrders.find((ko) => (ko?.category || 'separate_kit') === 'personalized');
   const piRaw = orderDoc?.packagingIncludes || [];
@@ -399,17 +409,18 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
       ? piRaw.map((p) => String(p.id))
       : piRaw.map((id) => String(id))
   );
+  const piQty = orderDoc?.packagingIncludesQty || {};
+  const bundledQtyForItemName = (name, fullQty) => {
+    if (!includedIds.has(String(name))) return 0;
+    const explicit = piQty[name];
+    return explicit != null ? Number(explicit) || 0 : fullQty;
+  };
   const includedKitIds = new Set();
-  const includedItemIds = new Set();
   if (personalizedKitOrder && includedIds.size > 0) {
     orderKitOrders.forEach((ko) => {
       if (!ko || ko === personalizedKitOrder) return;
       if ((ko.category || 'separate_kit') === 'personalized') return;
       if (ko.kitId && includedIds.has(String(ko.kitId))) includedKitIds.add(String(ko.kitId));
-    });
-    dispatch.items.forEach((it) => {
-      if (it.isKit || it.kitId) return;
-      if (it.itemName && includedIds.has(it.itemName)) includedItemIds.add(String(it._id));
     });
   }
 
@@ -419,8 +430,12 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
     .filter((kd) => !includedKitIds.has(String(kd.kitId)))
     .every((kd) => kd.dispatchedQty >= kd.overallQty)
     && dispatch.items
-      .filter((it) => !it.isKit && !includedItemIds.has(String(it._id)))
-      .every((it) => (it.qtyDispatched || 0) >= (it.qtyOrdered || 0));
+      .filter((it) => !it.isKit)
+      .every((it) => {
+        const bundled = personalizedKitOrder ? bundledQtyForItemName(it.itemName, it.qtyOrdered) : 0;
+        const required = Math.max(0, (it.qtyOrdered || 0) - bundled);
+        return (it.qtyDispatched || 0) >= required;
+      });
   dispatch.dispatchType = fullyDispatched ? 'Full Dispatch' : 'Partial Dispatch';
   // A fresh round (partial or full) just got confirmed — it hasn't had its own
   // "Finished Dispatch" LR/notify step yet, even if a PREVIOUS round already did.

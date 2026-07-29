@@ -425,6 +425,13 @@ export default function Purchase() {
   const [showLRUploadModal, setShowLRUploadModal] = useState(false);
   const [lrUploadTarget, setLrUploadTarget] = useState(null);
   const [lrUploadForm] = Form.useForm();
+  // The Cloudinary upload (customRequest) is async and independent of form submission —
+  // without this, clicking "Save LR Copy" right after dropping a file saves the LR with
+  // no lrFileUrl at all (the PATCH goes out before the file's .url exists yet), and the
+  // Dispatch Order Tracking table permanently shows "No file" for that order since there's
+  // no way to re-attach it afterwards except re-opening Edit and re-uploading.
+  const lrFileWatch = Form.useWatch('lr_file', lrUploadForm);
+  const lrFileUploading = !!lrFileWatch?.fileList?.some((f) => f.status === 'uploading');
 
   /* ── "Verified by" for received orders ── */
   const [verifiedByName, setVerifiedByName] = useState('');
@@ -478,6 +485,7 @@ export default function Purchase() {
         item: o.itemId?.itemName || o.itemName,
         qty: o.qty, unit: o.unit, amount: o.amount,
         lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
+        expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
         lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
         paymentProof: o.paymentProofUrl || null,
         paymentHistory: o.paymentHistory || [],
@@ -5282,6 +5290,14 @@ export default function Purchase() {
             onFinish={async (vals) => {
               const deliveryDate = vals.delivery_date ? vals.delivery_date.format('YYYY-MM-DD') : '';
               const fileItem = vals.lr_file?.fileList?.[0];
+              if (fileItem && fileItem.status === 'uploading') {
+                enqueueSnackbar('LR document is still uploading — please wait for it to finish before saving.', { variant: 'warning' });
+                return;
+              }
+              if (fileItem && fileItem.status === 'error') {
+                enqueueSnackbar('LR document failed to upload — remove it and try again, or save without it.', { variant: 'error' });
+                return;
+              }
               const fileUrl = fileItem?.url || null;
               const fileName = fileItem?.name || '';
               try {
@@ -5347,8 +5363,9 @@ export default function Purchase() {
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <Button style={{ flex: 1, height: 40, borderRadius: 8 }} onClick={() => { setShowLRUploadModal(false); lrUploadForm.resetFields(); }}>Cancel</Button>
               <Button type="primary" htmlType="submit" icon={<UploadOutlined />}
+                loading={lrFileUploading} disabled={lrFileUploading}
                 style={{ flex: 2, height: 40, borderRadius: 8, background: '#1890ff', border: 'none', fontWeight: 700 }}>
-                Save LR Copy
+                {lrFileUploading ? 'Uploading…' : 'Save LR Copy'}
               </Button>
             </div>
           </Form>

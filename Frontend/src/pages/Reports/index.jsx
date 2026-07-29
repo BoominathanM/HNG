@@ -1832,7 +1832,7 @@ export default function Reports() {
                         { label: 'Total Input GST / ITC (Purchase)', value: totInputGst, color: '#7c3aed', sub: `CGST ₹${(totPurCgst ?? 0).toLocaleString()} + SGST ₹${(totPurSgst ?? 0).toLocaleString()} + IGST ₹${(totPurIgst ?? 0).toLocaleString()}` },
                       ] : []),
                       ...(gstViewMode === 'combined' ? [
-                        { label: 'Net GST Payable', value: netGstPayable, color: netGstPayable > 0 ? '#ff4d4f' : '#52c41a', sub: netGstPayable > 0 ? 'Amount due to govt.' : 'Credit / No liability' },
+                        { label: 'Net GST Payable', value: Math.max(netGstPayable, 0), color: netGstPayable > 0 ? '#ff4d4f' : '#52c41a', sub: netGstPayable > 0 ? 'Amount due to govt.' : 'Credit / No liability' },
                       ] : []),
                     ].map((s, i) => (
                       <Col xs={12} sm={8} lg={24 / 5} key={s.label}>

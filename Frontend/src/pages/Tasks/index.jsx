@@ -224,6 +224,33 @@ function deriveKitGroups(order) {
   return { separateKitGroups, personalizedKitGroups };
 }
 
+// How many of a Kit Packing group's kits are emergency, straight from the order's own
+// splitDates — the same '__personalized__' / '__sepkit__:<kitId>' / legacy '__kit__' keys
+// Backend/src/modules/tasks/tasks.controller.js's buildEmergencyQtyMap resolves for the
+// per-product breakdown. Unlike that per-product map, the raw `qty` on these splitDates
+// entries IS already expressed in KIT units (e.g. "10" = 10 of the kits), so no per-product
+// proportional split is needed here — just resolve which entry (if any) matches this kit
+// group's identity. `null` qty on a matching entry means "all of it is emergency".
+function resolveKitEmergencyQty(orderDoc, category, kg) {
+  const splitDates = orderDoc?.splitDates || [];
+  // Sales' buildEmergencySelectionOptions keys a Separate Kit option off
+  // `kitId || kitName || kitType` (falling back when a legacy row has no kitId) — `kg.key`
+  // (deriveKitGroups' own group key) already resolves through that same chain, so match on
+  // both it and the plain kitId to stay correct whichever one the dropdown actually used.
+  const wantedKeys = category === 'personalized'
+    ? new Set(['__personalized__', '__kit__'])
+    : new Set([`__sepkit__:${kg?.key}`, `__sepkit__:${kg?.kitId}`, '__kit__']);
+  for (const sd of splitDates) {
+    const entries = [...(sd.products || []), { product: sd.product, qty: sd.qty }];
+    for (const e of entries) {
+      if (e.product && wantedKeys.has(e.product)) {
+        return e.qty != null ? Number(e.qty) : (Number(kg?.overallQty) || 0);
+      }
+    }
+  }
+  return 0;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 export default function Tasks() {
   const navigate = useNavigate();
@@ -313,7 +340,12 @@ export default function Tasks() {
     const isPackRouted = !isStickerRouted;
     // Suggested Tasks chips reuse the "orderId-productIndex" checklist card id.
     const orderIdStr = item.orderId?.toString ? item.orderId.toString() : item.orderId;
-    const productIndex = typeof item.id === 'string' ? item.id.split('-').pop() : undefined;
+    // item.id is `${orderId}-${idx}` normally, or `${orderId}-${idx}-emg`/`-rem` when the
+    // product was split into separate Emergency/Tentative cards (see computeSuggestedTasks'
+    // isPartialEmergencySplit) — orderId (a Mongo ObjectId hex string) never contains a
+    // hyphen, so the array index is always segment [1], regardless of a trailing suffix.
+    // .split('-').pop() would incorrectly return "emg"/"rem" for a split card's id.
+    const productIndex = typeof item.id === 'string' ? item.id.split('-')[1] : undefined;
     const requiredQty = Number(item.qty) || 0;
 
     const seen = new Set();
@@ -355,7 +387,14 @@ export default function Tasks() {
       // Already fully assigned under this exact task name — don't keep offering it,
       // but other task names this product still needs stay available.
       const assignedKey = `${orderIdStr}-${productIndex}-${name}`;
-      const alreadyCovered = requiredQty > 0 && (assignedQtyByKey.get(assignedKey) || 0) >= requiredQty;
+      const rawAssigned = assignedQtyByKey.get(assignedKey) || 0;
+      // Emergency/Tentative split cards (see computeSuggestedTasks' isPartialEmergencySplit)
+      // share this same key since they share the same productIndex — discount whatever's
+      // attributable to the sibling card's own qty (item.siblingQty) before comparing, so
+      // assigning just the emergency batch doesn't also make the tentative card's identical
+      // chip look already-covered (and vice versa).
+      const assignedForThisCard = item.siblingQty ? Math.max(0, rawAssigned - item.siblingQty) : rawAssigned;
+      const alreadyCovered = requiredQty > 0 && assignedForThisCard >= requiredQty;
       if (!alreadyCovered) result.push({ value: c.taskName, label: c.taskName });
     });
     return result;
@@ -814,12 +853,13 @@ export default function Tasks() {
   // "Filling") — pre-fills the first breakdown row so the user doesn't retype it.
   const handleAssignSuggested = (s, presetTaskName) => {
     if (!requireAccess('add')) return;
-    // Defense in depth for the Stickering chip only (it's already disabled in the UI) —
-    // every other task for this product must stay assignable even while Stickering itself
-    // is blocked on Printing Status, so this only fires for a sticker-named preset.
-    const isStickerTaskName = presetTaskName && /stick|label/i.test(presetTaskName);
-    if (isStickerTaskName && s.designType === 'Sticker' && s.stickerPrintingReady === false) {
-      enqueueSnackbar(`Stickering blocked for "${s.product}" — Printing Status must be Received/Closed first.`, { variant: 'warning' });
+    // Defense in depth for the own-print-gate chip only (it's already disabled in the UI) —
+    // every other task for this product must stay assignable even while its Stickering
+    // (Sticker-routed) or Packing (Box/Frosted Ziplock/Butter Paper + Printing) chip is
+    // blocked on Printing Status, so this only fires for a matching preset name.
+    const isOwnPrintGateTaskName = presetTaskName && (/stick|label/i.test(presetTaskName) || /pack|fill/i.test(presetTaskName));
+    if (isOwnPrintGateTaskName && s.stickerPrintingReady === false) {
+      enqueueSnackbar(`"${presetTaskName}" blocked for "${s.product}" — Printing Status must be Received/Closed first.`, { variant: 'warning' });
       return;
     }
     // Same defense-in-depth, for the pack/fill chip when this product's packing material
@@ -904,7 +944,11 @@ export default function Tasks() {
         const u = assignableUsers.find((x) => x._id === st.assignee);
         return { label: st.description, qty: Number(st.qty) || 0, assignedTo: u?._id, assigneeName: u?.fullName };
       });
-      const productIndex = typeof s.id === 'string' ? Number(s.id.split('-').pop()) : undefined;
+      // s.id is `${orderId}-${idx}` or `${orderId}-${idx}-emg`/`-rem` for a split
+      // Emergency/Tentative card — the real order-item index is always segment [1] (see
+      // getRelevantTaskOptions' matching comment); .pop() would misread "emg"/"rem" as the
+      // index and send productIndex:NaN to the backend.
+      const productIndex = typeof s.id === 'string' ? Number(s.id.split('-')[1]) : undefined;
       // Each breakdown row with a different Task Name + assignee becomes its OWN task
       // in Task Management (not one task with an embedded breakdown).
       let successCount = 0;
@@ -1470,6 +1514,18 @@ export default function Tasks() {
                                         <Tag color="blue" style={{ borderRadius: 12, fontWeight: 600, fontSize: 12 }}>Separate Kit</Tag>
                                         <Text strong style={{ fontSize: 13 }}>{kg.kitName}</Text>
                                         {kg.overallQty > 0 && <Tag color="geekblue">Total: {kg.overallQty} kits</Tag>}
+                                        {(() => {
+                                          const kEmQty = resolveKitEmergencyQty(orderDoc, 'separate_kit', kg);
+                                          if (kEmQty <= 0) return null;
+                                          return kEmQty >= kg.overallQty ? (
+                                            <Tag color="error" icon={<AlertFilled />}>{kEmQty} kits — Emergency</Tag>
+                                          ) : (
+                                            <>
+                                              <Tag color="error" icon={<AlertFilled />}>{kEmQty} kits Emergency</Tag>
+                                              <Tag color="blue">{kg.overallQty - kEmQty} kits Regular</Tag>
+                                            </>
+                                          );
+                                        })()}
                                         {kg.kitItems?.length > 0 && (
                                           <Tag color="blue" style={{ borderRadius: 10 }}>
                                             {kg.kitItems.length} product{kg.kitItems.length !== 1 ? 's' : ''} / kit
@@ -1515,6 +1571,18 @@ export default function Tasks() {
                                           <Tag color="magenta" style={{ borderRadius: 12, fontWeight: 600, fontSize: 12 }}>Personalized Kit</Tag>
                                           <Text strong style={{ fontSize: 13 }}>{kg.kitName}</Text>
                                           {kg.overallQty > 0 && <Tag color="purple">Total: {kg.overallQty} kits</Tag>}
+                                          {(() => {
+                                            const kEmQty = resolveKitEmergencyQty(orderDoc, 'personalized', kg);
+                                            if (kEmQty <= 0) return null;
+                                            return kEmQty >= kg.overallQty ? (
+                                              <Tag color="error" icon={<AlertFilled />}>{kEmQty} kits — Emergency</Tag>
+                                            ) : (
+                                              <>
+                                                <Tag color="error" icon={<AlertFilled />}>{kEmQty} kits Emergency</Tag>
+                                                <Tag color="blue">{kg.overallQty - kEmQty} kits Regular</Tag>
+                                              </>
+                                            );
+                                          })()}
                                           {kg.kitItems?.length > 0 && (
                                             <Tag color="magenta" style={{ borderRadius: 10 }}>
                                               {kg.kitItems.length} product{kg.kitItems.length !== 1 ? 's' : ''} / kit
@@ -1564,13 +1632,15 @@ export default function Tasks() {
                             const readyText = s.stockReady
                               ? 'All resources ready — safe to assign and start production.'
                               : 'Stock Not Available — insufficient inventory to fully produce this item.';
-                            // Stickering-only gate: a Sticker-routed product can't have its Stickering
-                            // task assigned until THIS product's own Printing Status (Operations →
-                            // Product Specifications table) reaches Received/Closed. This blocks ONLY
-                            // the Stickering suggested-task chip below (shown with a red border/background) —
-                            // every other task for the same product (Filling, Packing, etc.) and the
-                            // general "Assign Task" button stay fully usable, same as before.
-                            const stickerBlocked = s.designType === 'Sticker' && s.stickerPrintingReady === false;
+                            // Own-print gate: a product routed to its own design/packaging destination
+                            // (Sticker always, or Box/Frosted Ziplock/Butter Paper whenever this item
+                            // also needs Printing — e.g. Soap: Packing Material=Box, Printing=Yes) can't
+                            // have its matching Stickering/Packing task assigned until THIS product's
+                            // own Printing Status (Operations → Product Specifications table) reaches
+                            // Received/Closed. This blocks ONLY the matching suggested-task chip below
+                            // (shown with a red border/background) — every other task for the same
+                            // product and the general "Assign Task" button stay fully usable.
+                            const printGateBlocked = s.stickerPrintingReady === false;
                             // Packing-material gate: a Personalized Kit Packing / Filling task can't be
                             // assigned until this product's own packing material (box/ziplock/bottle/etc.,
                             // tracked in Inventory > Material Stocks) has enough stock. Blocks ONLY the
@@ -1614,6 +1684,16 @@ export default function Tasks() {
                                         </>
                                       )}
                                       {!s.isEmergencyProduct && s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
+                                      {/* Tentative/remaining split card only (see computeSuggestedTasks'
+                                          isPartialEmergencySplit) — mirrors Operations' own "After Emergency
+                                          Items" tag: informational only, this card is still fully assignable,
+                                          it's just a reminder that the emergency batch (its own separate
+                                          card, shown first) should be handled/dispatched first. */}
+                                      {s.isEmergencyGated && (
+                                        <Tooltip title="Emergency batch for this product should be completed and dispatched first">
+                                          <Tag color="orange">After Emergency Items</Tag>
+                                        </Tooltip>
+                                      )}
                                       <Tag color={s.stockReady ? 'green' : 'red'}>
                                         {s.stockReady ? `Stock: ${s.inventoryStock ?? '—'}` : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
                                       </Tag>
@@ -1645,14 +1725,17 @@ export default function Tasks() {
                                         task names that actually fit THIS product/order spec (see
                                         getRelevantTaskOptions): explicit per-product configs, or general
                                         configs matched by product-name/sticker/print/pack keywords.
-                                        Only the Stickering chip turns red/disabled when stickerBlocked, and
-                                        only pack/fill-named chips turn red/disabled when materialBlocked
-                                        (packing material out of stock) — every other chip for this product
-                                        stays clickable. When the last "Get AI Insight" run recommended
-                                        task(s) for THIS exact product (matched via aiProductTasks, keyed by
-                                        orderCode::product), that chip is moved first and highlighted gold
-                                        with a robot icon — the AI's product-wise call, not just the
-                                        summary paragraph above. */}
+                                        When printGateBlocked, the Stickering chip turns red/disabled for
+                                        Sticker-routed products, and the pack/fill-named chip turns
+                                        red/disabled for Box/Frosted Ziplock/Butter Paper products that
+                                        also need Printing — same gate, applied to whichever chip is this
+                                        product's own design/packaging step. Pack/fill-named chips also
+                                        turn red/disabled when materialBlocked (packing material out of
+                                        stock) — every other chip for this product stays clickable. When
+                                        the last "Get AI Insight" run recommended task(s) for THIS exact
+                                        product (matched via aiProductTasks, keyed by orderCode::product),
+                                        that chip is moved first and highlighted gold with a robot icon —
+                                        the AI's product-wise call, not just the summary paragraph above. */}
                                     {(() => {
                                       const relevantOptions = s.stockReady ? getRelevantTaskOptions(s) : [];
                                       if (relevantOptions.length === 0) return null;
@@ -1672,13 +1755,19 @@ export default function Tasks() {
                                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Suggested Tasks</Text>
                                           <Space size={4} wrap>
                                             {sortedOptions.map((opt) => {
+                                              const isStickerRouted = s.designType === 'Sticker';
                                               const isStickerOption = /stick|label/i.test(opt.value);
                                               const isPackFillOption = /pack|fill/i.test(opt.value);
-                                              const optStickerBlocked = stickerBlocked && isStickerOption;
+                                              // Sticker-routed products gate their Stickering-named chip;
+                                              // Box/Frosted Ziplock/Butter Paper products that also need
+                                              // Printing gate their pack/fill-named chip instead — same
+                                              // printGateBlocked flag, different chip depending on routing.
+                                              const optStickerBlocked = printGateBlocked && isStickerRouted && isStickerOption;
+                                              const optPrintPackBlocked = printGateBlocked && !isStickerRouted && isPackFillOption;
                                               const optMaterialBlocked = materialBlocked && isPackFillOption;
-                                              const optBlocked = optStickerBlocked || optMaterialBlocked;
+                                              const optBlocked = optStickerBlocked || optPrintPackBlocked || optMaterialBlocked;
                                               const isAiRecommended = !optBlocked && aiTasks.includes(opt.value.toLowerCase());
-                                              const tooltipTitle = optStickerBlocked
+                                              const tooltipTitle = (optStickerBlocked || optPrintPackBlocked)
                                                 ? `Blocked — Printing Status is "${s.itemPrintingStatus || 'not set'}". Needs Received/Closed first.`
                                                 : optMaterialBlocked
                                                   ? `Blocked — Packing material not available${s.materialShortfall ? ` (${s.materialShortfall.material}${s.materialShortfall.size ? ` ${s.materialShortfall.size}` : ''}: ${s.materialShortfall.available}/${s.materialShortfall.needed})` : ''}.`
@@ -2132,7 +2221,7 @@ export default function Tasks() {
                       }}
                     >
                       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                        <div style={{ flex: 2 }}>
+                        <div style={{ flex: 2, minWidth: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task {idx + 1} — Task Name</Text>
                           <Select
                             placeholder="Select task"
@@ -2146,7 +2235,7 @@ export default function Tasks() {
                             options={configTaskNameOptions}
                           />
                         </div>
-                        <div style={{ width: 90 }}>
+                        <div style={{ width: 90, flexShrink: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
                           <InputNumber
                             min={0}
@@ -2157,7 +2246,7 @@ export default function Tasks() {
                             style={{ width: '100%', borderRadius: 6 }}
                           />
                         </div>
-                        <div style={{ flex: 1.4 }}>
+                        <div style={{ flex: 1.4, minWidth: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
                           <Select
                             placeholder="Select"
@@ -2250,19 +2339,18 @@ export default function Tasks() {
                 </Divider>
                 <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
                 <Space direction="vertical" style={{ width: '100%', minWidth: 420 }} size={8}>
-                  {/* Task Name choices are scoped to the SAME relevant-for-this-product list
-                      the Suggested Tasks chips use (getRelevantTaskOptions), not every
-                      configured task name — picking a name outside that set used to create a
-                      task the dispatch-readiness check (backend isOrderReadyForDispatch) can
-                      never recognize as covering this product, since it only sums Done qty
-                      under the product's own relevant task names. That silently blocked
-                      dispatch forever on a product that clearly had a completed task, just
-                      filed under a name the check didn't know to look for. Falls back to the
-                      full list only when this product has no configured relevant names at
-                      all, matching the backend's own any-task-exists fallback for that case. */}
+                  {/* Task Name lists EVERY configured task name (same full list the "New Task"
+                      modal already used), not just the ones guessed "relevant" for this
+                      product — the assigner picks the right one directly instead of relying on
+                      product-name/keyword matching, which has repeatedly guessed wrong (see
+                      GENERIC_TASK_WORDS fix history above). Dispatch readiness
+                      (backend isOrderReadyForDispatch) still recognizes a task filed under any
+                      name for a product that only needs ONE task type (its single-relevant-name
+                      fallback sums Done qty by productIndex regardless of name); only a product
+                      needing 2+ distinct task steps needs each one filed under its own matching
+                      name for per-step coverage to track correctly. */}
                   {(() => {
-                    const relevantForTarget = assignTarget ? getRelevantTaskOptions(assignTarget) : [];
-                    const taskNameOptions = relevantForTarget.length ? relevantForTarget : configTaskNameOptions;
+                    const taskNameOptions = configTaskNameOptions;
                     return assignSubTasks.map((task, idx) => {
                     const rowEstimate = estimateSecFor(timeConfigs, { taskName: task.description }, Number(task.qty) || 0);
                     const sameNameRows = task.description
@@ -2281,7 +2369,7 @@ export default function Tasks() {
                       }}
                     >
                       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                        <div style={{ flex: 2 }}>
+                        <div style={{ flex: 2, minWidth: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task {idx + 1} — Task Name</Text>
                           <Select
                             placeholder="Select task"
@@ -2295,7 +2383,7 @@ export default function Tasks() {
                             options={taskNameOptions}
                           />
                         </div>
-                        <div style={{ width: 90 }}>
+                        <div style={{ width: 90, flexShrink: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
                           <InputNumber
                             min={0}
@@ -2306,7 +2394,7 @@ export default function Tasks() {
                             style={{ width: '100%', borderRadius: 6 }}
                           />
                         </div>
-                        <div style={{ flex: 1.4 }}>
+                        <div style={{ flex: 1.4, minWidth: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
                           <Select
                             placeholder="Select"
@@ -2466,7 +2554,7 @@ export default function Tasks() {
                     }}
                   >
                     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                      <div style={{ flex: 2 }}>
+                      <div style={{ flex: 2, minWidth: 0 }}>
                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task {idx + 1} — Task Name</Text>
                         <Select
                           placeholder="Select task"
@@ -2480,7 +2568,7 @@ export default function Tasks() {
                           options={configTaskNameOptions}
                         />
                       </div>
-                      <div style={{ width: 90 }}>
+                      <div style={{ width: 90, flexShrink: 0 }}>
                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
                         <InputNumber
                           min={0}
@@ -2491,7 +2579,7 @@ export default function Tasks() {
                           style={{ width: '100%', borderRadius: 6 }}
                         />
                       </div>
-                      <div style={{ flex: 1.4 }}>
+                      <div style={{ flex: 1.4, minWidth: 0 }}>
                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
                         <Select
                           mode="multiple"

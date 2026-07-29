@@ -351,8 +351,18 @@ function buildEmergencyQtyMap(order) {
   );
   const includeSet = new Set((order.packagingIncludes || []).map(String));
   const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName));
+  // How much of a bundled row is actually packed INSIDE the personalized kit — e.g. a Separate
+  // Product ordered at qty 20 but only 5 of those units packed into the kit (packagingIncludesQty
+  // holds that 5). Used to cap a bundled item's contribution to the personalized-kit emergency
+  // split at the bundled amount, not its full standalone order qty (see expandPersonalized).
+  const piQty = order.packagingIncludesQty || {};
+  const bundledQtyFor = (it) => {
+    const key = it.kitId != null ? String(it.kitId) : String(it.name || it.itemName);
+    return includeSet.has(key) ? (Number(piQty[key]) || 0) : null;
+  };
 
-  const expandGroup = (items, groupTotalQty, kitEmergencyQty) => {
+  const expandGroup = (items, groupTotalQty, kitEmergencyQty, qtyResolver) => {
+    const resolveQty = qtyResolver || ((it) => effectiveItemQty(it, order, kitCfgById));
     if (items.length === 0) return;
     if (kitEmergencyQty === null) {
       items.forEach((it) => {
@@ -365,7 +375,7 @@ function buildEmergencyQtyMap(order) {
     items.forEach((it) => {
       const key = (it.product || it.itemName || '').toLowerCase();
       if (!key || map.has(key)) return;
-      const itemQty = effectiveItemQty(it, order, kitCfgById);
+      const itemQty = resolveQty(it);
       const qty = Math.min(Math.round((kitEmergencyQty / groupTotalQty) * itemQty), itemQty);
       map.set(key, qty);
     });
@@ -395,7 +405,19 @@ function buildEmergencyQtyMap(order) {
     const groupTotalQty = kitItemsInGroup.length
       ? Math.max(...kitItemsInGroup.map(resolveKitCount))
       : (Number(order.kitOverallQty) || 0);
-    expandGroup(items, groupTotalQty, kitEmergencyQty);
+    // A row pulled into this group only because it's PARTIALLY bundled into the personalized
+    // kit (not itself a personalized-category component) must contribute only its bundled
+    // portion — otherwise a Separate Product ordered at 20 with just 5 packed into the kit
+    // has its FULL 20 marked emergency the moment any of the kit is, instead of just the 5
+    // that actually ship inside it (the other 15 ship separately and aren't emergency).
+    const qtyResolver = (it) => {
+      if (it.category !== 'personalized') {
+        const bundled = bundledQtyFor(it);
+        if (bundled != null) return bundled;
+      }
+      return effectiveItemQty(it, order, kitCfgById);
+    };
+    expandGroup(items, groupTotalQty, kitEmergencyQty, qtyResolver);
   };
 
   const expandSeparateKit = (kitKey, kitEmergencyQty) => {
@@ -447,13 +469,27 @@ async function computeSuggestedTasks() {
   // each covering the full required qty on its own — see checkTaskQuantityOverflow /
   // normTaskName in Tasks/index.jsx. So a product only fully leaves this checklist once
   // EVERY relevant task name for it is qty-complete, not the moment a single task exists.
-  const existingTasks = await Task.find({ orderId: { $ne: null } }).select('orderId productIndex taskName qty').lean();
-  const qtyByKey = new Map(); // `${orderId}-${productIndex}-${normalizedTaskName}` -> summed qty
+  // Only Done-status tasks count towards that coverage — merely ASSIGNING a task (Pending/
+  // In Progress) used to drop the product off the checklist immediately, before any real
+  // work happened, which read as the product silently vanishing/moving on its own. A
+  // product with pending or not-yet-assigned work now stays visible until the task is
+  // actually completed; nothing here auto-hides it earlier than that.
+  const existingTasks = await Task.find({ orderId: { $ne: null }, status: 'Done' }).select('orderId productIndex taskName qty').lean();
+  const qtyByKey = new Map(); // `${orderId}-${productIndex}-${normalizedTaskName}` -> summed DONE qty
   existingTasks.forEach((t) => {
     const key = `${t.orderId}-${t.productIndex ?? 'x'}-${(t.taskName || '').trim().toLowerCase()}`;
     qtyByKey.set(key, (qtyByKey.get(key) || 0) + (Number(t.qty) || 0));
   });
   const anyTaskSet = new Set(existingTasks.map((t) => `${t.orderId}-${t.productIndex ?? 'x'}`));
+  // Done qty per product regardless of task name — used only to gate a partially-emergency
+  // product's REMAINING/tentative split-card (see isPartialEmergencySplit below), same
+  // "any task name counts" fallback computeOrderDispatchReadiness already uses for
+  // single-task-type products.
+  const doneQtyByProduct = new Map(); // `${orderId}-${productIndex}` -> summed DONE qty (any task name)
+  existingTasks.forEach((t) => {
+    const key = `${t.orderId}-${t.productIndex ?? 'x'}`;
+    doneQtyByProduct.set(key, (doneQtyByProduct.get(key) || 0) + (Number(t.qty) || 0));
+  });
   const timeConfigs = await TaskTimeConfig.find({ active: true }).select('taskName product active').lean();
 
   // Build a stock lookup by item name (case-insensitive). NOTE: the field is `itemName`,
@@ -537,26 +573,33 @@ async function computeSuggestedTasks() {
       }
 
       // ── Printing readiness — only gate items that actually need a print step. ──
-      // Sticker-routed items are exempted here: they get their OWN soft gate below
-      // (stickerPrintingReady, keyed off this item's own printingStatus/override) which
-      // shows the card with just the Stickering chip red-marked until Received/Closed.
+      // Any item routed to its OWN design/packaging destination — Sticker always, or
+      // Box/Frosted Ziplock/Butter Paper whenever this item's own `printing` flag is
+      // YES (e.g. Soap: Packing Material=Box, Printing=Yes goes to the Box design
+      // vendor for printing before Operations gets it) — is exempted here: it gets its
+      // OWN soft gate below (stickerPrintingReady, keyed off this item's own
+      // printingStatus/override) which shows the card with just its packing/stickering
+      // chip red-marked/disabled until Received/Closed, same as Sticker always has.
       // Hard-hiding them here too (via the order-level printingStatus field) made them
       // disappear from the checklist entirely instead of showing red as intended.
       const needsPrintStep = normYN(it.printing) === 'YES';
-      const printingReady = designType === 'Sticker' || !needsPrintStep || !o.printingStatus || ['Closed', 'Received'].includes(o.printingStatus);
+      const needsOwnPrintGate = designType === 'Sticker' || (!!designType && needsPrintStep);
+      const printingReady = needsOwnPrintGate || !needsPrintStep || !o.printingStatus || ['Closed', 'Received'].includes(o.printingStatus);
 
-      // ── Stickering readiness — a Sticker-routed product can only have its Stickering
-      // task assigned once THIS product's own Printing Status (the same value shown in
-      // Operations' Product Specifications table) reaches Received/Closed. This is a
-      // separate field from `it.printing`/`printingReady` above (that gate covers a
-      // different print-step flag and hides the card entirely) — this one is per-item,
-      // doesn't hide the card, and only applies when the product is Sticker-routed.
-      // Resolution mirrors OperationDetail.jsx's Product Specifications column: the
-      // item's own `printingStatus` first, then the order-level override map by product name.
+      // ── Stickering/packing-print readiness — a product routed to its own design
+      // destination (Sticker, or Box/Frosted Ziplock/Butter Paper when it also needs
+      // printing) can only have its Stickering/Packing task assigned once THIS
+      // product's own Printing Status (the same value shown in Operations' Product
+      // Specifications table) reaches Received/Closed. This is a separate field from
+      // `it.printing`/`printingReady` above (that gate covers a different print-step
+      // flag and hides the card entirely) — this one is per-item, doesn't hide the
+      // card, and only applies when the product needs its own print gate
+      // (needsOwnPrintGate). Resolution mirrors OperationDetail.jsx's Product
+      // Specifications column: the item's own `printingStatus` first, then the
+      // order-level override map by product name.
       const overridesMap = o.printingStatusOverrides || {};
       const itemPrintingStatus = it.printingStatus || overridesMap[productKey.toLowerCase()] || '';
-      const isStickerRouted = designType === 'Sticker';
-      const stickerPrintingReady = !isStickerRouted || ['Closed', 'Received'].includes(itemPrintingStatus);
+      const stickerPrintingReady = !needsOwnPrintGate || ['Closed', 'Received'].includes(itemPrintingStatus);
 
       // ── Packing material readiness — Personalized Kit Packing needs enough Box/Ziplock/
       // Butter Paper, Shampoo Filling needs enough Bottles, etc. Same soft-gate shape as
@@ -580,11 +623,11 @@ async function computeSuggestedTasks() {
       if (!printingReady) return;
 
       // Only drop this product off the checklist once every task NAME relevant to it
-      // (Filling, Packing, etc. — see relevantTaskNamesFor) has been assigned enough qty
-      // to cover the full required quantity. Each task name needs the full qty independently
-      // (they don't split it between them — see normTaskName in Tasks/index.jsx), so
-      // assigning just one of several needed task types must NOT hide the card — the user
-      // still needs to come back and assign the others.
+      // (Filling, Packing, etc. — see relevantTaskNamesFor) has enough DONE qty to cover
+      // the full required quantity (qtyByKey is Done-only — see existingTasks above). Each
+      // task name needs the full qty independently (they don't split it between them — see
+      // normTaskName in Tasks/index.jsx), so completing just one of several needed task
+      // types must NOT hide the card — the user still needs the others actually finished.
       const relevantNames = relevantTaskNamesFor(it, timeConfigs, designType, needsPrintStep);
       if (relevantNames.size > 0) {
         const fullyCovered = [...relevantNames].every((name) => {
@@ -618,18 +661,22 @@ async function computeSuggestedTasks() {
       const emergencyQtyRaw = emergencyQtyMap.get(productKey.toLowerCase());
       const isEmergencyProduct = emergencyQtyRaw !== undefined;
       const emergencyQty = isEmergencyProduct ? (emergencyQtyRaw === null ? requiredQty : emergencyQtyRaw) : 0;
-      suggestions.push({
-        id: `${o._id}-${idx}`,
+      // Mirrors Operations' production-queue split (Frontend/src/pages/Operations/data.js
+      // makeRow/makeBoxRow/makeFrostedRow/makeButterRow: "Partial emergency: split into
+      // emergency qty + remaining qty"). A product that's only PARTIALLY emergency (e.g.
+      // 10 of 20 units) becomes TWO separate checklist cards instead of one combined card
+      // with an Emergency/Regular tag — the emergency batch is always assignable now; the
+      // remaining/tentative batch is assignable too but tagged (informational only, not a
+      // hard block, same as Operations' "After Emergency Items" tag) until the emergency
+      // batch's own work is Done. Each batch then gets its own independent Assign Task
+      // action and its own dispatch round. A FULLY emergency product (emergencyQty >=
+      // requiredQty) stays a single card, unchanged.
+      const isPartialEmergencySplit = isEmergencyProduct && emergencyQty > 0 && emergencyQty < requiredQty;
+      const baseSuggestion = {
         orderId: o._id, orderCode: o.orderCode, client: o.clientName,
-        // `qty` is the real production total (requiredQty), not the raw per-kit ratio
-        // stored on kit-component items — see the requiredQty comment above.
-        product: it.itemName, qty: requiredQty, logoType: it.logoType,
+        product: it.itemName, logoType: it.logoType,
         isUrgent: isEmergencyOrder,
         emergencyApproved: !!o.emergencyApproved,
-        // Per-product emergency qty (of the `qty` total above) — 0 when this specific
-        // product has no emergency split, even if the order itself is flagged urgent.
-        isEmergencyProduct,
-        emergencyQty,
         orderCreatedAt: o.createdAt,
         inventoryStock: stock,
         designType,
@@ -640,8 +687,10 @@ async function computeSuggestedTasks() {
         needsDesign: !!designType,
         needsPrinting: needsPrintStep,
         stockReady, stickerReady, printingReady,
-        // Stickering-only gate — see stickerPrintingReady comment above. itemPrintingStatus
-        // is passed through so the UI can show the actual status in its red indicator.
+        // Own-print-gate (Stickering, or Box/Frosted Ziplock/Butter Paper packing when
+        // this item needs printing) — see stickerPrintingReady comment above.
+        // itemPrintingStatus is passed through so the UI can show the actual status in
+        // its red indicator.
         itemPrintingStatus,
         stickerPrintingReady,
         // Packing/filling-only gate — see materialStockReady comment above. materialShortfall
@@ -651,7 +700,63 @@ async function computeSuggestedTasks() {
         materialShortfall,
         fullyReady: stockReady, // ready-to-assign now means "stock available" — design/print no longer factor in
         pending, // stock/packing-material shortfall only (task is still shown either way)
-      });
+      };
+      if (isPartialEmergencySplit) {
+        // Any Done qty already recorded against this productIndex (any task name) counts
+        // as the emergency batch's own work — same "any task name counts" approximation
+        // computeOrderDispatchReadiness's single-relevant-name fallback already relies on.
+        // Can't distinguish which physical batch a Done task actually covered (Operations'
+        // own isEmergencyGated has the same class of approximation, keyed off StickerRequest
+        // completion by product name only) — acceptable given the checklist always lists the
+        // emergency card first, so normal usage clears it before the remaining one anyway.
+        const doneQtyForProduct = doneQtyByProduct.get(`${o._id}-${idx}`) || 0;
+        const emergencyBatchDone = doneQtyForProduct >= emergencyQty;
+        // `-emg`/`-rem` id suffixes mirror Operations' `-emg`/`-rem` queue-row key suffixes.
+        // Both cards keep the SAME productIndex (idx) — see Tasks/index.jsx's id-parsing
+        // (split('-')[1], not .pop()) so task creation still links to the right order item.
+        // Once the emergency batch's own Done qty is met, its card drops off (mirrors the
+        // "a product only leaves once its task is Done" rule above) — only the remaining/
+        // tentative card stays, no longer gated.
+        // `siblingQty` (the OTHER split card's own qty) lets the frontend's "already
+        // assigned under this task name" chip-hiding check (assignedQtyByKey, keyed only by
+        // orderId-productIndex-taskName since both cards share the same productIndex)
+        // discount whatever's attributable to the sibling before comparing against THIS
+        // card's own smaller qty — otherwise assigning just the emergency batch would also
+        // make the remaining/tentative card's identical-named chip look "already covered".
+        if (!emergencyBatchDone) {
+          suggestions.push({
+            ...baseSuggestion,
+            id: `${o._id}-${idx}-emg`,
+            qty: emergencyQty,
+            isEmergencyProduct: true,
+            emergencyQty,
+            isEmergencyGated: false,
+            siblingQty: requiredQty - emergencyQty,
+          });
+        }
+        suggestions.push({
+          ...baseSuggestion,
+          id: `${o._id}-${idx}-rem`,
+          qty: requiredQty - emergencyQty,
+          isEmergencyProduct: false,
+          emergencyQty: 0,
+          isEmergencyGated: !emergencyBatchDone,
+          siblingQty: emergencyQty,
+        });
+      } else {
+        suggestions.push({
+          ...baseSuggestion,
+          id: `${o._id}-${idx}`,
+          // `qty` is the real production total (requiredQty), not the raw per-kit ratio
+          // stored on kit-component items — see the requiredQty comment above.
+          qty: requiredQty,
+          // Per-product emergency qty (of the `qty` total above) — 0 when this specific
+          // product has no emergency split, even if the order itself is flagged urgent.
+          isEmergencyProduct,
+          emergencyQty,
+          isEmergencyGated: false,
+        });
+      }
     });
   }
   // Emergency orders first, then FIFO by when the order was placed — matches the Dispatch

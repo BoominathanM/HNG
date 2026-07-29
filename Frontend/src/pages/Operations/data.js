@@ -344,6 +344,15 @@ export const getEmergencyProductQtyMap = (order) => {
   );
   const includeSet = new Set((order.packagingIncludes || []).map(String));
   const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName));
+  // How much of a bundled row is actually packed INSIDE the personalized kit — e.g. a Separate
+  // Product ordered at qty 20 but only 5 of those units packed into the kit (packagingIncludesQty
+  // holds that 5). Used to cap a bundled item's contribution to the personalized-kit emergency
+  // split at the bundled amount, not its full standalone order qty (see expandPersonalized).
+  const piQty = order.packagingIncludesQty || {};
+  const bundledQtyFor = (it) => {
+    const key = it.kitId != null ? String(it.kitId) : String(it.name || it.itemName);
+    return includeSet.has(key) ? (Number(piQty[key]) || 0) : null;
+  };
 
   // Proportionally splits `kitEmergencyQty` KITS of demand across `items`, whose shared "kit
   // count" denominator is `groupTotalQty` — each item's share is (kitEmergencyQty / groupTotalQty)
@@ -351,8 +360,12 @@ export const getEmergencyProductQtyMap = (order) => {
   // kitEmergencyQty/groupTotalQty MUST both be in kit-count units, not per-product multiplied
   // units — a splitDate of "50" means "50 of the kits", and each component's own ratio (1 paste,
   // 2 brushes per kit) is what turns that shared 50-kit figure into a different absolute number
-  // per product (50 paste, 100 brushes) via the itemQty multiplication below.
-  const expandGroup = (items, groupTotalQty, kitEmergencyQty) => {
+  // per product (50 paste, 100 brushes) via the itemQty multiplication below. `qtyResolver`
+  // overrides how an item's own total is resolved (default effectiveItemQty) — expandPersonalized
+  // uses it to cap a partially-bundled Separate Kit/Product at its bundled qty instead of its
+  // full standalone order qty.
+  const expandGroup = (items, groupTotalQty, kitEmergencyQty, qtyResolver) => {
+    const resolveQty = qtyResolver || ((it) => effectiveItemQty(it, order, kitCfgById));
     if (items.length === 0) return;
     if (kitEmergencyQty === null) {
       items.forEach((it) => {
@@ -365,7 +378,7 @@ export const getEmergencyProductQtyMap = (order) => {
     items.forEach((it) => {
       const key = (it.product || it.itemName || '').toLowerCase();
       if (!key || map.has(key)) return;
-      const itemQty = effectiveItemQty(it, order, kitCfgById);
+      const itemQty = resolveQty(it);
       const qty = Math.min(Math.round((kitEmergencyQty / groupTotalQty) * itemQty), itemQty);
       map.set(key, qty);
     });
@@ -386,7 +399,19 @@ export const getEmergencyProductQtyMap = (order) => {
     const groupTotalQty = kitItemsInGroup.length
       ? Math.max(...kitItemsInGroup.map((it) => resolveKitCount(it, order, kitCfgById)))
       : (Number(order.kitOverallQty) || 0);
-    expandGroup(items, groupTotalQty, kitEmergencyQty);
+    // A row pulled into this group only because it's PARTIALLY bundled into the personalized
+    // kit (not itself a personalized-category component) must contribute only its bundled
+    // portion — otherwise a Separate Product ordered at 20 with just 5 packed into the kit
+    // has its FULL 20 marked emergency the moment any of the kit is, instead of just the 5
+    // that actually ship inside it (the other 15 ship separately and aren't emergency).
+    const qtyResolver = (it) => {
+      if (it.category !== 'personalized') {
+        const bundled = bundledQtyFor(it);
+        if (bundled != null) return bundled;
+      }
+      return effectiveItemQty(it, order, kitCfgById);
+    };
+    expandGroup(items, groupTotalQty, kitEmergencyQty, qtyResolver);
   };
 
   const expandSeparateKit = (kitKey, kitEmergencyQty) => {

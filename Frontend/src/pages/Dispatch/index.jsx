@@ -72,34 +72,119 @@ const resolveDestination = (o) => {
 };
 
 // "Urgent / Emergency Deliveries (Partial)" split, keyed per target (lowercase product
-// name, or the literal '__kit__' Sales uses for its "Kit (All Products)" split-date
-// option) → { emergencyQty, totalQty }. Mirrors Dispatch Detail's emergencyByTarget so
-// the Dispatch Orders list's expanded product panel can show the same "N of M units are
-// emergency — dispatch first as Partial, rest later as Full" breakdown, not just the
-// Detail page. '__kit__' is measured against the personalized kit's own overall qty
-// (kitOverallQty), never against its component items' per-kit qty.
-const buildEmergencyByTarget = (splitDates, kitOverallQty, orderItems) => {
+// name, the literal '__kit__' composite key standing in for the Personalized Kit header
+// itself, or `__sepkit__:<kitId>` for a standalone Separate Kit header) → { emergencyQty,
+// totalQty }. Mirrors Dispatch Detail's emergencyByTarget so the Dispatch Orders list's
+// expanded product panel can show the same "N of M units are emergency — dispatch first
+// as Partial, rest later as Full" breakdown, not just the Detail page.
+//
+// Sales' emergency dropdown (see buildEmergencySelectionOptions in Sales/index.jsx) saves
+// '__personalized__' / '__sepkit__:<kitId>' as the splitDate's product value (the legacy
+// '__kit__' sentinel is only still interpreted for records saved before that rename). Both
+// must be EXPANDED here — a Personalized Kit's real component items (Paste/Brush, matched
+// by name below) and any Separate Product/Kit partially bundled into it (via
+// packagingIncludes) each need their OWN entry so their own row gets the right badge, not
+// just the kit header. A bundled row's contribution is capped at packagingIncludesQty (the
+// bundled portion) rather than its full order qty — a Separate Product ordered at 20 with
+// only 5 packed into the kit must show 5, not 20, as emergency purely because the kit
+// bundling it is fully emergency (mirrors the Operations/data.js getEmergencyProductQtyMap
+// fix for the same bug).
+// Marks which map keys represent a RAW splitDates entry (a kit header composite key, or a
+// plain product-name entry) vs. one produced by expanding a kit into its components/bundled
+// rows — attached to the returned map so callers can sum "total emergency units in this
+// order" from ONLY the raw entries (`map.topLevelKeys`), never double-counting a kit header
+// together with the very components it was expanded into.
+const buildEmergencyByTarget = (splitDates, kitOverallQty, orderItems, kitOrders, packagingIncludes, packagingIncludesQty) => {
   const map = new Map();
+  const topLevelKeys = new Set();
+  const rawItems = orderItems || [];
+
+  const kitCfgById = new Map((kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]));
+  const includeSet = new Set((packagingIncludes || []).map(String));
+  const piQty = packagingIncludesQty || {};
+  const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName || it.product));
+  const bundledQtyFor = (it) => {
+    const key = it.kitId ? String(it.kitId) : String(it.name || it.itemName || it.product);
+    return includeSet.has(key) ? (Number(piQty[key]) || 0) : null;
+  };
+  const resolveKitCount = (it) => Number(kitCfgById.get(String(it.kitId))?.overallQty) || Number(kitOverallQty) || 0;
+  const effectiveQty = (it) => {
+    if (!(it.isKit || it.kitType)) return Number(it.qty) || 0;
+    const perUnit = Number(it.qty) || 0;
+    const count = resolveKitCount(it);
+    return count > 0 ? perUnit * count : (Number(it.overallQty) || perUnit || 0);
+  };
+
+  // Name -> TRUE total qty (not the per-kit ratio a kit component's own `.qty` stores) —
+  // must use effectiveQty here, or a component like Brush (2/kit) shows totalQty=2 instead
+  // of its real 10-of-10-kits total, making its informational badge read as "5 of 2".
   const itemQtyByName = new Map();
-  (orderItems || []).forEach((it) => {
-    const key = (it.product || it.itemName || '').toLowerCase();
-    if (key) itemQtyByName.set(key, (itemQtyByName.get(key) || 0) + (Number(it.qty) || 0));
+  rawItems.forEach((it) => {
+    const key = (it.product || it.itemName || it.name || '').toLowerCase();
+    if (key) itemQtyByName.set(key, (itemQtyByName.get(key) || 0) + effectiveQty(it));
   });
+
+  const addToMap = (key, qty, total) => {
+    const existing = map.get(key) || { emergencyQty: 0, totalQty: total };
+    existing.emergencyQty += Number(qty) || 0;
+    map.set(key, existing);
+  };
+
+  const expandGroup = (items, groupTotalQty, kitEmergencyQty, qtyResolver) => {
+    const resolveQty = qtyResolver || effectiveQty;
+    if (!items.length || !groupTotalQty || kitEmergencyQty == null) return;
+    items.forEach((it) => {
+      const key = (it.product || it.itemName || it.name || '').toLowerCase();
+      if (!key) return;
+      const itemQty = resolveQty(it);
+      const qty = Math.min(Math.round((kitEmergencyQty / groupTotalQty) * itemQty), itemQty);
+      addToMap(key, qty, itemQtyByName.get(key) || itemQty);
+    });
+  };
+
+  const expandPersonalized = (kitEmergencyQty) => {
+    topLevelKeys.add('__kit__');
+    addToMap('__kit__', kitEmergencyQty, kitOverallQty || 0);
+    const items = rawItems.filter((it) => it.category === 'personalized' || isBundled(it));
+    const kitItems = items.filter((it) => it.isKit || it.kitType);
+    const groupTotalQty = kitItems.length ? Math.max(...kitItems.map(resolveKitCount)) : (Number(kitOverallQty) || 0);
+    const qtyResolver = (it) => {
+      if (it.category !== 'personalized') {
+        const bundled = bundledQtyFor(it);
+        if (bundled != null) return bundled;
+      }
+      return effectiveQty(it);
+    };
+    expandGroup(items, groupTotalQty, kitEmergencyQty, qtyResolver);
+  };
+
+  const expandSeparateKit = (kitKey, kitEmergencyQty) => {
+    const items = rawItems.filter((it) => !isBundled(it) && String(it.kitId || it.kitName || it.kitType) === kitKey);
+    const groupTotalQty = items.length ? Math.max(...items.map(resolveKitCount)) : 0;
+    topLevelKeys.add(`__sepkit__:${kitKey}`);
+    addToMap(`__sepkit__:${kitKey}`, kitEmergencyQty, groupTotalQty);
+    expandGroup(items, groupTotalQty, kitEmergencyQty);
+  };
+
+  const handleEntry = (product, qty) => {
+    if (!product) return;
+    if (product === '__kit__' || product === '__personalized__') { expandPersonalized(qty); return; }
+    if (typeof product === 'string' && product.startsWith('__sepkit__:')) {
+      expandSeparateKit(product.slice('__sepkit__:'.length), qty);
+      return;
+    }
+    const key = product.toLowerCase();
+    topLevelKeys.add(key);
+    addToMap(key, qty, itemQtyByName.get(key) || 0);
+  };
+
   (splitDates || []).forEach((sd) => {
     const productList = (sd.products && sd.products.length > 0)
       ? sd.products
       : (sd.product ? [{ product: sd.product, qty: sd.qty }] : []);
-    productList.forEach((p) => {
-      if (!p.product) return;
-      const key = p.product.toLowerCase();
-      const existing = map.get(key) || {
-        emergencyQty: 0,
-        totalQty: key === '__kit__' ? (kitOverallQty || 0) : (itemQtyByName.get(key) || 0),
-      };
-      existing.emergencyQty += Number(p.qty) || 0;
-      map.set(key, existing);
-    });
+    productList.forEach((p) => handleEntry(p.product, p.qty != null ? Number(p.qty) : null));
   });
+  map.topLevelKeys = topLevelKeys;
   return map;
 };
 
@@ -235,6 +320,11 @@ export default function Dispatch() {
       // personalized kit's own box, so buildDispatchGroupedProducts nests them under the
       // Personalized Kit bucket instead of Separate Kit/Product (see dispatchGrouping.js).
       packagingIncludes: d.orderId?.packagingIncludes || [],
+      // How much of each packagingIncludes-listed row is actually packed inside the
+      // personalized kit (vs. the rest shipping as its own standalone Separate
+      // Kit/Product) — see buildEmergencyByTarget, which needs this to avoid marking a
+      // bundled item's FULL order qty emergency when only its bundled portion is.
+      packagingIncludesQty: d.orderId?.packagingIncludesQty || {},
       // "Urgent / Emergency Deliveries (Partial)" split — same source Dispatch Detail
       // reads to badge which product/kit qty is emergency vs. the remaining tentative
       // qty, and to show the "dispatch emergency first, rest as Full Dispatch later" info.
@@ -504,6 +594,7 @@ export default function Dispatch() {
       boxes: record.boxes,
       kitDispatch: record.kitDispatch,
       packagingIncludes: record.packagingIncludes,
+      packagingIncludesQty: record.packagingIncludesQty,
       tasks: record.tasks,
     });
     const summary = summarizeDispatchVerification(products);
@@ -512,7 +603,7 @@ export default function Dispatch() {
     // lets a mixed order (some units emergency, the rest on the regular tentative date)
     // show the full order's product details here PLUS an info message on how much is
     // emergency vs. tentative, instead of only surfacing the emergency portion.
-    const emergencyByTarget = buildEmergencyByTarget(record.splitDates, record.kitOverallQty, record.orderItems);
+    const emergencyByTarget = buildEmergencyByTarget(record.splitDates, record.kitOverallQty, record.orderItems, record.kitOrders, record.packagingIncludes, record.packagingIncludesQty);
     const itemNameById = new Map();
     (record.items || []).forEach((it, i) => {
       if (!it?._id) return;
@@ -540,8 +631,13 @@ export default function Dispatch() {
       });
       return matched ? { emergencyQty, totalQty } : null;
     };
+    // Sum only the RAW splitDates entries (map.topLevelKeys) — a kit header's composite
+    // entry and the per-component entries it expands into both live in emergencyByTarget,
+    // and summing everything would double-count the same physical units twice.
     let emergencyTotals = { emergencyQty: 0, totalQty: 0 };
-    emergencyByTarget.forEach((v) => {
+    (emergencyByTarget.topLevelKeys || []).forEach((key) => {
+      const v = emergencyByTarget.get(key);
+      if (!v) return;
       emergencyTotals.emergencyQty += v.emergencyQty;
       emergencyTotals.totalQty += v.totalQty;
     });

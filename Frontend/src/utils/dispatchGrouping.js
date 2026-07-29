@@ -18,7 +18,7 @@
 // existed have no kitDispatch entries — those kits are treated as already fully
 // dispatched (matching the old all-dispatched-on-creation behavior they were built
 // under), so they show 0 pending and no photo action is needed.
-export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, boxes, kitDispatch, packagingIncludes, tasks }) {
+export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, boxes, kitDispatch, packagingIncludes, packagingIncludesQty, tasks }) {
   const dispatchItems = items || [];
   const sourceOrderItems = orderItems || [];
   const kitDispatchByKitId = new Map((kitDispatch || []).map((kd) => [String(kd.kitId), kd]));
@@ -60,6 +60,13 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       ? piRaw.map((p) => String(p.id))
       : piRaw.map((id) => String(id))
   );
+  // How much of a Separate PRODUCT (matched by name below) is actually packed inside the
+  // personalized kit's box — a product is often only PARTIALLY bundled (e.g. ordered at 20,
+  // only 5 packed into the kit), and the other 15 still ship as their own standalone
+  // Separate Product with their own box/photo/count. A name with NO packagingIncludesQty
+  // entry predates that field and is treated as fully bundled (matches the historical
+  // all-or-nothing behavior for those legacy records).
+  const piQty = packagingIncludesQty || {};
 
   // Note: `isKit` marks an item as belonging to a kit (every component of a
   // "Dental kit" carries isKit:true, kitId, etc) — it is NOT a "this is just a
@@ -100,12 +107,21 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
     ...extra,
   });
 
-  const productRowExtra = (item) => ({
-    qtyOrdered: item.qtyOrdered || 0,
-    qtyDispatched: item.qtyDispatched || 0,
-    pendingQty: Math.max(0, (item.qtyOrdered || 0) - (item.qtyDispatched || 0)),
-    assigned: !gatingActive || assignedProductIndices.has(item.productIndex),
-  });
+  // `bundledQty` reduces what this row still needs shipped ON ITS OWN — a product
+  // partially packed into the personalized kit only needs its REMAINING (unbundled) qty
+  // dispatched independently; the bundled portion ships with, and is accounted for by,
+  // the kit itself (mirrors the same reduction in Backend dispatch.controller.js's
+  // confirmDispatch completion check, so the UI's Dispatch Now cap and the server's
+  // "fully dispatched" requirement always agree on the same number).
+  const productRowExtra = (item, bundledQty = 0) => {
+    const orderedQty = Math.max(0, (item.qtyOrdered || 0) - bundledQty);
+    return {
+      qtyOrdered: orderedQty,
+      qtyDispatched: item.qtyDispatched || 0,
+      pendingQty: Math.max(0, orderedQty - (item.qtyDispatched || 0)),
+      assigned: !gatingActive || assignedProductIndices.has(item.productIndex),
+    };
+  };
 
   // No kit info anywhere — flat product list (unchanged from before).
   if (!kitOrdersList.length && !hasKitMeta) {
@@ -116,6 +132,11 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
   const rows = [];
   const verifiable = [];
   const matchedItemIds = new Set();
+  // itemId -> bundled qty, for every Separate Product only PARTIALLY packed into the
+  // personalized kit — populated below, read back when building its own Separate Product
+  // row so that row's required qty is reduced by the bundled portion instead of its full
+  // order qty.
+  const partiallyBundledQtyByItemId = new Map();
 
   if (kitOrdersList.length > 0) {
     // Which OTHER kitOrders entries are packed inside the personalized kit (see comment
@@ -184,7 +205,19 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
           const nm = it.product || it.name || it.itemName || '';
           return !!nm && includedIds.has(nm);
         });
-        includedProdItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
+        includedProdItems.forEach((it) => {
+          const nm = it.product || it.name || it.itemName || '';
+          const totalQty = Number(it.qtyOrdered ?? it.qty) || 0;
+          const explicit = piQty[nm];
+          const bundled = explicit != null ? (Number(explicit) || 0) : totalQty; // legacy: no qty recorded = fully bundled
+          const remaining = Math.max(0, totalQty - bundled);
+          // Only remove it from further matching (and so from ever getting its own
+          // Separate Product row) once it's FULLY absorbed into the kit — a partially
+          // bundled item's _id must stay available so the remaining unbundled qty still
+          // surfaces as its own dispatchable row below.
+          if (remaining <= 0) { if (it._id) matchedItemIds.add(it._id); }
+          else if (it._id) partiallyBundledQtyByItemId.set(String(it._id), bundled);
+        });
       }
 
       // The kit ships/photographs as ONE unit, so its header is only actionable once
@@ -253,8 +286,15 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
 
       // Separate products packed INSIDE the personalized kit (packagingIncludes referencing
       // a product by name) — folded in as child rows here instead of under Separate Products.
+      // When only PART of the product's qty is bundled, the label spells out how much (the
+      // rest gets its own Separate Product row below, via partiallyBundledQtyByItemId).
       includedProdItems.forEach((item, ii) => {
-        const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom: 'Included in kit packing', assigned: componentAssigned(item) });
+        const bundledQty = item._id ? partiallyBundledQtyByItemId.get(String(item._id)) : undefined;
+        const totalQty = Number(item.qtyOrdered ?? item.qty) || 0;
+        const includedFrom = bundledQty != null
+          ? `Included in kit packing (${bundledQty} of ${totalQty})`
+          : 'Included in kit packing';
+        const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom, assigned: componentAssigned(item) });
         rows.push(row);
       });
     });
@@ -263,7 +303,10 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
     if (sepItems.length > 0) {
       rows.push({ key: '_sep_hdr', type: 'kit_header', kitName: 'Separate Products', qty: null, boxes: 0, category: 'separate_product' });
       sepItems.forEach((item, i) => {
-        const row = toRow(item, i, 'product', { boxes: item.boxes || orderBoxes, bucket: 'separateProduct', ...productRowExtra(item) });
+        // A row that's ALSO partially bundled into the personalized kit (shows up above as
+        // an informational child row too) only needs its remaining unbundled qty here.
+        const bundled = item._id ? (partiallyBundledQtyByItemId.get(String(item._id)) || 0) : 0;
+        const row = toRow(item, i, 'product', { boxes: item.boxes || orderBoxes, bucket: 'separateProduct', ...productRowExtra(item, bundled) });
         rows.push(row);
         verifiable.push(row);
       });

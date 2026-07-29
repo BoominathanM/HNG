@@ -613,6 +613,15 @@ export default function OperationDetail() {
     const effQty = (it) => Number(it.requiredQty) || Number(it.qty) || 0;
     const includeSet = new Set((order?.packagingIncludes || []).map(String));
     const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName));
+    // How much of a bundled row is actually packed INSIDE the personalized kit — e.g. a Separate
+    // Product ordered at qty 20 but only 5 of those units packed into the kit. Caps a bundled
+    // item's contribution to the personalized-kit emergency split at that bundled amount instead
+    // of its full standalone order qty (see expandPersonalized below).
+    const piQty = order?.packagingIncludesQty || {};
+    const bundledQtyFor = (it) => {
+      const key = it.kitId != null ? String(it.kitId) : String(it.name || it.itemName);
+      return includeSet.has(key) ? (Number(piQty[key]) || 0) : null;
+    };
     // Number of KITS ordered (NOT the per-product total) — the shared denominator a splitDate's
     // emergency qty is expressed against (e.g. "50 of the 100 kits"). Math.max(...effQty(...))
     // was used as a stand-in for this before, which only happens to equal the real kit count
@@ -622,7 +631,8 @@ export default function OperationDetail() {
     const kitCfgById = Object.fromEntries((order?.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]));
     const resolveKitCount = (it) => Number(kitCfgById[String(it.kitId)]?.overallQty) || Number(order?.kitOverallQty) || 0;
 
-    const expandGroup = (items, groupTotalQty, kitEmergencyQty, sdDate) => {
+    const expandGroup = (items, groupTotalQty, kitEmergencyQty, sdDate, qtyResolver) => {
+      const resolveQty = qtyResolver || effQty;
       if (items.length === 0) return;
       if (kitEmergencyQty === null) {
         items.forEach((it) => {
@@ -635,7 +645,7 @@ export default function OperationDetail() {
       items.forEach((it) => {
         const key = (it.product || it.itemName || '').toLowerCase();
         if (!key || map[key]) return;
-        const itemQty = effQty(it);
+        const itemQty = resolveQty(it);
         const pQty = Math.min(Math.round((kitEmergencyQty / groupTotalQty) * itemQty), itemQty);
         map[key] = { date: sdDate, qty: pQty };
       });
@@ -651,7 +661,18 @@ export default function OperationDetail() {
       const items = (order?.items || []).filter((it) => it.category === 'personalized' || it.isIncludedInPersonalized || isBundled(it));
       const kitItemsInGroup = items.filter((it) => it.isKit || it.kitType);
       const groupTotalQty = kitItemsInGroup.length ? Math.max(...kitItemsInGroup.map(resolveKitCount)) : (Number(order?.kitOverallQty) || 0);
-      expandGroup(items, groupTotalQty, kitEmergencyQty, sdDate);
+      // A row pulled into this group only because it's PARTIALLY bundled into the personalized
+      // kit (not itself a personalized-category component) must contribute only its bundled
+      // portion — otherwise a Separate Product ordered at 20 with just 5 packed into the kit
+      // has its FULL 20 marked emergency instead of just the 5 that actually ship inside it.
+      const qtyResolver = (it) => {
+        if (it.category !== 'personalized') {
+          const bundled = bundledQtyFor(it);
+          if (bundled != null) return bundled;
+        }
+        return effQty(it);
+      };
+      expandGroup(items, groupTotalQty, kitEmergencyQty, sdDate, qtyResolver);
     };
 
     const expandSeparateKit = (kitKey, kitEmergencyQty, sdDate) => {
@@ -2994,7 +3015,7 @@ export default function OperationDetail() {
                 }}
               >
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                  <div style={{ flex: 2 }}>
+                  <div style={{ flex: 2, minWidth: 0 }}>
                     <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
                       Task {idx + 1} — Task Name
                     </Text>
@@ -3010,7 +3031,7 @@ export default function OperationDetail() {
                       options={configTaskNameOptions}
                     />
                   </div>
-                  <div style={{ width: 90 }}>
+                  <div style={{ width: 90, flexShrink: 0 }}>
                     <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
                     <InputNumber
                       min={0}
@@ -3021,7 +3042,7 @@ export default function OperationDetail() {
                       style={{ width: '100%', borderRadius: 6 }}
                     />
                   </div>
-                  <div style={{ flex: 1.2 }}>
+                  <div style={{ flex: 1.2, minWidth: 0 }}>
                     <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
                     <Select
                       placeholder="Select"
@@ -3189,7 +3210,7 @@ export default function OperationDetail() {
                       }}
                     >
                       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                        <div style={{ flex: 2 }}>
+                        <div style={{ flex: 2, minWidth: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task {idx + 1} — Task Name</Text>
                           <Select
                             placeholder="Select task"
@@ -3203,7 +3224,7 @@ export default function OperationDetail() {
                             options={configTaskNameOptions}
                           />
                         </div>
-                        <div style={{ width: 90 }}>
+                        <div style={{ width: 90, flexShrink: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
                           <InputNumber
                             min={0}
@@ -3214,7 +3235,7 @@ export default function OperationDetail() {
                             style={{ width: '100%', borderRadius: 6 }}
                           />
                         </div>
-                        <div style={{ flex: 1.4 }}>
+                        <div style={{ flex: 1.4, minWidth: 0 }}>
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
                           <Select
                             mode="multiple"
