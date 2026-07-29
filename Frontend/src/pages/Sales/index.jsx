@@ -196,10 +196,14 @@ const CATEGORY_META = {
 
 // ─── Emergency-delivery ("Urgent / Emergency Deliveries") dropdown options ────────────────────
 // Grouped by COMPOSITION, not by individual line item — a Personalized Kit that bundles a
-// Separate Kit + a Separate Product together (via packagingIncludes) should offer ONE
-// "Personalized Kit" choice (selecting it marks the whole bundle emergency), not three separate
-// product rows. Anything not bundled into a personalized order still gets its own Separate
-// Kit / Separate Product option, one per distinct kit/product.
+// Separate Kit + a Separate Product together (via packagingIncludes) offers a "Personalized
+// Kit" choice (selecting it marks the bundled portion emergency). But a bundled kit/product is
+// often only PARTIALLY packed inside the personalized kit (packagingIncludesQty holds how much),
+// e.g. Personalized Kit qty 50 while the Separate Kit/Product it's built from was ordered at
+// qty 100 — the other 50 units still ship as their own Separate Kit / Separate Product and must
+// stay selectable, not get silently swallowed by the "Personalized Kit" bundle option. So every
+// bundled row is checked for a remaining (unbundled) qty and still gets its own Separate option
+// whenever remaining > 0; it's only dropped once packagingIncludesQty fully consumes it.
 // Value scheme consumed by Operations/data.js's getEmergencyProductQtyMap (and its
 // OperationDetail.jsx mirror): '__personalized__', `__sepkit__:<kitId|kitName>`, or the product's
 // own name (unchanged, matches existing stored records).
@@ -208,14 +212,18 @@ const CATEGORY_META = {
 // a save that dropped it) the per-kit config in kitOrders is a smaller, more reliable surface
 // to detect "this record HAS a Personalized/Separate Kit" from, so the option doesn't silently
 // vanish and leave only its loose product rows behind.
-const buildEmergencySelectionOptions = (products, packagingIncludes, kitOrders) => {
+const buildEmergencySelectionOptions = (products, packagingIncludes, kitOrders, packagingIncludesQty) => {
   const list = (Array.isArray(products) ? products : []).filter((p) => p && (p.name || p.itemName || p.kitType));
   const kitOrdersList = (Array.isArray(kitOrders) ? kitOrders : []).filter((ko) => ko && ko.kitId);
   const includeSet = new Set((packagingIncludes || []).map(String));
-  const isBundled = (p) => includeSet.has(String(p.kitId)) || includeSet.has(String(p.name || p.itemName));
+  const piQty = packagingIncludesQty || {};
+  const isBundled = (key) => includeSet.has(String(key));
+  const bundledQtyFor = (key) => (isBundled(key) ? (Number(piQty[key]) || 0) : 0);
   const koById = new Map(kitOrdersList.map((ko) => [String(ko.kitId), ko]));
   const koForRow = (p) => (p.kitId != null ? koById.get(String(p.kitId)) : undefined);
-  const isPersonalized = (p) => p.category === ORDER_CATEGORIES.PERSONALIZED || koForRow(p)?.category === ORDER_CATEGORIES.PERSONALIZED || isBundled(p);
+  // "Personalized" here means the row IS the personalized kit itself — bundled rows keep their
+  // own Separate option (below) for whatever qty isn't consumed by the bundle.
+  const isPersonalized = (p) => p.category === ORDER_CATEGORIES.PERSONALIZED || koForRow(p)?.category === ORDER_CATEGORIES.PERSONALIZED;
   const isKitRow = (p) => p.isKit || p.kitType || !!koForRow(p);
 
   const options = [];
@@ -228,19 +236,32 @@ const buildEmergencySelectionOptions = (products, packagingIncludes, kitOrders) 
     const kKey = String(p.kitId || p.kitName || p.kitType);
     if (seenKits.has(kKey)) return;
     seenKits.add(kKey);
-    options.push({ value: `__sepkit__:${kKey}`, label: `Separate Kit — ${p.kitName || p.kitType}`, isKit: true });
+    const total = Number(koById.get(kKey)?.overallQty) || Number(p.overallQty) || Number(p.qty) || 0;
+    const remaining = total - bundledQtyFor(kKey);
+    if (isBundled(kKey) && remaining <= 0) return; // fully absorbed into the personalized kit
+    const suffix = isBundled(kKey) ? ` (${remaining} available)` : '';
+    options.push({ value: `__sepkit__:${kKey}`, label: `Separate Kit — ${p.kitName || p.kitType}${suffix}`, isKit: true });
   });
   // Kits whose own config exists (kitOrders) but that have no matching tagged product row —
   // still offer them as a Separate Kit choice instead of dropping them silently.
-  kitOrdersList.filter((ko) => ko.category !== ORDER_CATEGORIES.PERSONALIZED && !includeSet.has(String(ko.kitId))).forEach((ko) => {
+  kitOrdersList.filter((ko) => ko.category !== ORDER_CATEGORIES.PERSONALIZED).forEach((ko) => {
     const kKey = String(ko.kitId);
     if (seenKits.has(kKey)) return;
+    const total = Number(ko.overallQty) || 0;
+    const remaining = total - bundledQtyFor(kKey);
+    if (isBundled(kKey) && remaining <= 0) return;
     seenKits.add(kKey);
     const matchingRow = list.find((p) => String(p.kitId) === kKey);
-    options.push({ value: `__sepkit__:${kKey}`, label: `Separate Kit — ${ko.kitName || matchingRow?.kitName || kKey}`, isKit: true });
+    const suffix = isBundled(kKey) ? ` (${remaining} available)` : '';
+    options.push({ value: `__sepkit__:${kKey}`, label: `Separate Kit — ${ko.kitName || matchingRow?.kitName || kKey}${suffix}`, isKit: true });
   });
   list.filter((p) => !isPersonalized(p) && !isKitRow(p)).forEach((p) => {
-    options.push({ value: p.name || p.itemName, label: `Separate Product — ${p.name || p.itemName}` });
+    const key = String(p.name || p.itemName);
+    const total = Number(p.qty) || 0;
+    const remaining = total - bundledQtyFor(key);
+    if (isBundled(key) && remaining <= 0) return; // fully absorbed into the personalized kit
+    const suffix = isBundled(key) ? ` (${remaining} available)` : '';
+    options.push({ value: p.name || p.itemName, label: `Separate Product — ${p.name || p.itemName}${suffix}` });
   });
   return options;
 };
@@ -265,10 +286,16 @@ const ensureCurrentValueOption = (options, currentValue, products) => {
 
 // True total quantity a dropdown selection represents (used to auto-fill the Qty field): a kit
 // selection resolves to that kit's overallQty (from kitOrders); a standalone product resolves to
-// its own qty.
-const emergencySelectionTotalQty = (value, products, kitOrders) => {
+// its own qty. When the kit/product is partially bundled into the Personalized Kit
+// (packagingIncludes + packagingIncludesQty), only the remaining unbundled qty is available for
+// a Separate Kit / Separate Product selection — mirrors the "Total ordered → In personalized →
+// Separate" math shown in the "Included in Kit Packaging" panel.
+const emergencySelectionTotalQty = (value, products, kitOrders, packagingIncludes, packagingIncludesQty) => {
   const list = Array.isArray(products) ? products : [];
   const kitOrdersList = Array.isArray(kitOrders) ? kitOrders : [];
+  const includeSet = new Set((packagingIncludes || []).map(String));
+  const piQty = packagingIncludesQty || {};
+  const bundledQtyFor = (key) => (includeSet.has(String(key)) ? (Number(piQty[key]) || 0) : 0);
   if (value === '__personalized__') {
     const kitItem = list.find((p) => p.category === ORDER_CATEGORIES.PERSONALIZED && (p.isKit || p.kitType));
     const cfg = kitOrdersList.find((k) => String(k?.kitId) === String(kitItem?.kitId)) || kitOrdersList.find((k) => k.category === ORDER_CATEGORIES.PERSONALIZED);
@@ -277,12 +304,15 @@ const emergencySelectionTotalQty = (value, products, kitOrders) => {
   if (typeof value === 'string' && value.startsWith('__sepkit__:')) {
     const kKey = value.slice('__sepkit__:'.length);
     const cfg = kitOrdersList.find((k) => String(k?.kitId) === kKey);
-    if (cfg) return Number(cfg.overallQty) || 0;
-    const p = list.find((p) => String(p.kitId || p.kitName || p.kitType) === kKey);
-    return Number(p?.overallQty) || Number(p?.qty) || 0;
+    const total = cfg ? (Number(cfg.overallQty) || 0) : (() => {
+      const p = list.find((p) => String(p.kitId || p.kitName || p.kitType) === kKey);
+      return Number(p?.overallQty) || Number(p?.qty) || 0;
+    })();
+    return Math.max(0, total - bundledQtyFor(kKey));
   }
   const p = list.find((p) => (p.name || p.itemName) === value);
-  return Number(p?.qty) || 0;
+  const total = Number(p?.qty) || 0;
+  return Math.max(0, total - bundledQtyFor(value));
 };
 
 // productType may hold the new 3-category values, the legacy 2-value set, or a single string.
@@ -2515,7 +2545,10 @@ export default function Sales() {
       transportationBy: order.transportationBy || '',
       forwardingCharge: order.forwardingCharge || false,
       forwardingChargeAmount: order.forwardingChargeAmount || 0,
-      splitDates: (order.splitDates || []).map(sd => ({
+      // Fall back to the linked negotiation/quotation/lead when the order itself was
+      // opened straight from the table row (not the merged order-detail object, which
+      // already resolves this) and predates splitDates being carried onto the order doc.
+      splitDates: ((order.splitDates && order.splitDates.length ? order.splitDates : pickKit('splitDates')) || []).map(sd => ({
         ...sd,
         date: sd.date && typeof sd.date === 'string' ? dayjs(sd.date) : sd.date,
       })),
@@ -3165,11 +3198,13 @@ export default function Sales() {
   const watchedOrderProducts = Form.useWatch('products', orderForm);
   const watchedOrderKitOrders = Form.useWatch('kitOrders', orderForm) || [];
   const watchedOrderPackagingIncludes = Form.useWatch('packagingIncludes', orderForm) || [];
+  const watchedOrderPackagingIncludesQty = Form.useWatch('packagingIncludesQty', orderForm) || {};
   const watchedLeadProducts = Form.useWatch('products', leadForm);
   const watchedNegotiationProducts = Form.useWatch('products', negotiationForm);
   const watchedOrderEditSelKits = Form.useWatch('selectedKits', orderEditForm) || [];
   const watchedOrderEditKitOrds = Form.useWatch('kitOrders', orderEditForm) || [];
   const watchedOrderEditPackagingIncludes = Form.useWatch('packagingIncludes', orderEditForm) || [];
+  const watchedOrderEditPackagingIncludesQty = Form.useWatch('packagingIncludesQty', orderEditForm) || {};
   const watchedOrderEditProds = Form.useWatch('editProducts', orderEditForm) || [];
   const watchedOrderEditProductType = Form.useWatch('productType', orderEditForm);
   const watchedNegRoundValue = Form.useWatch('useRoundedTotal', negotiationForm);
@@ -9111,12 +9146,12 @@ export default function Sales() {
                                     placeholder="Select composition"
                                     allowClear
                                     onChange={(val) => {
-                                      const totalQty = emergencySelectionTotalQty(val, watchedOrderEditProds, watchedOrderEditKitOrds);
+                                      const totalQty = emergencySelectionTotalQty(val, watchedOrderEditProds, watchedOrderEditKitOrds, watchedOrderEditPackagingIncludes, watchedOrderEditPackagingIncludesQty);
                                       if (totalQty) orderEditForm.setFieldValue(['splitDates', name, 'qty'], totalQty);
                                     }}
                                   >
                                     {ensureCurrentValueOption(
-                                      buildEmergencySelectionOptions(watchedOrderEditProds, watchedOrderEditPackagingIncludes, watchedOrderEditKitOrds),
+                                      buildEmergencySelectionOptions(watchedOrderEditProds, watchedOrderEditPackagingIncludes, watchedOrderEditKitOrds, watchedOrderEditPackagingIncludesQty),
                                       orderEditForm.getFieldValue(['splitDates', name, 'product']),
                                       watchedOrderEditProds,
                                     ).map((o) => (
@@ -10438,12 +10473,12 @@ export default function Sales() {
                                     placeholder="Select composition"
                                     allowClear
                                     onChange={(val) => {
-                                      const totalQty = emergencySelectionTotalQty(val, watchedOrderProducts, watchedOrderKitOrders);
+                                      const totalQty = emergencySelectionTotalQty(val, watchedOrderProducts, watchedOrderKitOrders, watchedOrderPackagingIncludes, watchedOrderPackagingIncludesQty);
                                       if (totalQty) orderForm.setFieldValue(['splitDates', name, 'qty'], totalQty);
                                     }}
                                   >
                                     {ensureCurrentValueOption(
-                                      buildEmergencySelectionOptions(watchedOrderProducts, watchedOrderPackagingIncludes, watchedOrderKitOrders),
+                                      buildEmergencySelectionOptions(watchedOrderProducts, watchedOrderPackagingIncludes, watchedOrderKitOrders, watchedOrderPackagingIncludesQty),
                                       orderForm.getFieldValue(['splitDates', name, 'product']),
                                       watchedOrderProducts,
                                     ).map((o) => (
@@ -13221,12 +13256,12 @@ export default function Sales() {
                                               placeholder="Select composition"
                                               allowClear
                                               onChange={(val) => {
-                                                const totalQty = emergencySelectionTotalQty(val, watchedLeadProducts, watchedKitOrders);
+                                                const totalQty = emergencySelectionTotalQty(val, watchedLeadProducts, watchedKitOrders, watchedPackagingIncludes, watchedPackagingIncludesQty);
                                                 if (totalQty) leadForm.setFieldValue(['splitDates', dateName, 'products', prodName, 'qty'], totalQty);
                                               }}
                                             >
                                               {ensureCurrentValueOption(
-                                                buildEmergencySelectionOptions(watchedLeadProducts, watchedPackagingIncludes, watchedKitOrders),
+                                                buildEmergencySelectionOptions(watchedLeadProducts, watchedPackagingIncludes, watchedKitOrders, watchedPackagingIncludesQty),
                                                 leadForm.getFieldValue(['splitDates', dateName, 'products', prodName, 'product']),
                                                 watchedLeadProducts,
                                               ).map((o) => (

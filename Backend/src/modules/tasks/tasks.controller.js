@@ -176,6 +176,9 @@ function resolveDesignType(it, order) {
 // Which configured task names actually apply to a given order line item — mirrors the
 // frontend's getRelevantTaskOptions (Tasks/index.jsx) so the backend can tell whether a
 // product still needs MORE task types assigned, not just whether it has ANY task at all.
+// Generic-only task-name words — see isGenericName below.
+const GENERIC_TASK_WORDS = new Set(['pack', 'packing', 'sticker', 'stickering', 'stick', 'sticking', 'label', 'labeling', 'labelling', 'print', 'printing', 'filling', 'fill', 'placing', 'place', 'task']);
+
 function relevantTaskNamesFor(it, timeConfigs, designType, needsPrinting) {
   const productKey = (it.product || it.itemName || it.kitName || '').toLowerCase();
   const productWords = productKey.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
@@ -199,9 +202,16 @@ function relevantTaskNamesFor(it, timeConfigs, designType, needsPrinting) {
       // never be recorded against any single productIndex — making that product's coverage
       // permanently unsatisfiable regardless of how much real per-product work is completed.
       const isKitLevelName = /kit/.test(name);
-      const isStickerTask = !isKitLevelName && /stick|label/.test(name);
-      const isPrintTask = !isKitLevelName && /print/.test(name);
-      const isPackTask = !isKitLevelName && /pack/.test(name);
+      // A blank-product config whose name is made ONLY of generic words ("Packing",
+      // "Sticker Placing") is a true catch-all and applies to every routed product. But a
+      // name like "Paste Packing"/"Brush Packing" carries an extra specific word — it was
+      // written for THAT product, not every pack-routed product — so it must fall through
+      // to mentionsProduct instead of matching e.g. "Comb" just because it contains "pack".
+      const nameWords = name.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+      const isGenericName = nameWords.length > 0 && nameWords.every((w) => GENERIC_TASK_WORDS.has(w));
+      const isStickerTask = !isKitLevelName && isGenericName && /stick|label/.test(name);
+      const isPrintTask = !isKitLevelName && isGenericName && /print/.test(name);
+      const isPackTask = !isKitLevelName && isGenericName && /pack/.test(name);
       relevant = mentionsProduct
         || (isStickerRouted && isStickerTask)
         || (needsPrinting && isPrintTask)
@@ -901,9 +911,10 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
 });
 
 // Forward the order linked to a task from Task Management into the Dispatch queue.
-// Requires every sibling task on the order to be Done and (unless it's a sample
-// order) the order to be fully paid. This only makes the order Dispatch Ready and
-// ensures its DispatchRecord exists — it does NOT mark the order/lead as Dispatched.
+// Task completion/assignment is NOT required here — only that the order is paid
+// (unless it's a sample order or an approved Emergency Dispatch). This only makes
+// the order Dispatch Ready and ensures its DispatchRecord exists — it does NOT mark
+// the order/lead as Dispatched.
 // The actual "Dispatched" status is only set from the Dispatch module itself
 // (dispatch.controller.js confirmDispatch/uploadLR), so Sales/Dispatch don't show
 // an order as dispatched just because it was handed off from Task Management.
@@ -916,25 +927,13 @@ exports.dispatchOrder = asyncHandler(async (req, res, next) => {
   if (!order) return next(new AppError('Order not found', 404));
   // A sibling task's emergency approval already flips this at the order level (see
   // approveEmergencyOps) — fall back to it so every task on the order, not just the one
-  // that was individually approved, can bypass gates 1/2 below.
+  // that was individually approved, can bypass the payment gate below.
   const emergencyApproved = !!(task.emergencyApproved || order.emergencyApproved);
 
-  // Gate 1 — every product on the order needs full Done-status task coverage, not merely
-  // every task document that happens to exist (see isOrderReadyForDispatch) — a product
-  // with zero tasks assigned must still block dispatch, not slip through silently.
-  // Bypassed for an approved Emergency Dispatch, same as before.
-  const siblings = await Task.find({ orderId: task.orderId });
-  const allDone = await isOrderReadyForDispatch(task.orderId);
-  if (!allDone && !emergencyApproved) {
-    const pending = siblings.filter((t) => t.status !== 'Done').length;
-    return next(new AppError(
-      pending > 0
-        ? `${pending} task(s) on this order are not yet completed. Complete all tasks before dispatch.`
-        : 'Some products on this order don\'t have a completed task yet. Assign and complete a task for every product before dispatch.',
-      400,
-    ));
-  }
-
+  // Task-completion/assignment is no longer a Task Management gate — forwarding to
+  // Dispatch is allowed regardless of task status. Per-product assignment is instead
+  // enforced on the Dispatch page itself (buildDispatchGroupedProducts), which is where
+  // the actual pack/dispatch action happens.
   if (order.status === 'Dispatched') {
     return next(new AppError('This order has already been dispatched.', 400));
   }
@@ -945,7 +944,7 @@ exports.dispatchOrder = asyncHandler(async (req, res, next) => {
     return next(new AppError('This order has already been sent to Dispatch.', 400));
   }
 
-  // Gate 2 — payment must be settled, unless this is a sample order or an approved Emergency Dispatch.
+  // Payment gate — must be settled, unless this is a sample order or an approved Emergency Dispatch.
   const isSample = order.orderCategory === 'SAMPLE' || order.leadId?.leadType === 'SAMPLE';
   if (!isSample && !emergencyApproved) {
     const payStatus = await resolveOrderPaymentStatus(order._id).catch(() => 'Pending');

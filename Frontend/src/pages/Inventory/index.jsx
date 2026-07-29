@@ -2716,8 +2716,10 @@ export default function Inventory() {
             const showStickerSizeFor = (needle) => selectedPackingMaterials.some((v) => v.includes(needle));
             // Bottle types (shampoo/moisturizer/shower gel) — Sticker Printing = Yes shows
             // Bottle Sticker Size, same pattern as Box/Ziplock/Butter Paper above.
-            const hasStickerPrinting = activeDefs.some((fd) => fd.key === 'stickerPrinting');
-            const showBottleStickerSize = hasStickerPrinting && String(watchedStickerPrinting || '').toLowerCase() === 'yes';
+            // Gated on 'bottleType' (not just 'stickerPrinting') so soap — which also has a
+            // Sticker Printing toggle but no Bottle Type field — doesn't show this.
+            const hasBottleType = activeDefs.some((fd) => fd.key === 'bottleType');
+            const showBottleStickerSize = hasBottleType && String(watchedStickerPrinting || '').toLowerCase() === 'yes';
             return (
               <>
                 <Divider style={{ margin: '4px 0 12px' }}>

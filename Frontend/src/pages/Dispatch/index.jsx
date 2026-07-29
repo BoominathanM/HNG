@@ -71,6 +71,38 @@ const resolveDestination = (o) => {
   return city || state || o?.destination || '—';
 };
 
+// "Urgent / Emergency Deliveries (Partial)" split, keyed per target (lowercase product
+// name, or the literal '__kit__' Sales uses for its "Kit (All Products)" split-date
+// option) → { emergencyQty, totalQty }. Mirrors Dispatch Detail's emergencyByTarget so
+// the Dispatch Orders list's expanded product panel can show the same "N of M units are
+// emergency — dispatch first as Partial, rest later as Full" breakdown, not just the
+// Detail page. '__kit__' is measured against the personalized kit's own overall qty
+// (kitOverallQty), never against its component items' per-kit qty.
+const buildEmergencyByTarget = (splitDates, kitOverallQty, orderItems) => {
+  const map = new Map();
+  const itemQtyByName = new Map();
+  (orderItems || []).forEach((it) => {
+    const key = (it.product || it.itemName || '').toLowerCase();
+    if (key) itemQtyByName.set(key, (itemQtyByName.get(key) || 0) + (Number(it.qty) || 0));
+  });
+  (splitDates || []).forEach((sd) => {
+    const productList = (sd.products && sd.products.length > 0)
+      ? sd.products
+      : (sd.product ? [{ product: sd.product, qty: sd.qty }] : []);
+    productList.forEach((p) => {
+      if (!p.product) return;
+      const key = p.product.toLowerCase();
+      const existing = map.get(key) || {
+        emergencyQty: 0,
+        totalQty: key === '__kit__' ? (kitOverallQty || 0) : (itemQtyByName.get(key) || 0),
+      };
+      existing.emergencyQty += Number(p.qty) || 0;
+      map.set(key, existing);
+    });
+  });
+  return map;
+};
+
 // Escapes a value for CSV — wraps in quotes (and doubles any inner quotes) whenever
 // the field itself could contain a comma, e.g. the combined address string below.
 const csvCell = (v) => {
@@ -203,6 +235,11 @@ export default function Dispatch() {
       // personalized kit's own box, so buildDispatchGroupedProducts nests them under the
       // Personalized Kit bucket instead of Separate Kit/Product (see dispatchGrouping.js).
       packagingIncludes: d.orderId?.packagingIncludes || [],
+      // "Urgent / Emergency Deliveries (Partial)" split — same source Dispatch Detail
+      // reads to badge which product/kit qty is emergency vs. the remaining tentative
+      // qty, and to show the "dispatch emergency first, rest as Full Dispatch later" info.
+      splitDates: d.orderId?.splitDates || [],
+      kitOverallQty: d.orderId?.kitOverallQty || 0,
       // Order-level packing Tasks (productIndex/taskType/assignedTo) — lets the product
       // panel below tell an assigned product/kit apart from one nobody's picked up yet.
       tasks: d.tasks || [],
@@ -471,6 +508,44 @@ export default function Dispatch() {
     });
     const summary = summarizeDispatchVerification(products);
 
+    // Emergency-vs-tentative split for this order (see buildEmergencyByTarget above) —
+    // lets a mixed order (some units emergency, the rest on the regular tentative date)
+    // show the full order's product details here PLUS an info message on how much is
+    // emergency vs. tentative, instead of only surfacing the emergency portion.
+    const emergencyByTarget = buildEmergencyByTarget(record.splitDates, record.kitOverallQty, record.orderItems);
+    const itemNameById = new Map();
+    (record.items || []).forEach((it, i) => {
+      if (!it?._id) return;
+      const fallback = (record.orderItems || [])[i] || {};
+      itemNameById.set(String(it._id), it.product || it.itemName || fallback.product || fallback.itemName || fallback.name || '');
+    });
+    const getRowEmergency = (row) => {
+      if (emergencyByTarget.size === 0) return null;
+      if (row.type === 'kit_header' && row.isPersonalized) {
+        const info = emergencyByTarget.get('__kit__');
+        return info && info.emergencyQty > 0 ? info : null;
+      }
+      const childIds = row.type === 'kit_header' ? (row.childItemIds || []) : (row.itemId ? [row.itemId] : []);
+      if (childIds.length === 0) return null;
+      let emergencyQty = 0;
+      let totalQty = 0;
+      let matched = false;
+      const seenNames = new Set();
+      childIds.forEach((itemId) => {
+        const name = (itemNameById.get(String(itemId)) || '').toLowerCase();
+        if (!name || seenNames.has(name)) return;
+        seenNames.add(name);
+        const info = emergencyByTarget.get(name);
+        if (info) { matched = true; emergencyQty += info.emergencyQty; totalQty += info.totalQty; }
+      });
+      return matched ? { emergencyQty, totalQty } : null;
+    };
+    let emergencyTotals = { emergencyQty: 0, totalQty: 0 };
+    emergencyByTarget.forEach((v) => {
+      emergencyTotals.emergencyQty += v.emergencyQty;
+      emergencyTotals.totalQty += v.totalQty;
+    });
+
     const catMeta = {
       personalized: { icon: <GiftOutlined />, bg: '#ede9fe', color: '#5b21b6', label: 'Personalized Kit' },
       separate_kit: { icon: <GiftOutlined />, bg: '#e0f2fe', color: '#0369a1', label: 'Separate Kit' },
@@ -489,6 +564,15 @@ export default function Dispatch() {
             {summary.overall.dispatched} / {summary.overall.total} dispatched
           </Text>
         </div>
+        {emergencyTotals.emergencyQty > 0 && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 10, borderRadius: 8 }}
+            message="Emergency + Tentative Order"
+            description={`${emergencyTotals.emergencyQty} of ${emergencyTotals.totalQty} unit${emergencyTotals.totalQty !== 1 ? 's' : ''} in this order ${emergencyTotals.emergencyQty !== 1 ? 'are' : 'is'} emergency — dispatch ${emergencyTotals.emergencyQty !== 1 ? 'these' : 'this'} first as Partial Dispatch. The remaining ${emergencyTotals.totalQty - emergencyTotals.emergencyQty} tentative unit${(emergencyTotals.totalQty - emergencyTotals.emergencyQty) !== 1 ? 's' : ''} stay on this order and go out later as Full Dispatch — open the order to confirm each round.`}
+          />
+        )}
         <Space size={6} wrap style={{ marginBottom: 10 }}>
           {[summary.personalizedKit, summary.separateKit, summary.separateProduct]
             .filter((b) => b.total > 0)
@@ -517,6 +601,12 @@ export default function Dispatch() {
               // headers (Personalized/Separate Kit, `bucket` set) get their own Progress cell.
               onCell: (row) => (row.type === 'kit_header' && !row.bucket ? { colSpan: 2 } : {}),
               render: (v, row) => {
+                const emergencyInfo = getRowEmergency(row);
+                const emergencyBadge = emergencyInfo && (
+                  <Tag color="red" style={{ borderRadius: 12, fontSize: 10 }}>
+                    Emergency: {emergencyInfo.emergencyQty}{emergencyInfo.totalQty ? `/${emergencyInfo.totalQty}` : ''}
+                  </Tag>
+                );
                 if (row.type === 'kit_header') {
                   const cm = catMeta[row.category] || catMeta.separate_kit;
                   return (
@@ -532,15 +622,18 @@ export default function Dispatch() {
                         {cm.label}
                       </Tag>
                       {row.bucket && row.assigned === false && (
-                        <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: '#999', border: '1px solid #99999955' }}>
-                          Task Not Assigned
+                        <Tag color="error" style={{ borderRadius: 12, fontSize: 10 }}>
+                          {row.unassignedNames?.length
+                            ? `Not Assigned: ${row.unassignedNames.join(', ')}`
+                            : 'Task Not Assigned'}
                         </Tag>
                       )}
+                      {emergencyBadge}
                     </div>
                   );
                 }
                 return (
-                  <Space size={4}>
+                  <Space size={4} wrap>
                     {(row.type === 'kit_item' || row.type === 'personalized_item') && (
                       <span style={{ color: '#ccc', fontSize: 13, marginLeft: 8 }}>└</span>
                     )}
@@ -551,11 +644,12 @@ export default function Dispatch() {
                         {row.includedFrom}
                       </Tag>
                     )}
-                    {row.bucket === 'separateProduct' && row.assigned === false && (
-                      <Tag style={{ borderRadius: 10, fontSize: 10, background: 'transparent', color: '#999', border: '1px solid #99999955' }}>
-                        Task Not Assigned
+                    {(row.bucket === 'separateProduct' || row.type === 'kit_item' || row.type === 'personalized_item') && row.assigned === false && (
+                      <Tag color="error" style={{ borderRadius: 10, fontSize: 10 }}>
+                        Not Assigned
                       </Tag>
                     )}
+                    {emergencyBadge}
                   </Space>
                 );
               },

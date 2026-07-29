@@ -299,6 +299,10 @@ export default function Tasks() {
   //     Ziplock/Butter Paper/no-design items which are packed rather than stickered.
   //     This is what keeps a Box-routed item like Brush/Paste from suggesting "Sticker
   //     Placing" meant for a Sticker-routed item like Soap, and vice versa.
+  // Generic-only task-name words — mirrors the backend's GENERIC_TASK_WORDS
+  // (tasks.controller.js relevantTaskNamesFor) so both sides agree on which
+  // blank-product configs are true catch-alls vs. product-specific ones.
+  const GENERIC_TASK_WORDS = new Set(['pack', 'packing', 'sticker', 'stickering', 'stick', 'sticking', 'label', 'labeling', 'labelling', 'print', 'printing', 'filling', 'fill', 'placing', 'place', 'task']);
   const getRelevantTaskOptions = (item) => {
     const productKey = (item.product || '').toLowerCase();
     const productWords = productKey.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
@@ -331,9 +335,16 @@ export default function Tasks() {
         // (and, on the backend, requiring coverage) for a task type that can never actually
         // be recorded against this specific product.
         const isKitLevelName = /kit/.test(name);
-        const isStickerTask = !isKitLevelName && /stick|label/.test(name);
-        const isPrintTask = !isKitLevelName && /print/.test(name);
-        const isPackTask = !isKitLevelName && /pack/.test(name);
+        // A blank-product config whose name is made ONLY of generic words ("Packing",
+        // "Sticker Placing") is a true catch-all and applies to every routed product. But a
+        // name like "Paste Packing"/"Brush Packing" carries an extra specific word — it was
+        // written for THAT product, not every pack-routed product — so it must fall through
+        // to mentionsProduct instead of matching e.g. "Comb" just because it contains "pack".
+        const nameWords = name.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+        const isGenericName = nameWords.length > 0 && nameWords.every((w) => GENERIC_TASK_WORDS.has(w));
+        const isStickerTask = !isKitLevelName && isGenericName && /stick|label/.test(name);
+        const isPrintTask = !isKitLevelName && isGenericName && /print/.test(name);
+        const isPackTask = !isKitLevelName && isGenericName && /pack/.test(name);
         relevant = mentionsProduct
           || (isStickerRouted && isStickerTask)
           || (needsPrinting && isPrintTask)
@@ -651,8 +662,40 @@ export default function Tasks() {
       if (!map[hotel][order]) map[hotel][order] = [];
       map[hotel][order].push(s);
     });
+
+    // An order's individual products drop off suggestedList the moment every one of
+    // them is fully task-covered (see computeSuggestedTasks' fullyCovered check) — but
+    // that order can still owe a Separate Kit Packing / Personalized Kit Packing task
+    // (the outer kit assembly step, tracked separately from per-product tasks). Once the
+    // last product suggestion clears, the whole order used to vanish from Today's
+    // Checklist with that kit-packing task never surfaced for assignment. Re-add such
+    // orders here with a placeholder entry (flagged __kitPlaceholder, filtered out of the
+    // per-product card grid below) purely so the Kit Packing Task Assignment card — which
+    // reads ordersList/kitPackingTasksByOrder directly, not these items — still renders.
+    ordersList.forEach((o) => {
+      if (o.status !== 'In Production') return;
+      const hotel = o.clientName || 'Unknown';
+      const orderCode = o.orderCode || 'Unknown';
+      if (map[hotel]?.[orderCode]?.length) return; // already has real product suggestions
+      const { separateKitGroups, personalizedKitGroups } = deriveKitGroups(o);
+      if (separateKitGroups.length === 0 && personalizedKitGroups.length === 0) return;
+      const existing = kitPackingTasksByOrder[String(o._id)] || { separateTasks: [], personalizedTasks: [] };
+      const separateAllDone = existing.separateTasks.length > 0
+        && existing.separateTasks.every((t) => t.status === 'Done');
+      const separateNeedsAssignment = separateKitGroups.length > 0 && !separateAllDone;
+      const personalizedNeedsAssignment = personalizedKitGroups.length > 0 && existing.personalizedTasks.length === 0;
+      if (!separateNeedsAssignment && !personalizedNeedsAssignment) return;
+      if (!map[hotel]) map[hotel] = {};
+      map[hotel][orderCode] = [{
+        __kitPlaceholder: true,
+        orderId: o._id, orderCode, client: hotel,
+        isUrgent: !!(o.isUrgent || o.isEmergency || o.emergencyApproved),
+        fullyReady: true, // nothing stock-related is blocking — only kit assembly is left
+        orderCreatedAt: o.createdAt,
+      }];
+    });
     return map;
-  }, [suggestedList]);
+  }, [suggestedList, ordersList, kitPackingTasksByOrder]);
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -1367,7 +1410,7 @@ export default function Tasks() {
                   </div>
                 )}
 
-                {suggestedList.length === 0 ? (
+                {suggestedList.length === 0 && Object.keys(hotelGroups).length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '48px 0' }}>
                     <BulbOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
                     <Text type="secondary">No products awaiting task assignment</Text>
@@ -1384,7 +1427,7 @@ export default function Tasks() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                           <ShoppingOutlined style={{ color: '#B11E6A' }} />
                           <Text strong style={{ color: textColor }}>{orderCode}</Text>
-                          <Badge count={items.length} style={{ background: '#B11E6A' }} />
+                          <Badge count={items.filter((i) => !i.__kitPlaceholder).length} style={{ background: '#B11E6A' }} />
                           {items.some((i) => i.isUrgent) && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
                           {items.every((i) => i.fullyReady) && <Tag color="green" style={{ fontSize: 11 }}>All Ready</Tag>}
                         </div>
@@ -1513,7 +1556,7 @@ export default function Tasks() {
                         })()}
 
                         <Row gutter={[16, 16]}>
-                          {items.map((s) => {
+                          {items.filter((s) => !s.__kitPlaceholder).map((s) => {
                             // Design/printing are hard-gated server-side — every item reaching this
                             // checklist is print/design-complete already, so readiness here is purely
                             // about stock.
@@ -1684,7 +1727,12 @@ export default function Tasks() {
                   <Row gutter={[16, 16]}>
                     {Object.entries(hotelGroups).map(([hotel, orders]) => {
                       const allItems = Object.values(orders).flat();
-                      const readyCount = allItems.filter((i) => i.fullyReady).length;
+                      // Kit-packing placeholder entries (see hotelGroups above) aren't real
+                      // pending products — exclude them from the item/stock counts below, but
+                      // keep them in urgentCount so an emergency order waiting only on kit
+                      // packing still flags the hotel card red.
+                      const realItems = allItems.filter((i) => !i.__kitPlaceholder);
+                      const readyCount = realItems.filter((i) => i.fullyReady).length;
                       const urgentCount = allItems.filter((i) => i.isUrgent).length;
                       const orderCount = Object.keys(orders).length;
                       return (
@@ -1705,9 +1753,9 @@ export default function Tasks() {
                               <Text strong style={{ display: 'block', fontSize: 14, color: textColor, marginBottom: 6, lineHeight: '1.3' }}>{hotel}</Text>
                               <Space size={[4, 4]} wrap style={{ marginBottom: 8 }}>
                                 <Tag color="blue">{orderCount} order{orderCount !== 1 ? 's' : ''}</Tag>
-                                <Tag color="default">{allItems.length} item{allItems.length !== 1 ? 's' : ''}</Tag>
+                                <Tag color="default">{realItems.length} item{realItems.length !== 1 ? 's' : ''}</Tag>
                                 {readyCount > 0 && <Tag color="green">{readyCount} stock ready</Tag>}
-                                {allItems.length - readyCount > 0 && <Tag color="red">{allItems.length - readyCount} stock short</Tag>}
+                                {realItems.length - readyCount > 0 && <Tag color="red">{realItems.length - readyCount} stock short</Tag>}
                               </Space>
                               <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', marginTop: 4 }}>
                                 Click to view orders →
@@ -2838,12 +2886,10 @@ export default function Tasks() {
         width={Math.min(640, window.innerWidth - 32)}
         footer={(() => {
           const t = dispatchVerifyData?.task;
-          // missingProducts === null means the readiness preview is still loading — treat
-          // that as not-ready so the button can't fire before we actually know, same reason
-          // it's kept out of the "ready" state shown in the body below.
-          const noMissingProducts = dispatchVerifyData?.missingProducts?.length === 0;
+          // Task completion/assignment is informational only here — it does not block
+          // forwarding to Dispatch (see backend dispatchOrder). The only real gate left
+          // is payment (bypassed for sample orders / approved Emergency Dispatch).
           const ready = dispatchVerifyData
-            && (t?.emergencyApproved || (dispatchVerifyData.notDone.length === 0 && dispatchVerifyData.unassigned.length === 0 && noMissingProducts))
             && (t?.isSample || t?.paymentStatus === 'Paid' || t?.emergencyApproved)
             && !isAlreadySentToDispatch(t?.orderStatus);
           return [
@@ -2866,17 +2912,15 @@ export default function Tasks() {
         {dispatchVerifyData && (() => {
           const { task, orderTasks, notDone, unassigned, missingProducts } = dispatchVerifyData;
           const completedCount = orderTasks.filter((t) => t.status === 'Completed').length;
-          const allTasksDone = notDone.length === 0;
-          const allAssigned = unassigned.length === 0;
-          // null = readiness preview still loading — checked separately below so this can't
-          // read as "ready" (empty array) before the server-authoritative check comes back.
+          // null = readiness preview still loading — used only for the informational
+          // Task Completion panel below; task/product completion no longer gates
+          // forwarding to Dispatch (see backend dispatchOrder / buildDispatchGroupedProducts,
+          // which enforces per-product assignment on the Dispatch page itself instead).
           const checkingMissing = missingProducts === null;
-          const noMissingProducts = missingProducts?.length === 0;
-          const readyToDispatch = task.emergencyApproved
-            || (allTasksDone && allAssigned && noMissingProducts);
           const isPaid = task.paymentStatus === 'Paid';
           const isSample = task.isSample;
           const isEmergencyApproved = task.emergencyApproved;
+          const readyToDispatch = isPaid || isSample || isEmergencyApproved;
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
@@ -2905,36 +2949,24 @@ export default function Tasks() {
                 />
               )}
 
-              {/* Overall dispatch readiness */}
-              {!isAlreadySentToDispatch(task.orderStatus) && !isEmergencyApproved && checkingMissing && (
-                <Alert
-                  type="info"
-                  showIcon
-                  message="Checking every product has a completed task…"
-                  description="Confirming with the server that no product on this order is missing a task before showing a final readiness state."
-                  style={{ borderRadius: 8 }}
-                />
-              )}
-              {!isAlreadySentToDispatch(task.orderStatus) && !checkingMissing && (readyToDispatch && (isPaid || isSample || isEmergencyApproved) ? (
+              {/* Overall dispatch readiness — payment (or sample/emergency) is the only
+                  gate here; task completion is shown further below for reference only. */}
+              {!isAlreadySentToDispatch(task.orderStatus) && (readyToDispatch ? (
                 <Alert
                   type="success"
                   showIcon
                   message="Ready for Dispatch"
                   description={isEmergencyApproved
                     ? 'This task is covered by an approved Emergency Dispatch. You may proceed with dispatch.'
-                    : `All ${orderTasks.length} task(s) on Order ${task.order} are completed and assigned. ${isSample ? 'This is a sample order.' : 'Payment is confirmed.'} You may proceed with dispatch.`}
+                    : `${isSample ? 'This is a sample order.' : 'Payment is confirmed.'} You may proceed with dispatch. Task completion below is for reference — per-product packing assignment is verified on the Dispatch page.`}
                   style={{ borderRadius: 8 }}
                 />
               ) : (
                 <Alert
-                  type={readyToDispatch ? 'warning' : 'error'}
+                  type="warning"
                   showIcon
-                  message={!readyToDispatch ? 'Tasks Not Yet Complete' : 'Payment Pending'}
-                  description={
-                    !readyToDispatch
-                      ? `${notDone.length > 0 ? `${notDone.length} task(s) on this order are still incomplete. ` : ''}${unassigned.length > 0 ? `${unassigned.length} task(s) are unassigned. ` : ''}${!noMissingProducts ? `${missingProducts.length} product(s) don't have a completed task yet (${missingProducts.map((p) => p.product).join(', ')}). ` : ''}Complete all tasks before dispatching.`
-                      : `All tasks are complete but payment status is "${task.paymentStatus}". Dispatch requires full payment or emergency approval.`
-                  }
+                  message="Payment Pending"
+                  description={`Payment status is "${task.paymentStatus}". Dispatch requires full payment or an approved Emergency Dispatch.`}
                   style={{ borderRadius: 8 }}
                 />
               ))}
@@ -2978,10 +3010,10 @@ export default function Tasks() {
 
                 {!checkingMissing && missingProducts.length > 0 && (
                   <Alert
-                    type="error"
+                    type="warning"
                     showIcon
                     style={{ borderRadius: 8, marginBottom: 10 }}
-                    message="Product(s) with no completed task"
+                    message="Product(s) with no completed task (informational — does not block dispatch)"
                     description={missingProducts.map((p) => p.product).join(', ')}
                   />
                 )}
@@ -3019,12 +3051,7 @@ export default function Tasks() {
                   message="What to do next"
                   description={
                     <ul style={{ margin: '4px 0 0 0', paddingLeft: 18, fontSize: 13 }}>
-                      {notDone.length > 0 && <li>Complete the {notDone.length} remaining task(s) on this order.</li>}
-                      {unassigned.length > 0 && <li>Assign the {unassigned.length} unassigned task(s) to staff.</li>}
-                      {!checkingMissing && missingProducts.length > 0 && (
-                        <li>Assign and complete a task for: {missingProducts.map((p) => p.product).join(', ')}.</li>
-                      )}
-                      {!isPaid && !isSample && <li>Collect full payment or raise an Emergency Dispatch request.</li>}
+                      <li>Collect full payment or raise an Emergency Dispatch request.</li>
                     </ul>
                   }
                   style={{ borderRadius: 8 }}

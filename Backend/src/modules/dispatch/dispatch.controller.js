@@ -155,7 +155,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   const dispatchesRaw = await DispatchRecord.find({ _id: { $in: pageIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName total orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo expectedDeliveryDate kitOrders items packagingIncludes',
+      select: 'orderCode clientName total orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo expectedDeliveryDate kitOrders items packagingIncludes splitDates kitOverallQty',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -214,7 +214,7 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes',
+      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes splitDates kitOverallQty',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },

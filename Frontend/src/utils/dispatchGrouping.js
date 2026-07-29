@@ -139,6 +139,13 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       const overallQty = Number(ko.overallQty) || 0;
       const isPersonalized = (ko.category || 'separate_kit') === 'personalized';
       const headerKey = `_kh_${kitId || ki}`;
+      const kitLevelAssigned = isPersonalized ? personalizedKitPackingAssigned : separateKitPackingAssigned;
+      // A component is covered either by the shared kit-level task, or by its OWN
+      // per-product task (Suggested Tasks / assignTasksPerProduct, matched via
+      // productIndex) — so assigning every component individually is enough even if the
+      // kit-level task was never created, and one truly unassigned component can't be
+      // masked by an unrelated sibling's assignment.
+      const componentAssigned = (item) => kitLevelAssigned || assignedProductIndices.has(item.productIndex);
 
       // Match this kit's component items by kitId first (reliable when present on
       // either the dispatch item or its order-item fallback), else by kit name/type.
@@ -151,6 +158,42 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       });
       kitItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
       const kitItemIds = kitItems.map((it) => it._id).filter(Boolean);
+
+      // Any OTHER kit/products folded into this (personalized) kit's box — matched up
+      // front so the header's completeness check below covers every component that will
+      // actually ship and get photographed under this one header, not just kitItems.
+      const incGroups = [];
+      if (ki === personalizedIndex && includedKitOrderIndices.size > 0) {
+        includedKitOrderIndices.forEach((incKi) => {
+          const incKo = kitOrdersList[incKi];
+          const incKitId = String(incKo.kitId || '');
+          const incKitName = incKo.kitName || incKo.kitType || `Kit ${incKi + 1}`;
+          const incItems = rawItems.filter((it) => {
+            if (it._id && matchedItemIds.has(it._id)) return false;
+            return !!incKitId && !!it.kitId && String(it.kitId) === incKitId;
+          });
+          incItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
+          if (incItems.length) incGroups.push({ items: incItems, includedFrom: incKitName });
+        });
+      }
+      let includedProdItems = [];
+      if (ki === personalizedIndex && includedIds.size > 0) {
+        includedProdItems = rawItems.filter((it) => {
+          if (it._id && matchedItemIds.has(it._id)) return false;
+          if (it.kitId || it.isKit) return false;
+          const nm = it.product || it.name || it.itemName || '';
+          return !!nm && includedIds.has(nm);
+        });
+        includedProdItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
+      }
+
+      // The kit ships/photographs as ONE unit, so its header is only actionable once
+      // every component actually inside the box is covered — one unassigned component
+      // (no kit-level task AND no per-product task of its own) blocks the whole header.
+      const allComponents = [...kitItems, ...incGroups.flatMap((g) => g.items), ...includedProdItems];
+      const unassignedComponents = allComponents.filter((it) => !componentAssigned(it));
+      const headerAssigned = allComponents.length === 0 ? kitLevelAssigned : unassignedComponents.length === 0;
+      const unassignedNames = unassignedComponents.map((it) => it.product || it.name || it.itemName || 'item');
 
       // Kit-level dispatch progress — the kit ships as ONE unit. Legacy records with no
       // kitDispatch entry for this kit are treated as already fully dispatched (see file
@@ -178,7 +221,8 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
         isPersonalized,
         childItemIds: kitItemIds,
         bucket: isPersonalized ? 'personalizedKit' : 'separateKit',
-        assigned: isPersonalized ? personalizedKitPackingAssigned : separateKitPackingAssigned,
+        assigned: headerAssigned,
+        unassignedNames,
       };
       rows.push(headerRow);
       verifiable.push(headerRow);
@@ -186,50 +230,33 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       // Component rows stay in the display list for transparency (what's actually in
       // this kit), but are NOT independently dispatchable — the kit header above is the
       // single unit that carries the count + photo controls. This is the fix for the bug
-      // where every component demanded its own open/close photo pair.
+      // where every component demanded its own open/close photo pair. Each still carries
+      // its OWN `assigned` (per componentAssigned above) so a specific unassigned product
+      // can be called out on its own row instead of every sibling sharing one flag.
       kitItems.forEach((item, ii) => {
         const totalQty = Number(item.qty || item.qtyOrdered) || 0;
         const perKitQty = overallQty > 0 ? Math.round(totalQty / overallQty) : null;
         const itemType = isPersonalized ? 'personalized_item' : 'kit_item';
-        const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0, bucket: null, assigned: isPersonalized ? personalizedKitPackingAssigned : separateKitPackingAssigned });
+        const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0, bucket: null, assigned: componentAssigned(item) });
         rows.push(row);
       });
 
       // Fold in any separate kits packed INSIDE this personalized kit's box (see comment
       // at the top of the function) — their own components render as more child rows
       // right here, with no header of their own and no independent dispatch count.
-      if (ki === personalizedIndex && includedKitOrderIndices.size > 0) {
-        includedKitOrderIndices.forEach((incKi) => {
-          const incKo = kitOrdersList[incKi];
-          const incKitId = String(incKo.kitId || '');
-          const incKitName = incKo.kitName || incKo.kitType || `Kit ${incKi + 1}`;
-          const incItems = rawItems.filter((it) => {
-            if (it._id && matchedItemIds.has(it._id)) return false;
-            return !!incKitId && !!it.kitId && String(it.kitId) === incKitId;
-          });
-          incItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
-          incItems.forEach((item, ii) => {
-            const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom: incKitName, assigned: personalizedKitPackingAssigned });
-            rows.push(row);
-          });
+      incGroups.forEach(({ items, includedFrom }) => {
+        items.forEach((item, ii) => {
+          const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom, assigned: componentAssigned(item) });
+          rows.push(row);
         });
-      }
+      });
 
       // Separate products packed INSIDE the personalized kit (packagingIncludes referencing
       // a product by name) — folded in as child rows here instead of under Separate Products.
-      if (ki === personalizedIndex && includedIds.size > 0) {
-        const includedProdItems = rawItems.filter((it) => {
-          if (it._id && matchedItemIds.has(it._id)) return false;
-          if (it.kitId || it.isKit) return false;
-          const nm = it.product || it.name || it.itemName || '';
-          return !!nm && includedIds.has(nm);
-        });
-        includedProdItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
-        includedProdItems.forEach((item, ii) => {
-          const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom: 'Included in kit packing', assigned: personalizedKitPackingAssigned });
-          rows.push(row);
-        });
-      }
+      includedProdItems.forEach((item, ii) => {
+        const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom: 'Included in kit packing', assigned: componentAssigned(item) });
+        rows.push(row);
+      });
     });
 
     const sepItems = rawItems.filter((it) => !(it._id && matchedItemIds.has(it._id)));

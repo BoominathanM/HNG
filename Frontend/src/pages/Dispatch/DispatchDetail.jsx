@@ -1355,6 +1355,18 @@ export default function DispatchDetail() {
                           ))}
                       </Space>
                     </div>
+                    {groupedProducts.some((r) => r.type === 'kit_header' && r.bucket && r.assigned === false) && (
+                      <Alert
+                        type="error"
+                        showIcon
+                        style={{ borderRadius: 0, borderLeft: 'none', borderRight: 'none' }}
+                        message="Cannot dispatch — not every product has a packing task assigned yet"
+                        description={groupedProducts
+                          .filter((r) => r.type === 'kit_header' && r.bucket && r.assigned === false)
+                          .map((r) => `${r.kitName}: ${r.unassignedNames?.length ? r.unassignedNames.join(', ') : 'no task assigned'}`)
+                          .join(' • ')}
+                      />
+                    )}
                     <Table
                       size="small"
                       pagination={false}
@@ -1400,8 +1412,10 @@ export default function DispatchDetail() {
                                     {cm.label}
                                   </Tag>
                                   {row.bucket && row.assigned === false && (
-                                    <Tag style={{ borderRadius: 12, fontSize: 10, background: 'transparent', color: '#999', border: '1px solid #99999955' }}>
-                                      Task Not Assigned
+                                    <Tag color="error" style={{ borderRadius: 12, fontSize: 10 }}>
+                                      {row.unassignedNames?.length
+                                        ? `Not Assigned: ${row.unassignedNames.join(', ')}`
+                                        : 'Task Not Assigned'}
                                     </Tag>
                                   )}
                                   {emergencyBadge}
@@ -1423,9 +1437,9 @@ export default function DispatchDetail() {
                                     {row.includedFrom}
                                   </Tag>
                                 )}
-                                {row.bucket === 'separateProduct' && row.assigned === false && (
-                                  <Tag style={{ borderRadius: 10, fontSize: 10, background: 'transparent', color: '#999', border: '1px solid #99999955' }}>
-                                    Task Not Assigned
+                                {(row.bucket === 'separateProduct' || row.type === 'kit_item' || row.type === 'personalized_item') && row.assigned === false && (
+                                  <Tag color="error" style={{ borderRadius: 10, fontSize: 10 }}>
+                                    Not Assigned
                                   </Tag>
                                 )}
                                 {emergencyBadge}
