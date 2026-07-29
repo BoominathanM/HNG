@@ -4637,7 +4637,9 @@ export default function Sales() {
         packingMaterial: lead.packingMaterial,
         selectedKit: lead.selectedKit,
         selectedKits: lead.selectedKits || [],
-        kitOrders: lead.kitOrders || [],
+        // Personalized/Separate Kit overall qty must drop to 1 just like product qty does above —
+        // otherwise the sample order silently carries over the original order's kit count.
+        kitOrders: (lead.kitOrders || []).filter(Boolean).map(ko => ({ ...ko, overallQty: 1 })),
         packagingIncludes: lead.packagingIncludes || [],
         packagingIncludesQty: lead.packagingIncludesQty || {},
         kitSize: lead.kitSize,
@@ -4645,7 +4647,7 @@ export default function Sales() {
         kitLogo: lead.kitLogo || undefined,
         kitPrinting: lead.kitPrinting || undefined,
         kitPrice: lead.kitPrice != null ? Number(lead.kitPrice) : undefined,
-        kitOverallQty: lead.kitOverallQty != null ? Number(lead.kitOverallQty) : undefined,
+        kitOverallQty: lead.kitOverallQty != null ? 1 : undefined,
         productType: lead.productType,
         deliveryBy: lead.deliveryBy,
         transportationBy: lead.transportationBy,
@@ -5186,7 +5188,9 @@ export default function Sales() {
         packingMaterial: order.packingMaterial,
         selectedKit: order.selectedKit,
         selectedKits: order.selectedKits || [],
-        kitOrders: order.kitOrders || [],
+        // Personalized/Separate Kit overall qty must drop to 1 just like product qty does above —
+        // otherwise the sample order silently carries over the original order's kit count.
+        kitOrders: (order.kitOrders || []).filter(Boolean).map(ko => ({ ...ko, overallQty: 1 })),
         packagingIncludes: order.packagingIncludes || [],
         packagingIncludesQty: order.packagingIncludesQty || {},
         kitSize: order.kitSize,
@@ -5194,7 +5198,7 @@ export default function Sales() {
         kitLogo: order.kitLogo || undefined,
         kitPrinting: order.kitPrinting || undefined,
         kitPrice: order.kitPrice != null ? Number(order.kitPrice) : undefined,
-        kitOverallQty: order.kitOverallQty != null ? Number(order.kitOverallQty) : undefined,
+        kitOverallQty: order.kitOverallQty != null ? 1 : undefined,
         productType: order.productType,
         deliveryBy: order.deliveryBy,
         transportationBy: order.transportationBy,

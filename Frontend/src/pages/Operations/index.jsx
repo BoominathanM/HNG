@@ -15,7 +15,6 @@ import {
   Input,
   Modal,
   Popover,
-  Progress,
   Row,
   Select,
   Space,
@@ -740,20 +739,6 @@ export default function Operations() {
       responsive: ['md'],
     },
     { title: 'Assigned To', dataIndex: 'assignedEmployee', responsive: ['lg'] },
-    {
-      title: 'Process',
-      key: 'progress',
-      render: (_, record) => {
-        const percent = getProgressFromChecks(checkStates[record.id]);
-        const ready = canAssignTaskFromChecks(checkStates[record.id]);
-        return (
-          <Space direction="vertical" size={2} style={{ width: 180 }}>
-            <Progress percent={percent} size="small" strokeColor="#B11E6A" status={ready ? 'success' : 'active'} />
-            <Text style={{ fontSize: 11 }}>{ready ? 'Assignment unlocked' : record.operationStage}</Text>
-          </Space>
-        );
-      },
-    },
     {
       title: 'Actions',
       key: 'actions',

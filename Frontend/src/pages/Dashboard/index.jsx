@@ -59,8 +59,6 @@ export default function Dashboard() {
   const orderColumns = [
     { title: 'Order ID', dataIndex: 'orderCode', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
     { title: 'Client', dataIndex: 'clientName' },
-    { title: 'Product', dataIndex: 'product', responsive: ['md'] },
-    { title: 'Qty', dataIndex: 'qty', responsive: ['lg'], render: (v) => v?.toLocaleString() },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag style={{ borderRadius: 20 }} color={v === 'Completed' ? '#6b1240' : v === 'Dispatch Ready' ? '#8a1652' : '#B11E6A'}>{v}</Tag> },
     { title: 'Amount', dataIndex: 'total', render: (v) => <Text strong>₹{v?.toLocaleString()}</Text> },
   ];
