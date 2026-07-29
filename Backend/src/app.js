@@ -37,9 +37,24 @@ const app = express();
 app.set('trust proxy', 1);
 
 // ─── Security & Utility Middleware ───────────────────────────────────────────
+// Mirrors the frontend's env-based domain switching (Frontend/src/api/axios.js):
+// local dev and the production domain are both always allowed, so a missing/stale
+// CLIENT_URL on either box never breaks CORS. CLIENT_URL (if set) is added on top,
+// e.g. for a staging domain.
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://hngcrm.askeva.io',
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // No origin = server-to-server / curl / same-origin requests — allow.
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
   credentials: true,
 }));
 app.use(mongoSanitize());

@@ -378,15 +378,17 @@ exports.getPurchaseReport = asyncHandler(async (req, res) => {
   });
 });
 
-// Expense category → P&L bucket mapping
+// Expense category → P&L bucket mapping — one bucket per real Expense.category enum value
+// (Backend/src/models/Expense.js), so every category is independently selectable in the
+// Reports UI instead of Raw Material/Other/Purchase all being silently lumped into "other".
 const EXPENSE_CAT_MAP = {
-  'Raw Material': 'other',
+  'Raw Material': 'raw_material',
   'Shipping / Transportation': 'transport',
   'Utilities (Rent/Elec)': 'utilities',
   'Other': 'other',
-  'Purchase': 'other',
+  'Purchase': 'purchase',
 };
-const emptyExpenses = () => ({ utilities: 0, transport: 0, other: 0 });
+const emptyExpenses = () => ({ raw_material: 0, transport: 0, utilities: 0, purchase: 0, other: 0 });
 
 // ─── PROFIT & LOSS ─────────────────────────────────────────────────────────────
 exports.getProfitLoss = asyncHandler(async (req, res) => {

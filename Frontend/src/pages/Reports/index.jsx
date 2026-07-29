@@ -24,13 +24,16 @@ import {
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-// Buckets match EXPENSE_CAT_MAP in reports.controller.js, which in turn matches the real
-// Expense.category enum (Backend/src/models/Expense.js) — Rent/Salary/Marketing chips were
-// removed because no expense category maps to them, so they always showed a permanent ₹0.
+// One entry per real Expense.category enum value (Backend/src/models/Expense.js), matching
+// EXPENSE_CAT_MAP in reports.controller.js 1:1 — every category a user can actually log an
+// expense against gets its own selectable chip, instead of Raw Material/Other/Purchase being
+// silently lumped into one "Other" bucket.
 const expenseCategoryConfig = [
-  { key: 'utilities', label: 'Utilities',      color: '#B11E6A' },
-  { key: 'transport', label: 'Transport',      color: '#D85C9E' },
-  { key: 'other',     label: 'Other',          color: '#6b1240' },
+  { key: 'raw_material', label: 'Raw Material', color: '#8a1652' },
+  { key: 'transport',    label: 'Transport',     color: '#D85C9E' },
+  { key: 'utilities',    label: 'Utilities',     color: '#B11E6A' },
+  { key: 'purchase',     label: 'Purchase',      color: '#C94F8A' },
+  { key: 'other',        label: 'Other',         color: '#6b1240' },
 ];
 
 const CHART_COLORS = ['#B11E6A', '#D85C9E', '#8a1652', '#C94F8A', '#e91e8c', '#f06292'];
@@ -121,7 +124,10 @@ export default function Reports() {
   // P&L state
   const [plSelectedMonth, setPlSelectedMonth] = useState('all');
   const [plDateRange, setPlDateRange] = useState(null);
-  const [plSelectedExpenses, setPlSelectedExpenses] = useState(['utilities', 'transport', 'other']);
+  // All expense categories are deducted (checked) by default — Net Profit starts as
+  // Gross Profit minus every real expense category, matching the P&L definition; unchecking
+  // a chip excludes just that category from the Net Profit calc.
+  const [plSelectedExpenses, setPlSelectedExpenses] = useState(expenseCategoryConfig.map(c => c.key));
   const [plProductFilter, setPlProductFilter] = useState(null);
   const [plGstMode, setPlGstMode] = useState('excl');
 
@@ -254,7 +260,7 @@ export default function Reports() {
     if (plProductFilter && plProductMonthlyDataActive[plProductFilter]) {
       return plProductMonthlyDataActive[plProductFilter].map(pd => {
         const allRow = plMonthlyDataActive.find(d => d.month === pd.month);
-        if (!allRow) return { ...pd, expenses: { utilities: 0, transport: 0, other: 0 } };
+        if (!allRow) return { ...pd, expenses: Object.fromEntries(expenseCategoryConfig.map(c => [c.key, 0])) };
         const ratio = allRow.sales > 0 ? pd.sales / allRow.sales : 0;
         const expenses = Object.fromEntries(
           Object.entries(allRow.expenses || {}).map(([k, v]) => [k, Math.round(v * ratio * 100) / 100])
@@ -367,12 +373,15 @@ export default function Reports() {
   const exportPurchasePdf = () => exportRefToPdf(purchaseRef, 'Purchase_Report.pdf');
 
   const exportPlExcel = () => {
-    const headers = ['Month', 'Sales (Excl. GST)', 'Sales GST', 'COGS', 'Gross Profit', 'Paid', 'Pending', 'Utilities', 'Transport', 'Other Expenses'];
+    // Exports every expense category with its own column regardless of which chips are
+    // currently checked in the UI — the export is a full record, not a filtered view.
+    const headers = ['Month', 'Sales (Excl. GST)', 'Sales GST', 'COGS', 'Gross Profit', 'Paid', 'Pending', ...expenseCategoryConfig.map(c => c.label)];
     const rows = plFilteredData.map(d => [
       d.month, d.sales, d.salesGst || 0, d.cogs, d.grossProfit, d.paid || 0, d.pending || 0,
-      d.expenses?.utilities || 0, d.expenses?.transport || 0, d.expenses?.other || 0,
+      ...expenseCategoryConfig.map(c => d.expenses?.[c.key] || 0),
     ]);
-    rows.push(['TOTAL', totalSales, totalSalesGst, totalCogs, totalGrossProfit, totalPaid, totalPending, '', '', totalExpenses]);
+    const catTotals = expenseCategoryConfig.map(c => plFilteredData.reduce((s, d) => s + (d.expenses?.[c.key] || 0), 0));
+    rows.push(['TOTAL', totalSales, totalSalesGst, totalCogs, totalGrossProfit, totalPaid, totalPending, ...catTotals]);
     exportToExcel(headers, rows, 'Profit_Loss_Report.csv');
   };
   const exportPlPdf = () => exportRefToPdf(plRef, 'Profit_Loss_Report.pdf');
