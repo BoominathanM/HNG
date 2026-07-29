@@ -350,8 +350,16 @@ export const getEmergencyProductQtyMap = (order) => {
   // split at the bundled amount, not its full standalone order qty (see expandPersonalized).
   const piQty = order.packagingIncludesQty || {};
   const bundledQtyFor = (it) => {
-    const key = it.kitId != null ? String(it.kitId) : String(it.name || it.itemName);
-    return includeSet.has(key) ? (Number(piQty[key]) || 0) : null;
+    // Non-kit items carry `kitId: ''` (empty string, not null/undefined) — `it.kitId != null`
+    // was true for that empty string, so `key` locked onto '' and never fell back to the name
+    // key, and `includeSet.has('')` is always false. That silently made bundledQtyFor return
+    // null for every Separate Product (Soap/Comb), letting expandPersonalized fall through to
+    // effectiveItemQty (the item's FULL order qty) instead of its bundled portion — inflating
+    // the emergency split. Try the kitId key only when it's actually truthy, same as isBundled above.
+    const kitKey = it.kitId ? String(it.kitId) : '';
+    if (kitKey && includeSet.has(kitKey)) return Number(piQty[kitKey]) || 0;
+    const nameKey = String(it.name || it.itemName || '');
+    return includeSet.has(nameKey) ? (Number(piQty[nameKey]) || 0) : null;
   };
 
   // Proportionally splits `kitEmergencyQty` KITS of demand across `items`, whose shared "kit

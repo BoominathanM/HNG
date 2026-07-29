@@ -395,7 +395,16 @@ export default function Operations() {
         // Separate Kit / Separate Product inside the box → its OWN row reads as that (the personalized
         // outer packing is the synthesized personalized copy). Otherwise the per-kit Order Details
         // config (kitOrders[i].category) is the source of truth; the item's own category can be stale.
+        // `packagingIncludes` can list the personalized kit's OWN kitId (e.g. ORD-260005: the
+        // Dental Kit's id sits in packagingIncludes alongside Soap/Comb, meaning "the kit itself
+        // goes in the outer Box") — that self-reference must NOT be read as "this kit's own
+        // components were pulled in from being separately ordered". Without the guard below,
+        // Paste/Brush (the kit's own personalized components) matched `includeSet.has(item.kitId)`
+        // on their OWN kit id and got reclassified as Separate Kit, which then made the emergency
+        // split (Operations/data.js's getEmergencyProductQtyMap) treat them as a bundled foreign
+        // item instead of true kit components.
         const isIncludedInPersonalized = isPersonalizedOrder
+          && !(isKitItem && kitCfg?.category === 'personalized')
           && (includeSet.has(String(item.kitId)) || includeSet.has(String(item.name || item.itemName)));
         const itemCategory = isIncludedInPersonalized
           ? (isKitItem ? 'separate_kit' : 'separate_product')
@@ -452,6 +461,12 @@ export default function Operations() {
     // mapped order). Fall back to the populated lead like the other kit fields.
     productType: o.productType || o.leadId?.productType || [],
     packagingIncludes: (o.packagingIncludes?.length ? o.packagingIncludes : (o.leadId?.packagingIncludes || [])) || [],
+    // NOTE: packagingIncludesQty (how much of a bundled Separate Product/Kit is actually
+    // packed inside the personalized kit) was missing here entirely — getEmergencyProductQtyMap's
+    // bundledQtyFor read `order.packagingIncludesQty` but this mapped order never carried it,
+    // so it was always `{}`, making every bundled item's emergency split resolve to 0 regardless
+    // of how correct bundledQtyFor's own lookup logic was.
+    packagingIncludesQty: (o.packagingIncludesQty && Object.keys(o.packagingIncludesQty).length ? o.packagingIncludesQty : (o.leadId?.packagingIncludesQty || {})) || {},
     kitOrders: (o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || [],
     kitOverallQty: o.kitOverallQty ?? o.leadId?.kitOverallQty ?? 0,
     // Kit display fields — fall back to the populated leadId fields for orders created

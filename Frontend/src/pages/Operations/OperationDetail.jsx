@@ -321,7 +321,15 @@ export default function OperationDetail() {
         // Kit composition category: the per-kit Order Details config (kitOrders[i].category) is the
         // source of truth; the item row's own category can be stale. Computed first because the
         // display-unit fallback below depends on it.
+        // `packagingIncludes` can list the personalized kit's OWN kitId (e.g. ORD-260005: the
+        // Dental Kit's id is in packagingIncludes alongside Soap/Comb, representing "the kit
+        // itself sits in the outer Box") — that self-reference must NOT be read as "this kit's
+        // own components were pulled in from being separately ordered". Without the guard below,
+        // Paste/Brush (the kit's own personalized components) matched `includeSet.has(it.kitId)`
+        // on their OWN kit id and got reclassified as Separate Kit, which then made the emergency
+        // split treat them as a bundled foreign item instead of true kit components.
         const isIncludedInPersonalized = isPersonalizedOrder
+          && !(isKitItem && kitCfg?.category === 'personalized')
           && (includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName)));
         const itemCategory = isIncludedInPersonalized
           ? (isKitItem ? 'separate_kit' : 'separate_product')
@@ -407,6 +415,11 @@ export default function OperationDetail() {
     kitOrders: o.kitOrders || o.leadId?.kitOrders || [],
     kitOverallQty: o.kitOverallQty ?? o.leadId?.kitOverallQty ?? 0,
     packagingIncludes: (o.packagingIncludes?.length ? o.packagingIncludes : (o.leadId?.packagingIncludes || [])) || [],
+    // NOTE: packagingIncludesQty was missing here entirely — emergencyProductMap's bundledQtyFor
+    // reads `order.packagingIncludesQty` but this mapped order never carried it, so it was always
+    // `{}`, making every bundled item's emergency split resolve to 0 regardless of how correct
+    // bundledQtyFor's own lookup logic was.
+    packagingIncludesQty: (o.packagingIncludesQty && Object.keys(o.packagingIncludesQty).length ? o.packagingIncludesQty : (o.leadId?.packagingIncludesQty || {})) || {},
     displayUnitTab: o.displayUnitTab || o.leadId?.displayUnitTab || '',
     logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
     logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
@@ -450,6 +463,7 @@ export default function OperationDetail() {
 
   const openKitPackingModal = (kitGroup, category) => {
     setKitPackingModalCategory(category);
+    setKitPackingModalKind(kitGroup?.kind || null);
     setKitPackingModalKitCfg(kitGroup);
     setKitSubTasks([]);
     setKitPackingModalOpen(true);
@@ -619,8 +633,16 @@ export default function OperationDetail() {
     // of its full standalone order qty (see expandPersonalized below).
     const piQty = order?.packagingIncludesQty || {};
     const bundledQtyFor = (it) => {
-      const key = it.kitId != null ? String(it.kitId) : String(it.name || it.itemName);
-      return includeSet.has(key) ? (Number(piQty[key]) || 0) : null;
+      // Non-kit items carry `kitId: ''` (empty string, not null/undefined) — `it.kitId != null`
+      // was true for that empty string, so `key` locked onto '' and never fell back to the name
+      // key, and `includeSet.has('')` is always false. That silently made bundledQtyFor return
+      // null for every Separate Product (Soap/Comb), letting expandPersonalized fall through to
+      // effQty (the item's FULL order qty) instead of its bundled portion — inflating the split.
+      // Try the kitId key only when it's actually truthy, same as isBundled above.
+      const kitKey = it.kitId ? String(it.kitId) : '';
+      if (kitKey && includeSet.has(kitKey)) return Number(piQty[kitKey]) || 0;
+      const nameKey = String(it.name || it.itemName || '');
+      return includeSet.has(nameKey) ? (Number(piQty[nameKey]) || 0) : null;
     };
     // Number of KITS ordered (NOT the per-product total) — the shared denominator a splitDate's
     // emergency qty is expressed against (e.g. "50 of the 100 kits"). Math.max(...effQty(...))
@@ -701,7 +723,7 @@ export default function OperationDetail() {
       handleEntry(sd.product, sd.qty != null ? Number(sd.qty) : null, sdDate);
     });
     return map;
-  }, [order?.splitDates, order?.items, order?.packagingIncludes, order?.kitOverallQty, order?.kitOrders]);
+  }, [order?.splitDates, order?.items, order?.packagingIncludes, order?.packagingIncludesQty, order?.kitOverallQty, order?.kitOrders]);
 
   // Sort items: emergency products first (by emergency date), then regular products
   const sortedOrderItems = useMemo(() => {
@@ -795,20 +817,19 @@ export default function OperationDetail() {
   }, [stickerRequests, order?.key, id]);
   const displayUnitApproved = !!(displayUnitSR?.salesApproved && displayUnitSR?.opsHeadApproved);
 
-  // Separate kit items grouped by kit identity — used for kit packing task assignment section.
-  // kitIncludes entries use per-kit qty. When kitIncludes is empty, falls back to items in
-  // order.items with a matching kitId (total qty ÷ overallQty → per-kit qty).
-  const separateKitGroups = useMemo(() => {
-    const kitItems = (order?.items || []).filter((it) => it.isKit && it.category === 'separate_kit');
+  // Shared kit-grouping logic — groups sibling isKit:true rows (Brush, Paste, …) sharing the
+  // same kit identity together (Sales' applyKitsToForm creates ONE order-item row PER kit
+  // product, not one row with an embedded product list — deduping to just the first occurrence
+  // silently dropped every other component), and resolves each kit's per-kit product breakdown.
+  // Used both for a genuinely separate kit AND for a personalized kit's own "assemble the kit"
+  // step (see separateKitGroups/personalizedKitGroups below for when each applies) — the
+  // resolution logic (kitIncludes config → derived member rows → the group's own sibling rows)
+  // is identical either way, only the SOURCE item list and the fallback display name differ.
+  const buildKitGroups = (kitItems, fallbackName) => {
     if (kitItems.length === 0) return [];
-    // Group ALL sibling rows sharing the same kit identity together — Sales' applyKitsToForm
-    // creates ONE order-item row PER kit product (e.g. Brush, Paste), each marked isKit:true
-    // and sharing the same kitId/kitName, not one row for the kit with an embedded product
-    // list. Deduping to just the first occurrence (as this used to) silently dropped every
-    // other component from the breakdown, showing only 1 product (or none) per kit.
     const groups = new Map();
     kitItems.forEach((it) => {
-      const gKey = it.kitId || it.kitName || it.kitType || it.name || it.itemName || 'sep_kit';
+      const gKey = it.kitId || it.kitName || it.kitType || it.name || it.itemName || 'kit';
       if (!groups.has(gKey)) groups.set(gKey, []);
       groups.get(gKey).push(it);
     });
@@ -864,12 +885,41 @@ export default function OperationDetail() {
       }
 
       const kitIncludes = kitItems2.map((p) => ({ id: p.id || p.itemName || p.name || '', qty: p.perKitQty || 1 }));
-      return { key: gKey, kitName: it.kitName || it.kitType || 'Separate Kit', kitId: it.kitId || '', kitIncludes, kitItems: kitItems2, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' };
+      return { key: gKey, kitName: it.kitName || it.kitType || fallbackName, kitId: it.kitId || '', kitIncludes, kitItems: kitItems2, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' };
     });
+  };
+
+  // "First stage" kit packing groups — used for kit packing task assignment section. Two
+  // distinct cases feed this SAME "must be assigned/done before the final packing step" slot:
+  //   1. A genuinely separate kit (category='separate_kit') — its own independent product.
+  //   2. A personalized kit's OWN components (category='personalized') when the order ALSO
+  //      bundles additional separate products/kits into the SAME outer personalized container
+  //      (packagingIncludes) — that outer-packing step needs this kit already assembled into
+  //      its own per-kit display unit (e.g. Butter Paper) first, exactly like a genuinely
+  //      separate kit would. Without case 2, ORD-260005-shaped orders (single personalized
+  //      Dental Kit + bundled Soap/Comb) silently lost the "assemble the kit itself" task
+  //      entirely — only the combined outer-packing task showed, with nowhere to separately
+  //      assign/track the kit-assembly step. `kind` distinguishes the two for card labeling
+  //      (case 2 must NOT say "Separate Kit" — there is no separate kit here, only this
+  //      personalized kit's own components) while both still create a 'Separate Kit Packing'
+  //      task under the hood so the existing done/gating checks (which key off that literal
+  //      taskType, not which case produced it) keep working unchanged.
+  const separateKitGroups = useMemo(() => {
+    const trueSeparateItems = (order?.items || []).filter((it) => it.isKit && it.category === 'separate_kit');
+    const includedItems = (order?.items || []).filter((it) => it.isIncludedInPersonalized);
+    const personalizedOwnItems = includedItems.length > 0
+      ? (order?.items || []).filter((it) => it.isKit && it.category === 'personalized')
+      : [];
+    return [
+      ...buildKitGroups(trueSeparateItems, 'Separate Kit').map((g) => ({ ...g, kind: 'separate_kit' })),
+      ...buildKitGroups(personalizedOwnItems, 'Personalized Kit').map((g) => ({ ...g, kind: 'kit_assembly' })),
+    ];
   }, [order?.items, order?.kitOrders]);
 
-  // Personalized kit groups — either direct items with category='personalized', or a MIXED order's
-  // outer container (where inner items carry isIncludedInPersonalized=true).
+  // Personalized kit groups — the FINAL packing step. Either direct items with
+  // category='personalized' (no extra bundling — the kit's own packing IS the final step), or a
+  // MIXED order's outer container (where inner items carry isIncludedInPersonalized=true — the
+  // kit's own assembly is a separate, earlier step surfaced above in separateKitGroups instead).
   // Per-kit qty = total item qty ÷ kitCount (rounded, min 1).
   const personalizedKitGroups = useMemo(() => {
     const personalizedKitItems = (order?.items || []).filter((it) => (it.isKit || it.kitType) && it.category === 'personalized');
@@ -885,45 +935,7 @@ export default function OperationDetail() {
       });
       return [{ key: 'personalized', kitName: outerDU || 'Personalized Kit', kitIncludes: kitItems.map((p) => ({ id: p.id, qty: p.perKitQty })), kitItems, overallQty: kitCount, displayUnit: outerDU }];
     }
-    // Same grouping fix as separateKitGroups above — group sibling isKit:true rows
-    // (Brush, Paste, …) sharing the same kit identity, instead of dropping all but the
-    // first on a name-only dedup.
-    const groups = new Map();
-    personalizedKitItems.forEach((it) => {
-      const gKey = it.kitId || it.kitName || 'pers_kit';
-      if (!groups.has(gKey)) groups.set(gKey, []);
-      groups.get(gKey).push(it);
-    });
-    return Array.from(groups.entries()).map(([gKey, groupItems]) => {
-      const it = groupItems[0];
-      const itKitNameLow = (it.kitName || it.kitType || '').toLowerCase();
-      const ko = (order?.kitOrders || []).find((k) =>
-        (it.kitId && k.kitId && String(k.kitId) === String(it.kitId))
-        || (k.kitName && itKitNameLow && k.kitName.toLowerCase() === itKitNameLow)
-        || (k.kitType && itKitNameLow && k.kitType.toLowerCase() === itKitNameLow)
-      );
-      const overallQty = Number(ko?.overallQty) || Number(it.overallQty) || Number(it.requiredQty) || 0;
-      const configIncludes = Array.isArray(ko?.kitIncludes) && ko.kitIncludes.length > 0
-        ? ko.kitIncludes
-        : (Array.isArray(it.kitIncludes) && it.kitIncludes.length > 0 ? it.kitIncludes : []);
-      let kitItems;
-      if (configIncludes.length > 0) {
-        kitItems = configIncludes.map((inc) => {
-          const incId = typeof inc === 'object' ? String(inc.id ?? inc) : String(inc);
-          const incQty = typeof inc === 'object' ? (Number(inc.qty) || 1) : 1;
-          const matched = (order?.items || []).find((p) =>
-            !p.isKit && (p.itemName || p.name || '').toLowerCase() === incId.toLowerCase()
-          );
-          return { id: incId, perKitQty: incQty, ...(matched || {}) };
-        });
-      } else {
-        // No kitIncludes config — the group's own isKit:true sibling rows ARE the kit's
-        // component products, each already carrying its own per-kit qty.
-        kitItems = groupItems.map((p) => ({ ...p, id: p.itemName || p.kitType || p.name || '', perKitQty: Number(p.qty) || 1 }));
-      }
-      const kitIncludes = kitItems.map((p) => ({ id: p.id, qty: p.perKitQty || 1 }));
-      return { key: gKey, kitName: it.kitName || it.kitType || 'Personalized Kit', kitId: it.kitId || '', kitIncludes, kitItems, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' };
-    });
+    return buildKitGroups(personalizedKitItems, 'Personalized Kit');
   }, [order?.items, order?.kitOrders, order?.kitDisplayUnit, order?.qty]);
 
   // Send the kit's display unit (Box/Ziplock packaging) for dual Sales + Ops approval.
@@ -1038,6 +1050,11 @@ export default function OperationDetail() {
   // Partial-delivery split: record a partial qty; the balance becomes a follow-on entry.
   const [kitPackingModalOpen, setKitPackingModalOpen] = useState(false);
   const [kitPackingModalCategory, setKitPackingModalCategory] = useState(null); // 'separate_kit' | 'personalized'
+  // Display-only refinement of kitPackingModalCategory — 'kit_assembly' when this "separate_kit"
+  // slot is actually a personalized kit's own assembly step (see separateKitGroups' `kind`
+  // comment above), so the modal can say "Kit Assembly" instead of the misleading "Separate Kit"
+  // while the task itself still saves under the same 'Separate Kit Packing' taskType.
+  const [kitPackingModalKind, setKitPackingModalKind] = useState(null);
   const [kitPackingModalKitCfg, setKitPackingModalKitCfg] = useState(null);
   const [partialModalOpen, setPartialModalOpen] = useState(false);
   const [partialQtyInput, setPartialQtyInput] = useState(0);
@@ -1057,6 +1074,10 @@ export default function OperationDetail() {
     try { vals = await kitPackingForm.validateFields(); } catch { return; }
     const kitCfg = kitPackingModalKitCfg;
     const isPersonalized = kitPackingModalCategory === 'personalized';
+    const isKitAssembly = kitPackingModalKind === 'kit_assembly';
+    // Display label only — the saved taskType stays 'Separate Kit Packing' for the kit-assembly
+    // case too (see kitPackingModalKind comment above), so existing done/gating checks keep working.
+    const stepLabel = isPersonalized ? 'Personalized' : (isKitAssembly ? 'Kit Assembly' : 'Separate');
     const taskTypeName = isPersonalized ? 'Personalized Kit Packing' : 'Separate Kit Packing';
     const plannedStartTime = dayjs().toISOString();
 
@@ -1073,7 +1094,7 @@ export default function OperationDetail() {
       return;
     }
 
-    const product = kitCfg?.kitName || (isPersonalized ? (order?.kitDisplayUnit || 'Personalized Kit') : 'Separate Kit');
+    const product = kitCfg?.kitName || (isPersonalized ? (order?.kitDisplayUnit || 'Personalized Kit') : (isKitAssembly ? 'Kit Assembly' : 'Separate Kit'));
     const kitReqQty = kitCfg?.overallQty || 0;
 
     // Each row with a different Task Name + assignee becomes its OWN task in Task
@@ -1113,10 +1134,11 @@ export default function OperationDetail() {
       }
     }
     if (successCount > 0) {
-      enqueueSnackbar(`${successCount} ${isPersonalized ? 'Personalized' : 'Separate'} Kit Packing task${successCount > 1 ? 's' : ''} assigned`, { variant: 'success' });
+      enqueueSnackbar(`${successCount} ${stepLabel} ${isKitAssembly ? '' : 'Kit Packing '}task${successCount > 1 ? 's' : ''} assigned`, { variant: 'success' });
       setKitPackingModalOpen(false);
       setKitPackingModalKitCfg(null);
       setKitPackingModalCategory(null);
+      setKitPackingModalKind(null);
       kitPackingForm.resetFields();
       setKitSubTasks([]);
     }
@@ -2717,15 +2739,19 @@ export default function OperationDetail() {
                   >
                     <Space direction="vertical" size={16} style={{ width: '100%' }}>
 
-                      {/* Separate Kit group(s) */}
-                      {separateKitGroups.map((kg) => (
+                      {/* Separate Kit group(s) — plus a personalized kit's own "assemble the kit
+                          itself" step (kind='kit_assembly'), which must NOT be labeled "Separate
+                          Kit" since it isn't one; see separateKitGroups' comment above. */}
+                      {separateKitGroups.map((kg) => {
+                        const isAssembly = kg.kind === 'kit_assembly';
+                        return (
                         <div
                           key={kg.key}
                           style={{ padding: 16, borderRadius: 10, border: '1px solid rgba(24,144,255,0.25)', background: isDark ? 'rgba(24,144,255,0.07)' : 'rgba(24,144,255,0.04)' }}
                         >
                           <Space direction="vertical" style={{ width: '100%' }} size={10}>
                             <Space wrap>
-                              <Tag color="blue" style={{ borderRadius: 12, fontWeight: 600, fontSize: 12 }}>Separate Kit</Tag>
+                              <Tag color="blue" style={{ borderRadius: 12, fontWeight: 600, fontSize: 12 }}>{isAssembly ? 'Kit Assembly' : 'Separate Kit'}</Tag>
                               <Text strong style={{ fontSize: 14 }}>{kg.kitName}</Text>
                               {kg.overallQty > 0 && <Tag color="geekblue">Total: {kg.overallQty} kits</Tag>}
                               {kg.displayUnit && <Tag color="purple">{String(kg.displayUnit).replace(/_/g, ' ')}</Tag>}
@@ -2741,7 +2767,9 @@ export default function OperationDetail() {
                             {separateKitPackingTask && (
                               <Space style={{ marginTop: 4 }} wrap>
                                 <Tag color={separateKitPackingAllDone ? 'green' : 'orange'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
-                                  {separateKitPackingAllDone ? 'Separate Kit Packing Done' : 'Separate Kit Task Assigned — Pending'}
+                                  {separateKitPackingAllDone
+                                    ? (isAssembly ? 'Kit Assembly Done' : 'Separate Kit Packing Done')
+                                    : (isAssembly ? 'Kit Assembly Task Assigned — Pending' : 'Separate Kit Task Assigned — Pending')}
                                 </Tag>
                                 <Text type="secondary" style={{ fontSize: 12 }}>{separateKitPackingTask.taskName}</Text>
                               </Space>
@@ -2752,11 +2780,12 @@ export default function OperationDetail() {
                               style={{ background: 'linear-gradient(135deg,#1677ff,#69b1ff)', border: 'none', borderRadius: 8, marginTop: 4 }}
                               onClick={() => openKitPackingModal(kg, 'separate_kit')}
                             >
-                              {separateKitPackingTask ? 'Add Another Task' : 'Assign Separate Kit Task'}
+                              {separateKitPackingTask ? 'Add Another Task' : (isAssembly ? 'Assign Kit Assembly Task' : 'Assign Separate Kit Task')}
                             </Button>
                           </Space>
                         </div>
-                      ))}
+                        );
+                      })}
 
                       {/* Personalized Kit group(s) — gated until separate kit tasks are assigned */}
                       {personalizedKitGroups.map((kg) => {
@@ -2788,7 +2817,7 @@ export default function OperationDetail() {
                                 <Alert
                                   type="warning"
                                   showIcon
-                                  message="Mark the separate kit packing task(s) as Done before assigning personalized kit tasks."
+                                  message="Mark the kit assembly / separate kit packing task(s) above as Done before assigning personalized kit tasks."
                                   style={{ borderRadius: 8, fontSize: 12 }}
                                 />
                               )}
@@ -3124,6 +3153,7 @@ export default function OperationDetail() {
           setKitPackingModalOpen(false);
           setKitPackingModalKitCfg(null);
           setKitPackingModalCategory(null);
+          setKitPackingModalKind(null);
           kitPackingForm.resetFields();
         }}
         title={
@@ -3132,6 +3162,8 @@ export default function OperationDetail() {
             <span>
               {kitPackingModalCategory === 'personalized'
                 ? 'Assign Personalized Kit Packing Task'
+                : kitPackingModalKind === 'kit_assembly'
+                ? 'Assign Kit Assembly Task'
                 : kitPackingModalCategory === 'separate_kit'
                 ? 'Assign Separate Kit Packing Task'
                 : 'Assign Kit Packing Task'}
@@ -3155,7 +3187,11 @@ export default function OperationDetail() {
             <div style={{ marginBottom: 16 }}>
               <Space style={{ marginBottom: 6 }} wrap>
                 <Text strong style={{ fontSize: 12 }}>
-                  Included in 1 {kitPackingModalCategory === 'personalized' ? 'Personalized' : 'Separate'} Kit:
+                  {kitPackingModalCategory === 'personalized'
+                    ? 'Included in 1 Personalized Kit:'
+                    : kitPackingModalKind === 'kit_assembly'
+                    ? 'Kit Assembly — this kit’s own components:'
+                    : 'Included in 1 Separate Kit:'}
                 </Text>
                 {kitPackingModalKitCfg.overallQty > 0 && (
                   <Tag color={kitPackingModalCategory === 'personalized' ? 'magenta' : 'blue'} style={{ margin: 0 }}>
@@ -3299,7 +3335,9 @@ export default function OperationDetail() {
               }}
               onClick={submitKitPackingTask}
             >
-              Create and Assign {kitPackingModalCategory === 'personalized' ? 'Personalized' : 'Separate'} Kit Packing Task
+              Create and Assign {kitPackingModalCategory === 'personalized'
+                ? 'Personalized Kit Packing Task'
+                : kitPackingModalKind === 'kit_assembly' ? 'Kit Assembly Task' : 'Separate Kit Packing Task'}
             </Button>
           </Form.Item>
         </Form>

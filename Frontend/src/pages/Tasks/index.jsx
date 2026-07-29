@@ -251,6 +251,28 @@ function resolveKitEmergencyQty(orderDoc, category, kg) {
   return 0;
 }
 
+// Whether a Kit Packing group's own display-unit printing/sticker step has cleared — mirrors
+// the per-product printGateBlocked gate below (Operations' Printing Status column, driven by
+// the vendor's Box/Ziplock/Butter Paper/Sticker queue), applied to the kit as a whole: every
+// component of the kit that itself needs a print gate must reach Received/Closed before the
+// physical kit can be packed. Cross-references the per-component suggestion entries the
+// backend already computes (matched by product name — kit components have no stable id here)
+// instead of re-deriving the design-type/print-gate formula on the frontend. Once a component's
+// own suggestion clears (its task is Done, or computeSuggestedTasks now recognizes the kit's
+// OWN packing task as covering it), there's no matching entry left to block on, which correctly
+// reads as ready — the print gate only matters before the kit is packed anyway.
+function kitPrintGate(kg, orderCode, suggestedList) {
+  for (const p of kg.kitItems || []) {
+    const pname = (p.itemName || p.name || p.id || '').toLowerCase();
+    if (!pname) continue;
+    const s = suggestedList.find((x) => x.orderCode === orderCode && (x.product || '').toLowerCase() === pname);
+    if (s && s.stickerPrintingReady === false) {
+      return { blocked: true, product: p.itemName || p.name || p.id, status: s.itemPrintingStatus };
+    }
+  }
+  return { blocked: false };
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 export default function Tasks() {
   const navigate = useNavigate();
@@ -712,7 +734,11 @@ export default function Tasks() {
     // per-product card grid below) purely so the Kit Packing Task Assignment card — which
     // reads ordersList/kitPackingTasksByOrder directly, not these items — still renders.
     ordersList.forEach((o) => {
-      if (o.status !== 'In Production') return;
+      // Also cover an order already forwarded to Dispatch Ready — dispatchOrder (backend)
+      // forwards the whole order once any sibling task completes, without checking that the
+      // Kit Packing task itself was ever assigned, so this placeholder needs to survive that
+      // status flip too (mirrors computeSuggestedTasks' own widened order-status query).
+      if (o.status !== 'In Production' && o.status !== 'Dispatch Ready') return;
       const hotel = o.clientName || 'Unknown';
       const orderCode = o.orderCode || 'Unknown';
       if (map[hotel]?.[orderCode]?.length) return; // already has real product suggestions
@@ -1504,10 +1530,12 @@ export default function Tasks() {
                               style={{ borderRadius: 12, border: 'none', marginBottom: 16, background: cardBg, boxShadow: '0 4px 20px rgba(114,46,209,0.06)' }}
                             >
                               <Space direction="vertical" size={14} style={{ width: '100%' }}>
-                                {separateKitGroups.map((kg) => (
+                                {separateKitGroups.map((kg) => {
+                                  const printGate = kitPrintGate(kg, orderDoc?.orderCode, suggestedList);
+                                  return (
                                   <div
                                     key={kg.key}
-                                    style={{ padding: 14, borderRadius: 10, border: '1px solid rgba(24,144,255,0.25)', background: isDark ? 'rgba(24,144,255,0.07)' : 'rgba(24,144,255,0.04)' }}
+                                    style={{ padding: 14, borderRadius: 10, border: `1px solid ${printGate.blocked ? 'rgba(255,77,79,0.4)' : 'rgba(24,144,255,0.25)'}`, background: printGate.blocked ? (isDark ? '#2d1516' : '#fff1f0') : (isDark ? 'rgba(24,144,255,0.07)' : 'rgba(24,144,255,0.04)') }}
                                   >
                                     <Space direction="vertical" style={{ width: '100%' }} size={8}>
                                       <Space wrap>
@@ -1533,6 +1561,14 @@ export default function Tasks() {
                                         )}
                                       </Space>
                                       {renderKitProductSpecs(kg.kitItems, 'blue', kg.overallQty)}
+                                      {printGate.blocked && (
+                                        <Alert
+                                          type="error"
+                                          showIcon
+                                          message={`Blocked — ${printGate.product}'s Printing Status is "${printGate.status || 'not set'}". Needs Received/Closed before this kit can be packed.`}
+                                          style={{ borderRadius: 8, fontSize: 12 }}
+                                        />
+                                      )}
                                       {firstSeparateTask && (
                                         <Space wrap>
                                           <Tag color={separateAllDone ? 'green' : 'orange'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
@@ -1544,18 +1580,21 @@ export default function Tasks() {
                                       <Button
                                         size="small"
                                         type="primary"
+                                        disabled={printGate.blocked}
                                         icon={<TeamOutlined />}
-                                        style={{ background: 'linear-gradient(135deg,#1677ff,#69b1ff)', border: 'none', borderRadius: 8 }}
-                                        onClick={() => openKitPackingModal(kg, 'separate_kit', orderDoc)}
+                                        style={printGate.blocked ? { borderRadius: 8 } : { background: 'linear-gradient(135deg,#1677ff,#69b1ff)', border: 'none', borderRadius: 8 }}
+                                        onClick={() => !printGate.blocked && openKitPackingModal(kg, 'separate_kit', orderDoc)}
                                       >
                                         {firstSeparateTask ? 'Add Another Task' : 'Assign Separate Kit Task'}
                                       </Button>
                                     </Space>
                                   </div>
-                                ))}
+                                  );
+                                })}
 
                                 {personalizedKitGroups.map((kg) => {
                                   const separateDone = separateKitGroups.length === 0 || separateAllDone;
+                                  const printGate = kitPrintGate(kg, orderDoc?.orderCode, suggestedList);
                                   return (
                                     <div
                                       key={kg.key}
@@ -1598,6 +1637,14 @@ export default function Tasks() {
                                           />
                                         )}
                                         {renderKitProductSpecs(kg.kitItems, 'magenta', kg.overallQty)}
+                                        {printGate.blocked && (
+                                          <Alert
+                                            type="error"
+                                            showIcon
+                                            message={`Blocked — ${printGate.product}'s Printing Status is "${printGate.status || 'not set'}". Needs Received/Closed before this kit can be packed.`}
+                                            style={{ borderRadius: 8, fontSize: 12 }}
+                                          />
+                                        )}
                                         {firstPersonalizedTask && (
                                           <Space wrap>
                                             <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>Personalized Kit Task Assigned</Tag>
@@ -1607,10 +1654,10 @@ export default function Tasks() {
                                         <Button
                                           size="small"
                                           type="primary"
-                                          disabled={!separateDone}
+                                          disabled={!separateDone || printGate.blocked}
                                           icon={<TeamOutlined />}
-                                          style={separateDone ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 } : { borderRadius: 8 }}
-                                          onClick={() => separateDone && openKitPackingModal(kg, 'personalized', orderDoc)}
+                                          style={separateDone && !printGate.blocked ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 } : { borderRadius: 8 }}
+                                          onClick={() => separateDone && !printGate.blocked && openKitPackingModal(kg, 'personalized', orderDoc)}
                                         >
                                           {firstPersonalizedTask ? 'Add Another Task' : 'Assign Personalized Kit Task'}
                                         </Button>
