@@ -5,7 +5,9 @@ const Complaint = require('../../models/Complaint');
 const Lead = require('../../models/Lead');
 const Party = require('../../models/Party');
 const InventoryItem = require('../../models/InventoryItem');
+const Kit = require('../../models/Kit');
 const asyncHandler = require('../../utils/asyncHandler');
+const { computeCompositionGrandTotal } = require('../../utils/orderCalc');
 
 const getDateRange = (filter) => {
   const now = new Date();
@@ -78,8 +80,19 @@ exports.getRecentOrders = asyncHandler(async (req, res) => {
   const orders = await Order.find({ deletedAt: null })
     .populate('clientPartyId', 'name')
     .sort('-createdAt')
-    .limit(10);
-  res.status(200).json({ success: true, data: orders });
+    .limit(10)
+    .lean();
+
+  // Order.total is written at whatever save/conversion happened last (e.g. SAMPLE conversion
+  // uses a plain qty*rate sum that omits kit pricing) and can go stale — recompute the
+  // kit-aware grand total the same way Orders tab / Parties ledger do, instead of trusting
+  // the persisted field.
+  const kitsData = orders.some((o) => (o.packagingIncludes || []).length > 0)
+    ? await Kit.find().lean()
+    : [];
+  const data = orders.map((o) => ({ ...o, total: computeCompositionGrandTotal(o, kitsData) }));
+
+  res.status(200).json({ success: true, data });
 });
 
 exports.getLowStockAlerts = asyncHandler(async (req, res) => {

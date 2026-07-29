@@ -4599,6 +4599,18 @@ export default function Sales() {
       const sampleProducts = validProducts.map(p => ({ ...p, qty: 1, amount: Number(p.rate) || 0 }));
       const subtotal = r2(calcTotal(sampleProducts));
       const gstAmt = r2(calcGstAmount(sampleProducts));
+      // Personalized/Separate Kit overall qty must drop to 1 just like product qty does above —
+      // otherwise the sample order silently carries over the original order's kit count.
+      const sampleKitOrders = (lead.kitOrders || []).filter(Boolean).map(ko => ({ ...ko, overallQty: 1 }));
+      // Plain product subtotal+GST omits kit pricing (kitOrders[].kitPrice), so a sample from a
+      // kit-based lead under-counted its total — recompute kit-aware, same as the normal save path.
+      const kitAwareTotal = r2(computeRecordGrandTotal({
+        products: sampleProducts,
+        kitOrders: sampleKitOrders,
+        forwardingCharge: lead.forwardingCharge,
+        forwardingChargeAmount: lead.forwardingChargeAmount || 0,
+      }));
+      const grandTotal = kitAwareTotal > 0 ? kitAwareTotal : subtotal + gstAmt;
       const payload = {
         clientName: lead.hotelName || lead.billingName,
         clientPartyId: lead.clientPartyId?._id || lead.clientPartyId,
@@ -4626,7 +4638,7 @@ export default function Sales() {
         items: sampleProducts.map(p => mapOrderItem(p, lead.kitDisplayUnit || lead.displayUnit || '')),
         totalAmount: subtotal,
         gstAmount: gstAmt,
-        total: subtotal + gstAmt,
+        total: grandTotal,
         orderCategory: 'SAMPLE',
         status: 'In Production',
         logoRequired: lead.logoRequired,
@@ -4637,9 +4649,7 @@ export default function Sales() {
         packingMaterial: lead.packingMaterial,
         selectedKit: lead.selectedKit,
         selectedKits: lead.selectedKits || [],
-        // Personalized/Separate Kit overall qty must drop to 1 just like product qty does above —
-        // otherwise the sample order silently carries over the original order's kit count.
-        kitOrders: (lead.kitOrders || []).filter(Boolean).map(ko => ({ ...ko, overallQty: 1 })),
+        kitOrders: sampleKitOrders,
         packagingIncludes: lead.packagingIncludes || [],
         packagingIncludesQty: lead.packagingIncludesQty || {},
         kitSize: lead.kitSize,
@@ -5154,6 +5164,18 @@ export default function Sales() {
       }));
       const subtotal = r2(calcTotal(sampleProducts));
       const gstAmt = r2(calcGstAmount(sampleProducts));
+      // Personalized/Separate Kit overall qty must drop to 1 just like product qty does above —
+      // otherwise the sample order silently carries over the original order's kit count.
+      const sampleKitOrders = (order.kitOrders || []).filter(Boolean).map(ko => ({ ...ko, overallQty: 1 }));
+      // Plain product subtotal+GST omits kit pricing (kitOrders[].kitPrice), so a sample from a
+      // kit-based order under-counted its total — recompute kit-aware, same as the normal save path.
+      const kitAwareTotal = r2(computeRecordGrandTotal({
+        products: sampleProducts,
+        kitOrders: sampleKitOrders,
+        forwardingCharge: order.forwardingCharge,
+        forwardingChargeAmount: order.forwardingChargeAmount || 0,
+      }));
+      const grandTotal = kitAwareTotal > 0 ? kitAwareTotal : subtotal + gstAmt;
       const payload = {
         clientName: order.clientName || order.hotelName,
         clientPartyId: order.clientPartyId?._id || order.clientPartyId,
@@ -5177,7 +5199,7 @@ export default function Sales() {
         items: sampleProducts.map(p => mapOrderItem(p, order.kitDisplayUnit || order.displayUnit || '')),
         totalAmount: subtotal,
         gstAmount: gstAmt,
-        total: subtotal + gstAmt,
+        total: grandTotal,
         orderCategory: 'SAMPLE',
         status: 'In Production',
         logoRequired: order.logoRequired,
@@ -5188,9 +5210,7 @@ export default function Sales() {
         packingMaterial: order.packingMaterial,
         selectedKit: order.selectedKit,
         selectedKits: order.selectedKits || [],
-        // Personalized/Separate Kit overall qty must drop to 1 just like product qty does above —
-        // otherwise the sample order silently carries over the original order's kit count.
-        kitOrders: (order.kitOrders || []).filter(Boolean).map(ko => ({ ...ko, overallQty: 1 })),
+        kitOrders: sampleKitOrders,
         packagingIncludes: order.packagingIncludes || [],
         packagingIncludesQty: order.packagingIncludesQty || {},
         kitSize: order.kitSize,
