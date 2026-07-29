@@ -11,6 +11,7 @@ router.get('/suggested', ctrl.getSuggestedTasks);
 router.get('/suggested/insight', ctrl.getSuggestedTasksInsight);
 router.get('/suggested/insight/latest', ctrl.getLatestTaskInsight);
 router.get('/emergency-requests', ctrl.getEmergencyRequests);
+router.get('/order/:orderId/readiness', ctrl.getOrderDispatchReadiness);
 
 // ── Time Management config (must precede '/:id' so the literal isn't captured) ──
 router.get('/time-config', timeConfigCtrl.getAll);

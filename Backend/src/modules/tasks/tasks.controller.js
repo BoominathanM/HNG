@@ -191,9 +191,17 @@ function relevantTaskNamesFor(it, timeConfigs, designType, needsPrinting) {
       relevant = cfgProduct === productKey;
     } else {
       const mentionsProduct = productWords.some((w) => name.includes(w));
-      const isStickerTask = /stick|label/.test(name);
-      const isPrintTask = /print/.test(name);
-      const isPackTask = /pack/.test(name);
+      // A blank-product config named e.g. "Personalized Kit Packing"/"Personalized Kit
+      // Stickering" is a KIT-LEVEL task type (assigned with no productIndex at all via the
+      // Kit Packing Task Assignment flow — see submitKitPackingTask), not a per-product
+      // production step. Without this exclusion its generic "pack"/"stick" substring matches
+      // every Box/Ziplock/Sticker-routed product's relevantNames, but Done qty for it can
+      // never be recorded against any single productIndex — making that product's coverage
+      // permanently unsatisfiable regardless of how much real per-product work is completed.
+      const isKitLevelName = /kit/.test(name);
+      const isStickerTask = !isKitLevelName && /stick|label/.test(name);
+      const isPrintTask = !isKitLevelName && /print/.test(name);
+      const isPackTask = !isKitLevelName && /pack/.test(name);
       relevant = mentionsProduct
         || (isStickerRouted && isStickerTask)
         || (needsPrinting && isPrintTask)
@@ -217,14 +225,20 @@ function relevantTaskNamesFor(it, timeConfigs, designType, needsPrinting) {
 // the 3rd product's work undone. Once forwarded, that order also drops out of
 // computeSuggestedTasks' `status: 'In Production'` filter, so the undone product vanished
 // from Today's Checklist too, with no path back onto it.
-async function isOrderReadyForDispatch(orderId) {
+// Same computation as isOrderReadyForDispatch, but returns WHICH product lines are still
+// missing their Done-status task coverage instead of collapsing straight to a boolean —
+// lets a readiness preview (e.g. the Task Management "Verify" modal) show the same specific
+// products the dispatch gate below will actually block on, instead of a naive "all existing
+// task documents are Completed" check that stays green for a product with zero tasks at all.
+async function computeOrderDispatchReadiness(orderId) {
   const TaskTimeConfig = require('../../models/TaskTimeConfig');
   const order = await Order.findById(orderId)
     .select('items kitOrders displayUnitTab').lean();
-  if (!order || !(order.items || []).length) return false;
+  if (!order || !(order.items || []).length) return { ready: false, missingProducts: [] };
 
   const tasks = await Task.find({ orderId }).select('productIndex taskName qty status').lean();
   const doneQtyByKey = new Map();
+  const doneQtyByProduct = new Map();
   const anyDoneSet = new Set();
   tasks.forEach((t) => {
     if (t.status !== 'Done') return;
@@ -232,11 +246,17 @@ async function isOrderReadyForDispatch(orderId) {
     anyDoneSet.add(idxKey);
     const key = `${idxKey}-${(t.taskName || '').trim().toLowerCase()}`;
     doneQtyByKey.set(key, (doneQtyByKey.get(key) || 0) + (Number(t.qty) || 0));
+    // Total Done qty for this product regardless of which task name it was filed under —
+    // used below only as a single-task-type fallback (see productReady), so a task assigned
+    // under a name that doesn't exactly match the product's configured task name can't leave
+    // real, completed, full-qty work permanently invisible to the dispatch gate.
+    doneQtyByProduct.set(idxKey, (doneQtyByProduct.get(idxKey) || 0) + (Number(t.qty) || 0));
   });
 
   const timeConfigs = await TaskTimeConfig.find({ active: true }).select('taskName product active').lean();
 
-  return order.items.every((it, idx) => {
+  const missingProducts = [];
+  order.items.forEach((it, idx) => {
     const isKitItem = !!(it.isKit || it.kitType || it.kitName);
     const kitOrderMatch = isKitItem
       ? (order.kitOrders || []).find((k) =>
@@ -248,21 +268,151 @@ async function isOrderReadyForDispatch(orderId) {
     const requiredQty = isKitItem && kitOverallQty > 0
       ? (Number(it.qty) || 0) * kitOverallQty
       : (Number(it.overallQty) || Number(it.qty) || 0);
-    if (requiredQty <= 0) return true; // nothing required from this line — can't block on it
+    if (requiredQty <= 0) return; // nothing required from this line — can't block on it
 
     const designType = resolveDesignType(it, order);
     const needsPrintStep = normYN(it.printing) === 'YES';
     const relevantNames = relevantTaskNamesFor(it, timeConfigs, designType, needsPrintStep);
+    let productReady;
     if (relevantNames.size > 0) {
-      return [...relevantNames].every((name) => {
+      productReady = [...relevantNames].every((name) => {
         const key = `${idx}-${name.trim().toLowerCase()}`;
         return (doneQtyByKey.get(key) || 0) >= requiredQty;
       });
+      // Single-step products (exactly one relevant task name) get one more chance before
+      // being called missing: if this product's task was assigned via a picker that wasn't
+      // scoped to the relevant list (older tasks, or the New Task modal) the taskName on the
+      // Task doc can legitimately differ from the configured one even though the qty is real,
+      // Done work for THIS exact product. Sum Done qty across every task name for this
+      // productIndex and accept that instead. Left OFF for 2+ relevant names — there we can't
+      // tell which physical step a mismatched name represents, and each step still needs its
+      // own independent coverage (see relevantTaskNamesFor's comment above).
+      if (!productReady && relevantNames.size === 1) {
+        productReady = (doneQtyByProduct.get(`${idx}`) || 0) >= requiredQty;
+      }
+    } else {
+      // No configured task name matches this product — fall back to "at least one Done task
+      // exists for it", matching computeSuggestedTasks' own any-task-exists fallback.
+      productReady = anyDoneSet.has(`${idx}`);
     }
-    // No configured task name matches this product — fall back to "at least one Done task
-    // exists for it", matching computeSuggestedTasks' own any-task-exists fallback.
-    return anyDoneSet.has(`${idx}`);
+
+    if (!productReady) {
+      missingProducts.push({ productIndex: idx, product: it.product || it.itemName || it.kitName || `Item ${idx + 1}` });
+    }
   });
+
+  return { ready: missingProducts.length === 0, missingProducts };
+}
+
+// Whether EVERY product in this order has enough Done-status task coverage for its full
+// required qty — thin boolean wrapper around computeOrderDispatchReadiness, kept so the
+// dispatch gate / updateTaskStatus call sites below don't need to change.
+async function isOrderReadyForDispatch(orderId) {
+  return (await computeOrderDispatchReadiness(orderId)).ready;
+}
+
+// Effective TOTAL quantity of an order item. Kit-component items (Paste/Brush inside a Dental
+// kit) store their PER-KIT RATIO in `qty` (e.g. 1 paste + 2 brushes per kit — not necessarily
+// 1); the true total is that ratio × how many kits were ordered (kitOrders[]'s overallQty, or
+// the order-level kitOverallQty fallback) — the exact same formula deductInventoryForOrder
+// (above, sales.controller.js) uses to decide how much stock a kit order consumes, and the same
+// one this file's own computeSuggestedTasks/computeOrderDispatchReadiness already use for
+// `requiredQty`. Standalone (non-kit) items already store their real total directly in `qty`.
+function effectiveItemQty(it, order, kitCfgById) {
+  if (!(it.isKit || it.kitType)) return Number(it.qty) || 0;
+  const perUnitQty = Number(it.qty) || 0;
+  const kitCfg = kitCfgById[String(it.kitId)] || null;
+  const kitCount = Number(kitCfg?.overallQty) || Number(order.kitOverallQty) || 0;
+  if (kitCount > 0) return perUnitQty * kitCount;
+  // No resolvable kit count — fall back to a legacy per-item overallQty override, if present.
+  return Number(it.overallQty) || perUnitQty || 0;
+}
+
+// Returns a Map of lowercase product name -> emergency qty (number) or null (all of that
+// product is emergency) for products named in this order's splitDates. Mirrors Operations/
+// data.js's getEmergencyProductQtyMap (Frontend) so Today's Checklist reports the exact same
+// per-product emergency counts Operations does, instead of only the order-level isUrgent
+// boolean it had before. See that file for the fuller comment on the three synthetic
+// '__kit__' / '__personalized__' / '__sepkit__:<key>' splitDates product values.
+function buildEmergencyQtyMap(order) {
+  const map = new Map();
+  const kitCfgById = Object.fromEntries(
+    (order.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]),
+  );
+  const includeSet = new Set((order.packagingIncludes || []).map(String));
+  const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName));
+
+  const expandGroup = (items, groupTotalQty, kitEmergencyQty) => {
+    if (items.length === 0) return;
+    if (kitEmergencyQty === null) {
+      items.forEach((it) => {
+        const key = (it.product || it.itemName || '').toLowerCase();
+        if (key && !map.has(key)) map.set(key, null);
+      });
+      return;
+    }
+    if (!groupTotalQty) return;
+    items.forEach((it) => {
+      const key = (it.product || it.itemName || '').toLowerCase();
+      if (!key || map.has(key)) return;
+      const itemQty = effectiveItemQty(it, order, kitCfgById);
+      const qty = Math.min(Math.round((kitEmergencyQty / groupTotalQty) * itemQty), itemQty);
+      map.set(key, qty);
+    });
+  };
+
+  // Number of KITS ordered (NOT the per-product total) for a kit-flagged item — the shared
+  // denominator a splitDate's emergency qty is expressed against (e.g. "50 of the 100 kits").
+  // Using Math.max(...effectiveItemQty(...)) here (as a prior version of this did) only
+  // happened to equal the real kit count when every component in the kit has a 1-per-kit
+  // ratio — a kit with e.g. 2 brushes/kit inflated the denominator to the brush's own
+  // multiplied total (200) instead of the real kit count (100), understating every
+  // component's proportional emergency share.
+  const resolveKitCount = (it) => {
+    const kitCfg = kitCfgById[String(it.kitId)] || null;
+    return Number(kitCfg?.overallQty) || Number(order.kitOverallQty) || 0;
+  };
+
+  const expandLegacyKit = (kitEmergencyQty) => {
+    const items = (order.items || []).filter((it) => it.isKit || it.kitType);
+    const groupTotalQty = items.length ? Math.max(...items.map(resolveKitCount)) : 0;
+    expandGroup(items, groupTotalQty, kitEmergencyQty);
+  };
+
+  const expandPersonalized = (kitEmergencyQty) => {
+    const items = (order.items || []).filter((it) => it.category === 'personalized' || isBundled(it));
+    const kitItemsInGroup = items.filter((it) => it.isKit || it.kitType);
+    const groupTotalQty = kitItemsInGroup.length
+      ? Math.max(...kitItemsInGroup.map(resolveKitCount))
+      : (Number(order.kitOverallQty) || 0);
+    expandGroup(items, groupTotalQty, kitEmergencyQty);
+  };
+
+  const expandSeparateKit = (kitKey, kitEmergencyQty) => {
+    const items = (order.items || []).filter(
+      (it) => !isBundled(it) && String(it.kitId || it.kitName || it.kitType) === kitKey,
+    );
+    const groupTotalQty = items.length ? Math.max(...items.map(resolveKitCount)) : 0;
+    expandGroup(items, groupTotalQty, kitEmergencyQty);
+  };
+
+  const handleEntry = (product, qty) => {
+    if (!product) return;
+    if (product === '__kit__') { expandLegacyKit(qty); return; }
+    if (product === '__personalized__') { expandPersonalized(qty); return; }
+    if (typeof product === 'string' && product.startsWith('__sepkit__:')) {
+      expandSeparateKit(product.slice('__sepkit__:'.length), qty);
+      return;
+    }
+    const key = product.toLowerCase();
+    if (!map.has(key)) map.set(key, qty);
+  };
+
+  (order.splitDates || []).forEach((sd) => {
+    (sd.products || []).forEach((ep) => handleEntry(ep.product, ep.qty != null ? Number(ep.qty) : null));
+    handleEntry(sd.product, sd.qty != null ? Number(sd.qty) : null);
+  });
+  return map;
 }
 
 // Suggested Tasks: orders ready (or partially ready) for production but not yet fully tasked.
@@ -281,7 +431,7 @@ async function computeSuggestedTasks() {
   // Only orders still awaiting production — once forwarded to Dispatch Ready the order
   // has already left this workflow, so it shouldn't keep resurfacing here.
   const orders = await Order.find({ deletedAt: null, status: 'In Production' })
-    .select('orderCode clientName items kitOrders printingStatus printingStatusOverrides isUrgent isEmergency emergencyApproved displayUnitTab createdAt').lean();
+    .select('orderCode clientName items kitOrders printingStatus printingStatusOverrides isUrgent isEmergency emergencyApproved displayUnitTab createdAt splitDates packagingIncludes kitOverallQty').lean();
   // Same task NAME can be split across multiple tasks (different assignees), and a product
   // can independently need SEVERAL different task names (e.g. "Filling" then "Packing"),
   // each covering the full required qty on its own — see checkTaskQuantityOverflow /
@@ -318,6 +468,7 @@ async function computeSuggestedTasks() {
   const suggestions = [];
   for (const o of orders) {
     const stickerReqs = await StickerRequest.find({ orderId: o._id }).select('product status stickerType category').lean();
+    const emergencyQtyMap = buildEmergencyQtyMap(o);
     (o.items || []).forEach((it, idx) => {
       const productKey = it.product || it.itemName || it.kitName || '';
       const isKitItem = !!(it.isKit || it.kitType || it.kitName);
@@ -450,6 +601,13 @@ async function computeSuggestedTasks() {
       // alongside it on most creation paths, and `emergencyApproved` covers the dual-approval
       // emergency-dispatch flow — an order can arrive via any one of the three.
       const isEmergencyOrder = !!(o.isUrgent || o.isEmergency || o.emergencyApproved);
+      // Per-product emergency count from splitDates (kit-aware — see buildEmergencyQtyMap),
+      // matching what Operations' production queues show for the same product. `undefined`
+      // means this product has no emergency split at all; `null` in the map means the whole
+      // requiredQty is emergency (no explicit partial qty was set on the split date).
+      const emergencyQtyRaw = emergencyQtyMap.get(productKey.toLowerCase());
+      const isEmergencyProduct = emergencyQtyRaw !== undefined;
+      const emergencyQty = isEmergencyProduct ? (emergencyQtyRaw === null ? requiredQty : emergencyQtyRaw) : 0;
       suggestions.push({
         id: `${o._id}-${idx}`,
         orderId: o._id, orderCode: o.orderCode, client: o.clientName,
@@ -458,6 +616,10 @@ async function computeSuggestedTasks() {
         product: it.itemName, qty: requiredQty, logoType: it.logoType,
         isUrgent: isEmergencyOrder,
         emergencyApproved: !!o.emergencyApproved,
+        // Per-product emergency qty (of the `qty` total above) — 0 when this specific
+        // product has no emergency split, even if the order itself is flagged urgent.
+        isEmergencyProduct,
+        emergencyQty,
         orderCreatedAt: o.createdAt,
         inventoryStock: stock,
         designType,
@@ -496,6 +658,14 @@ async function computeSuggestedTasks() {
 exports.getSuggestedTasks = asyncHandler(async (req, res) => {
   const suggestions = await computeSuggestedTasks();
   res.status(200).json({ success: true, total: suggestions.length, data: suggestions });
+});
+
+// GET /api/tasks/order/:orderId/readiness — authoritative dispatch-readiness preview, so a
+// "Verify" UI can show the exact same missing-product list the dispatch gate (dispatchOrder,
+// below) would reject on, instead of a separate naive approximation drifting out of sync.
+exports.getOrderDispatchReadiness = asyncHandler(async (req, res) => {
+  const result = await computeOrderDispatchReadiness(req.params.orderId);
+  res.status(200).json({ success: true, data: result });
 });
 
 // GET /api/tasks/suggested/insight — AI-generated prioritized action plan on top of the

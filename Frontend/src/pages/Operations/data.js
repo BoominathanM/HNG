@@ -292,16 +292,34 @@ const STICKER_MOVED_ON_STATUSES = new Set(['In Process', 'Printing', 'Dispatch',
 const EMERGENCY_COMPLETE_STATUSES = new Set(['Done', 'Received', 'Closed']);
 
 // Effective TOTAL quantity of an order item. Kit-component items (Paste/Brush inside a Dental
-// kit, etc.) store their PER-KIT quantity in `qty` (almost always 1) — the real total across every
-// kit unit lives in `overallQty` / the matching kitOrders[] entry's overallQty / the order-level
-// kitOverallQty (mirrors the "Effective Required Qty" pattern already used in OperationDetail.jsx).
-// Standalone (non-kit) items already store their real total directly in `qty`. Without this, a
-// proportional emergency split treats a kit component's qty=1 as if it were the WHOLE quantity,
-// capping its emergency share at 1 instead of the true per-kit-multiplied amount.
+// kit, etc.) store their PER-KIT RATIO in `qty` (e.g. 1 paste + 2 brushes per kit — NOT
+// necessarily 1) — the true total is that ratio × however many kits were ordered (kitOrders[]'s
+// overallQty, or the order-level kitOverallQty fallback). This is the exact same formula
+// Backend sales.controller.js's deductInventoryForOrder uses to decide how much stock a kit
+// order actually consumes (`qty = perUnitQty * kitCount`), so Operations' counts never disagree
+// with what was actually deducted. Standalone (non-kit) items already store their real total
+// directly in `qty`. A prior version of this helper returned the kit count alone (or a stray
+// `it.overallQty`) without multiplying by the ratio — correct only for kits whose every
+// component happened to be exactly 1-per-kit, wrong the moment any component's ratio differs
+// (e.g. 2 brushes/kit showed as if it needed only 1× the kit count, not 2×).
 const effectiveItemQty = (it, order, kitCfgById) => {
   if (!(it.isKit || it.kitType)) return Number(it.qty) || 0;
+  const perUnitQty = Number(it.qty) || 0;
   const kitCfg = kitCfgById[String(it.kitId)] || null;
-  return Number(it.overallQty) || Number(kitCfg?.overallQty) || Number(order.kitOverallQty) || Number(it.qty) || 0;
+  const kitCount = Number(kitCfg?.overallQty) || Number(order.kitOverallQty) || 0;
+  if (kitCount > 0) return perUnitQty * kitCount;
+  // No resolvable kit count — fall back to a legacy per-item overallQty override, if present.
+  return Number(it.overallQty) || perUnitQty || 0;
+};
+
+// Number of KITS ordered (NOT the per-product total) for a kit-flagged item — the shared
+// "how many kits" denominator a splitDate's emergency qty is expressed against (e.g. "50 of
+// the 100 kits are emergency"). Resolves the same way effectiveItemQty resolves it internally,
+// but returns the count itself rather than qty × count, since the proportional split below
+// needs kitEmergencyQty and groupTotalQty in the SAME unit (kits, not multiplied product units).
+const resolveKitCount = (it, order, kitCfgById) => {
+  const kitCfg = kitCfgById[String(it.kitId)] || null;
+  return Number(kitCfg?.overallQty) || Number(order.kitOverallQty) || 0;
 };
 
 // Returns a Map of lowercase product name → emergency qty (number) or null if no qty specified.
@@ -327,9 +345,13 @@ export const getEmergencyProductQtyMap = (order) => {
   const includeSet = new Set((order.packagingIncludes || []).map(String));
   const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName));
 
-  // Proportionally splits `kitEmergencyQty` units of demand across `items`, whose shared "kit count"
-  // denominator is `groupTotalQty` — each item's share is (kitEmergencyQty / groupTotalQty) times
-  // that item's OWN effective total, capped at its own total so rounding can't over-allocate.
+  // Proportionally splits `kitEmergencyQty` KITS of demand across `items`, whose shared "kit
+  // count" denominator is `groupTotalQty` — each item's share is (kitEmergencyQty / groupTotalQty)
+  // times that item's OWN effective total, capped at its own total so rounding can't over-allocate.
+  // kitEmergencyQty/groupTotalQty MUST both be in kit-count units, not per-product multiplied
+  // units — a splitDate of "50" means "50 of the kits", and each component's own ratio (1 paste,
+  // 2 brushes per kit) is what turns that shared 50-kit figure into a different absolute number
+  // per product (50 paste, 100 brushes) via the itemQty multiplication below.
   const expandGroup = (items, groupTotalQty, kitEmergencyQty) => {
     if (items.length === 0) return;
     if (kitEmergencyQty === null) {
@@ -351,7 +373,10 @@ export const getEmergencyProductQtyMap = (order) => {
 
   const expandLegacyKit = (kitEmergencyQty) => {
     const items = (order.items || []).filter((it) => it.isKit || it.kitType);
-    const groupTotalQty = items.length ? Math.max(...items.map((it) => effectiveItemQty(it, order, kitCfgById))) : 0;
+    // '__kit__' can span several distinct kits at once — scope the shared denominator to the
+    // LARGEST kit's own count (a real kit count, not Math.max of already-multiplied product
+    // totals, which would wrongly inflate the denominator for any kit whose per-item ratio > 1).
+    const groupTotalQty = items.length ? Math.max(...items.map((it) => resolveKitCount(it, order, kitCfgById))) : 0;
     expandGroup(items, groupTotalQty, kitEmergencyQty);
   };
 
@@ -359,7 +384,7 @@ export const getEmergencyProductQtyMap = (order) => {
     const items = (order.items || []).filter((it) => it.category === 'personalized' || isBundled(it));
     const kitItemsInGroup = items.filter((it) => it.isKit || it.kitType);
     const groupTotalQty = kitItemsInGroup.length
-      ? Math.max(...kitItemsInGroup.map((it) => effectiveItemQty(it, order, kitCfgById)))
+      ? Math.max(...kitItemsInGroup.map((it) => resolveKitCount(it, order, kitCfgById)))
       : (Number(order.kitOverallQty) || 0);
     expandGroup(items, groupTotalQty, kitEmergencyQty);
   };
@@ -368,7 +393,7 @@ export const getEmergencyProductQtyMap = (order) => {
     const items = (order.items || []).filter(
       (it) => !isBundled(it) && String(it.kitId || it.kitName || it.kitType) === kitKey,
     );
-    const groupTotalQty = items.length ? Math.max(...items.map((it) => effectiveItemQty(it, order, kitCfgById))) : 0;
+    const groupTotalQty = items.length ? Math.max(...items.map((it) => resolveKitCount(it, order, kitCfgById))) : 0;
     expandGroup(items, groupTotalQty, kitEmergencyQty);
   };
 
@@ -447,6 +472,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     sticker: orders.flatMap((order) => {
       const emergencyQtyMap = getEmergencyProductQtyMap(order);
       const emergencyAllDone = areAllEmergencyItemsDone(order);
+      const kitCfgById = Object.fromEntries(
+        (order.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]),
+      );
       const items = (order.items || []).map((item, idx) => ({ item, idx }))
         .filter(({ item }) => {
           // Sticker tab shows ONLY items where sticker printing was explicitly requested.
@@ -461,7 +489,12 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           const productName = item.product || item.itemName;
           const pKey = (productName || '').toLowerCase();
           const eQty = emergencyQtyMap.get(pKey);
-          const itemQty = Number(item.qty) || 0;
+          // Kit-component items (Paste/Brush) store their PER-KIT qty in `item.qty` (~1), not
+          // the true order total — must resolve the same way getEmergencyProductQtyMap's eQty
+          // was computed, or a fully-emergency kit component (eQty=true total) always looks
+          // "itemQty <= eQty" true against the raw per-kit qty and renders qty=1 instead of
+          // the real total.
+          const itemQty = effectiveItemQty(item, order, kitCfgById);
 
           const makeRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
             key: `${order.id}-${idx}-sticker${keySuffix}`,
@@ -517,6 +550,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     box: orders.flatMap((order) => {
       const emergencyQtyMap = getEmergencyProductQtyMap(order);
       const emergencyAllDone = areAllEmergencyItemsDone(order);
+      const kitCfgById = Object.fromEntries(
+        (order.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]),
+      );
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
@@ -550,7 +586,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         if (!needsPrint && !order.logoRequired && !hasExplicitBoxTab) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
-        const itemQty = Number(item.qty) || 0;
+        // See sticker queue above: kit-component items store per-kit qty in item.qty (~1),
+        // not the true order total — must match the basis emergencyQtyMap's eQty used.
+        const itemQty = effectiveItemQty(item, order, kitCfgById);
         const boxNote = mustClearSticker
           ? 'Print approved — now in box manufacturing queue'
           : needsPrint ? 'Box manufacturing (printing at packaging stage)' : 'Box manufacturing';
@@ -607,6 +645,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     frosted: orders.flatMap((order) => {
       const emergencyQtyMap = getEmergencyProductQtyMap(order);
       const emergencyAllDone = areAllEmergencyItemsDone(order);
+      const kitCfgById = Object.fromEntries(
+        (order.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]),
+      );
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
@@ -650,7 +691,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         if (!needsPrint && !order.logoRequired && !hasExplicitZiplockTab) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
-        const itemQty = Number(item.qty) || 0;
+        // See sticker queue above: kit-component items store per-kit qty in item.qty (~1),
+        // not the true order total — must match the basis emergencyQtyMap's eQty used.
+        const itemQty = effectiveItemQty(item, order, kitCfgById);
         const frostedNote = mustClearSticker
           ? 'Print approved — now in frosted ziplock queue'
           : needsPrint ? 'Frosted ziplock (printing at packaging stage)' : 'Dispatch and received updates should be verified by operations';
@@ -706,6 +749,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     butter: orders.flatMap((order) => {
       const emergencyQtyMap = getEmergencyProductQtyMap(order);
       const emergencyAllDone = areAllEmergencyItemsDone(order);
+      const kitCfgById = Object.fromEntries(
+        (order.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]),
+      );
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
@@ -743,7 +789,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         if (!needsPrint && !order.logoRequired && !hasExplicitButterTab) return;
         const pKey = (product || '').toLowerCase();
         const eQty = emergencyQtyMap.get(pKey);
-        const itemQty = Number(item.qty) || 0;
+        // See sticker queue above: kit-component items store per-kit qty in item.qty (~1),
+        // not the true order total — must match the basis emergencyQtyMap's eQty used.
+        const itemQty = effectiveItemQty(item, order, kitCfgById);
         const butterNote = mustClearSticker
           ? 'Print approved — now in butter paper queue'
           : needsPrint ? 'Butter paper packing (printing at packaging stage)' : 'Butter paper packing';

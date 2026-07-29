@@ -822,11 +822,16 @@ exports.getOrders = asyncHandler(async (req, res) => {
   }
   // Visibility scoping (same rule as getLeads):
   // - Admin / Super Admin / Manager / Head: all orders
+  // - Task Management: all orders too — they assign packing/production tasks (including
+  //   Personalized/Separate Kit Packing) across every sales rep's orders, never just their
+  //   own, so scoping them to createdBy/assignedTo silently hid every other rep's order from
+  //   Task Management's Today's Checklist (and its Kit Packing Task Assignment card/New Task
+  //   order dropdown) even though those orders were fully in production.
   // - Everyone else (Executive, etc.): only orders they created or are assigned to
   if (req.user && req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
     const role = req.user.role || '';
-    const isManagerOrHead = /manager|head/i.test(role);
-    if (!isManagerOrHead) {
+    const hasFullOrderVisibility = /manager|head/i.test(role) || req.user.department === 'Task Management';
+    if (!hasFullOrderVisibility) {
       const visibility = [{ createdBy: req.user._id }, { assignedTo: req.user._id }];
       filter.$and = (filter.$and || []).concat([{ $or: visibility }]);
     }

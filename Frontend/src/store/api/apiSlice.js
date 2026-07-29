@@ -770,6 +770,13 @@ export const apiSlice = createApi({
       query: () => ({ url: '/tasks/emergency-requests' }),
       providesTags: ['Tasks'],
     }),
+    // Authoritative dispatch-readiness preview for one order — same missing-product check
+    // the dispatch gate itself runs, so the "Verify" UI can't show green when the real
+    // dispatch action would still reject it.
+    getOrderDispatchReadiness: builder.query({
+      query: (orderId) => ({ url: `/tasks/order/${orderId}/readiness` }),
+      providesTags: ['Tasks'],
+    }),
     getTask: builder.query({
       query: (id) => ({ url: `/tasks/${id}` }),
       providesTags: (result, error, id) => [{ type: 'Tasks', id }],
@@ -1432,6 +1439,7 @@ export const {
   useGetTasksQuery,
   useGetTaskQuery,
   useGetEmergencyRequestsQuery,
+  useLazyGetOrderDispatchReadinessQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useApproveEmergencyMutation,

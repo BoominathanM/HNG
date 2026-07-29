@@ -2193,6 +2193,96 @@ export default function Purchase() {
                             }
                           },
                           {
+                            title: 'Payment Status', key: 'payment_status', width: 110, align: 'center',
+                            render: (_, r) => {
+                              if (r.isBatchChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              const linkedOrder = findLinkedOrder(r);
+                              if (!linkedOrder) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              const payStatus = linkedOrder.status || 'Unpaid';
+                              return (
+                                <Tag color={payStatus === 'Paid' ? 'success' : payStatus === 'Partial Paid' ? 'warning' : 'error'} style={{ borderRadius: 10, margin: 0 }}>
+                                  {payStatus}
+                                </Tag>
+                              );
+                            }
+                          },
+                          {
+                            title: 'Payment Proof', key: 'payment_proof', width: 140, align: 'center',
+                            render: (_, r) => {
+                              if (r.isBatchChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              const linkedOrder = findLinkedOrder(r);
+                              const proofs = (linkedOrder?.paymentHistory || []).filter(p => p.proofUrl);
+                              if (proofs.length === 0 && !linkedOrder?.payment_proof) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              if (proofs.length === 0) {
+                                // Older order paid before paymentHistory existed — only the legacy single proof is available
+                                return (
+                                  <Button size="small" icon={<EyeOutlined />}
+                                    style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}
+                                    onClick={() => window.open(linkedOrder.payment_proof, '_blank')}>
+                                    View Proof
+                                  </Button>
+                                );
+                              }
+                              return (
+                                <Popover
+                                  trigger="click"
+                                  title={`Payment Proofs (${proofs.length})`}
+                                  content={
+                                    <Space direction="vertical" size={4}>
+                                      {proofs.slice().reverse().map((p, i) => (
+                                        <Button key={i} size="small" type="link" icon={<EyeOutlined />}
+                                          onClick={() => window.open(p.proofUrl, '_blank')}
+                                          style={{ padding: 0, height: 'auto', fontSize: 11 }}>
+                                          &#8377;{(p.amount || 0).toLocaleString()} — {p.paidDate ? new Date(p.paidDate).toLocaleDateString() : ''}
+                                        </Button>
+                                      ))}
+                                    </Space>
+                                  }
+                                >
+                                  <Button size="small" icon={<EyeOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}>
+                                    View Proof{proofs.length > 1 ? `s (${proofs.length})` : ''}
+                                  </Button>
+                                </Popover>
+                              );
+                            }
+                          },
+                          {
+                            title: 'Upload LR Copies', key: 'lr_copies', width: 160,
+                            render: (_, r) => {
+                              if (r.isBatchChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+                              const linkedOrder = findLinkedOrder(r);
+                              if (!linkedOrder) return <Text type="secondary">—</Text>;
+                              // Local lrData is session-only; fall back to the persisted PurchaseOrder
+                              // fields so an already-uploaded LR still shows after a refresh.
+                              const lr = lrData[linkedOrder.key] || (linkedOrder.lrNumber ? {
+                                lrNumber: linkedOrder.lrNumber,
+                                deliveryDate: linkedOrder.expectedDeliveryDate,
+                                paidStatus: linkedOrder.lrPaymentStatus || 'Not Paid',
+                              } : null);
+                              if (lr) {
+                                return (
+                                  <Space direction="vertical" size={2}>
+                                    <Tag color={lr.paidStatus === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 8, margin: 0 }}>
+                                      {lr.paidStatus === 'Paid' ? <CheckCircleOutlined style={{ marginRight: 3 }} /> : null}{lr.paidStatus}
+                                    </Tag>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
+                                    <Text type="secondary" style={{ fontSize: 10 }}>Delivery: {lr.deliveryDate}</Text>
+                                    <Button size="small" icon={<EditOutlined />}
+                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus }); setShowLRUploadModal(true); }}
+                                      style={{ fontSize: 11, height: 22, padding: '0 8px' }}>Edit</Button>
+                                  </Space>
+                                );
+                              }
+                              return (
+                                <Button size="small" icon={<UploadOutlined />}
+                                  onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.resetFields(); setShowLRUploadModal(true); }}
+                                  style={{ borderColor: '#1890ff', color: '#1890ff' }}>
+                                  Upload
+                                </Button>
+                              );
+                            }
+                          },
+                          {
                             title: 'Action', key: 'action', fixed: 'right', width: 200,
                             render: (_, r) => {
                               // Bulk batch, still Pending: one Upload/Amount/Save covers every

@@ -206,6 +206,14 @@ export default function OperationDetail() {
     () => (orderTasksData?.data || []).find((t) => t.taskType === 'Personalized Kit Packing') || null,
     [orderTasksData]
   );
+  // Personalized Kit Packing must not just have a Separate Kit task ASSIGNED — the separate
+  // kit packing work itself has to be finished first. "Add Another Task" can create more than
+  // one Separate Kit Packing task per order (partial-qty batches), so ALL of them need to reach
+  // Done, not just the first one found above.
+  const separateKitPackingAllDone = useMemo(() => {
+    const tasks = (orderTasksData?.data || []).filter((t) => t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing');
+    return tasks.length > 0 && tasks.every((t) => t.status === 'Done');
+  }, [orderTasksData]);
 
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
   const [assignTask] = useAssignTaskMutation();
@@ -333,14 +341,21 @@ export default function OperationDetail() {
         const logoType = inferItemLogoType(sticker, printing, pmRaw, packingMaterialTab, it.logoType);
         const logo = normYNOps(it.logo || (isKitItem ? kitCfg?.logo : ''));
         const displayUnitType = it.displayUnitType || (isKitItem ? kitCfg?.displayUnitType : '') || '';
-        // Effective Required Qty: a kit line stores its count in `overallQty` (the number of kits),
-        // while `qty` is just 1 (one kit unit) — so kit rows must report overallQty, not qty.
-        // Separate products keep their own qty. Falls back through item → kit-config → qty.
-        const kitOverallQty = isKitItem
-          ? (Number(it.overallQty) || Number(kitCfg?.overallQty) || Number(o.kitOverallQty) || 0)
+        // Effective Required Qty: a kit component's `qty` is its PER-KIT RATIO (e.g. 1 paste +
+        // 2 brushes per kit — not necessarily 1), not the order total. The true total is that
+        // ratio × how many kits were ordered (kitCount, from the per-kit config or the
+        // order-level fallback) — the exact formula Backend sales.controller.js's
+        // deductInventoryForOrder uses for stock deduction (`qty = perUnitQty * kitCount`), so
+        // this never disagrees with what was actually deducted. A prior version of this treated
+        // the kit count itself as the required qty for EVERY component (correct only when every
+        // component happened to be exactly 1-per-kit; wrong the moment any ratio differs — e.g.
+        // 2 brushes/kit showed as needing only 1× the kit count instead of 2×).
+        // Separate (non-kit) products keep their own qty as-is.
+        const kitCount = isKitItem
+          ? (Number(kitCfg?.overallQty) || Number(o.kitOverallQty) || 0)
           : 0;
         const requiredQty = isKitItem
-          ? (kitOverallQty || Number(it.qty) || 0)
+          ? (kitCount > 0 ? (Number(it.qty) || 0) * kitCount : (Number(it.overallQty) || Number(it.qty) || 0))
           : (Number(it.qty) || 0);
         const itemName = it.itemName || it.name;
         // Rows sourced from the Lead's product list (order.items empty) never carry a persisted
@@ -554,20 +569,17 @@ export default function OperationDetail() {
       butter_paper: productionQueues.butter,
     };
     const currentOrder = allOrders.find((o) => o.id === id);
-    const splitDates = currentOrder?.splitDates || [];
-    // Build set of lowercase emergency product names from splitDates (both formats)
-    const emergencyProducts = new Set();
-    splitDates.forEach((sd) => {
-      (sd.products || []).forEach((ep) => { if (ep.product) emergencyProducts.add(ep.product.toLowerCase()); });
-      if (sd.product) emergencyProducts.add(sd.product.toLowerCase());
-    });
-    // Include ALL products from this order (not just emergency) so sticker/box/ziplock teams see full order
+    // Include ALL products from this order (not just emergency) so sticker/box/ziplock teams see full order.
+    // isEmergencyProduct/qty come straight from productionQueues (buildProductionQueues in data.js),
+    // which already resolves splitDates through the kit-aware getEmergencyProductQtyMap (handles
+    // '__personalized__'/'__sepkit__:<id>'/'__kit__' expansion and per-kit-component qty). Recomputing
+    // a plain by-name Set here (as this used to) never matched those synthetic split-date values, so
+    // every Personalized/Separate Kit product silently showed as non-emergency in this modal.
     const items = (queueMap[printingModalType] || [])
       .filter((item) => item.orderId === id)
       .map((item) => ({
         ...item,
         isUrgent: currentOrder?.isUrgent || false,
-        isEmergencyProduct: emergencyProducts.has((item.product || '').toLowerCase()),
       }));
     return items.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
   }, [printingModalType, id, allOrders, productionQueues]);
@@ -601,6 +613,14 @@ export default function OperationDetail() {
     const effQty = (it) => Number(it.requiredQty) || Number(it.qty) || 0;
     const includeSet = new Set((order?.packagingIncludes || []).map(String));
     const isBundled = (it) => includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName));
+    // Number of KITS ordered (NOT the per-product total) — the shared denominator a splitDate's
+    // emergency qty is expressed against (e.g. "50 of the 100 kits"). Math.max(...effQty(...))
+    // was used as a stand-in for this before, which only happens to equal the real kit count
+    // when every component in the kit has a 1-per-kit ratio — a kit with e.g. 2 brushes/kit
+    // inflated the denominator to the brush's own multiplied total (200) instead of the real
+    // kit count (100), understating every component's proportional emergency share.
+    const kitCfgById = Object.fromEntries((order?.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]));
+    const resolveKitCount = (it) => Number(kitCfgById[String(it.kitId)]?.overallQty) || Number(order?.kitOverallQty) || 0;
 
     const expandGroup = (items, groupTotalQty, kitEmergencyQty, sdDate) => {
       if (items.length === 0) return;
@@ -623,20 +643,20 @@ export default function OperationDetail() {
 
     const expandLegacyKit = (kitEmergencyQty, sdDate) => {
       const items = (order?.items || []).filter((it) => it.isKit || it.kitType);
-      const groupTotalQty = items.length ? Math.max(...items.map(effQty)) : 0;
+      const groupTotalQty = items.length ? Math.max(...items.map(resolveKitCount)) : 0;
       expandGroup(items, groupTotalQty, kitEmergencyQty, sdDate);
     };
 
     const expandPersonalized = (kitEmergencyQty, sdDate) => {
       const items = (order?.items || []).filter((it) => it.category === 'personalized' || it.isIncludedInPersonalized || isBundled(it));
       const kitItemsInGroup = items.filter((it) => it.isKit || it.kitType);
-      const groupTotalQty = kitItemsInGroup.length ? Math.max(...kitItemsInGroup.map(effQty)) : (Number(order?.kitOverallQty) || 0);
+      const groupTotalQty = kitItemsInGroup.length ? Math.max(...kitItemsInGroup.map(resolveKitCount)) : (Number(order?.kitOverallQty) || 0);
       expandGroup(items, groupTotalQty, kitEmergencyQty, sdDate);
     };
 
     const expandSeparateKit = (kitKey, kitEmergencyQty, sdDate) => {
       const items = (order?.items || []).filter((it) => !isBundled(it) && String(it.kitId || it.kitName || it.kitType) === kitKey);
-      const groupTotalQty = items.length ? Math.max(...items.map(effQty)) : 0;
+      const groupTotalQty = items.length ? Math.max(...items.map(resolveKitCount)) : 0;
       expandGroup(items, groupTotalQty, kitEmergencyQty, sdDate);
     };
 
@@ -660,7 +680,7 @@ export default function OperationDetail() {
       handleEntry(sd.product, sd.qty != null ? Number(sd.qty) : null, sdDate);
     });
     return map;
-  }, [order?.splitDates, order?.items, order?.packagingIncludes, order?.kitOverallQty]);
+  }, [order?.splitDates, order?.items, order?.packagingIncludes, order?.kitOverallQty, order?.kitOrders]);
 
   // Sort items: emergency products first (by emergency date), then regular products
   const sortedOrderItems = useMemo(() => {
@@ -932,7 +952,12 @@ export default function OperationDetail() {
       const emergencyInfo = emergencyProductMap[name];
       if (hasEmergency && emergencyInfo) {
         const eQty = emergencyInfo.qty;
-        const itemQty = Number(item.qty) || 0;
+        // Kit components store their PER-KIT ratio in `qty` (e.g. 2 brushes/kit) — requiredQty
+        // (already resolved to ratio × kit count above) is the true total to split against.
+        // Comparing against raw `item.qty` here made a fully-emergency kit component (e.g.
+        // requiredQty=200, eQty=100) look like "itemQty(2) <= eQty(100)" — a false "no split
+        // needed" — and left `qty`/the Emergency Qty column showing 2 instead of the real 100.
+        const itemQty = Number(item.requiredQty) || Number(item.qty) || 0;
         if (eQty != null && itemQty > eQty) {
           // Partial emergency: split into emergency qty + remaining qty
           return [
@@ -940,7 +965,8 @@ export default function OperationDetail() {
             { ...item, key: `${item.key}-rem`, qty: itemQty - eQty, requiredQty: itemQty - eQty, lineTotal: null, isEmergencyProduct: false, isEmergencyGated: !emergencyPhaseDone },
           ];
         }
-        return [{ ...item, isEmergencyProduct: true, isEmergencyGated: false }];
+        // Fully emergency (no split) — report the true total, not the raw per-kit ratio.
+        return [{ ...item, qty: itemQty, requiredQty: itemQty, isEmergencyProduct: true, isEmergencyGated: false }];
       }
       return [{ ...item, isEmergencyProduct: false, isEmergencyGated: hasEmergency && !emergencyPhaseDone }];
     });
@@ -2693,8 +2719,8 @@ export default function OperationDetail() {
 
                             {separateKitPackingTask && (
                               <Space style={{ marginTop: 4 }} wrap>
-                                <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
-                                  Separate Kit Task Assigned
+                                <Tag color={separateKitPackingAllDone ? 'green' : 'orange'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
+                                  {separateKitPackingAllDone ? 'Separate Kit Packing Done' : 'Separate Kit Task Assigned — Pending'}
                                 </Tag>
                                 <Text type="secondary" style={{ fontSize: 12 }}>{separateKitPackingTask.taskName}</Text>
                               </Space>
@@ -2713,7 +2739,7 @@ export default function OperationDetail() {
 
                       {/* Personalized Kit group(s) — gated until separate kit tasks are assigned */}
                       {personalizedKitGroups.map((kg) => {
-                        const separateDone = separateKitGroups.length === 0 || !!separateKitPackingTask;
+                        const separateDone = separateKitGroups.length === 0 || separateKitPackingAllDone;
                         return (
                           <div
                             key={kg.key}
@@ -2741,7 +2767,7 @@ export default function OperationDetail() {
                                 <Alert
                                   type="warning"
                                   showIcon
-                                  message="Complete separate kit packing tasks first before assigning personalized kit tasks."
+                                  message="Mark the separate kit packing task(s) as Done before assigning personalized kit tasks."
                                   style={{ borderRadius: 8, fontSize: 12 }}
                                 />
                               )}

@@ -58,19 +58,27 @@ const resolveInvoiceMoney = (inv, order) => {
 };
 const ORDER_MONEY_FIELDS = 'total amount gstAmount forwardingCharge forwardingChargeAmount paymentCollection paidAmount';
 
-// Live Paid/Partially Paid/Pending status for an invoice, reconciled against its linked
-// order the same way resolveOrderPaymentStatus (utils/syncOrderPayment.js) and
-// getHotelPendingDue (parties.controller) already do: a payment recorded straight onto the
-// Order (e.g. Sales/Negotiation's own payment-entry flow) does not always sync back onto
-// Invoice.advanceAmount/status, so trusting inv.status alone can show "Pending" here for an
-// invoice Billing already displays as Paid. Take the larger of Invoice vs Order paid against
-// `invValue` (already the larger of Invoice vs Order total, from resolveInvoiceMoney).
-const resolveInvoiceStatus = (inv, order, invValue) => {
-  if (inv.isComplementary) return 'Paid';
+// Real paid amount for an invoice: the larger of Invoice.advanceAmount vs the linked Order's
+// own paymentCollection/paidAmount total. A payment recorded straight onto the Order (e.g.
+// Sales/Negotiation's own payment-entry flow, syncOrderPaymentCollection) does not always sync
+// back onto Invoice.advanceAmount, so trusting inv.advanceAmount alone understates what was
+// really paid — the exact reconciliation resolveOrderPaymentStatus (utils/syncOrderPayment.js)
+// and getHotelPendingDue (parties.controller) already do for Billing/Parties' own Paid/Pending
+// display; shared here so every consumer of "how much of this invoice is paid" agrees.
+const resolveInvoicePaid = (inv, order) => {
+  if (inv.isComplementary) return Number(inv.total) || 0;
   const orderPaid = order
     ? ((order.paymentCollection || []).reduce((s, e) => s + (Number(e?.paidAmount) || 0), 0) || Number(order.paidAmount) || 0)
     : 0;
-  const paid = Math.max(Number(inv.advanceAmount) || 0, orderPaid);
+  return Math.max(Number(inv.advanceAmount) || 0, orderPaid);
+};
+
+// Live Paid/Partially Paid/Pending status for an invoice, reconciled against its linked
+// order (see resolveInvoicePaid above). `invValue` is already the larger of Invoice vs Order
+// total, from resolveInvoiceMoney.
+const resolveInvoiceStatus = (inv, order, invValue) => {
+  if (inv.isComplementary) return 'Paid';
+  const paid = resolveInvoicePaid(inv, order);
   if (invValue <= 0) return inv.status || 'Pending';
   if (paid >= invValue) return 'Paid';
   if (paid > 0) return 'Partially Paid';
@@ -232,10 +240,13 @@ const buildPurchaseRows = async (dateFilter) => {
 // average, so Purchase Rate in reports always matches Inventory instead of drifting from it.
 // Falls back to the purchase-history average (then to the 62%/65%-of-revenue guess at the
 // call site) only for items with no InventoryItem record or no purchasePrice set.
+// Also returns gstIndex (per-item GST %, from InventoryItem.gstPercent, default 18 — same
+// default explodePurchaseOrderItems already uses) so callers costing a sold item can split its
+// COGS into taxable + GST the same way Sales/Purchase reports already split invoice/PO amounts.
 const buildItemCostIndex = async (dateFilter = {}) => {
   const [{ rows }, items] = await Promise.all([
     buildPurchaseRows(dateFilter),
-    InventoryItem.find({ deletedAt: null }, 'itemName purchasePrice'),
+    InventoryItem.find({ deletedAt: null }, 'itemName purchasePrice gstPercent'),
   ]);
   const acc = {};
   rows.forEach((r) => {
@@ -251,11 +262,14 @@ const buildItemCostIndex = async (dateFilter = {}) => {
   });
   const index = {};
   Object.entries(acc).forEach(([k, v]) => { index[k] = v.qty > 0 ? v.amount / v.qty : 0; });
+  const gstIndex = {};
   items.forEach((it) => {
     const key = (it.itemName || '').trim().toLowerCase();
-    if (key && Number(it.purchasePrice) > 0) index[key] = Number(it.purchasePrice);
+    if (!key) return;
+    if (Number(it.purchasePrice) > 0) index[key] = Number(it.purchasePrice);
+    gstIndex[key] = it.gstPercent != null ? Number(it.gstPercent) : 18;
   });
-  return index;
+  return { index, gstIndex };
 };
 
 // Current on-hand stock per item name, from InventoryItem.currentStock — the same running
@@ -383,67 +397,37 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   // directly, which double-counted un-invoiced orders as revenue and could disagree with
   // every other report tab whenever an invoice's amount was manually adjusted during
   // quotation→invoice conversion (billing.controller convertQuotationToInvoice).
-  const [invoices, purchaseOrders, localPurchases, expenses, itemCostIndex, stockIndex] = await Promise.all([
+  const [invoices, expenses, itemIndexes, stockIndex] = await Promise.all([
     Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
       .populate('orderId', `kitOrders kitOverallQty orderCategory ${ORDER_MONEY_FIELDS}`)
       .populate('quotationId', 'kitOrders kitOverallQty'),
-    // itemId/items.itemId gstPercent populated so COGS can be split into taxable + GST
-    // below (explodePurchaseOrderItems needs it) — same population as getMonthlyGst.
-    PurchaseOrder.find(poDateFilter)
-      .populate('itemId', 'gstPercent')
-      .populate('items.itemId', 'gstPercent'),
-    LocalPurchase.find(poDateFilter),
     // Expenses are dated by expenseDate, not createdAt — filtering by createdAt would
     // exclude/include the wrong entries whenever an expense is backdated.
     Expense.find(buildDateFilterOn(req, 'expenseDate')),
     buildItemCostIndex(poDateFilter),
     buildStockIndex(),
   ]);
+  const { index: itemCostIndex, gstIndex: itemGstIndex } = itemIndexes;
 
   // Excl-GST taxable value and GST split per invoice, reconciled the same way as every
   // other Invoice-sourced report tab (see reconcileTaxable above).
   const invRows = invoices.map((inv) => {
     const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
-    const { taxable, gstAmt } = resolveInvoiceMoney(inv, order);
-    return { inv, taxable, gstAmt };
+    const { taxable, gstAmt, invValue } = resolveInvoiceMoney(inv, order);
+    const paid = resolveInvoicePaid(inv, order);
+    return { inv, taxable, gstAmt, invValue, paid };
   });
 
   const totalSales = invRows.reduce((s, r) => s + r.taxable, 0);
   const totalSalesGst = invRows.reduce((s, r) => s + r.gstAmt, 0);
 
-  // COGS must be excl-GST (taxable) to be comparable with totalSales above, which is also
-  // excl-GST (resolveInvoiceMoney's `taxable`, same as every other Invoice-sourced report
-  // tab). Summing raw PurchaseOrder.amount here (GST-inclusive, per explodePurchaseOrderItems'
-  // own comment) previously subtracted a GST-inclusive cost from a GST-exclusive revenue
-  // figure, understating Gross Profit by the purchase-side GST — and the frontend's "Incl. GST"
-  // toggle then added cogsGst back on top of that already-inclusive cogs, double-counting it.
-  // Split each PO's amount into taxable/GST per line item (same explode+split the Purchase
-  // Report / Monthly GST report already do) so cogs/cogsGst below are real excl-GST + GST parts.
-  let totalCogs = 0;
-  let totalCogsGst = 0;
-  const poCostRows = [];
-  purchaseOrders.forEach((po) => {
-    explodePurchaseOrderItems(po).forEach((it) => {
-      const gstRate = it.gstPercent ?? 18;
-      const taxable = gstRate > 0 ? it.amount / (1 + gstRate / 100) : it.amount;
-      const gstAmt = it.amount - taxable;
-      totalCogs += taxable;
-      totalCogsGst += gstAmt;
-      poCostRows.push({ createdAt: po.createdAt, taxable, gstAmt });
-    });
-  });
-  // No GST captured on local/informal purchases (see explodeLocalPurchaseItems) — taxable
-  // spend only, same convention as Purchase Report/Monthly GST.
-  localPurchases.forEach((l) => { totalCogs += Number(l.totalAmount) || 0; });
-  totalCogs = r2(totalCogs);
-  totalCogsGst = r2(totalCogsGst);
-  const grossProfit = totalSales - totalCogs;
-
-  // Paid vs pending straight off Invoice.advanceAmount/balanceDue — the exact fields
-  // Billing itself writes on every recordPayment/convertQuotationToInvoice (see
-  // billing.controller) — instead of re-deriving from Order.paymentCollection, so this
-  // always agrees with what the Billing module shows for that invoice.
-  const paidRatio = (r) => (r.inv.total > 0 ? Math.min(1, (Number(r.inv.advanceAmount) || 0) / r.inv.total) : 0);
+  // Paid ratio off the reconciled paid/invValue (resolveInvoicePaid/resolveInvoiceMoney above)
+  // instead of raw Invoice.advanceAmount/Invoice.total — a payment recorded via Sales/
+  // Negotiation's own flow lands on Order.paymentCollection without always syncing back onto
+  // Invoice.advanceAmount, so trusting the raw Invoice fields alone previously kept showing an
+  // invoice as fully "Pending" here even after it was fully paid (and Billing/Parties already
+  // showed it as Paid).
+  const paidRatio = (r) => (r.invValue > 0 ? Math.min(1, r.paid / r.invValue) : 0);
   // Excl-GST paid/pending, applying each invoice's own paid ratio to its excl-GST taxable
   // figure so these reconcile exactly with `totalSales` above (also excl-GST).
   const totalPaid = invRows.reduce((s, r) => s + r2(r.taxable * paidRatio(r)), 0);
@@ -455,10 +439,11 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     expenseBreakdown[cat] = (expenseBreakdown[cat] || 0) + e.amount;
   });
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
-  const netProfit = grossProfit - totalExpenses;
   const netGstPayable = totalSalesGst;
 
-  // Monthly P&L with per-category expense breakdown
+  // Monthly sales/paid/pending (per-category expense breakdown added further below) —
+  // COGS is filled in after Product-wise P&L (below) so it can be derived from the same
+  // sales-matched per-product totals instead of a separate pass.
   const monthlyMap = {};
   invRows.forEach((r) => {
     const key = r.inv.invoiceDate?.toLocaleString('default', { month: 'short' }) || '';
@@ -474,22 +459,6 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     monthlyMap[key].paidGst += r2(r.gstAmt * ratio);
     monthlyMap[key].pendingGst += r2(r.gstAmt * (1 - ratio));
   });
-  // Reuses the per-line taxable/GST split computed above (poCostRows) instead of re-deriving
-  // it from raw po.amount with a hardcoded 18% guess — keeps monthly cogs/cogsGst consistent
-  // with totalCogs/totalCogsGst and with each item's real GST rate.
-  poCostRows.forEach((r) => {
-    const key = r.createdAt?.toLocaleString('default', { month: 'short' }) || '';
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
-    monthlyMap[key].cogs += r.taxable;
-    monthlyMap[key].cogsGst += r.gstAmt;
-  });
-  localPurchases.forEach((lp) => {
-    const key = lp.createdAt?.toLocaleString('default', { month: 'short' }) || '';
-    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
-    // No GST captured on local purchases — counts toward COGS but not input-GST credit.
-    monthlyMap[key].cogs += Number(lp.totalAmount) || 0;
-  });
-  Object.values(monthlyMap).forEach((m) => { m.grossProfit = m.sales - m.cogs; });
   expenses.forEach((e) => {
     const key = e.expenseDate?.toLocaleString('default', { month: 'short' }) || '';
     if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
@@ -516,7 +485,7 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   invoices.forEach((inv) => {
     invoiceItemRows(inv).forEach((item) => {
       const name = item.itemName || 'Unknown';
-      if (!productMap[name]) productMap[name] = { product: name, sales: 0, cogs: 0, grossProfit: 0, soldQty: 0, stockQty: 0 };
+      if (!productMap[name]) productMap[name] = { product: name, sales: 0, cogs: 0, cogsGst: 0, grossProfit: 0, soldQty: 0, stockQty: 0 };
       const itemSales = Number(item.lineTotal) || (Number(item.price) * Number(item.qty)) || 0;
       productMap[name].sales += itemSales;
       productMap[name].soldQty += Number(item.qty) || 0;
@@ -526,9 +495,22 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     const key = p.product.trim().toLowerCase();
     const rate = itemCostIndex[key];
     p.cogs = rate != null && rate > 0 ? r2(rate * p.soldQty) : r2(p.sales * 0.65);
+    p.cogsGst = r2(p.cogs * ((itemGstIndex[key] ?? 18) / 100));
     p.grossProfit = p.sales - p.cogs;
     p.stockQty = stockIndex[key] ?? 0;
   });
+
+  // Summary COGS = cost of the units actually SOLD in this date range (same invoices/scope as
+  // totalSales above) — the sum of Product-wise P&L's own per-product cogs, NOT independent
+  // Purchase Order/Local Purchase activity in the same window. Those two used to disagree
+  // whenever a period had sales but no fresh purchases (stock bought earlier) or purchases but
+  // few sales (restocking): Total Sales and Total COGS came from two unrelated document sets,
+  // so Gross Profit didn't reconcile with what the Product-wise P&L tab showed for the same
+  // range. Deriving it from productMap instead guarantees the two tabs always agree.
+  const totalCogs = r2(Object.values(productMap).reduce((s, p) => s + p.cogs, 0));
+  const totalCogsGst = r2(Object.values(productMap).reduce((s, p) => s + p.cogsGst, 0));
+  const grossProfit = totalSales - totalCogs;
+  const netProfit = grossProfit - totalExpenses;
 
   // Per-product monthly breakdown
   const productMonthlyData = {};
@@ -537,21 +519,35 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     invoiceItemRows(inv).forEach((item) => {
       const name = item.itemName || 'Unknown';
       if (!productMonthlyData[name]) productMonthlyData[name] = {};
-      if (!productMonthlyData[name][month]) productMonthlyData[name][month] = { month, sales: 0, cogs: 0, grossProfit: 0, qty: 0 };
+      if (!productMonthlyData[name][month]) productMonthlyData[name][month] = { month, sales: 0, cogs: 0, cogsGst: 0, grossProfit: 0, qty: 0 };
       const sales = Number(item.lineTotal) || (Number(item.price) * Number(item.qty)) || 0;
       productMonthlyData[name][month].sales += sales;
       productMonthlyData[name][month].qty += Number(item.qty) || 0;
     });
   });
   Object.keys(productMonthlyData).forEach((prod) => {
-    const rate = itemCostIndex[prod.trim().toLowerCase()];
+    const key = prod.trim().toLowerCase();
+    const rate = itemCostIndex[key];
+    const gstRate = itemGstIndex[key] ?? 18;
     const byMonth = Object.values(productMonthlyData[prod]);
     byMonth.forEach((m) => {
       m.cogs = rate != null && rate > 0 ? r2(rate * m.qty) : r2(m.sales * 0.65);
+      m.cogsGst = r2(m.cogs * (gstRate / 100));
       m.grossProfit = m.sales - m.cogs;
     });
     productMonthlyData[prod] = byMonth;
   });
+  // Monthly COGS bucketed by the SAME invoice month sales/paid/pending above are bucketed by
+  // (see productMonthlyData) — not by unrelated purchase createdAt — so a month's COGS always
+  // describes the cost of THAT month's sales, matching totalCogs' sales-matched basis.
+  Object.values(productMonthlyData).forEach((byMonth) => {
+    byMonth.forEach((m) => {
+      if (!monthlyMap[m.month]) monthlyMap[m.month] = { month: m.month, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
+      monthlyMap[m.month].cogs += m.cogs;
+      monthlyMap[m.month].cogsGst += m.cogsGst;
+    });
+  });
+  Object.values(monthlyMap).forEach((m) => { m.grossProfit = m.sales - m.cogs; });
 
   res.status(200).json({
     success: true,
@@ -572,7 +568,7 @@ exports.getBillPL = asyncHandler(async (req, res) => {
     .populate('orderId', `kitOrders kitOverallQty orderCategory ${ORDER_MONEY_FIELDS}`)
     .populate('quotationId', 'kitOrders kitOverallQty')
     .sort('-invoiceDate');
-  const itemCostIndex = await buildItemCostIndex();
+  const { index: itemCostIndex } = await buildItemCostIndex();
 
   const billPL = invoices.map((inv) => {
     // Kit rows on the invoice store qty PER KIT — the linked order (or quotation, when the

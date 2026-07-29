@@ -25,6 +25,7 @@ import {
   useGetSuggestedTasksQuery,
   useLazyGetSuggestedTasksInsightQuery,
   useGetLatestTaskInsightQuery,
+  useLazyGetOrderDispatchReadinessQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useDispatchTaskOrderMutation,
@@ -87,11 +88,21 @@ function deriveKitGroups(order) {
   const includeSet = new Set(includesList.map(String));
   order = {
     ...order,
-    items: (order.items || []).map((it) => ({
-      ...it,
-      isIncludedInPersonalized: isPersonalizedOrder
-        && (includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName))),
-    })),
+    items: (order.items || []).map((it) => {
+      const isIncludedInPersonalized = isPersonalizedOrder
+        && (includeSet.has(String(it.kitId)) || includeSet.has(String(it.name || it.itemName)));
+      // Mirrors Operations' allOrders item-category override (OperationDetail.jsx): a KIT nested
+      // inside a personalized outer bundle is functionally a Separate Kit — it has to be
+      // assembled/packed on its own before the outer Personalized Kit packing — even though Sales
+      // tagged its own item row category as 'personalized' (it was added under the Personalized
+      // tab, then also selected into packagingIncludes to be bundled inside the outer kit). Without
+      // this override, separateKitGroups below never saw it (category never said 'separate_kit'),
+      // so the "pack the inner kit first" gate never applied — only the merged Personalized Kit
+      // card ever showed. A plain (non-kit) included product becomes 'separate_product', same as
+      // Operations. Items NOT bundled into a personalized outer keep their own stored category.
+      const category = isIncludedInPersonalized ? (it.isKit ? 'separate_kit' : 'separate_product') : it.category;
+      return { ...it, isIncludedInPersonalized, category };
+    }),
   };
 
   const separateKitGroups = (() => {
@@ -263,6 +274,7 @@ export default function Tasks() {
   const [createTask] = useCreateTaskMutation();
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [dispatchTaskOrder, { isLoading: dispatching }] = useDispatchTaskOrderMutation();
+  const [fetchOrderDispatchReadiness] = useLazyGetOrderDispatchReadinessQuery();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
   const [requestEmergencyDispatchForOrder, { isLoading: requestingOrder }] = useRequestEmergencyDispatchForOrderMutation();
   const [deleteTask] = useDeleteTaskMutation();
@@ -311,9 +323,17 @@ export default function Tasks() {
         relevant = cfgProduct === productKey;
       } else {
         const mentionsProduct = productWords.some((w) => name.includes(w));
-        const isStickerTask = /stick|label/.test(name);
-        const isPrintTask = /print/.test(name);
-        const isPackTask = /pack/.test(name);
+        // A blank-product config named e.g. "Personalized Kit Packing"/"Personalized Kit
+        // Stickering" is a KIT-LEVEL task type (assigned with no productIndex at all, via
+        // the Kit Packing Task Assignment card), not a per-product production step — mirrors
+        // the backend's relevantTaskNamesFor exclusion. Without it, every such config's
+        // generic "pack"/"stick" substring matched every routed product, offering a chip
+        // (and, on the backend, requiring coverage) for a task type that can never actually
+        // be recorded against this specific product.
+        const isKitLevelName = /kit/.test(name);
+        const isStickerTask = !isKitLevelName && /stick|label/.test(name);
+        const isPrintTask = !isKitLevelName && /print/.test(name);
+        const isPackTask = !isKitLevelName && /pack/.test(name);
         relevant = mentionsProduct
           || (isStickerRouted && isStickerTask)
           || (needsPrinting && isPrintTask)
@@ -470,18 +490,22 @@ export default function Tasks() {
     setKitPackingModalOpen(true);
   };
 
-  // Existing Separate/Personalized Kit Packing task per order — same "already assigned"
+  // Existing Separate/Personalized Kit Packing task(s) per order — same "already assigned"
   // detection Operations does per-order (orderTasksData filtered by taskType), computed
   // once here across the full task list so every order card can check it by id.
+  // Kept as arrays (not a single task) because "Add Another Task" can create MORE THAN ONE
+  // Separate Kit Packing task per order (partial-qty batches) — gating below needs to know
+  // every one of them is Done, not just that the first one exists.
   const kitPackingTasksByOrder = useMemo(() => {
     const map = {};
     (tasksData?.data || []).forEach((t) => {
       const oid = (typeof t.orderId === 'object' ? t.orderId?._id : t.orderId)?.toString();
       if (!oid) return;
+      if (!map[oid]) map[oid] = { separateTasks: [], personalizedTasks: [] };
       if (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') {
-        map[oid] = { ...(map[oid] || {}), separate: t };
+        map[oid].separateTasks.push(t);
       } else if (t.taskType === 'Personalized Kit Packing') {
-        map[oid] = { ...(map[oid] || {}), personalized: t };
+        map[oid].personalizedTasks.push(t);
       }
     });
     return map;
@@ -952,12 +976,29 @@ export default function Tasks() {
   };
 
   // Show dispatch info modal with order/task/payment details.
-  const handleDispatchClick = (task) => {
+  const handleDispatchClick = async (task) => {
     const orderTasks = task.orderId ? taskList.filter((t) => t.orderId === task.orderId) : [];
     const notDone = orderTasks.filter((t) => t.status !== 'Completed');
     const unassigned = orderTasks.filter((t) => !t.assignee || t.assignee === '—');
-    setDispatchVerifyData({ task, orderTasks, notDone, unassigned });
+    // missingProducts starts null (still loading) rather than [] — the modal treats null as
+    // "not confirmed ready yet" so it can't flash a false green "Ready for Dispatch" for a
+    // product that has zero tasks at all, which the notDone/unassigned checks above can't
+    // catch on their own (they only ever look at tasks that already exist).
+    setDispatchVerifyData({ task, orderTasks, notDone, unassigned, missingProducts: null });
     setDispatchVerifyOpen(true);
+    if (task.orderId) {
+      try {
+        const res = await fetchOrderDispatchReadiness(task.orderId).unwrap();
+        setDispatchVerifyData((prev) => (prev && prev.task === task
+          ? { ...prev, missingProducts: res?.data?.missingProducts || [] }
+          : prev));
+      } catch {
+        // Readiness preview couldn't be fetched — leave missingProducts null so the modal
+        // keeps showing "checking" rather than silently trusting the naive task-only check.
+      }
+    } else {
+      setDispatchVerifyData((prev) => (prev ? { ...prev, missingProducts: [] } : prev));
+    }
   };
 
   // Forward the order linked to the task into the Dispatch queue (Dispatch Ready).
@@ -1355,7 +1396,15 @@ export default function Tasks() {
                           const orderDoc = ordersList.find((o) => String(o._id) === String(orderIdForGroup));
                           const { separateKitGroups, personalizedKitGroups } = deriveKitGroups(orderDoc);
                           if (separateKitGroups.length === 0 && personalizedKitGroups.length === 0) return null;
-                          const existingKitTasks = kitPackingTasksByOrder[String(orderIdForGroup)] || {};
+                          const existingKitTasks = kitPackingTasksByOrder[String(orderIdForGroup)] || { separateTasks: [], personalizedTasks: [] };
+                          const firstSeparateTask = existingKitTasks.separateTasks[0] || null;
+                          const firstPersonalizedTask = existingKitTasks.personalizedTasks[0] || null;
+                          // Personalized Kit Packing must not just have a Separate Kit task ASSIGNED —
+                          // the separate kit packing work itself has to be finished (Done) first. "Add
+                          // Another Task" can create more than one Separate Kit Packing task per order
+                          // (partial-qty batches), so ALL of them need to reach Done, not just the first.
+                          const separateAllDone = existingKitTasks.separateTasks.length > 0
+                            && existingKitTasks.separateTasks.every((t) => t.status === 'Done');
                           return (
                             <Card
                               size="small"
@@ -1385,10 +1434,12 @@ export default function Tasks() {
                                         )}
                                       </Space>
                                       {renderKitProductSpecs(kg.kitItems, 'blue', kg.overallQty)}
-                                      {existingKitTasks.separate && (
+                                      {firstSeparateTask && (
                                         <Space wrap>
-                                          <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>Separate Kit Task Assigned</Tag>
-                                          <Text type="secondary" style={{ fontSize: 12 }}>{existingKitTasks.separate.taskName}</Text>
+                                          <Tag color={separateAllDone ? 'green' : 'orange'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
+                                            {separateAllDone ? 'Separate Kit Packing Done' : 'Separate Kit Task Assigned — Pending'}
+                                          </Tag>
+                                          <Text type="secondary" style={{ fontSize: 12 }}>{firstSeparateTask.taskName}</Text>
                                         </Space>
                                       )}
                                       <Button
@@ -1398,14 +1449,14 @@ export default function Tasks() {
                                         style={{ background: 'linear-gradient(135deg,#1677ff,#69b1ff)', border: 'none', borderRadius: 8 }}
                                         onClick={() => openKitPackingModal(kg, 'separate_kit', orderDoc)}
                                       >
-                                        {existingKitTasks.separate ? 'Add Another Task' : 'Assign Separate Kit Task'}
+                                        {firstSeparateTask ? 'Add Another Task' : 'Assign Separate Kit Task'}
                                       </Button>
                                     </Space>
                                   </div>
                                 ))}
 
                                 {personalizedKitGroups.map((kg) => {
-                                  const separateDone = separateKitGroups.length === 0 || !!existingKitTasks.separate;
+                                  const separateDone = separateKitGroups.length === 0 || separateAllDone;
                                   return (
                                     <div
                                       key={kg.key}
@@ -1431,15 +1482,15 @@ export default function Tasks() {
                                           <Alert
                                             type="warning"
                                             showIcon
-                                            message="Complete separate kit packing tasks first before assigning personalized kit tasks."
+                                            message="Mark the separate kit packing task(s) as Done before assigning personalized kit tasks."
                                             style={{ borderRadius: 8, fontSize: 12 }}
                                           />
                                         )}
                                         {renderKitProductSpecs(kg.kitItems, 'magenta', kg.overallQty)}
-                                        {existingKitTasks.personalized && (
+                                        {firstPersonalizedTask && (
                                           <Space wrap>
                                             <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>Personalized Kit Task Assigned</Tag>
-                                            <Text type="secondary" style={{ fontSize: 12 }}>{existingKitTasks.personalized.taskName}</Text>
+                                            <Text type="secondary" style={{ fontSize: 12 }}>{firstPersonalizedTask.taskName}</Text>
                                           </Space>
                                         )}
                                         <Button
@@ -1450,7 +1501,7 @@ export default function Tasks() {
                                           style={separateDone ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 } : { borderRadius: 8 }}
                                           onClick={() => separateDone && openKitPackingModal(kg, 'personalized', orderDoc)}
                                         >
-                                          {existingKitTasks.personalized ? 'Add Another Task' : 'Assign Personalized Kit Task'}
+                                          {firstPersonalizedTask ? 'Add Another Task' : 'Assign Personalized Kit Task'}
                                         </Button>
                                       </Space>
                                     </div>
@@ -1503,7 +1554,23 @@ export default function Tasks() {
                                     </div>
                                     <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{s.product}</Text>
                                     <Space size={4} wrap style={{ marginBottom: 10 }}>
-                                      {s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
+                                      {/* Per-product emergency count (kit-aware — see backend buildEmergencyQtyMap):
+                                          only some kits/products in an order may be marked emergency via splitDates,
+                                          so this is a DIFFERENT (and often smaller) number than the order-level
+                                          "Emergency" tag above implies. When the product is fully emergency
+                                          (emergencyQty >= qty) show one red tag for the full qty; when only part
+                                          of it is (a partial splitDate qty), split into Emergency + Regular tags
+                                          so the two counts always add up to the product's total qty. */}
+                                      {s.isEmergencyProduct && s.emergencyQty > 0 && s.emergencyQty >= s.qty && (
+                                        <Tag color="error" icon={<AlertFilled />}>{Number(s.qty).toLocaleString()} units — Emergency</Tag>
+                                      )}
+                                      {s.isEmergencyProduct && s.emergencyQty > 0 && s.emergencyQty < s.qty && (
+                                        <>
+                                          <Tag color="error" icon={<AlertFilled />}>{Number(s.emergencyQty).toLocaleString()} Emergency</Tag>
+                                          <Tag color="blue">{Number(s.qty - s.emergencyQty).toLocaleString()} Regular</Tag>
+                                        </>
+                                      )}
+                                      {!s.isEmergencyProduct && s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
                                       <Tag color={s.stockReady ? 'green' : 'red'}>
                                         {s.stockReady ? `Stock: ${s.inventoryStock ?? '—'}` : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
                                       </Tag>
@@ -2135,7 +2202,20 @@ export default function Tasks() {
                 </Divider>
                 <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
                 <Space direction="vertical" style={{ width: '100%', minWidth: 420 }} size={8}>
-                  {assignSubTasks.map((task, idx) => {
+                  {/* Task Name choices are scoped to the SAME relevant-for-this-product list
+                      the Suggested Tasks chips use (getRelevantTaskOptions), not every
+                      configured task name — picking a name outside that set used to create a
+                      task the dispatch-readiness check (backend isOrderReadyForDispatch) can
+                      never recognize as covering this product, since it only sums Done qty
+                      under the product's own relevant task names. That silently blocked
+                      dispatch forever on a product that clearly had a completed task, just
+                      filed under a name the check didn't know to look for. Falls back to the
+                      full list only when this product has no configured relevant names at
+                      all, matching the backend's own any-task-exists fallback for that case. */}
+                  {(() => {
+                    const relevantForTarget = assignTarget ? getRelevantTaskOptions(assignTarget) : [];
+                    const taskNameOptions = relevantForTarget.length ? relevantForTarget : configTaskNameOptions;
+                    return assignSubTasks.map((task, idx) => {
                     const rowEstimate = estimateSecFor(timeConfigs, { taskName: task.description }, Number(task.qty) || 0);
                     const sameNameRows = task.description
                       ? assignSubTasks.filter((t) => normTaskName(t.description) === normTaskName(task.description))
@@ -2163,8 +2243,8 @@ export default function Tasks() {
                             value={task.description || undefined}
                             onChange={(val) => updateAssignSubTask(task.id, 'description', val)}
                             style={{ width: '100%' }}
-                            notFoundContent={configTaskNameOptions.length ? 'No match' : 'No tasks configured — add one in Time Management'}
-                            options={configTaskNameOptions}
+                            notFoundContent={taskNameOptions.length ? 'No match' : 'No tasks configured — add one in Time Management'}
+                            options={taskNameOptions}
                           />
                         </div>
                         <div style={{ width: 90 }}>
@@ -2213,7 +2293,8 @@ export default function Tasks() {
                       </Space>
                     </div>
                     );
-                  })}
+                  });
+                  })()}
                 </Space>
                 </div>
                 <Button
@@ -2757,8 +2838,12 @@ export default function Tasks() {
         width={Math.min(640, window.innerWidth - 32)}
         footer={(() => {
           const t = dispatchVerifyData?.task;
+          // missingProducts === null means the readiness preview is still loading — treat
+          // that as not-ready so the button can't fire before we actually know, same reason
+          // it's kept out of the "ready" state shown in the body below.
+          const noMissingProducts = dispatchVerifyData?.missingProducts?.length === 0;
           const ready = dispatchVerifyData
-            && (t?.emergencyApproved || (dispatchVerifyData.notDone.length === 0 && dispatchVerifyData.unassigned.length === 0))
+            && (t?.emergencyApproved || (dispatchVerifyData.notDone.length === 0 && dispatchVerifyData.unassigned.length === 0 && noMissingProducts))
             && (t?.isSample || t?.paymentStatus === 'Paid' || t?.emergencyApproved)
             && !isAlreadySentToDispatch(t?.orderStatus);
           return [
@@ -2779,11 +2864,16 @@ export default function Tasks() {
         })()}
       >
         {dispatchVerifyData && (() => {
-          const { task, orderTasks, notDone, unassigned } = dispatchVerifyData;
+          const { task, orderTasks, notDone, unassigned, missingProducts } = dispatchVerifyData;
           const completedCount = orderTasks.filter((t) => t.status === 'Completed').length;
           const allTasksDone = notDone.length === 0;
           const allAssigned = unassigned.length === 0;
-          const readyToDispatch = (allTasksDone && allAssigned) || task.emergencyApproved;
+          // null = readiness preview still loading — checked separately below so this can't
+          // read as "ready" (empty array) before the server-authoritative check comes back.
+          const checkingMissing = missingProducts === null;
+          const noMissingProducts = missingProducts?.length === 0;
+          const readyToDispatch = task.emergencyApproved
+            || (allTasksDone && allAssigned && noMissingProducts);
           const isPaid = task.paymentStatus === 'Paid';
           const isSample = task.isSample;
           const isEmergencyApproved = task.emergencyApproved;
@@ -2816,7 +2906,16 @@ export default function Tasks() {
               )}
 
               {/* Overall dispatch readiness */}
-              {!isAlreadySentToDispatch(task.orderStatus) && (readyToDispatch && (isPaid || isSample || isEmergencyApproved) ? (
+              {!isAlreadySentToDispatch(task.orderStatus) && !isEmergencyApproved && checkingMissing && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="Checking every product has a completed task…"
+                  description="Confirming with the server that no product on this order is missing a task before showing a final readiness state."
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+              {!isAlreadySentToDispatch(task.orderStatus) && !checkingMissing && (readyToDispatch && (isPaid || isSample || isEmergencyApproved) ? (
                 <Alert
                   type="success"
                   showIcon
@@ -2833,7 +2932,7 @@ export default function Tasks() {
                   message={!readyToDispatch ? 'Tasks Not Yet Complete' : 'Payment Pending'}
                   description={
                     !readyToDispatch
-                      ? `${notDone.length > 0 ? `${notDone.length} task(s) on this order are still incomplete. ` : ''}${unassigned.length > 0 ? `${unassigned.length} task(s) are unassigned. ` : ''}Complete all tasks before dispatching.`
+                      ? `${notDone.length > 0 ? `${notDone.length} task(s) on this order are still incomplete. ` : ''}${unassigned.length > 0 ? `${unassigned.length} task(s) are unassigned. ` : ''}${!noMissingProducts ? `${missingProducts.length} product(s) don't have a completed task yet (${missingProducts.map((p) => p.product).join(', ')}). ` : ''}Complete all tasks before dispatching.`
                       : `All tasks are complete but payment status is "${task.paymentStatus}". Dispatch requires full payment or emergency approval.`
                   }
                   style={{ borderRadius: 8 }}
@@ -2871,7 +2970,21 @@ export default function Tasks() {
                   <Tag color={completedCount === orderTasks.length ? 'success' : 'warning'}>{completedCount} completed</Tag>
                   {notDone.length > 0 && <Tag color="error">{notDone.length} incomplete</Tag>}
                   {unassigned.length > 0 && <Tag color="orange">{unassigned.length} unassigned</Tag>}
+                  {checkingMissing && <Tag color="processing">checking products…</Tag>}
+                  {!checkingMissing && missingProducts.length > 0 && (
+                    <Tag color="error">{missingProducts.length} product(s) without any task</Tag>
+                  )}
                 </Space>
+
+                {!checkingMissing && missingProducts.length > 0 && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    style={{ borderRadius: 8, marginBottom: 10 }}
+                    message="Product(s) with no completed task"
+                    description={missingProducts.map((p) => p.product).join(', ')}
+                  />
+                )}
 
                 {orderTasks.length > 0 && (
                   <Table
@@ -2908,6 +3021,9 @@ export default function Tasks() {
                     <ul style={{ margin: '4px 0 0 0', paddingLeft: 18, fontSize: 13 }}>
                       {notDone.length > 0 && <li>Complete the {notDone.length} remaining task(s) on this order.</li>}
                       {unassigned.length > 0 && <li>Assign the {unassigned.length} unassigned task(s) to staff.</li>}
+                      {!checkingMissing && missingProducts.length > 0 && (
+                        <li>Assign and complete a task for: {missingProducts.map((p) => p.product).join(', ')}.</li>
+                      )}
                       {!isPaid && !isSample && <li>Collect full payment or raise an Emergency Dispatch request.</li>}
                     </ul>
                   }
