@@ -1,5 +1,6 @@
 const DispatchRecord = require('../../models/DispatchRecord');
 const Order = require('../../models/Order');
+const Invoice = require('../../models/Invoice');
 const Lead = require('../../models/Lead');
 const User = require('../../models/User');
 const Task = require('../../models/Task');
@@ -445,6 +446,15 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   // (an empty/no-op confirm shouldn't clutter the log).
   const dispatchedSomethingThisRound = historyKits.length || historyProducts.length;
   if (dispatchedSomethingThisRound) {
+    // This round's billed invoice value, computed on the frontend (buildInvoiceData /
+    // docComposition.js — the same kit/GST-aware composition Billing uses) from the exact
+    // Dispatch Now counts just applied above, so it prices this round at unit rate × the
+    // qty ACTUALLY dispatched now, not the order's full qty. Best-effort — omitted rather
+    // than blocking the confirm if the frontend couldn't compute it (e.g. no invoice linked
+    // yet).
+    const invoiceSubtotal = Number(req.body.invoiceSubtotal);
+    const invoiceGst = Number(req.body.invoiceGst);
+    const invoiceTotal = Number(req.body.invoiceTotal);
     dispatch.dispatchHistory.push({
       date: Date.now(),
       dispatchType: dispatch.dispatchType,
@@ -454,6 +464,9 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
       kits: historyKits,
       products: historyProducts,
       confirmedByName: req.user?.fullName || req.user?.name || '',
+      ...(Number.isFinite(invoiceSubtotal) ? { subtotal: invoiceSubtotal } : {}),
+      ...(Number.isFinite(invoiceGst) ? { gstAmount: invoiceGst } : {}),
+      ...(Number.isFinite(invoiceTotal) ? { total: invoiceTotal } : {}),
     });
   }
 
@@ -510,6 +523,25 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
     await Order.findByIdAndUpdate(orderDoc._id, orderUpdate);
     if (orderDoc.leadId) {
       await Lead.findByIdAndUpdate(orderDoc.leadId, { status: 'Dispatched' });
+    }
+
+    // This is the FINAL round — the order is now fully dispatched, so reconcile the
+    // linked Invoice's stored totals against the full-order figures the frontend just
+    // computed (buildInvoiceData with filterVerified=false — the exact same composition
+    // Billing's own invoice total uses), so the invoice ends up matching Billing for the
+    // whole order regardless of how many partial rounds it was split across. Best-effort:
+    // skip silently if the frontend couldn't provide a figure or no invoice is linked yet.
+    const finalSubtotal = Number(req.body.finalInvoiceSubtotal);
+    const finalGst = Number(req.body.finalInvoiceGst);
+    const finalTotal = Number(req.body.finalInvoiceTotal);
+    if (Number.isFinite(finalTotal) && finalTotal > 0) {
+      const invoiceDoc = await Invoice.findOne({ orderId: orderDoc._id, deletedAt: null }).sort('-invoiceDate');
+      if (invoiceDoc) {
+        if (Number.isFinite(finalSubtotal)) invoiceDoc.subtotal = finalSubtotal;
+        if (Number.isFinite(finalGst)) invoiceDoc.gstAmount = finalGst;
+        invoiceDoc.total = finalTotal;
+        await invoiceDoc.save();
+      }
     }
   }
 

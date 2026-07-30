@@ -23,7 +23,13 @@ export const splitGst = (amount, g) => {
   return { taxable, gst: r2(a - taxable) };
 };
 
-export function computePersonalizedComposition(formData = {}, kitsData = []) {
+// bundleScaleRatio scales every included kit/product's bundled qty down to match how much
+// of the Personalized Kit itself is actually being dispatched THIS round (dispatched-or-
+// pending personalized qty ÷ the order's full personalized qty). Defaults to 1 (no scaling)
+// for Billing/Sales/the full invoice, which always mean the WHOLE order. A component
+// bundled at qty 20 across the order's full 20 personalized kits must show only 15 when
+// just 15 of those kits are shipping in this round (Dispatch's partial-dispatch print).
+export function computePersonalizedComposition(formData = {}, kitsData = [], bundleScaleRatio = 1) {
   const piRaw = formData.packagingIncludes || [];
   let piIds, piQtyMap;
   if (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null) {
@@ -32,6 +38,11 @@ export function computePersonalizedComposition(formData = {}, kitsData = []) {
   } else {
     piIds = piRaw;
     piQtyMap = formData.packagingIncludesQty || {};
+  }
+  if (bundleScaleRatio !== 1) {
+    piQtyMap = Object.fromEntries(
+      Object.entries(piQtyMap).map(([k, v]) => [k, Math.max(0, Math.round((Number(v) || 0) * bundleScaleRatio))])
+    );
   }
 
   const persQty = Number(formData.kitOverallQty) || 1;
@@ -85,7 +96,12 @@ export function computePersonalizedComposition(formData = {}, kitsData = []) {
   const ownKitProdsTotal = ownKitProdsPerPers * persQty;
   const totalPersonalized = r2(pkgTotal + ownKitProdsTotal + inclKitTotal + inclSepTotal);
 
-  const separateKits = kitOrders.map(ko => {
+  // A Personalized kitOrders entry must never appear as its own "Separate Kit" remainder —
+  // some orders end up with the Personalized kit's OWN kitId also listed in
+  // packagingIncludes (self-referencing, a known data glitch), which would otherwise make
+  // this map treat the personalized bundle as if it were a separate kit nested inside
+  // itself and show a phantom leftover row once its overall qty is scaled per-round.
+  const separateKits = kitOrders.filter(ko => (ko?.category || 'separate_kit') !== 'personalized').map(ko => {
     if (!ko || !ko.kitId) return null;
     const kDef = kitsData.find(k => String(k._id) === String(ko.kitId));
     const origQty = Number(ko.overallQty) || 0;
@@ -117,9 +133,9 @@ export function computePersonalizedComposition(formData = {}, kitsData = []) {
 // Section A (Personalized) and only the REMAINING kits/products in Sections B/C.
 // Returns null when there is no personalized-packaging consumption (caller falls back to
 // DocumentTemplate's own kitPrice×qty rendering).
-export function buildDocComposition(rec = {}, kitsData = []) {
+export function buildDocComposition(rec = {}, kitsData = [], bundleScaleRatio = 1) {
   if (!(rec.packagingIncludes || []).length || !kitsData.length) return null;
-  const comp = computePersonalizedComposition(rec, kitsData);
+  const comp = computePersonalizedComposition(rec, kitsData, bundleScaleRatio);
   let taxableSum = 0, gstSum = 0;
   const acc = (amount, g) => { const s = splitGst(amount, g); taxableSum += s.taxable; gstSum += s.gst; };
 

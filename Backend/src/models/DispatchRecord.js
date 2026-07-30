@@ -74,6 +74,13 @@ const dispatchRecordSchema = new mongoose.Schema({
     // history trail keeps showing this round's evidence even after later rounds add more.
     kits: [{ kitName: String, category: String, dispatchedQty: Number, openBoxPhotos: [String], closeBoxPhotos: [String] }],
     products: [{ itemName: String, dispatchedQty: Number, openBoxPhotos: [String], closeBoxPhotos: [String] }],
+    // This round's billed invoice value — unit price × the quantity actually dispatched
+    // THIS round (computed on the frontend via the same kit/GST-aware composition Billing
+    // uses, see docComposition.js), not the order's full amount. Lets each partial delivery
+    // keep its own invoice record instead of only ever knowing the order's final total.
+    subtotal: Number,
+    gstAmount: Number,
+    total: Number,
     confirmedByName: String,
     // Stamped by uploadLR when this round's "Finished Dispatch" (LR/notify) step is
     // done — 'Partial Finished' | 'Fully Finished'. Left unset while the round's

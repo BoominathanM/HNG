@@ -47,9 +47,9 @@ const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // Dispatch-printed invoice total is computed the same way Billing computes its own
 // live total instead of trusting the Invoice document's frozen `total` snapshot, which
 // is what caused the two printed totals to drift apart after an order edit.
-function computeCompositionGrandTotal(rec = {}, kitsData = []) {
+function computeCompositionGrandTotal(rec = {}, kitsData = [], bundleScaleRatio = 1) {
   if ((rec.packagingIncludes || []).length > 0 && kitsData.length > 0) {
-    const comp = computePersonalizedComposition(rec, kitsData);
+    const comp = computePersonalizedComposition(rec, kitsData, bundleScaleRatio);
     const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
     const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const roundOffTotal = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
@@ -224,34 +224,123 @@ export default function DispatchDetail() {
     const productDispatchNowByItemId = new Map(
       (products || []).filter((p) => p.type === 'product' && p.itemId).map((p) => [String(p.itemId), dispatchNowCounts[p.key] || 0])
     );
+    // Confirmed-so-far (previous rounds) PLUS this round's not-yet-confirmed "Dispatch Now"
+    // entry — not an either/or choice between the two. A kit already partially confirmed in
+    // an earlier round (e.g. 3 of 10) with a NEW count entered for this round (e.g. 2 more)
+    // must resolve to 5, not silently drop the 2 just because something was already
+    // confirmed — that under-count is what made the invoice preview (and, below, the
+    // per-round invoice snapshot) ignore whatever was typed for a second/third partial round.
     const dispatchedOrPendingQtyForKit = (kitId) => {
       const kd = kitId ? kitDispatchByKitId.get(String(kitId)) : null;
       const confirmed = kd?.dispatchedQty || 0;
-      return confirmed > 0 ? confirmed : (kitDispatchNowByKitId.get(String(kitId)) || 0);
+      return confirmed + (kitDispatchNowByKitId.get(String(kitId)) || 0);
     };
     const isKitDispatched = (kitId) => dispatchedOrPendingQtyForKit(kitId) > 0;
+    // Same confirmed + pending resolution as dispatchedOrPendingQtyForKit above, but for a
+    // single (non-kit) DispatchRecord item.
+    const dispatchedOrPendingQtyForItem = (it) => {
+      if (!it) return 0;
+      const confirmed = it.qtyDispatched || 0;
+      return confirmed + (productDispatchNowByItemId.get(String(it._id)) || 0);
+    };
+
+    // Name-keyed lookup of DispatchRecord.items (order.items) → its own dispatched-qty
+    // tracking. `srcProds` prefers Order.products, while order.items is seeded from
+    // Order.items (see forwardOrderToDispatch) — two INDEPENDENTLY built arrays that are
+    // NOT guaranteed to share the same length or ordering (Order.items is remapped from
+    // req.body.items/products at conversion time, Order.products is copied as-is), so a
+    // product's dispatched state must be resolved by identity (kit id, or product name)
+    // rather than by matching array position — matching by index silently paired the
+    // wrong dispatched flag to the wrong product whenever the two arrays diverged, which
+    // is what dropped an entire category (kit or product) from the dispatched-only
+    // invoice and skewed the per-kit rate/GST split for whichever rows survived by mistake.
+    const dispatchItemsList = order?.items || [];
+    const dispatchItemByName = new Map(
+      dispatchItemsList
+        .map((it, i) => {
+          const fallback = (order?.orderRawItems || [])[i] || {};
+          const nm = (it.product || it.itemName || fallback.product || fallback.itemName || fallback.name || '').toLowerCase();
+          return [nm, it];
+        })
+        .filter(([nm]) => nm)
+    );
+    const isNamedItemDispatched = (nm) => dispatchedOrPendingQtyForItem(dispatchItemByName.get(String(nm || '').toLowerCase())) > 0;
+
+    // Personalized kit's own kitOrders entry (if any). Needed both to resolve its own
+    // dispatched-or-pending qty AND to know which kit/product ids are referenced in
+    // packagingIncludes (bundled INSIDE the personalized kit's box) — those bundled rows
+    // have NO independent Dispatch Now tracking of their own (dispatchGrouping.js folds
+    // them into the personalized kit's children, never giving them their own header/row),
+    // so their dispatched status has to follow the PERSONALIZED kit's own progress instead
+    // of a (nonexistent) independent kitDispatch/qtyDispatched entry for themselves.
+    // Same legacy-field gap as the Emergency Order banner (order.kitOverallQty is 0 for
+    // orders saved with kitOrders instead of the old single-kit field) — prefer the
+    // personalized kitOrders entry's own overallQty before falling back.
+    const personalizedKo = (linkedOrder?.kitOrders || []).find((ko) => ko && (ko.category || 'separate_kit') === 'personalized');
+    const fullPersQty = Number(personalizedKo?.overallQty) || Number(linkedOrder?.kitOverallQty) || 0;
+    const isPersonalizedDispatched = isKitDispatched(personalizedKo?.kitId);
+    const includedIdSet = new Set((() => {
+      const piRaw = linkedOrder?.packagingIncludes || [];
+      return (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null)
+        ? piRaw.map((p) => String(p.id))
+        : piRaw.map((id) => String(id));
+    })());
+
+    // How much of the Personalized Kit itself is actually being dispatched this round vs
+    // the order's full personalized count — everything bundled inside it (kits AND
+    // standalone products referenced in packagingIncludes) scales down by this same ratio.
+    // e.g. 15 of the order's 20 personalized kits shipping now means only 15 (not the full
+    // 20) of whatever's bundled inside each one goes out with them.
+    const scaledPersQty = filterVerified ? dispatchedOrPendingQtyForKit(personalizedKo?.kitId) : fullPersQty;
+    const bundleScaleRatio = filterVerified && fullPersQty > 0 ? (scaledPersQty / fullPersQty) : 1;
+    const scaleByBundleRatio = (q) => Math.max(0, Math.round((Number(q) || 0) * bundleScaleRatio));
 
     if (filterVerified) {
-      // dispatch items (order.items) line up positionally with the order's own
-      // products/items array — same fallback convention dispatchGrouping.js and the
-      // emergency-badge lookup below already rely on — so "actually dispatched" state at
-      // index i applies to srcProds[i]. Kit-linked items are dispatched as one unit via
-      // kitDispatch (dispatchedQty > 0 for that kit); plain items use their own qtyDispatched,
-      // falling back to this round's pending Dispatch Now count for either.
-      const dispatchItemsList = order?.items || [];
-      const dispatchedIndexSet = new Set(
-        dispatchItemsList
-          .map((it, i) => {
-            if (!it?._id) return -1;
-            const isDispatched = it.kitId
-              ? isKitDispatched(it.kitId)
-              : (it.qtyDispatched || 0) > 0 || (productDispatchNowByItemId.get(String(it._id)) || 0) > 0;
-            return isDispatched ? i : -1;
-          })
-          .filter((i) => i >= 0)
-      );
-      const filteredProds = srcProds.filter((_, i) => dispatchedIndexSet.has(i));
-      srcKitOrders = srcKitOrders.filter((ko) => !ko.kitId || filteredProds.some((p) => String(p.kitId) === String(ko.kitId)));
+      // A row bundled inside the Personalized Kit (its id/name is listed in
+      // packagingIncludes) rides on the PERSONALIZED kit's own dispatch status when it has
+      // no independent tracking of its own; it's also kept if it DOES have independent
+      // progress (kitDispatch for a kit, qtyDispatched/Dispatch Now for a standalone item).
+      const isProductDispatched = (p) => {
+        const nm = p.name || p.itemName || '';
+        const ownDispatched = p.kitId ? isKitDispatched(p.kitId) : isNamedItemDispatched(nm);
+        const bundled = (p.kitId && includedIdSet.has(String(p.kitId))) || (nm && includedIdSet.has(nm));
+        return ownDispatched || (bundled && isPersonalizedDispatched);
+      };
+      // A partial dispatch must bill only the qty actually going out THIS round, not the
+      // order's full qty — e.g. a Separate Kit ordered at 10 units with "Dispatch Now" = 5
+      // must price at unit rate × 5, the same way the Personalized kit's own overall qty
+      // is already scaled via effectiveKitOverallQty below (mirrors Billing's per-unit rate,
+      // just against the dispatched count instead of the full order count).
+      const filteredProds = srcProds.filter(isProductDispatched).map((p) => {
+        // Kit COMPONENT rows (p.kitId set) carry a PER-KIT quantity, not a total — scaling
+        // the kit CONTAINER's overallQty below already scales their displayed total qty.
+        if (p.kitId) return p;
+        const nm = p.name || p.itemName || '';
+        const ownDispatchQty = dispatchedOrPendingQtyForItem(dispatchItemByName.get(nm.toLowerCase()));
+        if (ownDispatchQty > 0) return { ...p, qty: ownDispatchQty };
+        // No independent dispatch tracking of its own (fully bundled into the Personalized
+        // Kit) — scale its base qty by the same ratio as the bundled/consumed count below,
+        // so a partial personalized round doesn't leave a phantom "remaining" balance.
+        if (nm && includedIdSet.has(nm) && bundleScaleRatio !== 1) return { ...p, qty: scaleByBundleRatio(p.qty) };
+        return p;
+      });
+      srcKitOrders = srcKitOrders
+        .filter((ko) => {
+          if (!ko.kitId) return true;
+          const bundled = includedIdSet.has(String(ko.kitId));
+          return isKitDispatched(ko.kitId) || (bundled && isPersonalizedDispatched);
+        })
+        .map((ko) => {
+          // The Personalized bundle's own count is scaled separately via
+          // effectiveKitOverallQty just below — leave its kitOrders entry untouched here.
+          if (!ko.kitId || (ko.category || 'separate_kit') === 'personalized') return ko;
+          const ownDispatchQty = dispatchedOrPendingQtyForKit(ko.kitId);
+          if (ownDispatchQty > 0) return { ...ko, overallQty: ownDispatchQty };
+          if (includedIdSet.has(String(ko.kitId)) && bundleScaleRatio !== 1) {
+            return { ...ko, overallQty: scaleByBundleRatio(ko.overallQty) };
+          }
+          return ko;
+        });
       srcProds = filteredProds;
     }
 
@@ -260,30 +349,13 @@ export default function DispatchDetail() {
     // DIRECTLY — independent of the products/kitOrders arrays just filtered above — so without
     // scaling these too, the dispatched-only invoice kept showing the FULL personalized-kit qty
     // (and everything packed inside it) even when only part (or none) of it had been dispatched.
-    // Same legacy-field gap as the Emergency Order banner (order.kitOverallQty is 0 for
-    // orders saved with kitOrders instead of the old single-kit field) — prefer the
-    // personalized kitOrders entry's own overallQty before falling back.
-    const personalizedKoDefault = (linkedOrder?.kitOrders || []).find((ko) => ko && ko.category === 'personalized');
-    let effectiveKitOverallQty = Number(personalizedKoDefault?.overallQty) || Number(linkedOrder?.kitOverallQty) || 0;
+    let effectiveKitOverallQty = scaledPersQty;
     let effectivePackagingIncludes = linkedOrder?.packagingIncludes || [];
     if (filterVerified) {
-      const personalizedKo = (linkedOrder?.kitOrders || []).find((ko) => (ko.category || 'separate_kit') === 'personalized');
-      effectiveKitOverallQty = dispatchedOrPendingQtyForKit(personalizedKo?.kitId);
-
-      // Name lookup for included SEPARATE PRODUCTS (packagingIncludes can reference a
-      // product name, not just a kit id) — same positional fallback as the item filter above.
-      const itemByLowerName = new Map(
-        (order?.items || []).map((it, i) => {
-          const fallback = (order?.orderRawItems || [])[i] || {};
-          const nm = (it.product || it.itemName || fallback.product || fallback.itemName || fallback.name || '').toLowerCase();
-          return [nm, it];
-        })
-      );
-      const isIncludedTargetDispatched = (idOrName) => {
-        if (isKitDispatched(idOrName)) return true;
-        const it = itemByLowerName.get(String(idOrName || '').toLowerCase());
-        return (it?.qtyDispatched || 0) > 0 || (productDispatchNowByItemId.get(String(it?._id)) || 0) > 0;
-      };
+      // packagingIncludes can reference either a kit id or a (separate) product name — any
+      // id/name listed here rides on the Personalized kit's own dispatch status (it has no
+      // independent tracking of its own once bundled), same as isProductDispatched above.
+      const isIncludedTargetDispatched = (idOrName) => isKitDispatched(idOrName) || isNamedItemDispatched(idOrName) || isPersonalizedDispatched;
       const piRaw = linkedOrder?.packagingIncludes || [];
       effectivePackagingIncludes = (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null)
         ? piRaw.filter((p) => isIncludedTargetDispatched(p.id))
@@ -307,13 +379,16 @@ export default function DispatchDetail() {
     // Pre-built personalized composition (outer packaging folded into Section A's total,
     // included kits/products broken out, remaining in B/C) so the printed invoice matches the
     // Billing invoice exactly. Null when there is no personalized packaging → flat fallback.
-    const composition = buildDocComposition(compositionRec, kits);
+    // bundleScaleRatio proportionally scales every bundled kit/product's consumed qty to
+    // match how much of the Personalized Kit is actually going out this round (1 = no
+    // scaling, e.g. for the Print Full Invoice / Billing's own always-full-order total).
+    const composition = buildDocComposition(compositionRec, kits, bundleScaleRatio);
     // Live kit-aware grand total for this exact item set — mirrors Billing's own total
     // calculation instead of trusting Invoice.total, which is frozen at invoice-creation
     // time and drifts once kit prices are edited or (for the dispatched-only print) once
     // only a subset of the order's items are actually going out. Falls back to the stored
     // invoice total only when there's no product/kit data to compute from at all.
-    const liveTotal = computeCompositionGrandTotal(compositionRec, kits);
+    const liveTotal = computeCompositionGrandTotal(compositionRec, kits, bundleScaleRatio);
 
     const customerName = inv.partyId?.name || order?.client || '—';
     const pendingDue = await fetchHotelPendingDue({
@@ -848,6 +923,25 @@ export default function DispatchDetail() {
       const rawInvoices = orderInvoicesData?.data || [];
       const linkedInvoice = rawInvoices[0];
 
+      // This round's billed invoice value — unit rate × the qty actually being dispatched
+      // NOW (the same kit/GST-aware composition Print Invoice uses), computed here so the
+      // backend can store it on the DispatchRecord.dispatchHistory entry it's about to
+      // create for this round, instead of only ever knowing the order's final total. When
+      // this round completes the order, also compute the FULL (unfiltered) order total so
+      // the backend can reconcile the linked Invoice's stored total to match Billing exactly.
+      let roundInvoiceSnapshot = null;
+      let finalInvoiceSnapshot = null;
+      if (linkedInvoice) {
+        try {
+          roundInvoiceSnapshot = await buildInvoiceData(linkedInvoice, true);
+          if (willFullyComplete) {
+            finalInvoiceSnapshot = await buildInvoiceData(linkedInvoice, false);
+          }
+        } catch {
+          // Best-effort — a snapshot failure must not block the confirm itself.
+        }
+      }
+
       // WhatsApp checkbox is on: the "Dispatch Notify" template requires a document
       // header, so generate the Billing invoice as a PDF and upload it first — the
       // resulting URL rides along on the confirm request as invoiceDocumentUrl.
@@ -895,6 +989,16 @@ export default function DispatchDetail() {
       // lives in local state and reverts to the original amount on reload.
       if (order.forwardingCharge) formData.append('forwardingChargeAmount', effectiveFwdAmount);
       if (linkedInvoice?.invoiceDate) formData.append('invoiceDate', new Date(linkedInvoice.invoiceDate).toISOString().slice(0, 10));
+      if (roundInvoiceSnapshot) {
+        formData.append('invoiceSubtotal', roundInvoiceSnapshot.taxableAmount || 0);
+        formData.append('invoiceGst', roundInvoiceSnapshot.gst || 0);
+        formData.append('invoiceTotal', roundInvoiceSnapshot.total || 0);
+      }
+      if (finalInvoiceSnapshot) {
+        formData.append('finalInvoiceSubtotal', finalInvoiceSnapshot.taxableAmount || 0);
+        formData.append('finalInvoiceGst', finalInvoiceSnapshot.gst || 0);
+        formData.append('finalInvoiceTotal', finalInvoiceSnapshot.total || 0);
+      }
       // Backend reads sendWhatsapp (FormData sends it as a string) — single checkbox now
       // governs whether the "Dispatch Notify" WhatsApp message goes out. It only actually
       // sends when an invoice document URL was successfully prepared above.
