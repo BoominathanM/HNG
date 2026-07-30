@@ -1532,9 +1532,15 @@ export default function Operations() {
       const typeKey = type === 'Box' ? 'box' : type === 'Butter Paper' ? 'butter' : 'frosted';
       const orderMap = new Map();
       activeRows.forEach((row) => {
-        // Group by order AND composition category, so a Separate Kit group and the Personalized
-        // (outer-packing) group of the SAME order render as TWO distinct kit blocks in this tab.
-        const gkey = `${row.orderId}|${row.category || ''}`;
+        // Group by order, composition category, AND which specific kit (kitId, falling back to
+        // kitName for legacy rows without one) — so a Separate Kit group and the Personalized
+        // (outer-packing) group of the SAME order render as distinct kit blocks in this tab, AND
+        // two DIFFERENT kits sharing the same category+tab (e.g. two Separate Kits both routed to
+        // Box) get their OWN parent row/approval instead of merging into one shared one. Without
+        // the kit identity segment, sending a single kit's design for approval silently covered
+        // every other same-category kit in the order too (whichever kit's name `group[0]` happened
+        // to be), since they'd all collapse into one 'kit parent' row sharing one StickerRequest.
+        const gkey = `${row.orderId}|${row.category || ''}|${row.kitId || row.kitName || ''}`;
         if (!orderMap.has(gkey)) orderMap.set(gkey, []);
         orderMap.get(gkey).push(row);
       });
@@ -1568,10 +1574,17 @@ export default function Operations() {
           });
         } else {
           // Kit assembly: one shared parent row (display unit upload) with per-product children.
-          // Key suffix must end in -box/-frosted so findStickerReq detects the right SR type.
+          // Key suffix must still literally END in -box/-frosted/-butter — several spots in this
+          // file (findStickerReq and the design/print onClick handlers) match on
+          // item.key?.endsWith('-box') etc. — so the kit identity segment goes
+          // BEFORE the '-kit-<type>' tail, not after, so that suffix check keeps working. It
+          // keeps two different kits sharing this category+tab from colliding on the same
+          // React key / parent row (and, more importantly, from colliding in downstream
+          // per-key step/queue tracking that would otherwise treat them as the same row).
           const first = group[0];
+          const kitIdentity = first.kitId || first.kitName || '';
           tableSource.push({
-            key: `${orderId}-${first.category || 'kit'}-kit-${typeKey}`,
+            key: `${orderId}-${first.category || 'kit'}${kitIdentity ? `-${kitIdentity}` : ''}-kit-${typeKey}`,
             orderId,
             orderCategory: first.orderCategory,
             hotelLogo: first.hotelLogo,
@@ -1585,14 +1598,18 @@ export default function Operations() {
               // Show kit assembly count, not the sum of per-product quantities inside the kit.
               // Personalized outer packing step: use the top-level kit count directly.
               if (cat === 'personalized' && order?.kitOverallQty) return Number(order.kitOverallQty);
-              // Separate kits (dental/shaving/bath/etc.): sum overallQty of kitOrders routing to this tab.
+              // Separate kits (dental/shaving/bath/etc.): sum overallQty of kitOrders routing to
+              // this tab AND belonging to THIS specific kit — without the kitId/kitName filter,
+              // two different kits sharing a tab would each report the OTHER kit's qty added in.
               const kos = order?.kitOrders || [];
               if (kos.length) {
                 const tabLabel = typeKey === 'box' ? 'Box' : typeKey === 'frosted' ? 'Ziplock' : 'Butter Paper';
                 const matching = kos.filter((ko) => {
                   const du = ko.displayUnit || '';
                   const tab = displayUnitTabMap[du] || packTabFromString(du);
-                  return tab === tabLabel;
+                  if (tab !== tabLabel) return false;
+                  if (!kitIdentity) return true;
+                  return String(ko.kitId || '') === String(first.kitId || '') || (ko.kitName || '') === (first.kitName || '');
                 });
                 if (matching.length) return matching.reduce((s, ko) => s + (Number(ko.overallQty) || 0), 0);
               }
@@ -1601,6 +1618,8 @@ export default function Operations() {
             })(),
             product: 'Kit',
             category: first.category,
+            kitId: first.kitId || '',
+            kitName: first.kitName || '',
             size: order?.kitSize || null,
             stickerPrinting: first.stickerPrinting,
             packagingType: first.packagingType,

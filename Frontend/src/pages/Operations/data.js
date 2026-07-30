@@ -647,6 +647,12 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           logoRequired: order.logoRequired || false,
           logoUrl: order.logoUrl || '',
           isKit: isKitItem,
+          // Which SPECIFIC kit this row belongs to (Dental Kit vs Shaving Kit, say) — without
+          // this, two different kits of the same category sharing this tab were indistinguishable
+          // to the grouping/gkey logic below, which merged them into ONE shared "kit parent" row
+          // (one shared design/print approval) instead of one each.
+          kitId: item.kitId || '',
+          kitName: item.kitName || item.kitType || '',
           displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
           displayUnitType: item.displayUnitType || '',
           lamination: item.lamination || '',
@@ -752,6 +758,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           logoRequired: order.logoRequired || false,
           logoUrl: order.logoUrl || '',
           isKit: isKitItem,
+          // See makeBoxRow's comment — which specific kit this row belongs to.
+          kitId: item.kitId || '',
+          kitName: item.kitName || item.kitType || '',
           displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
           displayUnitType: item.displayUnitType || '',
           sticker: item.sticker || '',
@@ -850,6 +859,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           logoRequired: order.logoRequired || false,
           logoUrl: order.logoUrl || '',
           isKit: isKitItem,
+          // See makeBoxRow's comment — which specific kit this row belongs to.
+          kitId: item.kitId || '',
+          kitName: item.kitName || item.kitType || '',
           displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
           displayUnitType: item.displayUnitType || '',
           sticker: item.sticker || '',

@@ -162,7 +162,12 @@ function deriveKitGroups(order) {
         kitItems2 = groupItems.map((p) => ({ ...p, id: p.itemName || p.kitType || p.name || '', perKitQty: Number(p.qty) || 1 }));
       }
       const kitIncludes = kitItems2.map((p) => ({ id: p.id || p.itemName || p.name || '', qty: p.perKitQty || 1 }));
-      return { key: gKey, kitName: it.kitName || it.kitType || 'Separate Kit', kitId: it.kitId || '', kitIncludes, kitItems: kitItems2, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' };
+      // Kit-level (not per-component) Sticker/Printing — the OUTER Display Unit wrap's own
+      // flags, sourced from order.kitOrders (Sales' "Per-Kit Order Details" card), used by
+      // kitPrintGate to decide whether this kit's own outer packaging needs a print gate at
+      // all. Deliberately NOT falling back to any single component's own it.sticker/it.printing
+      // — those are a different, per-product concept (see kitPrintGate's comment).
+      return { key: gKey, kitName: it.kitName || it.kitType || 'Separate Kit', kitId: it.kitId || '', kitIncludes, kitItems: kitItems2, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '', sticker: ko?.sticker || order.kitSticker || '', printing: ko?.printing || order.kitPrinting || '' };
     });
   })();
 
@@ -178,7 +183,7 @@ function deriveKitGroups(order) {
         const perKitQty = kitCount > 0 ? Math.max(1, Math.round(totalQty / kitCount)) : totalQty;
         return { ...it, id: it.itemName || it.name || '', perKitQty };
       });
-      return [{ key: 'personalized', kitName: outerDU || 'Personalized Kit', kitIncludes: kitItems.map((p) => ({ id: p.id, qty: p.perKitQty })), kitItems, overallQty: kitCount, displayUnit: outerDU }];
+      return [{ key: 'personalized', kitName: outerDU || 'Personalized Kit', kitIncludes: kitItems.map((p) => ({ id: p.id, qty: p.perKitQty })), kitItems, overallQty: kitCount, displayUnit: outerDU, sticker: order.kitSticker || '', printing: order.kitPrinting || '' }];
     }
     // Same grouping fix as separateKitGroups above — group sibling isKit:true rows
     // (Brush, Paste, …) sharing the same kit identity, instead of dropping all but the
@@ -217,7 +222,8 @@ function deriveKitGroups(order) {
         kitItems = groupItems.map((p) => ({ ...p, id: p.itemName || p.kitType || p.name || '', perKitQty: Number(p.qty) || 1 }));
       }
       const kitIncludes = kitItems.map((p) => ({ id: p.id, qty: p.perKitQty || 1 }));
-      return { key: gKey, kitName: it.kitName || it.kitType || 'Personalized Kit', kitId: it.kitId || '', kitIncludes, kitItems, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '' };
+      // See separateKitGroups' comment above — kit-level Sticker/Printing, not per-component.
+      return { key: gKey, kitName: it.kitName || it.kitType || 'Personalized Kit', kitId: it.kitId || '', kitIncludes, kitItems, overallQty, displayUnit: it.displayUnit || ko?.displayUnit || '', sticker: ko?.sticker || order.kitSticker || '', printing: ko?.printing || order.kitPrinting || '' };
     });
   })();
 
@@ -251,6 +257,19 @@ function resolveKitEmergencyQty(orderDoc, category, kg) {
   return 0;
 }
 
+// Statuses that count as "printing done" — same enum/wording Order.items[].printingStatus and
+// Operations' own Printing Status column already use (Yet to Receive/Received/Closed).
+const KIT_DU_READY_STATUSES = ['Received', 'Closed'];
+
+// Stable key for a kit GROUP's own outer packaging (Display Unit), used to store/read its
+// printing status on order.printingStatusOverrides — same Map + same updateItemPrintingStatus
+// endpoint every per-component printing status already round-trips through (see
+// Backend/src/modules/operations/operations.controller.js updateItemPrintingStatus's
+// by-product-name fallback), just keyed by a synthetic 'kitdu:<kitId>' product name instead of
+// a real item name so it can never collide with an actual product. Mirrored in
+// Operations/OperationDetail.jsx so either page can read/set the exact same value.
+const kitDisplayUnitKey = (kg) => `kitdu:${String(kg.key || kg.kitId || kg.kitName || '').trim().toLowerCase()}`;
+
 // Whether a Kit Packing group's own display-unit printing/sticker step has cleared — mirrors
 // the per-product printGateBlocked gate below (Operations' Printing Status column, driven by
 // the vendor's Box/Ziplock/Butter Paper/Sticker queue), applied to the kit as a whole: every
@@ -261,11 +280,30 @@ function resolveKitEmergencyQty(orderDoc, category, kg) {
 // own suggestion clears (its task is Done, or computeSuggestedTasks now recognizes the kit's
 // OWN packing task as covering it), there's no matching entry left to block on, which correctly
 // reads as ready — the print gate only matters before the kit is packed anyway.
-function kitPrintGate(kg, orderCode, suggestedList) {
+//
+// ALSO checks the kit's OWN outer Display Unit first — a Box/Ziplock/Butter Paper/Sticker wrap
+// around the whole kit (the "Kit Details"/"Per-Kit Order Details" Display Unit/Sticker/Logo/
+// Printing card in Sales), which is DISTINCT from any single component's own packaging and was
+// never checked here at all before — a kit's task could be assigned the moment every component
+// cleared even though the kit's own outer wrap hadn't been printed/received yet. Tracked with
+// the exact same Received/Closed printing-status mechanism as a component (see
+// kitDisplayUnitKey), not a separate approval flow, so it can actually be cleared from the
+// Kit Packing card's own status control below. Only gates when the kit's own Sticker or
+// Printing flag is Yes (kg.sticker/kg.printing, sourced from order.kitOrders) — a kit with
+// neither has nothing to print and needs no gate, same as a component's needsOwnPrintGate.
+function kitPrintGate(kg, orderDoc, suggestedList) {
+  const kduNeeded = String(kg.sticker || '').toUpperCase() === 'YES' || String(kg.printing || '').toUpperCase() === 'YES';
+  if (kduNeeded) {
+    const overrides = orderDoc?.printingStatusOverrides || {};
+    const kduStatus = overrides[kitDisplayUnitKey(kg)] || '';
+    if (!KIT_DU_READY_STATUSES.includes(kduStatus)) {
+      return { blocked: true, displayUnit: true, status: kduStatus || 'Yet to Receive' };
+    }
+  }
   for (const p of kg.kitItems || []) {
     const pname = (p.itemName || p.name || p.id || '').toLowerCase();
     if (!pname) continue;
-    const s = suggestedList.find((x) => x.orderCode === orderCode && (x.product || '').toLowerCase() === pname);
+    const s = suggestedList.find((x) => x.orderCode === orderDoc?.orderCode && (x.product || '').toLowerCase() === pname);
     if (s && s.stickerPrintingReady === false) {
       return { blocked: true, product: p.itemName || p.name || p.id, status: s.itemPrintingStatus };
     }
@@ -1506,6 +1544,9 @@ export default function Tasks() {
                             + multi-assignee task assignment, mirroring Operations (OperationDetail.jsx). */}
                         {(() => {
                           const orderIdForGroup = items[0]?.orderId;
+                          // Printing status (including the kit's own Display Unit — see kitPrintGate)
+                          // is edited only from Operations' Product Specifications table, same as any
+                          // other product; this page just reads whatever ordersList already has.
                           const orderDoc = ordersList.find((o) => String(o._id) === String(orderIdForGroup));
                           const { separateKitGroups, personalizedKitGroups } = deriveKitGroups(orderDoc);
                           if (separateKitGroups.length === 0 && personalizedKitGroups.length === 0) return null;
@@ -1531,7 +1572,7 @@ export default function Tasks() {
                             >
                               <Space direction="vertical" size={14} style={{ width: '100%' }}>
                                 {separateKitGroups.map((kg) => {
-                                  const printGate = kitPrintGate(kg, orderDoc?.orderCode, suggestedList);
+                                  const printGate = kitPrintGate(kg, orderDoc, suggestedList);
                                   return (
                                   <div
                                     key={kg.key}
@@ -1565,7 +1606,9 @@ export default function Tasks() {
                                         <Alert
                                           type="error"
                                           showIcon
-                                          message={`Blocked — ${printGate.product}'s Printing Status is "${printGate.status || 'not set'}". Needs Received/Closed before this kit can be packed.`}
+                                          message={printGate.displayUnit
+                                            ? `Blocked — Kit's own Display Unit Printing Status is "${printGate.status}". Set it to Received/Closed on the order's Product Specifications table in Operations before this kit can be packed.`
+                                            : `Blocked — ${printGate.product}'s Printing Status is "${printGate.status || 'not set'}". Needs Received/Closed before this kit can be packed.`}
                                           style={{ borderRadius: 8, fontSize: 12 }}
                                         />
                                       )}
@@ -1594,7 +1637,7 @@ export default function Tasks() {
 
                                 {personalizedKitGroups.map((kg) => {
                                   const separateDone = separateKitGroups.length === 0 || separateAllDone;
-                                  const printGate = kitPrintGate(kg, orderDoc?.orderCode, suggestedList);
+                                  const printGate = kitPrintGate(kg, orderDoc, suggestedList);
                                   return (
                                     <div
                                       key={kg.key}
@@ -1641,7 +1684,9 @@ export default function Tasks() {
                                           <Alert
                                             type="error"
                                             showIcon
-                                            message={`Blocked — ${printGate.product}'s Printing Status is "${printGate.status || 'not set'}". Needs Received/Closed before this kit can be packed.`}
+                                            message={printGate.displayUnit
+                                              ? `Blocked — Kit's own Display Unit Printing Status is "${printGate.status}". Set it to Received/Closed on the order's Product Specifications table in Operations before this kit can be packed.`
+                                              : `Blocked — ${printGate.product}'s Printing Status is "${printGate.status || 'not set'}". Needs Received/Closed before this kit can be packed.`}
                                             style={{ borderRadius: 8, fontSize: 12 }}
                                           />
                                         )}
