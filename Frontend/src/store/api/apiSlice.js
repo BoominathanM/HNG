@@ -874,7 +874,11 @@ export const apiSlice = createApi({
         method: 'patch',
         data: { printingStatus, product },
       }),
-      invalidatesTags: ['Operations'],
+      // Task Management's Today's Checklist reads order data via 'Orders' (useGetSalesOrdersQuery)
+      // and per-item printing readiness via 'Tasks'/'SuggestedTasks' (useGetSuggestedTasksQuery) —
+      // both must be busted here too, or kitPrintGate/checklist gating keeps evaluating stale data
+      // after Operations sets a kit's/product's printing status to Received/Closed.
+      invalidatesTags: ['Operations', 'Orders', 'Tasks', 'SuggestedTasks'],
     }),
     splitPartialDelivery: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/operations/orders/${id}/partial-split`, method: 'post', data }),

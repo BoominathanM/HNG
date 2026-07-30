@@ -801,13 +801,21 @@ exports.createDirectOrder = asyncHandler(async (req, res) => {
 // (Task Management's dispatch gating, Sales' lead-exclusion filters, Operations, etc).
 async function attachDispatchStage(orders) {
   const ids = orders.map((o) => o._id).filter(Boolean);
-  if (!ids.length) return orders.map((o) => (o.toObject ? o.toObject() : o));
+  // { flattenMaps: true } is required here — Order.printingStatusOverrides is a Mongoose Map,
+  // and toObject() without this option leaves it as a real Map instance. JSON.stringify (what
+  // res.json() uses to send the response) silently serializes a bare Map to `{}`, so every
+  // order returned by getOrders/getOrder always looked like it had NO printing-status
+  // overrides regardless of what was actually saved — breaking Task Management's Today's
+  // Checklist kit-display-unit print gate (which reads this exact field), while
+  // Operations stayed correct only because operations.controller.js queries with .lean()
+  // (which never wraps Map fields in the Mongoose class in the first place).
+  if (!ids.length) return orders.map((o) => (o.toObject ? o.toObject({ flattenMaps: true }) : o));
   const dispatches = await DispatchRecord.find({ orderId: { $in: ids } })
     .select('orderId dispatchType')
     .lean();
   const stageByOrder = new Map(dispatches.map((d) => [String(d.orderId), d.dispatchType]));
   return orders.map((o) => {
-    const obj = o.toObject ? o.toObject() : o;
+    const obj = o.toObject ? o.toObject({ flattenMaps: true }) : o;
     obj.dispatchStage = stageByOrder.get(String(o._id)) === 'Partial Dispatch' ? 'Partial Dispatch' : null;
     return obj;
   });

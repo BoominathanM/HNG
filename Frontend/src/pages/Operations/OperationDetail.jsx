@@ -108,35 +108,16 @@ const KIT_DU_READY_STATUSES = ['Received', 'Closed'];
 // order.printingStatusOverrides entry regardless of which one an ops user has open.
 const kitDisplayUnitKey = (kg) => `kitdu:${String(kg.key || kg.kitId || kg.kitName || '').trim().toLowerCase()}`;
 
-// Whether a Kit Packing group's own display-unit printing/sticker step has cleared — mirrors
-// Tasks/index.jsx's kitPrintGate (Today's Checklist), ported here so this page's Kit Packing
-// Task Assignment card can't be used to bypass the same restriction: every component of the
-// kit that itself needs a print/sticker gate (Backend's computeSuggestedTasks) must reach
-// Received/Closed before the physical kit can be packed. Without this, Assign Separate/
-// Personalized Kit Task here was never blocked at all, regardless of printing status.
-//
-// ALSO checks the kit's OWN outer Display Unit first (see kitDisplayUnitKey) — distinct from
-// any single component's own packaging, tracked with the same Received/Closed printing-status
-// mechanism via a synthetic 'kitdu:<kitId>' entry on order.printingStatusOverrides, editable
-// from the status control on this card (see printingStatusValues usage below). Only gates when
-// the kit's own Sticker or Printing flag is Yes (kg.sticker/kg.printing).
-function kitPrintGate(kg, orderDoc, suggestedList) {
-  const kduNeeded = String(kg.sticker || '').toUpperCase() === 'YES' || String(kg.printing || '').toUpperCase() === 'YES';
-  if (kduNeeded) {
-    const overrides = orderDoc?.printingStatusOverrides || {};
-    const kduStatus = overrides[kitDisplayUnitKey(kg)] || '';
-    if (!KIT_DU_READY_STATUSES.includes(kduStatus)) {
-      return { blocked: true, displayUnit: true, status: kduStatus || 'Yet to Receive' };
-    }
-  }
-  for (const p of kg.kitItems || []) {
-    const pname = (p.itemName || p.name || p.id || '').toLowerCase();
-    if (!pname) continue;
-    const s = suggestedList.find((x) => x.orderCode === orderDoc?.id && (x.product || '').toLowerCase() === pname);
-    if (s && s.stickerPrintingReady === false) {
-      return { blocked: true, product: p.itemName || p.name || p.id, status: s.itemPrintingStatus };
-    }
-  }
+// Printing-status gate for Kit Packing Task Assignment — DISABLED BY REQUEST (2026-07-30):
+// the user found this restriction too disruptive across multi-kit orders (needing every
+// component AND the kit's own outer Display Unit at Received/Closed before Assign Separate/
+// Personalized/Kit Assembly Task would even enable) and asked for it removed entirely, with
+// no replacement gate. Kept as a function (rather than deleting every call site) so nothing
+// else in this file needs to change — every caller still gets a `{ blocked, ... }` shape, it
+// just always reports not-blocked now. `kitDisplayUnitKey`/`KIT_DU_READY_STATUSES` above and
+// the "Kit's Display Unit Printing Status" controls on each card are left in place (still
+// useful as a status TRACKER), they just no longer disable anything.
+function kitPrintGate() {
   return { blocked: false };
 }
 
@@ -243,22 +224,23 @@ export default function OperationDetail() {
     () => productTasks.length > 0 && productTasks.every((t) => t.status === 'Done'),
     [productTasks]
   );
-  const separateKitPackingTask = useMemo(
-    () => (orderTasksData?.data || []).find((t) => t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') || null,
-    [orderTasksData]
+  // Separate Kit Packing / Personalized Kit Packing tasks carry no kitId of their own — the
+  // only field identifying WHICH kit a task belongs to is `product` (set to the kit group's
+  // own kitName at creation, see submitKitPackingTask below). An order-WIDE lookup (matching
+  // only on taskType) would let one kit's task/Done-status bleed onto every sibling kit's
+  // card — e.g. Dental Kit's assigned task making Shaving Kit's card also show "Add Another
+  // Task"/Done even though Shaving Kit has no task of its own yet. Single-kit orders never
+  // exposed this (there was only ever one possible match); it surfaces once an order has more
+  // than one genuine Separate Kit (or kit-assembly) group, e.g. Dental Kit + Shaving Kit both
+  // packed inside the same Personalized Kit order.
+  const separateKitTasksFor = (kg) => (orderTasksData?.data || []).filter((t) =>
+    (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing')
+    && (t.product || '').toLowerCase() === (kg?.kitName || '').toLowerCase()
   );
-  const personalizedKitPackingTask = useMemo(
-    () => (orderTasksData?.data || []).find((t) => t.taskType === 'Personalized Kit Packing') || null,
-    [orderTasksData]
+  const personalizedKitTasksFor = (kg) => (orderTasksData?.data || []).filter((t) =>
+    t.taskType === 'Personalized Kit Packing'
+    && (t.product || '').toLowerCase() === (kg?.kitName || '').toLowerCase()
   );
-  // Personalized Kit Packing must not just have a Separate Kit task ASSIGNED — the separate
-  // kit packing work itself has to be finished first. "Add Another Task" can create more than
-  // one Separate Kit Packing task per order (partial-qty batches), so ALL of them need to reach
-  // Done, not just the first one found above.
-  const separateKitPackingAllDone = useMemo(() => {
-    const tasks = (orderTasksData?.data || []).filter((t) => t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing');
-    return tasks.length > 0 && tasks.every((t) => t.status === 'Done');
-  }, [orderTasksData]);
 
   const [updateOrderStatus] = useUpdateOperationOrderStatusMutation();
   const [assignTask] = useAssignTaskMutation();
@@ -975,6 +957,20 @@ export default function OperationDetail() {
       ...buildKitGroups(personalizedOwnItems, 'Personalized Kit').map((g) => ({ ...g, kind: 'kit_assembly' })),
     ];
   }, [order?.items, order?.kitOrders]);
+
+  // Personalized Kit Packing must not just have SOME Separate Kit task assigned — EVERY
+  // Separate Kit / Kit Assembly group in this order (e.g. both Dental Kit AND Shaving Kit
+  // when an order packs more than one Separate Kit into the same Personalized Kit) needs its
+  // own task(s) assigned and ALL of them Done, not just whichever kit happened to get a task
+  // first. "Add Another Task" can also create more than one task per kit group (partial-qty
+  // batches), so every task for every group must reach Done.
+  const separateKitPackingAllDone = useMemo(() => {
+    if (separateKitGroups.length === 0) return true;
+    return separateKitGroups.every((kg) => {
+      const tasks = separateKitTasksFor(kg);
+      return tasks.length > 0 && tasks.every((t) => t.status === 'Done');
+    });
+  }, [orderTasksData, separateKitGroups]);
 
   // Personalized kit groups — the FINAL packing step. Either direct items with
   // category='personalized' (no extra bundling — the kit's own packing IS the final step), or a
@@ -2867,6 +2863,9 @@ export default function OperationDetail() {
                       {separateKitGroups.map((kg) => {
                         const isAssembly = kg.kind === 'kit_assembly';
                         const printGate = kitPrintGate(kg, effectiveOrderForKitGate, suggestedList);
+                        const kgTasks = separateKitTasksFor(kg);
+                        const kgTask = kgTasks[0] || null;
+                        const kgAllDone = kgTasks.length > 0 && kgTasks.every((t) => t.status === 'Done');
                         return (
                         <div
                           key={kg.key}
@@ -2898,14 +2897,14 @@ export default function OperationDetail() {
                               />
                             )}
 
-                            {separateKitPackingTask && (
+                            {kgTask && (
                               <Space style={{ marginTop: 4 }} wrap>
-                                <Tag color={separateKitPackingAllDone ? 'green' : 'orange'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
-                                  {separateKitPackingAllDone
+                                <Tag color={kgAllDone ? 'green' : 'orange'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
+                                  {kgAllDone
                                     ? (isAssembly ? 'Kit Assembly Done' : 'Separate Kit Packing Done')
                                     : (isAssembly ? 'Kit Assembly Task Assigned — Pending' : 'Separate Kit Task Assigned — Pending')}
                                 </Tag>
-                                <Text type="secondary" style={{ fontSize: 12 }}>{separateKitPackingTask.taskName}</Text>
+                                <Text type="secondary" style={{ fontSize: 12 }}>{kgTask.taskName}</Text>
                               </Space>
                             )}
                             <Button
@@ -2915,7 +2914,7 @@ export default function OperationDetail() {
                               style={printGate.blocked ? { borderRadius: 8, marginTop: 4 } : { background: 'linear-gradient(135deg,#1677ff,#69b1ff)', border: 'none', borderRadius: 8, marginTop: 4 }}
                               onClick={() => !printGate.blocked && openKitPackingModal(kg, 'separate_kit')}
                             >
-                              {separateKitPackingTask ? 'Add Another Task' : (isAssembly ? 'Assign Kit Assembly Task' : 'Assign Separate Kit Task')}
+                              {kgTask ? 'Add Another Task' : (isAssembly ? 'Assign Kit Assembly Task' : 'Assign Separate Kit Task')}
                             </Button>
                           </Space>
                         </div>
@@ -2924,8 +2923,10 @@ export default function OperationDetail() {
 
                       {/* Personalized Kit group(s) — gated until separate kit tasks are assigned */}
                       {personalizedKitGroups.map((kg) => {
-                        const separateDone = separateKitGroups.length === 0 || separateKitPackingAllDone;
+                        const separateDone = separateKitPackingAllDone;
                         const printGate = kitPrintGate(kg, effectiveOrderForKitGate, suggestedList);
+                        const kgTasks = personalizedKitTasksFor(kg);
+                        const kgTask = kgTasks[0] || null;
                         return (
                           <div
                             key={kg.key}
@@ -2958,12 +2959,55 @@ export default function OperationDetail() {
                                 />
                               )}
 
+                              {/* The OUTER Personalized Kit (e.g. the Box wrapping Dental + Shaving
+                                  Kit + Comb together) has its own Sticker/Printing flags at the
+                                  ORDER level (order.kitSticker/kitPrinting) but — unlike a genuine
+                                  Separate Kit — no item row of its own in Product Specifications to
+                                  host a "Kit's Display Unit" status control on. Without this, whenever
+                                  the outer container itself needs Sticker/Printing, printGate.blocked
+                                  stays true forever with no way to ever clear it. Render the same
+                                  control here directly so it's actually reachable. */}
+                              {(() => {
+                                const kduNeeded = String(kg.sticker || '').toUpperCase() === 'YES' || String(kg.printing || '').toUpperCase() === 'YES';
+                                if (!kduNeeded) return null;
+                                const kduKey = kitDisplayUnitKey(kg);
+                                const kduStatus = printingStatusValues[kduKey] ?? ((order?.printingStatusOverrides || {})[kduKey] || '');
+                                return (
+                                  <Space direction="vertical" size={2}>
+                                    <Tag color="purple" style={{ fontSize: 9, margin: 0, borderRadius: 8, width: 'fit-content' }}>Kit's Display Unit Printing Status</Tag>
+                                    {kduStatus === 'Closed' ? (
+                                      <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 6, padding: '2px 10px', width: 'fit-content' }}>Closed</Tag>
+                                    ) : (
+                                      <Select
+                                        size="small"
+                                        value={kduStatus || undefined}
+                                        placeholder="Select status"
+                                        style={{ width: 160 }}
+                                        onChange={async (val) => {
+                                          setPrintingStatusValues((prev) => ({ ...prev, [kduKey]: val }));
+                                          try {
+                                            await updateItemPrintingStatus({ orderId: order.key, itemKey: kduKey, printingStatus: val, product: kduKey }).unwrap();
+                                          } catch {
+                                            enqueueSnackbar('Failed to save Display Unit printing status', { variant: 'error' });
+                                            setPrintingStatusValues((prev) => ({ ...prev, [kduKey]: (order?.printingStatusOverrides || {})[kduKey] || undefined }));
+                                          }
+                                        }}
+                                      >
+                                        <Option value="Yet to Receive">Yet to Receive</Option>
+                                        <Option value="Received">Received</Option>
+                                        <Option value="Closed">Closed</Option>
+                                      </Select>
+                                    )}
+                                  </Space>
+                                );
+                              })()}
+
                               {printGate.blocked && (
                                 <Alert
                                   type="error"
                                   showIcon
                                   message={printGate.displayUnit
-                                    ? `Blocked — Kit's own Display Unit Printing Status is "${printGate.status}". Set it to Received/Closed in the Printing Status column of Product Specifications above before this kit can be packed.`
+                                    ? `Blocked — Kit's own Display Unit Printing Status is "${printGate.status}". Set it using the control above before this kit can be packed.`
                                     : `Blocked — ${printGate.product}'s Printing Status is "${printGate.status || 'not set'}". Needs Received/Closed before this kit can be packed.`}
                                   style={{ borderRadius: 8, fontSize: 12 }}
                                 />
@@ -2971,12 +3015,12 @@ export default function OperationDetail() {
 
                               {renderKitProductSpecs(kg.kitItems, 'magenta', kg.overallQty)}
 
-                              {personalizedKitPackingTask && (
+                              {kgTask && (
                                 <Space style={{ marginTop: 4 }} wrap>
                                   <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
                                     Personalized Kit Task Assigned
                                   </Tag>
-                                  <Text type="secondary" style={{ fontSize: 12 }}>{personalizedKitPackingTask.taskName}</Text>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>{kgTask.taskName}</Text>
                                 </Space>
                               )}
                               <Button
@@ -2986,7 +3030,7 @@ export default function OperationDetail() {
                                 style={separateDone && !printGate.blocked ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8, marginTop: 4 } : { borderRadius: 8, marginTop: 4 }}
                                 onClick={() => separateDone && !printGate.blocked && openKitPackingModal(kg, 'personalized')}
                               >
-                                {personalizedKitPackingTask ? 'Add Another Task' : 'Assign Personalized Kit Task'}
+                                {kgTask ? 'Add Another Task' : 'Assign Personalized Kit Task'}
                               </Button>
                             </Space>
                           </div>
