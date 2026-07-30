@@ -637,7 +637,15 @@ async function computeSuggestedTasks() {
       // Hard-hiding them here too (via the order-level printingStatus field) made them
       // disappear from the checklist entirely instead of showing red as intended.
       const needsPrintStep = normYN(it.printing) === 'YES';
-      const needsOwnPrintGate = designType === 'Sticker' || (!!designType && needsPrintStep);
+      // A kit's own outer packaging (Box/Ziplock/Butter Paper) can independently need a
+      // printed sticker applied to it even when the item's `printing` flag is No — e.g.
+      // Butter Paper with Sticker=Yes still has to go through the same design/print vendor
+      // queue (tracked via itemPrintingStatus below) before the kit can be packed. Checking
+      // only `printing` left every Box/Ziplock/Butter-Paper kit whose ONLY flag was
+      // Sticker=Yes completely ungated — packable the moment it hit production regardless
+      // of whether its sticker had actually arrived.
+      const needsStickerOnPackaging = isKitItem && normYN(it.sticker) === 'YES';
+      const needsOwnPrintGate = designType === 'Sticker' || (!!designType && (needsPrintStep || needsStickerOnPackaging));
       const printingReady = needsOwnPrintGate || !needsPrintStep || !o.printingStatus || ['Closed', 'Received'].includes(o.printingStatus);
 
       // ── Stickering/packing-print readiness — a product routed to its own design

@@ -420,7 +420,6 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
   const taxPct = (g) => (cfg.show.taxRate ? `${Number(g) || 0}%` : '');
   // 1-kit price = kit price + included-products price, i.e. section total ÷ kit count.
   const persKitRate = sections.persKitCount > 0 ? r2d(sections.persKitTotal / sections.persKitCount) : 0;
-  const sepKitRate = sections.sepKitCount > 0 ? r2d(sections.separateKit / sections.sepKitCount) : 0;
   let html = '';
 
   // ── Section A: Personalized Kit ──
@@ -510,13 +509,16 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
   // ── Section B: Separate Kit ──
   if (sections.separateKit > 0) {
     const cs = CAT_STYLE.separate_kit;
+    // Header Unit Price = sum of each separate kit TYPE's own unit price (e.g. Dental Kit
+    // 16.25 + Shaving Kit 11.4), not a quantity-weighted average across them.
+    const sepKitUnitPriceSum = r2d(sections.sepKits.reduce((s, ko) => s + (ko.qty > 0 ? r2d(ko.kitTotal / ko.qty) : 0), 0));
     html += `
       <tr>
         <td colspan="3" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
           B &nbsp;&mdash;&nbsp; SEPARATE KIT${sections.sepKitCount ? ` — ${sections.sepKitCount} kit${sections.sepKitCount !== 1 ? 's' : ''}` : ''}
         </td>
         <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
-          ${sepKitRate > 0 ? sepKitRate.toLocaleString() : ''}
+          ${sepKitUnitPriceSum > 0 ? sepKitUnitPriceSum.toLocaleString() : ''}
         </td>
         <td style="padding:8px 10px;background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};"></td>
         <td style="padding:8px 10px;background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};"></td>
@@ -529,13 +531,17 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
       const qty = ko.qty;
       const price = ko.price;
       const hasComponents = ko.components && ko.components.length > 0;
+      const kitUnitPrice = qty > 0 ? r2d(ko.kitTotal / qty) : 0;
       if (hasComponents) {
         html += `
           <tr style="background:${cs.sub};">
-            <td colspan="6" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+            <td colspan="3" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
               ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}${!HIDE_LINE_RATES && price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
             </td>
-            <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
+            <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
+            <td style="padding:6px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
+            <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};font-size:11px;">${rs(kitUnitPrice * qty)}</td>
           </tr>`;
         ko.components.forEach(comp => {
           html += `
@@ -559,10 +565,10 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
             </td>
             <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
             <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
-            <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
-            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_RATES ? '' : (price > 0 ? price.toLocaleString() : '')}</td>
+            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
-            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
+            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
+            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${rs(kitUnitPrice * qty)}</td>
           </tr>`;
       }
     });
@@ -863,7 +869,6 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
   const taxPct = (g) => (cfg.show.taxRate ? `${Number(g) || 0}%` : '');
   // 1-kit price = kit price + included-products price, i.e. section total ÷ kit count.
   const persKitRate = sections.persKitCount > 0 ? r2d(sections.persKitTotal / sections.persKitCount) : 0;
-  const sepKitRate = sections.sepKitCount > 0 ? r2d(sections.separateKit / sections.sepKitCount) : 0;
 
   return (
     <>
@@ -948,6 +953,8 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
       {/* ── Section B: Separate Kit ── */}
       {sections.separateKit > 0 && (() => {
         const cs = CAT_STYLE.separate_kit;
+        // 16.25 + Shaving Kit 11.4), not a quantity-weighted average across them.
+        const sepKitUnitPriceSum = r2d(sections.sepKits.reduce((s, ko) => s + (ko.qty > 0 ? r2d(ko.kitTotal / ko.qty) : 0), 0));
         return (
           <>
             <tr>
@@ -955,7 +962,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                 B &nbsp;—&nbsp; SEPARATE KIT{sections.sepKitCount ? ` — ${sections.sepKitCount} kit${sections.sepKitCount !== 1 ? 's' : ''}` : ''}
               </td>
               <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'right' }}>
-                {sepKitRate > 0 ? sepKitRate.toLocaleString() : ''}
+                {sepKitUnitPriceSum > 0 ? sepKitUnitPriceSum.toLocaleString() : ''}
               </td>
               <td style={{ ...td, background: cs.header }} />
               <td style={{ ...td, background: cs.header }} />
@@ -967,24 +974,28 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
               const qty = ko.qty;
               const price = ko.price;
               const hasComponents = ko.components && ko.components.length > 0;
+              const kitUnitPrice = qty > 0 ? r2d(ko.kitTotal / qty) : 0;
               return (
                 <React.Fragment key={`skit-${i}`}>
                   {hasComponents ? (
                     <tr style={{ background: cs.sub }}>
-                      <td colSpan={6} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
+                      <td colSpan={3} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
                         {ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}{!HIDE_LINE_RATES && price > 0 ? ` — ${rs(price)}/kit` : ''}
                       </td>
-                      <td style={{ ...td, textAlign: 'right', fontWeight: 700, borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
+                      <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
+                      <td style={{ ...td }}></td>
+                      <td style={{ ...td }}></td>
+                      <td style={{ ...td, textAlign: 'right', fontWeight: 700, borderRight: 'none' }}>{rs(kitUnitPrice * qty)}</td>
                     </tr>
                   ) : (
                     <tr style={{ background: cs.sub }}>
                       <td style={{ ...td, paddingLeft: 24 }}>{ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}</td>
                       <td style={{ ...td, textAlign: 'center' }}></td>
                       <td style={{ ...td, textAlign: 'center' }}></td>
-                      <td style={{ ...td, textAlign: 'center' }}></td>
-                      <td style={{ ...td, textAlign: 'right' }}>{HIDE_LINE_RATES ? '' : (price > 0 ? price.toLocaleString() : '')}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
                       <td style={{ ...td, textAlign: 'right' }}></td>
-                      <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{HIDE_LINE_AMOUNTS ? '' : rs(ko.kitTotal)}</td>
+                      <td style={{ ...td, textAlign: 'right' }}></td>
+                      <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{rs(kitUnitPrice * qty)}</td>
                     </tr>
                   )}
                   {hasComponents && ko.components.map((comp, j) => (
