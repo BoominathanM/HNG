@@ -62,6 +62,7 @@ import {
   useCreateStickerRequestMutation,
   useUploadStickerDesignMutation,
   useUpdateStickerStatusMutation,
+  useReassignStickerRequestMutation,
   useSendToStickerTeamMutation,
   useSendDesignConfirmationWhatsAppMutation,
   useAssignTaskMutation,
@@ -107,14 +108,20 @@ const INVOICE_TYPE_SLUG = {
   'Butter Paper': 'butter',
 };
 
+// Matches StickerRequest.status (Backend/src/models/StickerRequest.js) — row.status now
+// comes straight from the matching StickerRequest (see buildProductionQueues in ./data),
+// so these buckets must line up with that enum or every count below silently reads 0.
 const queueStatuses = [
-  'Sent',
+  'Pending',
+  'Waiting for Approval',
   'Design Confirmation',
+  'Approved',
   'In Process',
+  'Printing',
   'Dispatch',
   'Received',
-  'Pending Approval',
   'Design Change',
+  'Done',
 ];
 
 const flowStageColors = ['default', 'blue', 'gold', 'magenta', 'green', 'success'];
@@ -164,6 +171,7 @@ export default function Operations() {
   const [uploadStickerDesign] = useUploadStickerDesignMutation();
   const [uploadStickerInvoice] = useUploadStickerInvoiceMutation();
   const [updateStickerStatus] = useUpdateStickerStatusMutation();
+  const [reassignStickerRequest] = useReassignStickerRequestMutation();
   const [sendToStickerTeam] = useSendToStickerTeamMutation();
   const [sendDesignConfirmationWhatsApp] = useSendDesignConfirmationWhatsAppMutation();
   const [assignTask] = useAssignTaskMutation();
@@ -672,7 +680,7 @@ export default function Operations() {
     },
     {
       label: 'Approval Waiting',
-      value: apiOrders.filter((order) => order.designStatus === 'Pending Approval').length,
+      value: stickerRequests.filter((s) => s.status === 'Waiting for Approval').length,
       color: '#8a1652',
     },
     {
@@ -1072,6 +1080,40 @@ export default function Operations() {
               </a>
               {isExisting && <Tag color="green" style={{ fontSize: 10, margin: 0 }}>♻ Existing</Tag>}
             </Space>
+          );
+        },
+      },
+      {
+        title: 'Vendor',
+        key: 'vendor',
+        width: 150,
+        render: (_, record) => {
+          if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          const sr = findStickerReq(record);
+          if (!sr?._id) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          // Role values on the User are 'Ziplock', not the StickerRequest's 'Frosted Ziplock'.
+          const roleForLabel = label === 'Frosted Ziplock' ? 'Ziplock' : label;
+          const options = vendorUsers
+            .filter(u => u.role === roleForLabel)
+            .map(u => ({ value: u._id, label: u.fullName }));
+          const currentVendorId = sr.vendorId?._id || sr.vendorId || undefined;
+          return (
+            <Select
+              size="small"
+              style={{ width: 140 }}
+              placeholder="Unassigned"
+              allowClear
+              value={currentVendorId}
+              options={options}
+              onChange={async (val) => {
+                try {
+                  await reassignStickerRequest({ id: sr._id, vendorId: val || null }).unwrap();
+                  enqueueSnackbar('Vendor reassigned — existing design & approval stay attached', { variant: 'success' });
+                } catch (err) {
+                  enqueueSnackbar(err?.data?.message || 'Failed to reassign vendor', { variant: 'error' });
+                }
+              }}
+            />
           );
         },
       },

@@ -921,6 +921,10 @@ export const apiSlice = createApi({
       query: ({ id, ...data }) => ({ url: `/operations/stickers/${id}/status`, method: 'patch', data }),
       invalidatesTags: ['Stickers'],
     }),
+    reassignStickerRequest: builder.mutation({
+      query: ({ id, vendorId }) => ({ url: `/operations/stickers/${id}/reassign`, method: 'patch', data: { vendorId } }),
+      invalidatesTags: ['Stickers'],
+    }),
     uploadStickerInvoice: builder.mutation({
       query: ({ id, formData }) => ({ url: `/operations/stickers/${id}/upload-invoice`, method: 'post', data: formData }),
       invalidatesTags: ['Stickers'],
@@ -1468,6 +1472,7 @@ export const {
   useCreateStickerRequestMutation,
   useUploadStickerDesignMutation,
   useUpdateStickerStatusMutation,
+  useReassignStickerRequestMutation,
   useUploadStickerInvoiceMutation,
   useSendToStickerTeamMutation,
   useSendDesignConfirmationWhatsAppMutation,

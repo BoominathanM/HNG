@@ -19,15 +19,27 @@ const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
 // Visibility scoping (same rule as Sales getLeads/Task Management getTasks):
 // - Admin / Super Admin / Manager / Head (role contains 'Manager' or 'Head'): all orders
 // - Everyone else (Executive, etc.): only orders they created, are assigned to, or are the salesPerson on
-function applyOrderVisibility(user, filter) {
+async function applyOrderVisibility(user, filter) {
   if (user && user.role !== 'Super Admin' && user.role !== 'Admin') {
     const role = user.role || '';
     const isManagerOrHead = /manager|head/i.test(role);
     if (!isManagerOrHead) {
-      const visibility = [{ createdBy: user._id }, { assignedTo: user._id }];
-      const myName = user.fullName || user.name;
-      if (myName) visibility.push({ salesPerson: myName });
-      filter.$or = visibility;
+      const myStickerType = ROLE_TO_STICKER_TYPE[role];
+      if (user.department === 'Vendors' && myStickerType) {
+        // Design/Vendor Team Members (Sticker/Box/Ziplock/Butter Paper) are never the
+        // order's createdBy/assignedTo/salesPerson — their work is routed via
+        // StickerRequest.vendorId (see getStickerRequests), so scope their order
+        // visibility to whatever orders have a request routed to them instead.
+        const orderIds = await StickerRequest.find({
+          $or: [{ vendorId: user._id }, { vendorId: null, stickerType: myStickerType }],
+        }).distinct('orderId');
+        filter._id = { $in: orderIds };
+      } else {
+        const visibility = [{ createdBy: user._id }, { assignedTo: user._id }];
+        const myName = user.fullName || user.name;
+        if (myName) visibility.push({ salesPerson: myName });
+        filter.$or = visibility;
+      }
     }
   }
   return filter;
@@ -36,7 +48,7 @@ function applyOrderVisibility(user, filter) {
 exports.getOrders = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.status) filter.status = req.query.status;
-  applyOrderVisibility(req.user, filter);
+  await applyOrderVisibility(req.user, filter);
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [orders, total] = await Promise.all([
@@ -64,7 +76,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
 exports.getTodaysOrders = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  const filter = applyOrderVisibility(req.user, { createdAt: { $gte: start, $lte: end }, deletedAt: null });
+  const filter = await applyOrderVisibility(req.user, { createdAt: { $gte: start, $lte: end }, deletedAt: null });
   const orders = await Order.find(filter);
   res.status(200).json({ success: true, data: orders });
 });
@@ -72,7 +84,7 @@ exports.getTodaysOrders = asyncHandler(async (req, res) => {
 exports.getTodaysDispatch = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  const filter = applyOrderVisibility(req.user, {
+  const filter = await applyOrderVisibility(req.user, {
     status: { $in: ['Dispatch Ready', 'Dispatched'] },
     updatedAt: { $gte: start, $lte: end },
     deletedAt: null,
@@ -369,6 +381,36 @@ exports.createStickerRequest = asyncHandler(async (req, res) => {
     link: '/operations',
   }).catch(() => {});
   res.status(201).json({ success: true, data: sticker });
+});
+
+// Move an existing design task to a different Vendor Team Member (e.g. the original
+// vendor is unavailable, or work needs to move to whoever is now marked "Auto" for
+// this type). Only vendorId changes — designFileUrl/status/approvals are untouched,
+// so the new vendor immediately sees whatever design/approval state was already there
+// (including a design already approved via HotelDesign reuse) instead of starting over.
+exports.reassignStickerRequest = asyncHandler(async (req, res, next) => {
+  const sticker = await StickerRequest.findById(req.params.id);
+  if (!sticker) return next(new AppError('Sticker request not found', 404));
+
+  let vendorId = req.body.vendorId || null;
+  if (vendorId) {
+    const asTeamMember = await User.findOne({ _id: vendorId, department: 'Vendors' }).select('_id').lean();
+    if (!asTeamMember) return next(new AppError('Selected user is not a Vendor Team Member', 400));
+  }
+
+  sticker.vendorId = vendorId;
+  await sticker.save();
+
+  notifyRoles({
+    modules: ['Operations', 'Sales Team'],
+    userIds: vendorId ? [vendorId] : [],
+    type: 'task',
+    title: 'Design Task Reassigned',
+    message: `${sticker.stickerType || 'Sticker'} request for "${sticker.product || 'product'}" was reassigned to you`,
+    link: '/operations',
+  }).catch(() => {});
+
+  res.status(200).json({ success: true, data: sticker });
 });
 
 exports.uploadStickerDesign = asyncHandler(async (req, res, next) => {

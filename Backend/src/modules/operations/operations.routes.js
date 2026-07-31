@@ -19,6 +19,7 @@ router.post('/orders/:id/partial-split', ctrl.splitPartialDelivery);
 
 router.get('/stickers', ctrl.getStickerRequests);
 router.post('/stickers', ctrl.createStickerRequest);
+router.patch('/stickers/:id/reassign', ctrl.reassignStickerRequest);
 router.post('/stickers/:id/upload-design', upload.single('design'), ctrl.uploadStickerDesign);
 router.post('/stickers/:id/upload-invoice', upload.single('invoice'), ctrl.uploadStickerInvoice);
 router.patch('/stickers/:id/status', ctrl.updateStickerStatus);

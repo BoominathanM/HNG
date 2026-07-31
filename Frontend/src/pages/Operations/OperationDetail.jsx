@@ -74,8 +74,6 @@ import { downloadFile } from '../../utils/fileDownload';
 import {
   buildProductionQueues,
   canAssignTaskFromChecks,
-  DESIGN_FLOW,
-  designColor,
   FLOW_STAGES,
   getCheckStateMap,
   getFlowStep,
@@ -2507,7 +2505,6 @@ export default function OperationDetail() {
                 <Title level={3} style={{ margin: '4px 0 0', color: textColor }}>{order.hotelLogo}</Title>
               </div>
               <Space wrap>
-                <Tag color={designColor[order.designStatus] || 'default'}>{order.designStatus}</Tag>
                 <Tag color={statusPill[order.printingStatus] || 'default'}>{order.printingStatus}</Tag>
                 <Tag color={statusPill[order.stockStatus] || 'default'}>{order.stockStatus}</Tag>
                 <Tag color={order.taskStatus === 'Full' ? 'green' : order.taskStatus === 'Partial' ? 'orange' : 'default'}>

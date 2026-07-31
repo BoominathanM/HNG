@@ -76,15 +76,18 @@ export const PAYMENT_LABELS = {
   CREDIT_10_30: 'Credit (10days to 1 month)',
 };
 
+// Matches StickerRequest.status exactly (Backend/src/models/StickerRequest.js) so rows
+// built from a live StickerRequest — see buildProductionQueues below — always land in a
+// real bucket here instead of a renamed one that no longer exists on the record.
 export const DESIGN_FLOW = [
-  'Sent', 'Design Confirmation', 'In Process', 'Dispatch',
-  'Received', 'Pending Approval', 'Design Change', 'Approved', 'Printing', 'Completed',
+  'Pending', 'Waiting for Approval', 'Design Confirmation', 'Approved', 'In Process',
+  'Printing', 'Dispatch', 'Received', 'Design Change', 'Done',
 ];
 
 export const designColor = {
-  Sent: 'blue', 'Design Confirmation': 'cyan', 'In Process': 'orange',
-  Dispatch: 'purple', Received: 'geekblue', 'Pending Approval': 'gold',
-  'Design Change': 'red', Approved: 'green', Printing: 'magenta', Completed: 'success',
+  Pending: 'blue', 'Waiting for Approval': 'gold', 'Design Confirmation': 'cyan',
+  Approved: 'green', 'In Process': 'orange', Printing: 'magenta', Dispatch: 'purple',
+  Received: 'geekblue', 'Design Change': 'red', Done: 'success',
 };
 
 export const statusPill = {
@@ -538,7 +541,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             product: productName,
             qty,
             size: item.size || getDefaultSize(productName),
-            status: order.designStatus,
+            status: findSR(order.id, productName, 'Sticker')?.status || 'Pending',
             sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.7),
             verified: order.stockStatus === 'Received',
             note: (order.notifications || [])[0] || '',
@@ -635,7 +638,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
-          status: order.designStatus,
+          status: findSR(order.id, product, 'Box')?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,
           note: boxNote,
@@ -751,7 +754,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
-          status: order.designStatus,
+          status: findSR(order.id, product, 'Frosted Ziplock')?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
           verified: order.stockStatus === 'Received',
           note: frostedNote,
@@ -854,7 +857,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
-          status: order.designStatus,
+          status: findSR(order.id, product, 'Butter Paper')?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
           verified: order.stockStatus === 'Received',
           note: butterNote,

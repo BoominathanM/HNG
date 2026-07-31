@@ -443,10 +443,17 @@ export default function Settings() {
     } else {
       // Clear permissions so admin manually selects access for this user
       const emptyPerms = Object.fromEntries(MODULES.map(m => [m, { ...NO_PERMS }]));
+      if (watchedDept === 'Vendors') {
+        // Design vendors (Sticker/Box/Ziplock/Butter Paper) live entirely inside the
+        // Operations sticker queue. Without at least read access here they're routed
+        // and marked "Auto" correctly but the login itself can't open the page to see
+        // any of it, so grant it by default instead of leaving it for the admin to remember.
+        emptyPerms['Operations'] = { ...NO_PERMS, read: true };
+      }
       userForm.setFieldsValue({ perms: emptyPerms, tabAccess: {} });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchedRole, addUserOpen]);
+  }, [watchedRole, watchedDept, addUserOpen]);
 
   // Show all modules whenever a role is selected so access can be fully configured
   const visibleModules = watchedRole ? MODULES : [];
