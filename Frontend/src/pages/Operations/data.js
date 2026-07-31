@@ -653,8 +653,13 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           // (one shared design/print approval) instead of one each.
           kitId: item.kitId || '',
           kitName: item.kitName || item.kitType || '',
-          displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
-          displayUnitType: item.displayUnitType || '',
+          // item.displayUnit/displayUnitType are almost never populated on the item itself (the
+          // per-kit "Order Details" card writes them onto kitOrders[i], not onto the individual
+          // product rows) — fall back to THIS item's own kit config via kitId before falling back
+          // to the order-level singular displayUnit, so multi-kit orders don't leak one kit's
+          // display unit onto another's rows.
+          displayUnit: item.displayUnit || kitCfgById[String(item.kitId)]?.displayUnit || kitDuNameOf(item, order) || '',
+          displayUnitType: item.displayUnitType || (isKitItem ? kitCfgById[String(item.kitId)]?.displayUnitType : '') || '',
           lamination: item.lamination || '',
           sticker: item.sticker || '',
           stickerSize: item.stickerSize || '',
@@ -761,8 +766,10 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           // See makeBoxRow's comment — which specific kit this row belongs to.
           kitId: item.kitId || '',
           kitName: item.kitName || item.kitType || '',
-          displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
-          displayUnitType: item.displayUnitType || '',
+          // See makeBoxRow's comment — fall back to this item's OWN kit config (by kitId) before
+          // the order-level singular displayUnit/Type.
+          displayUnit: item.displayUnit || kitCfgById[String(item.kitId)]?.displayUnit || kitDuNameOf(item, order) || '',
+          displayUnitType: item.displayUnitType || (isKitItem ? kitCfgById[String(item.kitId)]?.displayUnitType : '') || '',
           sticker: item.sticker || '',
           stickerSize: item.stickerSize || '',
           printing: item.printing || '',
@@ -862,8 +869,10 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           // See makeBoxRow's comment — which specific kit this row belongs to.
           kitId: item.kitId || '',
           kitName: item.kitName || item.kitType || '',
-          displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
-          displayUnitType: item.displayUnitType || '',
+          // See makeBoxRow's comment — fall back to this item's OWN kit config (by kitId) before
+          // the order-level singular displayUnit/Type.
+          displayUnit: item.displayUnit || kitCfgById[String(item.kitId)]?.displayUnit || kitDuNameOf(item, order) || '',
+          displayUnitType: item.displayUnitType || (isKitItem ? kitCfgById[String(item.kitId)]?.displayUnitType : '') || '',
           sticker: item.sticker || '',
           stickerSize: item.stickerSize || '',
           printing: item.printing || '',

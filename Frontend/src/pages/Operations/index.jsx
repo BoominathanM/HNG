@@ -962,6 +962,17 @@ export default function Operations() {
         key: 'displayUnitType',
         render: (_, record) => {
           if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+          // A personalized kit's individual-packing step (dual-step routing — see makeBoxRow/
+          // makeFrostedRow/makeButterRow in data.js) can land this row in a tab that differs from
+          // the kit's OWN display unit — e.g. a Butter-Paper kit's Paste/Brush still needs an
+          // individual Box-packing step. record.displayUnitType always carries the kit's REAL
+          // display-unit subtype (e.g. "transparent"), so only label it as this tab's type when
+          // the kit's display unit actually matches this tab — otherwise it isn't a Box/Ziplock/
+          // Butter Paper type at all and showing it here mislabels it.
+          const tabCanonical = label === 'Frosted Ziplock' ? 'Ziplock' : label;
+          if (record.displayUnit && packTabFromString(record.displayUnit) !== tabCanonical) {
+            return <Text type="secondary">—</Text>;
+          }
           return record.displayUnitType ? <Tag color="purple">{record.displayUnitType}</Tag> : <Text type="secondary">—</Text>;
         },
       }] : []),
@@ -1596,11 +1607,12 @@ export default function Operations() {
             qty: (() => {
               const cat = first.category || '';
               // Show kit assembly count, not the sum of per-product quantities inside the kit.
-              // Personalized outer packing step: use the top-level kit count directly.
-              if (cat === 'personalized' && order?.kitOverallQty) return Number(order.kitOverallQty);
-              // Separate kits (dental/shaving/bath/etc.): sum overallQty of kitOrders routing to
-              // this tab AND belonging to THIS specific kit — without the kitId/kitName filter,
-              // two different kits sharing a tab would each report the OTHER kit's qty added in.
+              // Match by kitOrders FIRST (covers personalized too — an order can hold several
+              // personalized kits, each with its own overallQty) so two personalized kits with
+              // DIFFERENT quantities each report their own count instead of both showing the
+              // order-level total. Separate kits (dental/shaving/bath/etc.) already relied on this
+              // same per-kit filter — without the kitId/kitName check, two different kits sharing a
+              // tab would each report the OTHER kit's qty added in.
               const kos = order?.kitOrders || [];
               if (kos.length) {
                 const tabLabel = typeKey === 'box' ? 'Box' : typeKey === 'frosted' ? 'Ziplock' : 'Butter Paper';
@@ -1613,6 +1625,9 @@ export default function Operations() {
                 });
                 if (matching.length) return matching.reduce((s, ko) => s + (Number(ko.overallQty) || 0), 0);
               }
+              // Personalized outer packing step, legacy order with no matching per-kit entry:
+              // fall back to the top-level kit count.
+              if (cat === 'personalized' && order?.kitOverallQty) return Number(order.kitOverallQty);
               // Fallback for non-kit or data-missing cases.
               return group.reduce((sum, r) => sum + Number(r.qty || 0), 0);
             })(),
