@@ -6,8 +6,6 @@ const User = require('../../models/User');
 const Task = require('../../models/Task');
 const WhatsAppEvent = require('../../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
-const InventoryItem = require('../../models/InventoryItem');
-const StockMovement = require('../../models/StockMovement');
 const Transport = require('../../models/Transport');
 const PickupOrder = require('../../models/PickupOrder');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -301,29 +299,12 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   if (req.body.invoiceDocumentFilename) dispatch.invoiceDocumentFilename = req.body.invoiceDocumentFilename;
 
   const orderDoc = dispatch.orderId && (dispatch.orderId._id ? dispatch.orderId : await Order.findById(dispatch.orderId));
-  const orderItems = orderDoc?.items || [];
 
-  const decrementStock = async (itemId, qty) => {
-    if (!itemId || !qty) return;
-    const invItem = await InventoryItem.findById(itemId);
-    if (!invItem) return;
-    const before = invItem.currentStock;
-    invItem.currentStock = Math.max(0, invItem.currentStock - qty);
-    await invItem.save({ validateBeforeSave: false });
-    await StockMovement.create({
-      itemId,
-      movementType: 'OUT',
-      qty,
-      qtyBefore: before,
-      qtyAfter: invItem.currentStock,
-      referenceType: 'Order',
-      referenceId: orderDoc?._id,
-      approvalStatus: 'Approved',
-      approvedBy: req.user._id,
-      approvedAt: Date.now(),
-      createdBy: req.user._id,
-    });
-  };
+  // Inventory is already deducted once, in full, when the order is created
+  // (deductInventoryForOrder in sales.controller.js) — that's the point stock is considered
+  // "committed". Dispatch only ships what was already committed, so it must NOT deduct
+  // again here; a prior version called InventoryItem/StockMovement updates on every confirm
+  // round, silently double-decrementing stock on partial (and full) dispatch.
 
   // ─── Apply this round's dispatch counts ───────────────────────────────────
   // kitCounts/productCounts are JSON-stringified arrays of { id, dispatchNow } sent from
@@ -360,13 +341,6 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
       kitName: kd.kitName, category: kd.category, dispatchedQty: delta,
       openBoxPhotos: [...(kd.openBoxPhotos || [])], closeBoxPhotos: [...(kd.closeBoxPhotos || [])],
     });
-    // Every component of this kit ships proportionally — decrement each by its
-    // per-kit-unit share (component's total ordered qty / kit's overall qty) × delta.
-    const components = orderItems.filter((it) => it.kitId && String(it.kitId) === String(kd.kitId));
-    for (const comp of components) {
-      const perKitQty = kd.overallQty > 0 ? (Number(comp.qty) || 0) / kd.overallQty : 0;
-      await decrementStock(comp.itemId, Math.round(perKitQty * delta * 100) / 100);
-    }
   }
 
   for (const entry of productCounts) {
@@ -381,7 +355,6 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
       itemName: item.itemName, dispatchedQty: delta,
       openBoxPhotos: [...(item.openBoxPhotos || [])], closeBoxPhotos: [...(item.closeBoxPhotos || [])],
     });
-    await decrementStock(item.itemId, delta);
   }
 
   // Kits/products packed INSIDE a Personalized Kit's box ("Select Kit(s) to Include" on the

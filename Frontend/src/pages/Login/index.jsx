@@ -1,5 +1,5 @@
 import React from 'react';
-import { Form, Input, Button, Typography, Alert } from 'antd';
+import { Form, Input, Button, Typography, Alert, Checkbox } from 'antd';
 import { UserOutlined, LockOutlined, EyeTwoTone, EyeInvisibleOutlined } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
@@ -26,7 +26,11 @@ export default function Login() {
 
   const handleSubmit = async (values) => {
     try {
-      const res = await login({ email: values.email, password: values.password }).unwrap();
+      const res = await login({
+        email: values.email,
+        password: values.password,
+        rememberMe: !!values.rememberMe,
+      }).unwrap();
       enqueueSnackbar('Signed in successfully', { variant: 'success' });
       // Land on the first page the user actually has access to, so a user
       // without Dashboard permission doesn't hit the "Access Restricted" screen.
@@ -95,6 +99,12 @@ export default function Login() {
                 style={{ borderRadius: 10, borderColor: '#e8d0dc' }}
                 iconRender={(visible) => visible ? <EyeTwoTone twoToneColor="#B11E6A" /> : <EyeInvisibleOutlined style={{ color: '#ccc' }} />}
               />
+            </Form.Item>
+
+            <Form.Item name="rememberMe" valuePropName="checked" style={{ marginBottom: 16 }}>
+              <Checkbox style={{ color: '#1a1a2e' }}>
+                Remember me for 30 days
+              </Checkbox>
             </Form.Item>
 
             <Form.Item style={{ marginBottom: 0 }}>

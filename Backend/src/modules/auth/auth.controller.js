@@ -4,16 +4,25 @@ const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
 
 const signToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '30d' });
+  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' });
 
-const signRefreshToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '365d' });
+// Session length is controlled by the refresh token: 24h by default, 30d when
+// the user checked "Remember Me" at login. The short-lived access token above
+// is silently renewed off this one (see Frontend/src/api/axios.js), so once
+// the refresh token itself expires the user is forced back to /login.
+const signRefreshToken = (id, rememberMe) =>
+  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: rememberMe
+      ? process.env.JWT_REFRESH_EXPIRES_IN_REMEMBER || '30d'
+      : process.env.JWT_REFRESH_EXPIRES_IN || '24h',
+  });
 
-const sendTokens = async (user, statusCode, res) => {
+const sendTokens = async (user, statusCode, res, rememberMe = user.rememberMe || false) => {
   const token = signToken(user._id);
-  const refreshToken = signRefreshToken(user._id);
+  const refreshToken = signRefreshToken(user._id, rememberMe);
 
   user.refreshToken = refreshToken;
+  user.rememberMe = rememberMe;
   await user.save({ validateBeforeSave: false });
 
   // flattenMaps: true converts Mongoose Map fields (permissions, tabAccess) to plain JS objects
@@ -31,7 +40,7 @@ const sendTokens = async (user, statusCode, res) => {
 };
 
 exports.login = asyncHandler(async (req, res, next) => {
-  const { email, password } = req.body;
+  const { email, password, rememberMe } = req.body;
   if (!email || !password) return next(new AppError('Please provide email and password', 400));
 
   const user = await User.findOne({ email, deletedAt: null }).select('+password');
@@ -40,7 +49,7 @@ exports.login = asyncHandler(async (req, res, next) => {
   }
   if (user.status === 'Inactive') return next(new AppError('Your account is inactive. Contact admin.', 403));
 
-  await sendTokens(user, 200, res);
+  await sendTokens(user, 200, res, !!rememberMe);
 });
 
 exports.refresh = asyncHandler(async (req, res, next) => {
@@ -54,12 +63,12 @@ exports.refresh = asyncHandler(async (req, res, next) => {
     return next(new AppError('Invalid or expired refresh token', 401));
   }
 
-  const user = await User.findById(decoded.id).select('+refreshToken');
+  const user = await User.findById(decoded.id).select('+refreshToken +rememberMe');
   if (!user || user.refreshToken !== refreshToken) {
     return next(new AppError('Invalid refresh token', 401));
   }
 
-  await sendTokens(user, 200, res);
+  await sendTokens(user, 200, res, user.rememberMe);
 });
 
 exports.logout = asyncHandler(async (req, res) => {

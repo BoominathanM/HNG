@@ -35,6 +35,8 @@ import {
   useApproveMovementMutation,
   useRejectMovementMutation,
   useGetStockHistoryQuery,
+  useGetStockHistoryReportQuery,
+  useGetPartiesQuery,
   useSubmitStockCheckMutation,
   useGetVendorsQuery,
   useCreateVendorMutation,
@@ -474,11 +476,22 @@ export default function Inventory() {
   const [approvalStatus, setApprovalStatus] = useState(null);
   const [approvalDateRange, setApprovalDateRange] = useState(null);
   /* ── Stock History ── */
-  const [historyPage, setHistoryPage] = useState(1);
-  const [historyPageSize, setHistoryPageSize] = useState(10);
-  const { data: historyData } = useGetStockHistoryQuery({ page: historyPage, limit: historyPageSize });
+  // Hotels/Parties for the filter dropdown (used inside the per-item history screen) — the
+  // same "Customer" Party records Orders link to via clientPartyId, not the unrelated
+  // Vendor(type:'customer') list used by the Vendors tab.
+  const { data: hotelPartiesData } = useGetPartiesQuery({ type: 'Customer', limit: 500 });
+  const hotelPartyOptions = useMemo(
+    () => (hotelPartiesData?.data || []).map((p) => ({ value: p._id, label: p.name })),
+    [hotelPartiesData]
+  );
+
+  // Recent movements feed for the "Recent Stock History" preview on the Stock Inventory tab's
+  // item detail drawer — the main Stock History tab itself is now a one-row-per-item picker
+  // (below), not a movement log, so this fetch only needs to cover recent activity.
+  const { data: historyData } = useGetStockHistoryQuery({ limit: 50 });
   const stockHistory = useMemo(() => (historyData?.data || []).map((m) => ({
     key: m._id,
+    itemId: m.itemId?._id || m.itemId,
     date: m.createdAt?.slice(0, 10),
     item: m.itemId?.itemName || '—',
     code: m.itemId?.itemCode || '—',
@@ -488,12 +501,68 @@ export default function Inventory() {
     unit: m.itemId?.unit || '',
     vendor: m.vendorId?.name || m.vendorName || '—',
     source: m.referenceType || '—',
-    person: 'Admin',
+    hotel: m.partyId?.name || m.partyName || '—',
+    person: m.createdBy?.fullName || 'Admin',
     notes: m.reason || '',
   })), [historyData]);
-  const [historySearch, setHistorySearch] = useState('');
-  const [historyActionFilter, setHistoryActionFilter] = useState(null);
-  const [historyDateRange, setHistoryDateRange] = useState(null);
+
+  /* ── Per-item Stock In/Out History screen (replaces the old modal — opens in place of the
+     Stock History table, like Parties' list↔detail toggle, not a popup) ── */
+  const [historyItem, setHistoryItem] = useState(null); // { id, name } | null
+  const [itemHistoryTab, setItemHistoryTab] = useState('all'); // 'all' | 'in' | 'out'
+  const [itemHistoryPartyFilter, setItemHistoryPartyFilter] = useState(null);
+  const [itemHistorySearch, setItemHistorySearch] = useState('');
+  const [itemHistoryPeriod, setItemHistoryPeriod] = useState('monthly'); // weekly | monthly | yearly
+
+  const itemHistoryQueryParams = useMemo(() => {
+    const params = { itemId: historyItem?.id, limit: 500 };
+    if (itemHistoryPartyFilter) params.partyId = itemHistoryPartyFilter;
+    return params;
+  }, [historyItem?.id, itemHistoryPartyFilter]);
+  const { data: itemHistoryData, isFetching: itemHistoryLoading } = useGetStockHistoryQuery(
+    itemHistoryQueryParams,
+    { skip: !historyItem?.id }
+  );
+  const itemHistoryRows = useMemo(() => (itemHistoryData?.data || []).map((m) => ({
+    key: m._id,
+    date: m.createdAt ? dayjs(m.createdAt).format('DD MMM YYYY, hh:mm A') : '—',
+    // Same action labels/coloring as the main Stock History table, for a consistent look.
+    action: m.movementType === 'IN' ? 'Stock Added' : m.movementType === 'OUT' ? 'Stock Deducted'
+      : (m.qtyAfter >= m.qtyBefore ? 'Adjustment (Add)' : 'Adjustment (Deduct)'),
+    isIn: m.movementType === 'IN' || (m.movementType !== 'OUT' && m.qtyAfter >= m.qtyBefore),
+    qty: m.qty,
+    unit: m.itemId?.unit || '',
+    qtyBefore: m.qtyBefore,
+    qtyAfter: m.qtyAfter,
+    vendor: m.vendorId?.name || m.vendorName || '—',
+    hotel: m.partyId?.name || m.partyName || '—',
+    source: m.referenceType || '—',
+    person: m.createdBy?.fullName || 'Admin',
+    notes: m.reason || '',
+  })), [itemHistoryData]);
+  const filteredItemHistoryRows = useMemo(() => itemHistoryRows.filter((r) => {
+    const matchTab = itemHistoryTab === 'all' || (itemHistoryTab === 'in' ? r.isIn : !r.isIn);
+    const q = itemHistorySearch.toLowerCase();
+    const matchSearch = !q || r.vendor.toLowerCase().includes(q) || r.hotel.toLowerCase().includes(q)
+      || r.source.toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q);
+    return matchTab && matchSearch;
+  }), [itemHistoryRows, itemHistoryTab, itemHistorySearch]);
+  const itemHistoryInTotal = useMemo(() => itemHistoryRows.filter((r) => r.isIn).reduce((s, r) => s + (r.qty || 0), 0), [itemHistoryRows]);
+  const itemHistoryOutTotal = useMemo(() => itemHistoryRows.filter((r) => !r.isIn).reduce((s, r) => s + (r.qty || 0), 0), [itemHistoryRows]);
+
+  const { data: itemHistoryReportData } = useGetStockHistoryReportQuery(
+    { itemId: historyItem?.id, period: itemHistoryPeriod, partyId: itemHistoryPartyFilter || undefined },
+    { skip: !historyItem?.id }
+  );
+  const periodLabelFormat = itemHistoryPeriod === 'weekly' ? 'DD MMM' : itemHistoryPeriod === 'yearly' ? 'YYYY' : 'MMM YYYY';
+  const itemHistoryReportRows = useMemo(
+    () => (itemHistoryReportData?.data || []).map((r) => ({
+      period: dayjs(r.period).format(periodLabelFormat),
+      'Stock In': r.stockIn,
+      'Stock Out': r.stockOut,
+    })),
+    [itemHistoryReportData, periodLabelFormat]
+  );
 
   /* ── Packing Material Config ── */
   const { data: packingConfigData } = useGetPackingConfigQuery();
@@ -752,15 +821,11 @@ export default function Inventory() {
     return matchSearch && matchType && matchStatus && matchDate;
   });
 
-  const filteredHistory = stockHistory.filter(h => {
-    const q = historySearch.toLowerCase();
-    const matchSearch = !q || h.item.toLowerCase().includes(q) || (h.code || '').toLowerCase().includes(q) || (h.source || '').toLowerCase().includes(q) || (h.invoiceNo || '').toLowerCase().includes(q) || (h.vendor || '').toLowerCase().includes(q);
-    const matchAction = !historyActionFilter || h.action === historyActionFilter;
-    const matchDate = !historyDateRange || !historyDateRange[0] || !historyDateRange[1] || (
-      h.date >= historyDateRange[0].format('YYYY-MM-DD') && h.date <= historyDateRange[1].format('YYYY-MM-DD')
-    );
-    return matchSearch && matchAction && matchDate;
-  });
+  // Stock History tab main view — one row per item (not one per movement), so an item's name
+  // never repeats; click a row to open its full Stock In/Out history.
+  const historyItemRows = useMemo(() => inventoryList.map((i) => ({
+    key: i.key, itemId: i.key, item: i.name, code: i.code, category: i.category, current: i.current, unit: i.unit,
+  })), [inventoryList]);
 
   const lowStock = inventoryList.filter((i) => i.status === 'Low' || i.status === 'Out');
 
@@ -1127,6 +1192,98 @@ export default function Inventory() {
     },
   ];
 
+  // Per-item Stock In/Out History — full screen shown in place of the Stock History table
+  // when a row is clicked (list↔detail toggle, same pattern as Parties' detail view; no
+  // modal, no route change).
+  const renderItemHistoryScreen = () => (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+        <Button icon={<LeftOutlined />} onClick={() => { setHistoryItem(null); setItemHistoryTab('all'); setItemHistoryPartyFilter(null); setItemHistorySearch(''); }}>
+          Back to Stock History
+        </Button>
+        <Text strong style={{ fontSize: 18, color: '#B11E6A' }}>{historyItem?.name}</Text>
+      </div>
+
+      <Row gutter={12} style={{ marginBottom: 14 }}>
+        <Col xs={12} sm={8}>
+          <Card size="small" style={{ borderRadius: 12, border: '1px solid #52c41a33', background: isDark ? '#12241a' : '#f6ffed' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>Total Stock In</Text>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#52c41a' }}>+{itemHistoryInTotal}</div>
+          </Card>
+        </Col>
+        <Col xs={12} sm={8}>
+          <Card size="small" style={{ borderRadius: 12, border: '1px solid #ff4d4f33', background: isDark ? '#2a1315' : '#fff1f0' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>Total Stock Out</Text>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#ff4d4f' }}>-{itemHistoryOutTotal}</div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginBottom: 16 }} styles={{ body: { padding: 16 } }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14, alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <Tabs
+            activeKey={itemHistoryTab}
+            onChange={setItemHistoryTab}
+            items={[
+              { key: 'all', label: 'All' },
+              { key: 'in', label: <Space><span>Stock In</span><Badge count={itemHistoryRows.filter(r => r.isIn).length} showZero color="#52c41a" /></Space> },
+              { key: 'out', label: <Space><span>Stock Out</span><Badge count={itemHistoryRows.filter(r => !r.isIn).length} showZero color="#ff4d4f" /></Space> },
+            ]}
+          />
+          <Space wrap>
+            <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search vendor, hotel, source, notes..." allowClear value={itemHistorySearch} onChange={(e) => setItemHistorySearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
+            <Select allowClear showSearch optionFilterProp="label" placeholder="Hotel / Party" value={itemHistoryPartyFilter} onChange={setItemHistoryPartyFilter} options={hotelPartyOptions} style={{ width: 200 }} />
+          </Space>
+        </div>
+        <Table
+          size="small"
+          loading={itemHistoryLoading}
+          dataSource={filteredItemHistoryRows}
+          pagination={{ pageSize: 10, size: 'small' }}
+          columns={[
+            { title: 'Date', dataIndex: 'date', key: 'date', render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+            {
+              title: 'Action', dataIndex: 'action', key: 'action',
+              render: (v, r) => <Tag color={r.isIn ? 'success' : 'error'} style={{ borderRadius: 12 }}>{v}</Tag>
+            },
+            { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.isIn ? '#52c41a' : '#ff4d4f' }}>{r.isIn ? '+' : '-'}{r.qty} {r.unit}</Text> },
+            { title: 'Before → After', key: 'ba', render: (_, r) => <Text type="secondary" style={{ fontSize: 12 }}>{r.qtyBefore} → {r.qtyAfter}</Text> },
+            { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', render: v => v && v !== '—' ? <Tag color="geekblue" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text> },
+            { title: 'Source / Entity', dataIndex: 'source', key: 'source', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
+            { title: 'Hotel / Party', dataIndex: 'hotel', key: 'hotel', render: v => v && v !== '—' ? <Tag color="purple" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text> },
+            { title: 'Person', dataIndex: 'person', key: 'person' },
+            { title: 'Notes', dataIndex: 'notes', key: 'notes', render: v => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : '—' },
+          ]}
+        />
+      </Card>
+
+      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+          <Text strong style={{ color: textColor }}>Stock In vs Stock Out Report{itemHistoryPartyFilter ? ` — ${hotelPartyOptions.find(o => o.value === itemHistoryPartyFilter)?.label || ''}` : ''}</Text>
+          <Select value={itemHistoryPeriod} onChange={setItemHistoryPeriod} style={{ width: 150 }}>
+            <Option value="weekly">Weekly</Option>
+            <Option value="monthly">Monthly</Option>
+            <Option value="yearly">Yearly</Option>
+          </Select>
+        </div>
+        {itemHistoryReportRows.length === 0 ? (
+          <Text type="secondary">No movement data for this period yet.</Text>
+        ) : (
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={itemHistoryReportRows}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+              <XAxis dataKey="period" tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} />
+              <ReTooltip />
+              <Bar dataKey="Stock In" fill="#52c41a" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Stock Out" fill="#ff4d4f" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+    </div>
+  );
+
   return (
     <div className="page-container fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
@@ -1343,27 +1500,18 @@ export default function Inventory() {
           {
             key: 'history',
             label: <Space><HistoryOutlined />Stock History</Space>,
-            children: (
+            children: historyItem ? renderItemHistoryScreen() : (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14, alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                  <Space wrap>
-                    <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search item, code, source, invoice..." allowClear value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
-                    <Select allowClear placeholder="Movement Type" value={historyActionFilter} onChange={setHistoryActionFilter} style={{ width: 170 }}>
-                      <Option value="Stock Added">Incoming (Stock Added)</Option>
-                      <Option value="Stock Deducted">Outgoing (Stock Deducted)</Option>
-                      <Option value="Stock Check">Adjustment (Stock Check)</Option>
-                    </Select>
-                    <DatePicker.RangePicker style={{ width: 280 }} onChange={setHistoryDateRange} />
-                  </Space>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
                   <Button
                     icon={<DownloadOutlined />}
                     type="primary"
                     style={{ background: '#B11E6A', border: 'none' }}
                     onClick={() => {
-                      if (exportRowsToCSV(filteredHistory, `stock-history-${dayjs().format('YYYY-MM-DD')}.csv`)) {
-                        enqueueSnackbar(`Exported ${filteredHistory.length} history record(s) to CSV`, { variant: 'success' });
+                      if (exportRowsToCSV(historyItemRows, `stock-history-items-${dayjs().format('YYYY-MM-DD')}.csv`)) {
+                        enqueueSnackbar(`Exported ${historyItemRows.length} item(s) to CSV`, { variant: 'success' });
                       } else {
-                        enqueueSnackbar('No history records to export', { variant: 'warning' });
+                        enqueueSnackbar('No items to export', { variant: 'warning' });
                       }
                     }}
                   >
@@ -1372,31 +1520,18 @@ export default function Inventory() {
                 </div>
                 <Table
                   size="small"
-                  dataSource={filteredHistory}
+                  dataSource={historyItemRows}
+                  onRow={(r) => ({
+                    onClick: () => setHistoryItem({ id: r.itemId, name: r.item }),
+                    style: { cursor: 'pointer' },
+                  })}
                   columns={[
-                    { title: 'Date', dataIndex: 'date', key: 'date', render: v => <Text strong>{v}</Text> },
+                    { title: 'Item Name', dataIndex: 'item', key: 'item', sorter: (a, b) => a.item.localeCompare(b.item), render: v => <Text strong style={{ color: '#B11E6A', textDecoration: 'underline', cursor: 'pointer' }}>{v}</Text> },
                     { title: 'Code', dataIndex: 'code', key: 'code', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 12 }}>{v}</Text> },
-                    { title: 'Item Name', dataIndex: 'item', key: 'item', render: v => <Text strong>{v}</Text> },
-                    {
-                      title: 'Action', dataIndex: 'action', key: 'action',
-                      render: v => <Tag color={v === 'Stock Added' ? 'success' : v === 'Stock Deducted' ? 'error' : 'warning'} style={{ borderRadius: 12 }}>{v}</Tag>
-                    },
-                    { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.action === 'Stock Added' ? '#52c41a' : '#ff4d4f' }}>{r.action === 'Stock Added' ? '+' : '-'}{r.qty} units</Text> },
-                    { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', render: v => v && v !== '—' ? <Tag color="geekblue" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text> },
-                    { title: 'Source / Entity', dataIndex: 'source', key: 'source', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                    { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', render: v => v ? <Text style={{ color: '#7c3aed' }}>{v}</Text> : <Text type="secondary">—</Text> },
-                    { title: 'Person', dataIndex: 'person', key: 'person' },
-                    { title: 'Notes', dataIndex: 'notes', key: 'notes', render: v => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : '—' },
+                    { title: 'Category', dataIndex: 'category', key: 'category', render: v => v ? <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> : <Text type="secondary">—</Text> },
+                    { title: 'Current Stock', key: 'current', render: (_, r) => <Text strong>{(r.current ?? 0).toLocaleString()} {r.unit}</Text> },
                   ]}
-                  pagination={{
-                    current: historyPage,
-                    pageSize: historyPageSize,
-                    total: historyData?.total || 0,
-                    showSizeChanger: true,
-                    pageSizeOptions: ['10', '20', '50', '100'],
-                    size: 'small',
-                    onChange: (p, ps) => { setHistoryPage(p); setHistoryPageSize(ps); },
-                  }}
+                  pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                 />
               </Card>
             )

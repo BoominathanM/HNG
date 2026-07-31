@@ -391,6 +391,10 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/inventory/history', params }),
       providesTags: ['StockHistory'],
     }),
+    getStockHistoryReport: builder.query({
+      query: (params) => ({ url: '/inventory/history/report', params }),
+      providesTags: ['StockHistory'],
+    }),
     submitStockCheck: builder.mutation({
       query: ({ items, notes }) => ({ url: '/inventory/stock-check', method: 'post', data: { items, notes } }),
       invalidatesTags: ['Inventory', 'StockApprovals', 'StockHistory'],
@@ -1361,6 +1365,7 @@ export const {
   useApproveMovementMutation,
   useRejectMovementMutation,
   useGetStockHistoryQuery,
+  useGetStockHistoryReportQuery,
   useSubmitStockCheckMutation,
   useGetKitsQuery,
   useCreateKitMutation,

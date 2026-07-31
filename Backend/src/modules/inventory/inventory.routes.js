@@ -24,6 +24,7 @@ router.delete('/packing-config/:id', packingConfigCtrl.remove);
 router.get('/', ctrl.getItems);
 router.post('/', ctrl.createItem);
 router.get('/history', ctrl.getStockHistory);
+router.get('/history/report', ctrl.getStockHistoryReport);
 router.get('/approvals', ctrl.getApprovals);
 router.post('/stock-check', ctrl.submitStockCheck);
 

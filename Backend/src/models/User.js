@@ -39,6 +39,7 @@ const userSchema = new mongoose.Schema({
   rewardThreeQtr: { type: String, default: '', trim: true },
   rewardFull: { type: String, default: '', trim: true },
   refreshToken: { type: String, select: false },
+  rememberMe: { type: Boolean, default: false, select: false },
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

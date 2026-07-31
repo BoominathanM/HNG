@@ -23,6 +23,9 @@ const stockMovementSchema = new mongoose.Schema({
   vendorName: String,
   purchaseDate: Date,
   partyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Party' },
+  // Hotel/customer this stock was committed to (order's clientName) — snapshot so Stock
+  // History still shows it even if the Party is later renamed/deleted.
+  partyName: String,
   approvalStatus: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   approvedAt: Date,

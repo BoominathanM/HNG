@@ -586,6 +586,8 @@ async function deductInventoryForOrder(order, userId) {
           vendorId: seg.vendorId || undefined,
           vendorName: seg.vendorName,
           purchaseDate: seg.purchaseDate,
+          partyId: order.clientPartyId || undefined,
+          partyName: order.clientName,
           approvalStatus: 'Approved',
           approvedBy: userId,
           createdBy: userId,

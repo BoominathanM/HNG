@@ -1,6 +1,8 @@
+const mongoose = require('mongoose');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const Vendor = require('../../models/Vendor');
+const Party = require('../../models/Party');
 const Kit = require('../../models/Kit');
 const WhatsAppEvent = require('../../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
@@ -183,6 +185,13 @@ exports.deleteItem = asyncHandler(async (req, res, next) => {
 exports.sellStockRequest = asyncHandler(async (req, res, next) => {
   const item = await InventoryItem.findOne({ _id: req.params.id, deletedAt: null });
   if (!item) return next(new AppError('Item not found', 404));
+  // Snapshot the party's name at the time of the request (same reasoning as vendorName on
+  // purchase movements) so Stock History still shows it even if the Party is later renamed.
+  let partyName = req.body.partyName;
+  if (!partyName && req.body.partyId) {
+    const party = await Party.findById(req.body.partyId).select('name').lean();
+    partyName = party?.name;
+  }
   const movement = await StockMovement.create({
     itemId: item._id,
     movementType: 'OUT',
@@ -192,7 +201,8 @@ exports.sellStockRequest = asyncHandler(async (req, res, next) => {
     referenceType: 'Sale',
     sellPrice: req.body.sellPrice,
     departureDate: req.body.departureDate,
-    partyId: req.body.partyId,
+    partyId: req.body.partyId || undefined,
+    partyName,
     approvalStatus: 'Pending',
     createdBy: req.user._id,
   });
@@ -279,13 +289,53 @@ exports.getStockHistory = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.itemId) filter.itemId = req.query.itemId;
   if (req.query.type) filter.movementType = req.query.type;
+  if (req.query.partyId) filter.partyId = req.query.partyId;
+  if (req.query.dateFrom || req.query.dateTo) {
+    filter.createdAt = {};
+    if (req.query.dateFrom) filter.createdAt.$gte = new Date(req.query.dateFrom);
+    if (req.query.dateTo) filter.createdAt.$lte = new Date(`${req.query.dateTo}T23:59:59.999Z`);
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [movements, total] = await Promise.all([
-    StockMovement.find(filter).populate('itemId', 'itemName unit').populate('vendorId', 'name').populate('createdBy', 'fullName').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    StockMovement.find(filter).populate('itemId', 'itemName unit').populate('vendorId', 'name').populate('partyId', 'name').populate('createdBy', 'fullName').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     StockMovement.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: movements });
+});
+
+// Stock In vs Stock Out report, bucketed by week/month/year — powers the Weekly/Monthly/
+// Yearly report chart on the per-item Stock In/Out History screen. Aggregated server-side
+// (rather than summed on the frontend from a paginated list) so it stays correct regardless
+// of how many movements an item has.
+exports.getStockHistoryReport = asyncHandler(async (req, res) => {
+  const unit = req.query.period === 'weekly' ? 'week' : req.query.period === 'yearly' ? 'year' : 'month';
+  const match = { movementType: { $in: ['IN', 'OUT'] } };
+  if (req.query.itemId) match.itemId = new mongoose.Types.ObjectId(req.query.itemId);
+  if (req.query.partyId) match.partyId = new mongoose.Types.ObjectId(req.query.partyId);
+  const rows = await StockMovement.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: {
+          period: { $dateTrunc: { date: '$createdAt', unit, binSize: 1 } },
+          type: '$movementType',
+        },
+        qty: { $sum: '$qty' },
+      },
+    },
+    { $sort: { '_id.period': 1 } },
+  ]);
+  const byPeriod = new Map();
+  for (const r of rows) {
+    const key = r._id.period.toISOString();
+    if (!byPeriod.has(key)) byPeriod.set(key, { period: r._id.period, stockIn: 0, stockOut: 0 });
+    const bucket = byPeriod.get(key);
+    if (r._id.type === 'IN') bucket.stockIn += r.qty;
+    else bucket.stockOut += r.qty;
+  }
+  const data = [...byPeriod.values()].sort((a, b) => a.period - b.period);
+  res.status(200).json({ success: true, data });
 });
 
 // ─── KITS ──────────────────────────────────────────────────────────────────
