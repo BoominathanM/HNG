@@ -16,7 +16,7 @@ import { useLogoutMutation, useGetCompanySettingsQuery, useGetTasksQuery, useGet
 const { Sider } = Layout;
 const { Text } = Typography;
 
-const DEFAULT_LOGO = '/hng logo new.png';
+const DEFAULT_LOGO = '/hnglogonew.png';
 
 const ALL_MENU_ITEMS = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard', module: 'Dashboard' },

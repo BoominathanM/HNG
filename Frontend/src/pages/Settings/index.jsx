@@ -339,7 +339,7 @@ export default function Settings() {
   const computedOverallTarget = watchedOldHotel + watchedNewHotel + watchedPayment + watchedSoftware;
 
   // Logo
-  const [logoUrl, setLogoUrl] = useState('/hng logo new.png');
+  const [logoUrl, setLogoUrl] = useState('/hnglogonew.png');
 
   // Invoice Settings
   const [invoiceTheme, setInvoiceTheme]             = useState('classic');

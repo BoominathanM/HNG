@@ -20,10 +20,15 @@ export const store = configureStore({
 // window focus/online listeners RTK Query needs to act on them.
 setupListeners(store.dispatch);
 
+// NOTE: 'hng_auth' is intentionally NOT persisted here. authSlice's own reducers
+// (setUser/refreshUser/logout) already persist it on the actions that actually
+// change it. Silent token refresh (Frontend/src/api/axios.js) also writes fresh
+// tokens straight to localStorage without touching Redux. A blanket subscribe
+// like this one fires on every RTK Query action and would re-serialize the
+// (stale) in-memory auth.token/refreshToken over the top of that refresh,
+// resurrecting an already-rotated refresh token and forcing a spurious logout
+// on the next silent-refresh attempt.
 store.subscribe(() => {
-  const { auth, theme } = store.getState();
-  if (auth.isAuthenticated) {
-    localStorage.setItem('hng_auth', JSON.stringify(auth));
-  }
+  const { theme } = store.getState();
   localStorage.setItem('hng_theme', JSON.stringify(theme));
 });

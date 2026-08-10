@@ -16,7 +16,7 @@ const BANK = {
   bank: 'Kotak Mahindra Bank, MADURAI',
 };
 
-const DEFAULT_LOGO = '/hng logo new.png';
+const DEFAULT_LOGO = '/hnglogonew.png';
 
 // When true, the per-line AMOUNT values inside each category section (kit-level,
 // component, and product line rows) are hidden in quotations & invoices. Only the
@@ -458,7 +458,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
           </tr>`;
         ko.components.forEach(comp => {
           html += `
-            <tr style="background:#fff;">
+            <tr style="background:${cs.sub};">
               <td style="padding:5px 10px 5px 40px;font-size:10px;color:#555;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
                 &ndash;&nbsp;${comp.name}
               </td>
@@ -488,7 +488,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
 
     sections.persProdRows.forEach(p => {
       html += `
-        <tr style="background:#fff;">
+        <tr style="background:${cs.sub};">
           <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">${p.name}</td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${p.perKit != null ? p.perKit : ''}</td>
           <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
@@ -509,22 +509,16 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
   // ── Section B: Separate Kit ──
   if (sections.separateKit > 0) {
     const cs = CAT_STYLE.separate_kit;
-    // Header Unit Price = sum of each separate kit TYPE's own unit price (e.g. Dental Kit
-    // 16.25 + Shaving Kit 11.4), not a quantity-weighted average across them.
-    const sepKitUnitPriceSum = r2d(sections.sepKits.reduce((s, ko) => s + (ko.qty > 0 ? r2d(ko.kitTotal / ko.qty) : 0), 0));
     html += `
       <tr>
-        <td colspan="3" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
-          B &nbsp;&mdash;&nbsp; SEPARATE KIT${sections.sepKitCount ? ` — ${sections.sepKitCount} kit${sections.sepKitCount !== 1 ? 's' : ''}` : ''}
-        </td>
-        <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
-          ${sepKitUnitPriceSum > 0 ? sepKitUnitPriceSum.toLocaleString() : ''}
+        <td colspan="2" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+          B &nbsp;&mdash;&nbsp; KIT
         </td>
         <td style="padding:8px 10px;background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};"></td>
         <td style="padding:8px 10px;background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};"></td>
-        <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:right;border-bottom:1px solid ${BORDER};">
-          ${rs(sections.separateKit)}
-        </td>
+        <td style="padding:8px 10px;background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};"></td>
+        <td style="padding:8px 10px;background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};"></td>
+        <td style="padding:8px 10px;background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};"></td>
       </tr>`;
 
     sections.sepKits.forEach(ko => {
@@ -535,9 +529,11 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
       if (hasComponents) {
         html += `
           <tr style="background:${cs.sub};">
-            <td colspan="3" style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
-              ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}${!HIDE_LINE_RATES && price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
+            <td style="padding:6px 10px 6px 24px;font-size:11px;font-weight:700;color:#333;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+              ${ko.kitName || '—'}${!HIDE_LINE_RATES && price > 0 ? ` &mdash; ${rs(price)}/kit` : ''}
             </td>
+            <td style="padding:6px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
+            <td style="padding:6px 10px;text-align:center;font-weight:700;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${qty}</td>
             <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
             <td style="padding:6px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
             <td style="padding:6px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
@@ -545,7 +541,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
           </tr>`;
         ko.components.forEach(comp => {
           html += `
-            <tr style="background:#fff;">
+            <tr style="background:${cs.sub};">
               <td style="padding:5px 10px 5px 40px;font-size:10px;color:#555;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
                 &ndash;&nbsp;${comp.name}
               </td>
@@ -561,10 +557,10 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
         html += `
           <tr style="background:${cs.sub};">
             <td style="padding:6px 10px 6px 24px;font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
-              ${ko.kitName || '—'} &times; ${qty} kit${qty !== 1 ? 's' : ''}
+              ${ko.kitName || '—'}
             </td>
             <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
-            <td style="padding:6px 10px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
+            <td style="padding:6px 10px;text-align:center;font-weight:700;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${qty}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
@@ -684,8 +680,8 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
     <div style="padding:12px 16px;text-align:center;font-size:11px;color:#666;border-top:1px solid ${BORDER};">${cfg.footer}</div>` : '';
 
   const logoHtml = cfg.show.logo ? `
-      <div style="width:80px;height:80px;border:2px solid ${ACCENT};border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;">
-        <img src="${cfg.logoUrl}" alt="logo" style="width:100%;height:100%;object-fit:contain;" onerror="this.style.display='none';this.parentNode.innerHTML='<span style=font-size:18px;font-weight:900;color:${ACCENT}>HNG</span>'"/>
+      <div style="display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <img src="${cfg.logoUrl}" alt="logo" style="height:85px;width:auto;object-fit:contain;" onerror="this.style.display='none';this.parentNode.innerHTML='<span style=font-size:18px;font-weight:900;color:${ACCENT}>HNG</span>'"/>
       </div>` : '';
 
   // Forwarding charge row (only if non-zero)
@@ -752,14 +748,15 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
   </div>
   <div class="doc">
     <!-- Header -->
-    <div style="display:flex;padding:16px 20px;border-bottom:2px solid ${ACCENT};align-items:flex-start;gap:16px;">
+    <div style="display:flex;padding:16px 20px 16px 8px;border-bottom:2px solid ${ACCENT};align-items:center;gap:16px;">
       ${logoHtml}
-      <div style="flex:1;">
+      <div style="flex:1;text-align:center;">
         <div style="font-size:22px;font-weight:900;color:${ACCENT};letter-spacing:0.5px;">${cfg.company.name}</div>
       </div>
       <div style="text-align:right;font-size:11px;color:#333;line-height:1.8;">
         <div>${cfg.company.address}</div>
-        <div>Mobile: ${cfg.company.mobile}${cfg.show.gstin ? ` &nbsp;&nbsp; GSTIN: ${cfg.company.gstin}` : ''}</div>
+        <div>Mobile: ${cfg.company.mobile}</div>
+        ${cfg.show.gstin ? `<div>GSTIN: ${cfg.company.gstin}</div>` : ''}
         <div>PAN Number: ${cfg.company.pan}</div>
         <div>Email: ${cfg.company.email}</div>
       </div>
@@ -918,7 +915,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                     </tr>
                   )}
                   {hasComponents && ko.components.map((comp, j) => (
-                    <tr key={`pkit-${i}-comp-${j}`} style={{ background: '#fff' }}>
+                    <tr key={`pkit-${i}-comp-${j}`} style={{ background: cs.sub }}>
                       <td style={{ ...td, paddingLeft: 40, fontSize: 10, color: '#555' }}>–&nbsp;{comp.name}</td>
                       <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555', fontWeight: 700 }}>{comp.perKit != null ? comp.perKit : ''}</td>
                       <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555' }}></td>
@@ -932,7 +929,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
               );
             })}
             {sections.persProdRows.map((p, i) => (
-              <tr key={`pprod-${i}`} style={{ background: '#fff' }}>
+              <tr key={`pprod-${i}`} style={{ background: cs.sub }}>
                 <td style={{ ...td, paddingLeft: 24 }}>{p.name}</td>
                 <td style={{ ...td, textAlign: 'center' }}>{p.perKit != null ? p.perKit : ''}</td>
                 <td style={{ ...td, textAlign: 'center' }}></td>
@@ -953,22 +950,17 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
       {/* ── Section B: Separate Kit ── */}
       {sections.separateKit > 0 && (() => {
         const cs = CAT_STYLE.separate_kit;
-        // 16.25 + Shaving Kit 11.4), not a quantity-weighted average across them.
-        const sepKitUnitPriceSum = r2d(sections.sepKits.reduce((s, ko) => s + (ko.qty > 0 ? r2d(ko.kitTotal / ko.qty) : 0), 0));
         return (
           <>
             <tr>
-              <td colSpan={3} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, borderRight: `1px solid ${BORDER}` }}>
-                B &nbsp;—&nbsp; SEPARATE KIT{sections.sepKitCount ? ` — ${sections.sepKitCount} kit${sections.sepKitCount !== 1 ? 's' : ''}` : ''}
-              </td>
-              <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'right' }}>
-                {sepKitUnitPriceSum > 0 ? sepKitUnitPriceSum.toLocaleString() : ''}
+              <td colSpan={2} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11 }}>
+                B &nbsp;—&nbsp; KIT
               </td>
               <td style={{ ...td, background: cs.header }} />
               <td style={{ ...td, background: cs.header }} />
-              <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'right', borderRight: 'none' }}>
-                {rs(sections.separateKit)}
-              </td>
+              <td style={{ ...td, background: cs.header }} />
+              <td style={{ ...td, background: cs.header }} />
+              <td style={{ ...td, background: cs.header, borderRight: 'none' }} />
             </tr>
             {sections.sepKits.map((ko, i) => {
               const qty = ko.qty;
@@ -979,9 +971,11 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                 <React.Fragment key={`skit-${i}`}>
                   {hasComponents ? (
                     <tr style={{ background: cs.sub }}>
-                      <td colSpan={3} style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333', borderRight: `1px solid ${BORDER}` }}>
-                        {ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}{!HIDE_LINE_RATES && price > 0 ? ` — ${rs(price)}/kit` : ''}
+                      <td style={{ ...td, paddingLeft: 24, fontWeight: 700, color: '#333' }}>
+                        {ko.kitName || '—'}{!HIDE_LINE_RATES && price > 0 ? ` — ${rs(price)}/kit` : ''}
                       </td>
+                      <td style={{ ...td }}></td>
+                      <td style={{ ...td, textAlign: 'center', fontWeight: 700 }}>{qty}</td>
                       <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
                       <td style={{ ...td }}></td>
                       <td style={{ ...td }}></td>
@@ -989,9 +983,9 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                     </tr>
                   ) : (
                     <tr style={{ background: cs.sub }}>
-                      <td style={{ ...td, paddingLeft: 24 }}>{ko.kitName || '—'} × {qty} kit{qty !== 1 ? 's' : ''}</td>
+                      <td style={{ ...td, paddingLeft: 24 }}>{ko.kitName || '—'}</td>
                       <td style={{ ...td, textAlign: 'center' }}></td>
-                      <td style={{ ...td, textAlign: 'center' }}></td>
+                      <td style={{ ...td, textAlign: 'center', fontWeight: 700 }}>{qty}</td>
                       <td style={{ ...td, textAlign: 'right' }}>{kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
                       <td style={{ ...td, textAlign: 'right' }}></td>
                       <td style={{ ...td, textAlign: 'right' }}></td>
@@ -999,7 +993,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                     </tr>
                   )}
                   {hasComponents && ko.components.map((comp, j) => (
-                    <tr key={`skit-${i}-comp-${j}`} style={{ background: '#fff' }}>
+                    <tr key={`skit-${i}-comp-${j}`} style={{ background: cs.sub }}>
                       <td style={{ ...td, paddingLeft: 40, fontSize: 10, color: '#555' }}>–&nbsp;{comp.name}</td>
                       <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555', fontWeight: 700 }}>{comp.perKit != null ? comp.perKit : ''}</td>
                       <td style={{ ...td, textAlign: 'center', fontSize: 10, color: '#555' }}></td>
@@ -1067,22 +1061,23 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
   return (
     <div style={{ fontFamily: cfg.font, fontSize: 12, color: '#000', background: '#fff', border: `1px solid ${BORDER}` }}>
       {/* Header */}
-      <div style={{ display: 'flex', padding: '16px 20px', borderBottom: `2px solid ${ACCENT}`, alignItems: 'flex-start', gap: 16 }}>
+      <div style={{ display: 'flex', padding: '16px 20px 16px 8px', borderBottom: `2px solid ${ACCENT}`, alignItems: 'center', gap: 16 }}>
         {cfg.show.logo && (
-          <div style={{ width: 80, height: 80, border: `2px solid ${ACCENT}`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <img
               src={cfg.logoUrl} alt="logo"
-              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              style={{ height: 85, width: 'auto', objectFit: 'contain' }}
               onError={(e) => { e.target.style.display = 'none'; e.target.parentNode.innerHTML = `<span style="font-size:18px;font-weight:900;color:${ACCENT}">HNG</span>`; }}
             />
           </div>
         )}
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, textAlign: 'center' }}>
           <div style={{ fontSize: 22, fontWeight: 900, color: ACCENT, letterSpacing: 0.5 }}>{cfg.company.name}</div>
         </div>
         <div style={{ textAlign: 'right', fontSize: 11, color: '#333', lineHeight: 1.8 }}>
           <div>{cfg.company.address}</div>
-          <div>Mobile: {cfg.company.mobile}{cfg.show.gstin ? <> &nbsp;&nbsp; GSTIN: {cfg.company.gstin}</> : null}</div>
+          <div>Mobile: {cfg.company.mobile}</div>
+          {cfg.show.gstin && <div>GSTIN: {cfg.company.gstin}</div>}
           <div>PAN Number: {cfg.company.pan}</div>
           <div>Email: {cfg.company.email}</div>
         </div>

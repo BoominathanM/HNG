@@ -41,6 +41,14 @@ const purchaseOrderSchema = new mongoose.Schema({
   receivedAt: Date,
   stockUpdated: { type: Boolean, default: false },
   invoiceFileUrl: String,
+  // Header fields AI-extracted from the receiving invoice (scan-invoice) and confirmed by the
+  // user on receive — kept separate from `invNo`/`amount` (the PO's own values at order time)
+  // so Purchase can compare what was ordered against what the vendor's invoice actually says.
+  receivedInvoiceNo: String,
+  receivedInvoiceVendorName: String,
+  receivedInvoiceTotalAmount: Number,
+  receivedInvoiceVendorGST: String,
+  receivedInvoiceVendorAddress: String,
   // Per-line-item breakdown captured at receiving time (from AI invoice scan + manual
   // adjustment) — persists what the frontend previously only tracked in local React state.
   receivedItems: [{
@@ -50,6 +58,8 @@ const purchaseOrderSchema = new mongoose.Schema({
     receivedQty: Number,
     missingQty: Number,
     reason: String,
+    hsn: String,
+    gst: String,
   }],
   // Only set when a shortfall was recorded (dispatchStatus === 'Partially Received').
   missedBy: { type: String, enum: ['vendor', 'lorry', null], default: null },

@@ -28,7 +28,7 @@ export const apiSlice = createApi({
   refetchOnReconnect: true,
   tagTypes: [
     'Auth', 'Staff', 'Claims',
-    'Vendors', 'Purchase', 'PurchaseOrders', 'LocalPurchases', 'PurchaseHistory',
+    'Vendors', 'Purchase', 'PurchaseOrders', 'LocalPurchases', 'PurchaseHistory', 'PurchasePersons',
     'Dispatch', 'Inventory', 'StockApprovals', 'StockHistory',
     'Financial', 'ExpensePayments', 'PickupExpenses', 'LocalPurchaseExpenses',
     'Sales', 'Leads', 'Quotations', 'Negotiations', 'Orders', 'Complaints',
@@ -249,6 +249,14 @@ export const apiSlice = createApi({
     getLocalPurchase: builder.query({
       query: (id) => ({ url: `/purchase/local/${id}` }),
       providesTags: (result, error, id) => [{ type: 'LocalPurchases', id }],
+    }),
+    getPurchasePersons: builder.query({
+      query: () => ({ url: '/purchase/purchase-persons' }),
+      providesTags: ['PurchasePersons'],
+    }),
+    createPurchasePerson: builder.mutation({
+      query: (data) => ({ url: '/purchase/purchase-persons', method: 'post', data }),
+      invalidatesTags: ['PurchasePersons'],
     }),
     getPurchaseHistory: builder.query({
       query: () => ({ url: '/purchase/history' }),
@@ -1317,6 +1325,8 @@ export const {
   useScanLocalPurchaseInvoiceMutation,
   useCreateLocalPurchaseMutation,
   useGetLocalPurchaseQuery,
+  useGetPurchasePersonsQuery,
+  useCreatePurchasePersonMutation,
   useGetPurchaseHistoryQuery,
   // Dispatch
   useGetDispatchesQuery,

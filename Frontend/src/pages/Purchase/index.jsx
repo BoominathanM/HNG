@@ -35,6 +35,8 @@ import {
   useUploadPurchaseLRMutation,
   useScanLocalPurchaseInvoiceMutation,
   useCreateLocalPurchaseMutation,
+  useGetPurchasePersonsQuery,
+  useCreatePurchasePersonMutation,
   useGetWhatsAppEventMappingsQuery,
   useUploadFilesMutation,
   useSendWhatsAppMessageMutation,
@@ -149,6 +151,8 @@ export default function Purchase() {
   const [scanLocalPurchaseInvoice] = useScanLocalPurchaseInvoiceMutation();
   const [createVendorMutation] = useCreateVendorMutation();
   const { data: allVendorData } = useGetVendorsQuery();
+  const { data: purchasePersonsData } = useGetPurchasePersonsQuery();
+  const [createPurchasePersonMutation] = useCreatePurchasePersonMutation();
 
   const suppliers = useMemo(() => (vendorData?.data || []).map((v) => ({
     id: v._id, key: v._id, name: v.name, phone: v.phone,
@@ -161,6 +165,10 @@ export default function Purchase() {
     email: v.email, address: v.address, bank: v.bankDetails,
     totalPaid: 0, pending: 0, status: v.status,
   })), [allVendorData]);
+
+  const purchasePersons = useMemo(() => (purchasePersonsData?.data || []).map((p) => ({
+    id: p._id, key: p._id, name: p.name, phone: p.phone, gPayNumber: p.gPayNumber,
+  })), [purchasePersonsData]);
 
   const inventoryItems = useMemo(() => (itemsData?.data || []).map((i) => ({
     key: i._id, code: i.itemCode, name: i.itemName,
@@ -215,10 +223,11 @@ export default function Purchase() {
       lpCode: lp.lpCode,
       invoiceNo: lp.invoiceNo, invoiceFile: lp.invoiceFileUrl,
       vendorName: lp.vendorName, vendorPhone: lp.vendorPhone,
-      items: lp.items || [], totalAmount: lp.totalAmount,
+      items: lp.items || [], totalAmount: lp.totalAmount, gstAmount: lp.gstAmount || 0,
       paymentType: lp.paymentType, paymentStatus: lp.paymentStatus,
       paymentProof: lp.paymentProofUrl, gPayNumber: lp.gPayNumber,
       paidBy: lp.paidBy, paidDate: lp.paidDate?.slice(0, 10),
+      purchasePersonName: lp.purchasePersonName || '', purchasePersonPhone: lp.purchasePersonPhone || '',
       paidAmount: lp.paidAmount || 0,
       balance: Math.max(0, (lp.totalAmount || 0) - (lp.paidAmount || 0)),
       dueDate: lp.dueDate?.slice(0, 10),
@@ -511,6 +520,7 @@ export default function Purchase() {
   const [productQtys, setProductQtys] = useState({});
   const [receivedInvoiceFile, setReceivedInvoiceFile] = useState(null);
   const [receivedConfirmLoading, setReceivedConfirmLoading] = useState(false);
+  const [scannedInvoiceDetails, setScannedInvoiceDetails] = useState(null);
   const [productNotes, setProductNotes] = useState({});
   const [partialReceived, setPartialReceived] = useState(false);
   const [missedBy, setMissedBy] = useState(null);
@@ -560,6 +570,7 @@ export default function Purchase() {
     setMissedBy(null);
     setVendorMissedAction(null);
     setReceivedInvoiceFile(null);
+    setScannedInvoiceDetails(null);
     setShowReceivedModal(true);
   };
 
@@ -579,8 +590,10 @@ export default function Purchase() {
         key: it.itemId ? String(it.itemId) : idx,
         itemId: it.itemId,
         name: it.itemName,
-        hsn: '-', gst: '-',
+        hsn: it.hsn || '-', gst: it.gst || '-',
         originalQty: it.orderedQty,
+        invoiceQty: it.invoiceQty ?? it.receivedQty,
+        matched: !!it.matched,
         unit: it.unit || receivedTarget.unit,
       }));
       setInvoiceProducts(products);
@@ -588,6 +601,22 @@ export default function Purchase() {
       scannedItems.forEach((it, idx) => { qtys[products[idx].key] = it.receivedQty; });
       setProductQtys(qtys);
       setInvoiceScanned(true);
+      // Header fields (invoice no / vendor name / GST no / address / total amount) the AI
+      // actually read off the uploaded document — surfaced separately from the item table so
+      // Purchase can check them against the PO before confirming, instead of only seeing the
+      // pre-filled ordered qtys. qtyVerification compares ordered vs the invoice's own printed
+      // qty (immutable), independent of any later manual edits to the received-qty steppers.
+      setScannedInvoiceDetails({
+        invoiceNo: res?.data?.invoiceNo || '',
+        vendorName: res?.data?.vendorName || '',
+        vendorPhone: res?.data?.vendorPhone || '',
+        vendorAddress: res?.data?.vendorAddress || '',
+        vendorGST: res?.data?.vendorGST || '',
+        totalAmount: res?.data?.totalAmount,
+        vendorMismatch: !!res?.data?.vendorMismatch,
+        poVendorName: res?.data?.poVendorName,
+        qtyVerification: res?.data?.qtyVerification || null,
+      });
       enqueueSnackbar('Invoice scanned — products fetched successfully!', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'AI scan failed', { variant: 'error' });
@@ -620,10 +649,17 @@ export default function Purchase() {
         orderedQty: p.originalQty,
         receivedQty: productQtys[p.key] ?? p.originalQty,
         reason: productNotes[p.key] || '',
+        hsn: p.hsn && p.hsn !== '-' ? p.hsn : '',
+        gst: p.gst && p.gst !== '-' ? p.gst : '',
       }))));
       if (missedBy) fd.append('missedBy', missedBy);
       if (vendorMissedAction) fd.append('vendorMissedAction', vendorMissedAction);
       if (receivedInvoiceFile) fd.append('invoice', receivedInvoiceFile);
+      if (scannedInvoiceDetails?.invoiceNo) fd.append('invoiceNo', scannedInvoiceDetails.invoiceNo);
+      if (scannedInvoiceDetails?.vendorName) fd.append('vendorName', scannedInvoiceDetails.vendorName);
+      if (scannedInvoiceDetails?.totalAmount) fd.append('totalAmount', scannedInvoiceDetails.totalAmount);
+      if (scannedInvoiceDetails?.vendorGST) fd.append('vendorGST', scannedInvoiceDetails.vendorGST);
+      if (scannedInvoiceDetails?.vendorAddress) fd.append('vendorAddress', scannedInvoiceDetails.vendorAddress);
       await receiveOrderMutation({ id: receivedTarget.key, formData: fd }).unwrap();
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record receipt', { variant: 'error' });
@@ -670,6 +706,8 @@ export default function Purchase() {
   const [showAddVendorInlineModal, setShowAddVendorInlineModal] = useState(false);
   const [addVendorInlineForm] = Form.useForm();
   const [inlineDropdownContext, setInlineDropdownContext] = useState(''); // which dropdown triggered it
+  const [showAddPurchasePersonInlineModal, setShowAddPurchasePersonInlineModal] = useState(false);
+  const [addPurchasePersonInlineForm] = Form.useForm();
 
   /* ── Camera capture (shared across all scan sections) ── */
   const [showCameraModal, setShowCameraModal] = useState(false);
@@ -1120,6 +1158,7 @@ export default function Purchase() {
         vendorAddress: knownVendor?.address || extracted.vendorAddress || '',
         vendorGST: extracted.vendorGST || '',
         items,
+        gstAmount: Number(extracted.gstAmount) || 0,
         totalAmount: extracted.totalAmount || items.reduce((s, it) => s + (Number(it.amount) || 0), 0),
         isNewVendor: !knownVendor && !!extracted.vendorName,
       };
@@ -1130,6 +1169,7 @@ export default function Purchase() {
       if (scanned.vendorName) fieldValues.vendorName = scanned.vendorName;
       if (scanned.vendorPhone) fieldValues.vendorPhone = scanned.vendorPhone;
       if (scanned.totalAmount) fieldValues.totalAmount = scanned.totalAmount;
+      if (scanned.gstAmount) fieldValues.gstAmount = scanned.gstAmount;
       if (items.length) fieldValues.items = items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount }));
       localPurchaseForm.setFieldsValue(fieldValues);
 
@@ -1158,12 +1198,15 @@ export default function Purchase() {
       vendorPhone: values.vendorPhone || localPurchaseScannedDetails?.vendorPhone || '',
       items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0 })),
       totalAmount: values.totalAmount || localPurchaseScannedDetails?.totalAmount || 0,
+      gstAmount: Number(values.gstAmount ?? localPurchaseScannedDetails?.gstAmount) || 0,
       paymentType: values.paymentType || 'credit',
       // Instant + Finance Team = already settled → Paid immediately, just logged for tracking.
       // Instant + Purchase Person = needs reimbursement → Pending, same follow-up flow as Credit.
       paymentStatus: values.paymentType === 'instant' && values.paidBy === 'finance_team' ? 'Paid' : 'Pending',
       gPayNumber: values.paymentType === 'instant' ? (values.gPayNumber || null) : null,
       paidBy: values.paymentType === 'instant' ? (values.paidBy === 'finance_team' ? 'Finance Team' : 'Purchase Person') : null,
+      purchasePersonName: values.paymentType === 'instant' && values.paidBy === 'purchase_person' ? (values.purchasePersonName || null) : null,
+      purchasePersonPhone: values.paymentType === 'instant' && values.paidBy === 'purchase_person' ? (values.purchasePersonPhone || null) : null,
       paymentProofUrl: values.paymentType === 'instant' ? (getFileUrl(values.paymentProofFile?.fileList?.[0]) || null) : null,
     };
 
@@ -1220,11 +1263,14 @@ export default function Purchase() {
           amount: Number(it.amount) || 0,
         })),
         totalAmount: Number(newLP.totalAmount) || 0,
+        gstAmount: Number(newLP.gstAmount) || 0,
         paymentType: newLP.paymentType,
         paymentStatus: newLP.paymentStatus,
         ...(newLP.paymentStatus === 'Paid' ? { paidAmount: Number(newLP.totalAmount) || 0, paidDate: new Date().toISOString() } : {}),
         ...(newLP.gPayNumber ? { gPayNumber: newLP.gPayNumber } : {}),
         ...(newLP.paidBy ? { paidBy: newLP.paidBy } : {}),
+        ...(newLP.purchasePersonName ? { purchasePersonName: newLP.purchasePersonName } : {}),
+        ...(newLP.purchasePersonPhone ? { purchasePersonPhone: newLP.purchasePersonPhone } : {}),
         ...(newLP.paymentProofUrl ? { paymentProofUrl: newLP.paymentProofUrl } : {}),
         ...(values.paymentType === 'credit' && values.dueDate ? { dueDate: values.dueDate.toDate() } : {}),
       }).unwrap();
@@ -1264,6 +1310,21 @@ export default function Purchase() {
         enqueueSnackbar(`Vendor "${vals.name}" added!`, { variant: 'success' });
       } catch (e) {
         enqueueSnackbar(e?.data || 'Failed to add vendor', { variant: 'error' });
+      }
+    });
+  };
+
+  const handleAddPurchasePersonInline = () => {
+    addPurchasePersonInlineForm.validateFields().then(async vals => {
+      try {
+        await createPurchasePersonMutation({ name: vals.name, phone: vals.phone || '', gPayNumber: vals.gPayNumber || '' }).unwrap();
+        setShowAddPurchasePersonInlineModal(false);
+        addPurchasePersonInlineForm.resetFields();
+        // Auto-select the newly added person back into the Local Purchase form.
+        localPurchaseForm.setFieldsValue({ purchasePersonName: vals.name, purchasePersonPhone: vals.phone || '', gPayNumber: vals.gPayNumber || '' });
+        enqueueSnackbar(`Purchase person "${vals.name}" added!`, { variant: 'success' });
+      } catch (e) {
+        enqueueSnackbar(e?.data || 'Failed to add purchase person', { variant: 'error' });
       }
     });
   };
@@ -2961,8 +3022,11 @@ export default function Purchase() {
                                   {localPurchaseDetailView.paymentType === 'credit' && localPurchaseDetailView.dueDate && <div><Text type="secondary" style={{ fontSize: 12 }}>Due Date: </Text><Text strong>{localPurchaseDetailView.dueDate}</Text></div>}
                                   {localPurchaseDetailView.gPayNumber && <div><Text type="secondary" style={{ fontSize: 12 }}>GPay: </Text><Text>{localPurchaseDetailView.gPayNumber}</Text></div>}
                                   {localPurchaseDetailView.paidBy && <div><Text type="secondary" style={{ fontSize: 12 }}>Paid By: </Text><Text strong>{localPurchaseDetailView.paidBy}</Text></div>}
+                                  {localPurchaseDetailView.purchasePersonName && <div><Text type="secondary" style={{ fontSize: 12 }}>Purchase Person: </Text><Text strong>{localPurchaseDetailView.purchasePersonName}</Text></div>}
+                                  {localPurchaseDetailView.purchasePersonPhone && <div><Text type="secondary" style={{ fontSize: 12 }}>Purchase Person Phone: </Text><Text>{localPurchaseDetailView.purchasePersonPhone}</Text></div>}
                                   {localPurchaseDetailView.paidDate && <div><Text type="secondary" style={{ fontSize: 12 }}>Paid Date: </Text><Text>{localPurchaseDetailView.paidDate}</Text></div>}
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Total: </Text><Text strong style={{ color: '#B11E6A' }}>₹{localPurchaseDetailView.totalAmount?.toLocaleString()}</Text></div>
+                                  {localPurchaseDetailView.gstAmount > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>GST Amount: </Text><Text strong>₹{localPurchaseDetailView.gstAmount.toLocaleString()}</Text></div>}
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Paid Amount: </Text><Text strong style={{ color: '#52c41a' }}>₹{(localPurchaseDetailView.paidAmount || 0).toLocaleString()}</Text></div>
                                   {localPurchaseDetailView.balance > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>Balance: </Text><Text strong style={{ color: '#fa8c16' }}>₹{localPurchaseDetailView.balance.toLocaleString()}</Text></div>}
                                 </div>
@@ -3128,6 +3192,10 @@ export default function Purchase() {
                                 render: v => <Text strong style={{ color: '#B11E6A' }}>₹{v?.toLocaleString()}</Text>
                               },
                               {
+                                title: 'GST Amount', dataIndex: 'gstAmount', key: 'gstAmount', width: 100, align: 'right',
+                                render: v => v > 0 ? <Text>₹{v.toLocaleString()}</Text> : <Text type="secondary">—</Text>
+                              },
+                              {
                                 title: 'Balance', dataIndex: 'balance', key: 'balance', width: 100, align: 'right',
                                 render: v => v > 0 ? <Text strong style={{ color: '#fa8c16' }}>₹{v?.toLocaleString()}</Text> : <Text type="secondary">—</Text>
                               },
@@ -3138,6 +3206,16 @@ export default function Purchase() {
                               {
                                 title: 'Payment Type', dataIndex: 'paymentType', key: 'paymentType', width: 110, align: 'center',
                                 render: v => <Tag color={v === 'instant' ? 'green' : 'orange'} style={{ borderRadius: 8 }}>{v === 'instant' ? 'Instant' : 'Credit'}</Tag>
+                              },
+                              {
+                                title: 'Paid By', dataIndex: 'paidBy', key: 'paidBy', width: 150,
+                                render: (v, r) => v === 'Purchase Person' ? (
+                                  <div>
+                                    <Tag color="purple" style={{ borderRadius: 8, marginBottom: 2 }}>Purchase Person</Tag>
+                                    {r.purchasePersonName && <div><Text style={{ fontSize: 12 }}>{r.purchasePersonName}</Text></div>}
+                                    {r.purchasePersonPhone && <div><Text type="secondary" style={{ fontSize: 11 }}>{r.purchasePersonPhone}</Text></div>}
+                                  </div>
+                                ) : v ? <Tag color="blue" style={{ borderRadius: 8 }}>{v}</Tag> : <Text type="secondary">—</Text>
                               },
                               {
                                 title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 120, align: 'center',
@@ -3748,6 +3826,7 @@ export default function Purchase() {
                   { label: 'Phone', val: localPurchaseScannedDetails.vendorPhone },
                   { label: 'Address', val: localPurchaseScannedDetails.vendorAddress },
                   { label: 'Total Amount', val: `₹${localPurchaseScannedDetails.totalAmount?.toLocaleString()}` },
+                  { label: 'GST Amount', val: `₹${(localPurchaseScannedDetails.gstAmount || 0).toLocaleString()}` },
                 ].map((d, i) => (
                   <Col xs={12} key={i} style={{ marginBottom: 4 }}>
                     <Text style={{ fontSize: 10, color: '#888', display: 'block' }}>{d.label}</Text>
@@ -3860,6 +3939,13 @@ export default function Purchase() {
               </Form.Item>
             </Col>
           </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="GST Amount (₹)" name="gstAmount">
+                <InputNumber prefix="₹" style={{ width: '100%' }} min={0} placeholder="0.00" />
+              </Form.Item>
+            </Col>
+          </Row>
 
           {/* Payment Type */}
           <Form.Item label="Payment Type" name="paymentType" initialValue="credit" rules={[{ required: true }]}>
@@ -3912,13 +3998,48 @@ export default function Purchase() {
               </Form.Item>
 
               {localPurchasePaidBy === 'purchase_person' && (
-                <Alert
-                  type="info"
-                  showIcon
-                  style={{ marginBottom: 12, borderRadius: 8 }}
-                  message={<Text strong style={{ fontSize: 12 }}>Goes to Reimbursement Expense</Text>}
-                  description={<Text style={{ fontSize: 11 }}>This payment will be recorded as a Purchase Person expense and sent to the Reimbursement Expense section for approval and settlement.</Text>}
-                />
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12, borderRadius: 8 }}
+                    message={<Text strong style={{ fontSize: 12 }}>Goes to Reimbursement Expense</Text>}
+                    description={<Text style={{ fontSize: 11 }}>This payment will be recorded as a Purchase Person expense and sent to the Reimbursement Expense section for approval and settlement.</Text>}
+                  />
+                  <Row gutter={12}>
+                    <Col span={12}>
+                      <Form.Item label="Purchase Person Name" name="purchasePersonName" rules={[{ required: true, message: 'Select or add purchase person' }]} style={{ marginBottom: 12 }}>
+                        <Select
+                          placeholder="Select or add purchase person"
+                          showSearch
+                          optionFilterProp="children"
+                          onChange={(val) => {
+                            const p = purchasePersons.find(pp => pp.name === val);
+                            if (p) localPurchaseForm.setFieldsValue({ purchasePersonPhone: p.phone || '', gPayNumber: p.gPayNumber || '' });
+                          }}
+                          dropdownRender={menu => (
+                            <>
+                              {menu}
+                              <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0' }}>
+                                <Button type="link" icon={<PlusOutlined />} style={{ color: '#B11E6A', padding: 0, fontWeight: 600 }}
+                                  onClick={() => setShowAddPurchasePersonInlineModal(true)}>
+                                  Add New Purchase Person
+                                </Button>
+                              </div>
+                            </>
+                          )}
+                        >
+                          {purchasePersons.map(p => <Option key={p.id} value={p.name}>{p.name}</Option>)}
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item label="Purchase Person Phone" name="purchasePersonPhone" rules={[phoneValidator(true)]} style={{ marginBottom: 12 }}>
+                        <PhoneInput placeholder="Phone number" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </>
               )}
               {localPurchasePaidBy === 'finance_team' && (
                 <Alert
@@ -4066,6 +4187,34 @@ export default function Purchase() {
             <Button style={{ flex: 1 }} onClick={() => { setShowAddVendorInlineModal(false); addVendorInlineForm.resetFields(); }}>Cancel</Button>
             <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#1890ff,#096dd9)', border: 'none', fontWeight: 700 }} onClick={handleAddVendorInline}>
               Add Vendor
+            </Button>
+          </div>
+        </Form>
+      </Modal>
+
+      {/* ──────── Inline Add Purchase Person Modal ──────── */}
+      <Modal
+        title={<Space><PlusOutlined style={{ color: '#B11E6A' }} /><Text strong>Add New Purchase Person</Text></Space>}
+        open={showAddPurchasePersonInlineModal}
+        onCancel={() => { setShowAddPurchasePersonInlineModal(false); addPurchasePersonInlineForm.resetFields(); }}
+        footer={null}
+        width={400}
+        centered
+      >
+        <Form form={addPurchasePersonInlineForm} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item label="Purchase Person Name" name="name" rules={[{ required: true, message: 'Required' }]}>
+            <Input placeholder="Full name" />
+          </Form.Item>
+          <Form.Item label="Phone Number" name="phone" rules={[{ required: true, message: 'Required' }, phoneValidator(true)]}>
+            <PhoneInput placeholder="Phone number" />
+          </Form.Item>
+          <Form.Item label="GPay / UPI Number" name="gPayNumber">
+            <Input placeholder="GPay / UPI number" prefix={<PhoneOutlined style={{ color: '#52c41a' }} />} />
+          </Form.Item>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowAddPurchasePersonInlineModal(false); addPurchasePersonInlineForm.resetFields(); }}>Cancel</Button>
+            <Button type="primary" style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }} onClick={handleAddPurchasePersonInline}>
+              Add Purchase Person
             </Button>
           </div>
         </Form>
@@ -5694,6 +5843,62 @@ export default function Purchase() {
               </Space>
             </div>
 
+            {/* Scanned invoice details — the header fields AI actually read off the uploaded
+                document (invoice no / vendor / GST / address / amount), for Purchase to check
+                against the PO before confirming, not just the qty table below. */}
+            {invoiceScanned && scannedInvoiceDetails && (
+              <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: isDark ? '#0f1a0f' : '#f6fff8', border: '1px solid #52c41a33' }}>
+                <Space size={4} style={{ marginBottom: 8 }}>
+                  <RobotOutlined style={{ color: '#52c41a' }} />
+                  <Text style={{ fontWeight: 700, color: '#52c41a', fontSize: 13 }}>AI-Scanned Invoice Details</Text>
+                </Space>
+                <Row gutter={[8, 8]}>
+                  {[
+                    { label: 'Invoice No', val: scannedInvoiceDetails.invoiceNo || '-' },
+                    { label: 'Vendor Name', val: scannedInvoiceDetails.vendorName || '-' },
+                    { label: 'GST Number', val: scannedInvoiceDetails.vendorGST || '-' },
+                    { label: 'Vendor Phone', val: scannedInvoiceDetails.vendorPhone || '-' },
+                    { label: 'Vendor Address', val: scannedInvoiceDetails.vendorAddress || '-', xs: 24 },
+                    { label: 'Total Amount', val: scannedInvoiceDetails.totalAmount ? `₹${Number(scannedInvoiceDetails.totalAmount).toLocaleString()}` : '-' },
+                  ].map((d, i) => (
+                    <Col xs={d.xs || 12} sm={d.xs || 8} key={i}>
+                      <Text style={{ fontSize: 10, color: '#888', display: 'block' }}>{d.label}</Text>
+                      <Text strong style={{ fontSize: 12 }}>{d.val}</Text>
+                    </Col>
+                  ))}
+                </Row>
+                {scannedInvoiceDetails.qtyVerification && (
+                  <div style={{
+                    marginTop: 10, padding: '8px 12px', borderRadius: 8,
+                    background: scannedInvoiceDetails.qtyVerification.missingItemsCount > 0 ? (isDark ? '#1a1500' : '#fffbe6') : (isDark ? '#0f1a0f' : '#f6fff8'),
+                    border: `1px solid ${scannedInvoiceDetails.qtyVerification.missingItemsCount > 0 ? '#fa8c1644' : '#52c41a33'}`,
+                  }}>
+                    <Text style={{ fontSize: 12, fontWeight: 700, display: 'block', marginBottom: 4 }}>Ordered vs Invoice Qty — by Product Name</Text>
+                    <Space size={16} wrap>
+                      <Text style={{ fontSize: 12 }}>Ordered Qty (Total): <Text strong>{scannedInvoiceDetails.qtyVerification.totalOrderedQty}</Text></Text>
+                      <Text style={{ fontSize: 12 }}>Invoice Qty (Total): <Text strong>{scannedInvoiceDetails.qtyVerification.totalInvoiceQty}</Text></Text>
+                      <Text style={{ fontSize: 12 }}>Missing Qty (Total): <Text strong style={{ color: scannedInvoiceDetails.qtyVerification.missingQtyTotal > 0 ? '#fa541c' : '#52c41a' }}>{scannedInvoiceDetails.qtyVerification.missingQtyTotal}</Text></Text>
+                      <Text style={{ fontSize: 12, color: scannedInvoiceDetails.qtyVerification.missingItemsCount > 0 ? '#d46b08' : '#52c41a' }}>
+                        {scannedInvoiceDetails.qtyVerification.missingItemsCount > 0
+                          ? `${scannedInvoiceDetails.qtyVerification.missingItemsCount} item(s) short vs invoice (out of ${invoiceProducts.length})`
+                          : 'All item quantities match the invoice'}
+                      </Text>
+                    </Space>
+                  </div>
+                )}
+                {scannedInvoiceDetails.vendorMismatch && (
+                  <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: isDark ? '#1a1500' : '#fffbe6', border: '1px solid #fa8c1644' }}>
+                    <Space>
+                      <WarningOutlined style={{ color: '#fa8c16' }} />
+                      <Text style={{ fontSize: 12, color: '#d46b08' }}>
+                        Invoice vendor "{scannedInvoiceDetails.vendorName}" doesn't match this PO's vendor "{scannedInvoiceDetails.poVendorName}" — double-check before confirming.
+                      </Text>
+                    </Space>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Products table */}
             {invoiceScanned && invoiceProducts.length > 0 && (
               <div style={{ marginBottom: 16 }}>
@@ -5713,6 +5918,27 @@ export default function Purchase() {
                     { title: 'HSN', dataIndex: 'hsn', width: 70, render: v => <Text type="secondary" style={{ fontSize: 11 }}>{v}</Text> },
                     { title: 'GST', dataIndex: 'gst', width: 60, render: v => <Tag color="blue" style={{ fontSize: 10, padding: '0 4px' }}>{v}</Tag> },
                     { title: 'Ordered', dataIndex: 'originalQty', width: 80, render: (v, r) => <Text>{v} {r.unit}</Text> },
+                    {
+                      title: 'Invoice Qty', key: 'invoice_qty', width: 110,
+                      render: (_, r) => {
+                        const invQty = r.invoiceQty ?? 0;
+                        const diff = invQty - r.originalQty;
+                        return (
+                          <Space size={4}>
+                            <Text>{invQty} {r.unit}</Text>
+                            {r.matched === false && (
+                              <Tag color="red" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Not on invoice</Tag>
+                            )}
+                            {r.matched !== false && diff < 0 && (
+                              <Tag color="warning" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Missing {-diff}</Tag>
+                            )}
+                            {r.matched !== false && diff > 0 && (
+                              <Tag color="blue" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Extra {diff}</Tag>
+                            )}
+                          </Space>
+                        );
+                      }
+                    },
                     {
                       title: 'Received Qty', key: 'received_qty', width: 130,
                       render: (_, r) => (
@@ -5789,6 +6015,7 @@ export default function Purchase() {
                   style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid #fa8c1633' }}
                   columns={[
                     { title: 'Item', dataIndex: 'name', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'HSN', dataIndex: 'hsn', width: 70, render: v => <Text type="secondary" style={{ fontSize: 11 }}>{v}</Text> },
                     { title: 'Ordered', dataIndex: 'originalQty' },
                     { title: 'Received', dataIndex: 'receivedQty', render: v => <Text style={{ color: '#52c41a' }}>{v}</Text> },
                     { title: 'Missing', dataIndex: 'missingQty', render: v => <Text strong style={{ color: '#ff4d4f' }}>{v}</Text> },

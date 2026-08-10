@@ -272,11 +272,12 @@ const INVOICE_EXTRACTION_PROMPT = `You are a data-entry assistant extracting det
 - vendorPhone: the vendor's contact phone number, if printed
 - vendorAddress: the vendor's postal address, if printed
 - vendorGST: the vendor's GST number or PAN, if printed
-- items: an array of every line item on the invoice, each as { name, qty, unit, amount } — name is the item/product description, qty is the quantity as a plain number, unit is the unit of measure (e.g. "Pcs", "Kg", "Box"), defaulting to "Pcs" if not stated, amount is the line total for that item as a plain number (no currency symbols/commas)
+- items: an array of every line item on the invoice, each as { name, qty, unit, amount, hsn, gst } — name is the item/product description, qty is the quantity as a plain number, unit is the unit of measure (e.g. "Pcs", "Kg", "Box"), defaulting to "Pcs" if not stated, amount is the line total for that item as a plain number (no currency symbols/commas), hsn is the HSN/SAC code printed for that line item if present else "", gst is the GST rate/tax percentage printed for that line item if present (e.g. "18%") else ""
+- gstAmount: the total GST/tax amount printed on the invoice as a plain number (no currency symbols/commas) — sum of CGST+SGST or IGST if shown separately, or the single GST/tax total line if only one is printed
 - totalAmount: the grand total amount of the invoice as a plain number (no currency symbols/commas)
 
 Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
-{ "invoiceNo": "", "vendorName": "", "vendorPhone": "", "vendorAddress": "", "vendorGST": "", "items": [ { "name": "", "qty": 0, "unit": "Pcs", "amount": 0 } ], "totalAmount": 0 }
+{ "invoiceNo": "", "vendorName": "", "vendorPhone": "", "vendorAddress": "", "vendorGST": "", "items": [ { "name": "", "qty": 0, "unit": "Pcs", "amount": 0, "hsn": "", "gst": "" } ], "gstAmount": 0, "totalAmount": 0 }
 If a field cannot be determined from the document, use an empty string ("" ), 0 for numeric fields, or [] for items — do not guess or invent data.`;
 
 // file: { url, originalName, mimetype } — Cloudinary-hosted, already uploaded by multer.
@@ -326,6 +327,8 @@ async function extractInvoiceFields({ apiKey, model, file }) {
           qty: Number(it.qty) || 0,
           unit: it.unit || 'Pcs',
           amount: Number(it.amount) || 0,
+          hsn: it.hsn || it.hsnCode || '',
+          gst: it.gst || it.gstRate || '',
         }))
         .filter((it) => it.name)
     : [];
@@ -337,6 +340,7 @@ async function extractInvoiceFields({ apiKey, model, file }) {
     vendorAddress: parsed.vendorAddress || '',
     vendorGST: parsed.vendorGST || '',
     items,
+    gstAmount: Number(parsed.gstAmount) || 0,
     totalAmount: Number(parsed.totalAmount) || items.reduce((s, it) => s + it.amount, 0),
   };
 }

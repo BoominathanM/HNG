@@ -24,6 +24,9 @@ router.post('/local/scan-invoice', upload.single('invoice'), ctrl.scanLocalPurch
 router.post('/local', upload.single('invoice'), ctrl.createLocalPurchase);
 router.get('/local/:id', ctrl.getLocalPurchase);
 
+router.get('/purchase-persons', ctrl.getPurchasePersons);
+router.post('/purchase-persons', ctrl.createPurchasePerson);
+
 router.get('/history', ctrl.getPurchaseHistory);
 
 // AI Quotation Comparison

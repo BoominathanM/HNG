@@ -213,12 +213,15 @@ export default function Financial() {
     vendorPhone: lp.vendorPhone,
     items: lp.items || [],
     totalAmount: lp.totalAmount,
+    gstAmount: lp.gstAmount || 0,
     paymentType: lp.paymentType,
     paymentStatus: lp.paymentStatus,
     paymentProof: lp.paymentProofUrl,
     gPayNumber: lp.gPayNumber,
     paidDate: lp.paidDate,
     paidBy: lp.paidBy,
+    purchasePersonName: lp.purchasePersonName || '',
+    purchasePersonPhone: lp.purchasePersonPhone || '',
     paidAmount: lp.paidAmount || 0,
     balance: Math.max(0, (lp.totalAmount || 0) - (lp.paidAmount || 0)),
   })), [localPurchaseExpData]);
@@ -1105,10 +1108,21 @@ export default function Financial() {
                                     ))
                                   },
                                   { title: 'Total', dataIndex: 'totalAmount', key: 'totalAmount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{v?.toLocaleString()}</Text> },
+                                  { title: 'GST Amount', dataIndex: 'gstAmount', key: 'gstAmount', width: 105, align: 'right', render: v => v > 0 ? <Text style={{ fontSize: 13 }}>₹{v.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
                                   { title: 'Balance', dataIndex: 'balance', key: 'balance', width: 105, align: 'right', render: v => v > 0 ? <Text strong style={{ color: '#fa8c16', fontSize: 13 }}>₹{v?.toLocaleString()}</Text> : <Text type="secondary">—</Text> },
                                   { title: 'Payment Type', dataIndex: 'paymentType', key: 'paymentType', width: 115, align: 'center', render: v => <Tag color={v === 'instant' ? 'green' : 'orange'} style={{ borderRadius: 8, fontSize: 13 }}>{v === 'instant' ? 'Instant' : 'Credit'}</Tag> },
                                   {
-                                    title: 'GPay Number', dataIndex: 'gPayNumber', key: 'gPayNumber', width: 135,
+                                    title: 'Paid By', dataIndex: 'paidBy', key: 'paidBy', width: 165,
+                                    render: (v, r) => v === 'Purchase Person' ? (
+                                      <div>
+                                        <Tag color="purple" style={{ borderRadius: 8, fontSize: 12, marginBottom: 2 }}>Purchase Person</Tag>
+                                        {r.purchasePersonName && <div><Text style={{ fontSize: 12 }}>{r.purchasePersonName}</Text></div>}
+                                        {r.purchasePersonPhone && <div><Text type="secondary" style={{ fontSize: 11 }}>{r.purchasePersonPhone}</Text></div>}
+                                      </div>
+                                    ) : v ? <Tag color="blue" style={{ borderRadius: 8, fontSize: 13 }}>{v}</Tag> : <Text type="secondary">—</Text>
+                                  },
+                                  {
+                                    title: 'Purchase Person GPay Number', dataIndex: 'gPayNumber', key: 'gPayNumber', width: 135,
                                     render: v => v ? <Space size={4}><PhoneOutlined style={{ color: '#52c41a' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> : <Text type="secondary">—</Text>
                                   },
                                   {

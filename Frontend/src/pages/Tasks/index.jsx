@@ -1865,9 +1865,13 @@ export default function Tasks() {
                                                     style={{
                                                       cursor: optBlocked ? 'not-allowed' : 'pointer',
                                                       borderRadius: 10,
-                                                      borderColor: optBlocked ? '#ff4d4f' : (isAiRecommended ? '#faad14' : '#B11E6A66'),
-                                                      background: optBlocked ? (isDark ? '#2d1516' : '#fff1f0') : (isAiRecommended ? (isDark ? '#2b2111' : '#fffbe6') : undefined),
-                                                      color: optBlocked ? '#ff4d4f' : (isAiRecommended ? '#ad6800' : '#B11E6A'),
+                                                      padding: '4px 12px',
+                                                      fontSize: 13,
+                                                      lineHeight: '20px',
+                                                      borderColor: optBlocked ? '#cf1322' : (isAiRecommended ? '#faad14' : '#B11E6A66'),
+                                                      background: optBlocked ? '#ff4d4f' : (isAiRecommended ? (isDark ? '#2b2111' : '#fffbe6') : undefined),
+                                                      color: optBlocked ? '#fff' : (isAiRecommended ? '#ad6800' : '#B11E6A'),
+                                                      fontWeight: optBlocked ? 600 : undefined,
                                                     }}
                                                     onClick={() => !optBlocked && handleAssignSuggested(s, opt.value)}
                                                   >

@@ -3,22 +3,25 @@ const User = require('../../models/User');
 const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
 
-const signToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' });
+// Session length: 24h by default, 30d when the user checked "Remember Me" at
+// login. The access token itself carries this full duration (not a short-lived
+// token dependent on silent background refresh) so the session length is
+// guaranteed regardless of request timing. The refresh token mirrors it and
+// exists only so the token can be rotated without forcing a manual re-login
+// mid-session (see Frontend/src/api/axios.js).
+const sessionTTL = (rememberMe) =>
+  rememberMe
+    ? process.env.JWT_EXPIRES_IN_REMEMBER || '30d'
+    : process.env.JWT_EXPIRES_IN || '24h';
 
-// Session length is controlled by the refresh token: 24h by default, 30d when
-// the user checked "Remember Me" at login. The short-lived access token above
-// is silently renewed off this one (see Frontend/src/api/axios.js), so once
-// the refresh token itself expires the user is forced back to /login.
+const signToken = (id, rememberMe) =>
+  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: sessionTTL(rememberMe) });
+
 const signRefreshToken = (id, rememberMe) =>
-  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: rememberMe
-      ? process.env.JWT_REFRESH_EXPIRES_IN_REMEMBER || '30d'
-      : process.env.JWT_REFRESH_EXPIRES_IN || '24h',
-  });
+  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, { expiresIn: sessionTTL(rememberMe) });
 
 const sendTokens = async (user, statusCode, res, rememberMe = user.rememberMe || false) => {
-  const token = signToken(user._id);
+  const token = signToken(user._id, rememberMe);
   const refreshToken = signRefreshToken(user._id, rememberMe);
 
   user.refreshToken = refreshToken;

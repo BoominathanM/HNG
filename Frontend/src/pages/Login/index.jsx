@@ -11,7 +11,7 @@ import { motion } from 'framer-motion';
 
 const { Title, Text } = Typography;
 
-const DEFAULT_LOGO = '/hng%20logo%20new.png';
+const DEFAULT_LOGO = '/hnglogonew.png';
 
 export default function Login() {
   const dispatch = useDispatch();

@@ -2,6 +2,7 @@ const PurchaseRequest = require('../../models/PurchaseRequest');
 const PurchaseOrder = require('../../models/PurchaseOrder');
 const LocalPurchase = require('../../models/LocalPurchase');
 const Vendor = require('../../models/Vendor');
+const PurchasePerson = require('../../models/PurchasePerson');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const PickupOrder = require('../../models/PickupOrder');
@@ -232,24 +233,62 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
 
   const norm = (s) => (s || '').toLowerCase().trim();
   const scannedItems = extracted.items || [];
+  // `invoiceQty` is the raw, untouched quantity the AI read off the invoice for this line —
+  // kept separate from `receivedQty` (which the frontend pre-fills from it, but the user can
+  // then hand-adjust) so the ordered-vs-invoice mismatch check below stays accurate even after
+  // manual edits in the modal.
   const items = orderedLines.map((line) => {
     const match = scannedItems.find((si) => norm(si.name).includes(norm(line.itemName)) || norm(line.itemName).includes(norm(si.name)));
+    const invoiceQty = match ? Number(match.qty) || 0 : 0;
     return {
       itemId: line.itemId,
       itemName: line.itemName,
       orderedQty: line.orderedQty,
-      receivedQty: match ? Number(match.qty) || 0 : 0,
+      receivedQty: invoiceQty,
+      invoiceQty,
       unit: line.unit,
+      hsn: match?.hsn || '',
+      gst: match?.gst || '',
+      matched: !!match,
     };
   });
+
+  // Flag when the invoice's printed vendor doesn't look like the vendor this PO was raised
+  // against — e.g. a mixed-up delivery — so Purchase can catch it before confirming receipt.
+  const poVendorName = order.vendorId?.name;
+  const scannedVendorName = extracted.vendorName;
+  const vendorMismatch = !!(scannedVendorName && poVendorName
+    && !norm(scannedVendorName).includes(norm(poVendorName)) && !norm(poVendorName).includes(norm(scannedVendorName)));
+
+  // Line-level ordered-vs-invoice quantity check, per product name (the `items` match above is
+  // already done by matching order-line itemName against the invoice's scanned item names).
+  // `mismatchCount` is any difference either direction (short OR over); `missing*` is narrowed
+  // to shortfalls only (invoice qty < ordered qty, including items the AI never found at all —
+  // those are fully missing) since that's the number Purchase actually needs to act on.
+  const qtyMismatchCount = items.filter((it) => !it.matched || it.orderedQty !== it.invoiceQty).length;
+  const missingLines = items.filter((it) => it.invoiceQty < it.orderedQty);
+  const missingItemsCount = missingLines.length;
+  const missingQtyTotal = missingLines.reduce((s, it) => s + (it.orderedQty - it.invoiceQty), 0);
+  const totalOrderedQty = items.reduce((s, it) => s + (it.orderedQty || 0), 0);
+  const totalInvoiceQty = items.reduce((s, it) => s + (it.invoiceQty || 0), 0);
 
   res.status(200).json({
     success: true,
     data: {
       items,
-      vendorName: extracted.vendorName || order.vendorId?.name,
+      vendorName: scannedVendorName || poVendorName,
+      vendorPhone: extracted.vendorPhone,
+      vendorAddress: extracted.vendorAddress,
+      vendorGST: extracted.vendorGST,
       invoiceNo: extracted.invoiceNo,
       totalAmount: extracted.totalAmount,
+      vendorMismatch,
+      poVendorName,
+      qtyVerification: {
+        totalOrderedQty, totalInvoiceQty,
+        mismatchCount: qtyMismatchCount,
+        missingItemsCount, missingQtyTotal,
+      },
     },
   });
 });
@@ -260,6 +299,11 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
   if (order.stockUpdated) return next(new AppError('Stock already updated for this order', 400));
 
   if (req.file) order.invoiceFileUrl = req.file.path;
+  if (req.body.invoiceNo) order.receivedInvoiceNo = req.body.invoiceNo;
+  if (req.body.vendorName) order.receivedInvoiceVendorName = req.body.vendorName;
+  if (req.body.totalAmount) order.receivedInvoiceTotalAmount = Number(req.body.totalAmount) || undefined;
+  if (req.body.vendorGST) order.receivedInvoiceVendorGST = req.body.vendorGST;
+  if (req.body.vendorAddress) order.receivedInvoiceVendorAddress = req.body.vendorAddress;
 
   let lines;
   try {
@@ -281,6 +325,8 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
     receivedQty: Number(li.receivedQty) || 0,
     missingQty: Math.max(0, (Number(li.orderedQty) || 0) - (Number(li.receivedQty) || 0)),
     reason: li.reason || '',
+    hsn: li.hsn || '',
+    gst: li.gst || '',
   }));
   const isPartial = order.receivedItems.some((li) => li.missingQty > 0);
 
@@ -506,9 +552,54 @@ exports.createLocalPurchase = asyncHandler(async (req, res) => {
     });
     if (match) vendorId = match._id;
   }
-  const lp = await LocalPurchase.create({ ...req.body, ...(vendorId ? { vendorId } : {}), lpCode, createdBy: req.user._id });
+
+  let purchasePersonId = null;
+  // Only relevant when paidBy is the Purchase Person — auto-link/create the same way as
+  // Vendor above so the same person's history rolls up under one PurchasePerson record.
+  if (req.body.paidBy === 'Purchase Person' && (req.body.purchasePersonName || req.body.purchasePersonPhone)) {
+    const name = (req.body.purchasePersonName || '').trim();
+    const phone = req.body.purchasePersonPhone || '';
+    let person = await PurchasePerson.findOne({
+      $or: [
+        ...(phone ? [{ phone }] : []),
+        ...(name ? [{ name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }] : []),
+      ],
+    });
+    if (!person && name) {
+      person = await PurchasePerson.create({ name, phone, gPayNumber: req.body.gPayNumber || '', createdBy: req.user._id });
+    }
+    if (person) purchasePersonId = person._id;
+  }
+
+  const lp = await LocalPurchase.create({
+    ...req.body,
+    ...(vendorId ? { vendorId } : {}),
+    ...(purchasePersonId ? { purchasePersonId } : {}),
+    lpCode,
+    createdBy: req.user._id,
+  });
   await addLocalPurchaseStock(lp, req.user._id);
   res.status(201).json({ success: true, data: lp });
+});
+
+// ─── PURCHASE PERSONS ─────────────────────────────────────────────────────────
+// Lightweight master-data list so the "Paid By: Purchase Person" dropdown on Local
+// Purchase can offer existing people and auto-fill their phone/GPay on selection.
+exports.getPurchasePersons = asyncHandler(async (req, res) => {
+  const purchasePersons = await PurchasePerson.find().sort('name');
+  res.status(200).json({ success: true, data: purchasePersons });
+});
+
+exports.createPurchasePerson = asyncHandler(async (req, res, next) => {
+  const name = (req.body.name || '').trim();
+  if (!name) return next(new AppError('Purchase person name is required', 400));
+  const purchasePerson = await PurchasePerson.create({
+    name,
+    phone: req.body.phone || '',
+    gPayNumber: req.body.gPayNumber || '',
+    createdBy: req.user._id,
+  });
+  res.status(201).json({ success: true, data: purchasePerson });
 });
 
 // POST /api/purchase/local/scan-invoice — upload a local purchase invoice,
