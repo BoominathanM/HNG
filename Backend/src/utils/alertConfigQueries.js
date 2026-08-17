@@ -12,6 +12,8 @@ const ROLE_TO_STICKER_TYPE = {
   Box: 'Box',
   Ziplock: 'Frosted Ziplock',
   'Butter Paper': 'Butter Paper',
+  'Wooden Brush': 'Wooden Brush',
+  Other: 'Other',
 };
 
 // A design item keeps alerting until it's actually dispatched. 'Design Change'

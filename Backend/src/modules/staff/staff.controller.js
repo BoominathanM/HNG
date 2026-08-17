@@ -8,6 +8,7 @@ const upload = require('../../config/multer');
 
 exports.getStaff = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
+  if (req.query.department) filter.department = req.query.department;
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [staff, total] = await Promise.all([

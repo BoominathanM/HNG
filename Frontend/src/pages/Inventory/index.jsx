@@ -31,6 +31,7 @@ import {
   useDeleteItemMutation,
   useAddStockRequestMutation,
   useSellStockRequestMutation,
+  useFillStockMutation,
   useGetStockApprovalsQuery,
   useApproveMovementMutation,
   useRejectMovementMutation,
@@ -74,6 +75,34 @@ const SIZES_SOAP = ['15', '20', '30'].map(v => ({ value: v, label: `${v}g` }));
 const SIZES_LIQUID = ['15', '20', '25', '30'].map(v => ({ value: v, label: `${v}ml` }));
 const PASTE_BRANDS = ['Promise', 'Meswak', 'Anchor', 'Colgate'].map(v => ({ value: v, label: v }));
 const BRUSH_BRANDS = ['Promise', 'Anchor', 'Pristin'].map(v => ({ value: v, label: v }));
+const UNIT_OPTIONS = [
+  { value: 'Kg', label: 'Kg' },
+  { value: 'Gram', label: 'Gram' },
+  { value: 'Litres', label: 'Litres' },
+  { value: 'ml', label: 'ml' },
+  { value: 'Pcs', label: 'Pieces (Pcs)' },
+  { value: 'Units', label: 'Units' },
+  { value: 'Box', label: 'Box' },
+  { value: 'Pack', label: 'Pack' },
+];
+
+// Fill unit → how many of it make up 1 unit of its linked bulk item (mirrors the backend's
+// UNIT_TO_BULK_FACTOR in inventory.controller.js) — ml/gram are 1000-to-1 sub-units of
+// Litres/Kg, while a Litres/Kg fill unit draws 1:1 from a same-unit bulk item.
+const UNIT_TO_BULK_FACTOR = { ml: 1000, Litres: 1, gram: 1000, Kg: 1 };
+
+// Max whole pieces of a Filled item fillable from all of its linked bulk item's stock
+// currently on hand — same formula the backend uses (mirrors inventory.controller.js's
+// fillStock auto-fallback), so Fill Stock never needs the piece count worked out by hand.
+const computeMaxFillQty = (filledItem, inventoryItems) => {
+  const bulkSrc = inventoryItems.find((b) => b.key === filledItem.bulkSourceItemId);
+  const fillSize = Number(filledItem.unitValue) || 0;
+  if (!bulkSrc || fillSize <= 0) return null;
+  const wastage = Math.min(Number(filledItem.fillWastagePercent) || 0, 99);
+  const factor = UNIT_TO_BULK_FACTOR[filledItem.unit] || 1000;
+  const maxQty = Math.floor(((bulkSrc.current || 0) * factor * (1 - wastage / 100)) / fillSize);
+  return maxQty > 0 ? maxQty : null;
+};
 
 // usePackingConfig: true → options are populated at render time from the packing config state
 const PRODUCT_FIELD_DEFS = {
@@ -252,6 +281,7 @@ export default function Inventory() {
   const { data: suppliersData } = useGetVendorsQuery({ type: 'raw_material' });
   const [createItemMutation] = useCreateItemMutation();
   const [updateItemMutation] = useUpdateItemMutation();
+  const [fillStockMutation] = useFillStockMutation();
   const [deleteItemMutation] = useDeleteItemMutation();
   const [addStockRequest] = useAddStockRequestMutation();
   const [sellStockRequest] = useSellStockRequestMutation();
@@ -288,10 +318,19 @@ export default function Inventory() {
     packingMaterial: i.packingMaterial,
     materialCategory: i.materialCategory,
     brand: i.brand,
+    itemType: i.itemType || 'standard',
+    bulkSourceItemId: i.bulkSourceItemId?._id || i.bulkSourceItemId || undefined,
+    fillWastagePercent: i.fillWastagePercent || 0,
     productAttributes: i.productAttributes || {},
     vendorId: i.vendorId?._id || i.vendorId || undefined,
     vendorName: i.vendorId?.name || '',
     purchaseBatches: i.purchaseBatches || [],
+    // Most recent purchaseDate across all vendor batches — shown on the item detail drawer.
+    lastPurchaseDate: (i.purchaseBatches || []).reduce((latest, b) => {
+      if (!b.purchaseDate) return latest;
+      const d = dayjs(b.purchaseDate);
+      return d.isValid() && (!latest || d.isAfter(latest)) ? d : latest;
+    }, null),
     // One row per vendor this product has ever been bought from, with the qty still remaining
     // from that vendor's batches — so buying the same product from a different vendor shows up
     // here instead of overwriting the previous vendor's stock.
@@ -308,6 +347,10 @@ export default function Inventory() {
       return Object.entries(byVendor).map(([name, stock]) => ({ name, stock }));
     })(),
   })), [invData]);
+
+  // Bulk raw-material items (e.g. "Coconut Oil - Bulk", tracked in Litres/Kg) — the pool
+  // that "Filled/Packed" items (e.g. "Coconut Oil 10ml") are packed from via Fill Stock.
+  const bulkItems = useMemo(() => inventoryList.filter((i) => i.itemType === 'bulk'), [inventoryList]);
 
   // Lookup product attributes by item name — used to surface attributes for kit
   // products (kit rows store a snapshot without attributes, so we resolve them live).
@@ -341,10 +384,55 @@ export default function Inventory() {
   const [adjustModal, setAdjustModal] = useState({ open: false, item: null, type: null });
   const [adjustForm] = Form.useForm();
 
+  /* ── Fill Stock modal (Filled/Packed items → drawn from a linked Bulk item) ── */
+  const [fillStockModal, setFillStockModal] = useState({ open: false, item: null });
+  const [fillQtyValue, setFillQtyValue] = useState(null);
+
+  // Live preview of how much bulk stock a fill would consume — shared by the modal's footer
+  // (to gate the Fill Stock button) and body (to show the amount/warning), computed once here
+  // instead of twice so both stay in sync.
+  const fillPreview = useMemo(() => {
+    const item = fillStockModal.item;
+    if (!item) return { fillSize: 0, wastage: 0, needed: 0, bulkSrc: null, insufficient: false };
+    const bulkSrc = inventoryList.find((b) => b.key === item.bulkSourceItemId);
+    const fillSize = Number(item.unitValue) || 0;
+    const wastage = Number(item.fillWastagePercent) || 0;
+    // Same factor the backend applies: ml/gram are 1000-to-1 sub-units of Litres/Kg, while a
+    // fill unit of Litres/Kg itself draws 1:1 from a same-unit bulk item.
+    const fillUnitFactor = UNIT_TO_BULK_FACTOR[item.unit] || 1000;
+    const needed = fillQtyValue && fillSize
+      ? ((fillQtyValue * fillSize) / (1 - Math.min(wastage, 99) / 100)) / fillUnitFactor
+      : 0;
+    const insufficient = !!(bulkSrc && needed > (bulkSrc.current || 0));
+    return { fillSize, wastage, needed, bulkSrc, insufficient };
+  }, [fillStockModal.item, fillQtyValue, inventoryList]);
+
   /* ── Add / Edit Item modal ── */
   const [addItemModal, setAddItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [addItemForm] = Form.useForm();
+  // Which creation flow opened the modal — kept separate so Bulk/Filled items are never
+  // offered as an option from the plain "Add Item" button (Standard items only there);
+  // they get their own "Add Bulk / Filled Item" entry point on the Bulk tab instead.
+  const [addItemScope, setAddItemScope] = useState('standard'); // 'standard' | 'bulk_filled'
+
+  const openAddStandardItem = () => {
+    if (!requireAccess('add')) return;
+    setEditingItem(null);
+    addItemForm.resetFields();
+    setAddItemScope('standard');
+    addItemForm.setFieldsValue({ itemType: 'standard' });
+    setAddItemModal(true);
+  };
+
+  const openAddBulkItem = () => {
+    if (!requireAccess('add')) return;
+    setEditingItem(null);
+    addItemForm.resetFields();
+    setAddItemScope('bulk_filled');
+    addItemForm.setFieldsValue({ itemType: 'bulk' });
+    setAddItemModal(true);
+  };
 
   /* ── Kits ── */
   const { data: kitsData } = useGetKitsQuery();
@@ -741,6 +829,41 @@ export default function Inventory() {
   // their sticker toggle is 'stickerPrinting' — so Bottle Sticker Size below is gated on
   // this instead of showStickerSizeFor(packingMaterial) like Box/Ziplock/Butter Paper are.
   const watchedStickerPrinting = Form.useWatch(['productAttrs', 'stickerPrinting'], addItemForm);
+  const watchedItemType = Form.useWatch('itemType', addItemForm) || 'standard';
+  const watchedBulkSourceItemId = Form.useWatch('bulkSourceItemId', addItemForm);
+  const watchedMergeItemCode = Form.useWatch('mergeItemCode', addItemForm);
+
+  // Fill Unit options follow whichever bulk item is selected — its metric sub-unit for
+  // small per-piece fills (Litres→ml, Kg→gram) or the bulk unit itself for large per-piece
+  // fills (Litres, Kg). Falls back to both pairs before a bulk item is chosen.
+  const fillUnitOptions = useMemo(() => {
+    const src = bulkItems.find((b) => b.key === watchedBulkSourceItemId);
+    if (src?.unit === 'Litres') return [{ value: 'ml', label: 'ml (milliliter)' }, { value: 'Litres', label: 'Litres (L)' }];
+    if (src?.unit === 'Kg') return [{ value: 'gram', label: 'gram' }, { value: 'Kg', label: 'Kg' }];
+    return [{ value: 'ml', label: 'ml' }, { value: 'gram', label: 'gram' }, { value: 'Litres', label: 'Litres (L)' }, { value: 'Kg', label: 'Kg' }];
+  }, [bulkItems, watchedBulkSourceItemId]);
+
+  // Default the Fill Unit to the bulk item's smaller sub-unit as soon as a bulk source is
+  // picked — the dropdown stays fully editable so the user can switch it to the bulk unit
+  // itself (e.g. Litres) for large per-piece fills instead.
+  useEffect(() => {
+    if (watchedItemType !== 'filled' || !watchedBulkSourceItemId) return;
+    const src = bulkItems.find((b) => b.key === watchedBulkSourceItemId);
+    const expected = src?.unit === 'Litres' ? 'ml' : src?.unit === 'Kg' ? 'gram' : null;
+    if (expected) addItemForm.setFieldsValue({ unit: expected });
+  }, [watchedItemType, watchedBulkSourceItemId, bulkItems, addItemForm]);
+
+  // Nudge toward merging when the typed name looks like an item that already exists
+  // (e.g. typing "Boomi Coconut Oil" while "Coconut Oil" is already in stock) — the user
+  // may not remember the existing item's code, so surface it instead of requiring recall.
+  const nameMatches = useMemo(() => {
+    const n = String(watchedItemName || '').trim().toLowerCase();
+    if (editingItem || n.length < 3) return [];
+    return inventoryList.filter((i) => {
+      const iName = (i.name || '').toLowerCase();
+      return iName && (iName.includes(n) || n.includes(iName));
+    }).slice(0, 3);
+  }, [watchedItemName, inventoryList, editingItem]);
 
   /* ── Category & Kit expand ── */
   const [expandedCategory, setExpandedCategory] = useState(null);
@@ -800,7 +923,12 @@ export default function Inventory() {
   }, [inventoryList]);
 
   /* ── Derived ── */
+  // Stock Inventory tab shows Standard items only — Bulk Raw Material and Filled/Packed
+  // items live on their own "Bulk & Filled Items" tab instead.
   const filteredInventory = inventoryList.filter((i) => {
+    // Bulk Raw Material lives only on the Bulk tab — Filled/Packed items are sellable
+    // stock like any Standard item, so they belong here in Stock Inventory too.
+    if (i.itemType === 'bulk') return false;
     const q = invSearch.toLowerCase();
     const matchSearch = !q || i.name.toLowerCase().includes(q) || (i.code || '').toLowerCase().includes(q) || (i.sellers || []).map(s => (s.name || s)).join(' ').toLowerCase().includes(q);
     const matchCategory = !invCategory || i.category === invCategory;
@@ -911,10 +1039,12 @@ export default function Inventory() {
       const cleanAttrs = Object.fromEntries(
         Object.entries(rawAttrs).filter(([, v]) => v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0))
       );
+      const itemType = vals.itemType || 'standard';
       const payload = {
         itemName: vals.name,
         category: vals.category || '',
         unit: vals.unit || 'Pcs',
+        unitValue: Number(vals.unitValue) || 0,
         minStock: Number(vals.min) || 0,
         purchasePrice: Number(String(vals.purchase_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         marginAmount: Number(String(vals.margin_amount ?? '').replace(/[^0-9.]/g, '')) || 0,
@@ -923,19 +1053,44 @@ export default function Inventory() {
         hsnCode: vals.hsn || '',
         vendorId: vals.vendorId || null,
         purchaseDate: vals.purchaseDate ? vals.purchaseDate.toISOString() : new Date().toISOString(),
-        productAttributes: cleanAttrs,
+        productAttributes: itemType === 'bulk' ? {} : cleanAttrs,
+        itemType,
+        bulkSourceItemId: itemType === 'filled' ? vals.bulkSourceItemId : undefined,
+        fillWastagePercent: itemType === 'filled' ? (Number(vals.fillWastagePercent) || 0) : undefined,
       };
       if (editingItem) {
         await updateItemMutation({ id: editingItem.key, ...payload, addStockQty: Number(vals.addStockQty) || 0 }).unwrap();
         enqueueSnackbar(Number(vals.addStockQty) > 0 ? `Item updated — ${vals.addStockQty} units added to stock` : 'Item updated', { variant: 'success' });
-      } else {
-        const opening = Number(vals.current) || 0;
-        await createItemMutation({ ...payload, openingStock: opening, currentStock: opening }).unwrap();
-        enqueueSnackbar('Item added', { variant: 'success' });
+        addItemForm.resetFields();
+        setEditingItem(null);
+        setAddItemModal(false);
+        return;
       }
-      addItemForm.resetFields();
-      setEditingItem(null);
-      setAddItemModal(false);
+
+      // New item — confirm the merge-vs-new decision before it's committed, since it can't
+      // be easily undone once stock has been merged into another item or a duplicate created.
+      const opening = Number(vals.current) || 0;
+      const mergeCode = String(vals.mergeItemCode || '').trim().toUpperCase() || undefined;
+      const matched = mergeCode ? inventoryList.find((i) => i.code === mergeCode) : null;
+
+      Modal.confirm({
+        title: mergeCode ? 'Merge into existing item?' : 'Add as new item?',
+        content: mergeCode
+          ? `Merge ${opening} ${vals.unit || ''} into existing item "${matched?.name || mergeCode}" (${mergeCode})${matched ? ` — current stock: ${matched.current} ${matched.unit}` : ''}?`
+          : `No item code entered — add "${vals.name}" as a NEW inventory item?`,
+        okText: mergeCode ? 'Merge' : 'Add as New',
+        onOk: async () => {
+          try {
+            await createItemMutation({ ...payload, openingStock: opening, currentStock: opening, mergeItemCode: mergeCode }).unwrap();
+            enqueueSnackbar(mergeCode ? 'Stock merged into existing item' : 'Item added', { variant: 'success' });
+            addItemForm.resetFields();
+            setEditingItem(null);
+            setAddItemModal(false);
+          } catch (err) {
+            enqueueSnackbar(err?.data?.message || err?.data || 'Failed to save item', { variant: 'error' });
+          }
+        },
+      });
     } catch (err) {
       if (err?.errorFields) return;
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to save item', { variant: 'error' });
@@ -1119,7 +1274,16 @@ export default function Inventory() {
 
   const columns = [
     { title: 'Code', dataIndex: 'code', render: (v) => <Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text> },
-    { title: 'Item Name', dataIndex: 'name', render: (v) => <Text strong>{v}</Text> },
+    {
+      title: 'Item Name', dataIndex: 'name',
+      render: (v, r) => (
+        <Space size={4}>
+          <Text strong>{v}</Text>
+          {r.itemType === 'bulk' && <Tag color="blue" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Bulk</Tag>}
+          {r.itemType === 'filled' && <Tag color="purple" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Filled</Tag>}
+        </Space>
+      ),
+    },
     { title: 'Category', dataIndex: 'category', responsive: ['sm'], render: (v) => <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> },
     { title: 'Value', key: 'value', responsive: ['lg'], render: (_, r) => r.unitValue ? `${r.unitValue} ${r.unit}` : (r.unit || '—') },
     { title: 'Product Spec', key: 'productSpec', responsive: ['lg'], render: (_, r) => renderAttrTags(r.productAttributes, 220) },
@@ -1182,7 +1346,10 @@ export default function Inventory() {
             <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
-          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, vendorId: r.vendorId, purchaseDate: dayjs(), addStockQty: undefined, productAttrs: normalizeAttrsForEdit(r.productAttributes, r.name) }); setAddItemModal(true); }}>Edit</Button>
+          <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); setAddItemScope(r.itemType === 'bulk' || r.itemType === 'filled' ? 'bulk_filled' : 'standard'); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, unitValue: r.unitValue, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, vendorId: r.vendorId, purchaseDate: dayjs(), addStockQty: undefined, productAttrs: normalizeAttrsForEdit(r.productAttributes, r.name), itemType: r.itemType || 'standard', bulkSourceItemId: r.bulkSourceItemId, fillWastagePercent: r.fillWastagePercent }); setAddItemModal(true); }}>Edit</Button>
+          {r.itemType === 'filled' && (
+            <Button size="small" icon={<ContainerOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setFillQtyValue(computeMaxFillQty(r, inventoryList)); setFillStockModal({ open: true, item: r }); }}>Fill Stock</Button>
+          )}
           {/* Add Stock / Sell Stock — hidden per request
           <Button size="small" type="primary" icon={<DownloadOutlined />} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openReceive(r); }}>Add Stock</Button>
           <Button size="small" icon={<ShoppingOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); openIssue(r); }}>Sell Stock</Button>
@@ -1288,8 +1455,8 @@ export default function Inventory() {
     <div className="page-container fade-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <PageBreadcrumb title="Inventory" items={[{ label: 'Inventory' }]} style={{ marginBottom: 0 }} />
-        {activeInvTab !== 'kit' && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!requireAccess('add')) return; setAddItemModal(true); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add Item</Button>
+        {activeInvTab !== 'kit' && activeInvTab !== 'bulk' && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAddStandardItem} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Add Item</Button>
         )}
       </div>
 
@@ -1439,7 +1606,42 @@ export default function Inventory() {
             })(),
           },
 
-          /* ── Tab 2: Approvals ── */
+          /* ── Tab 2: Bulk Items — Bulk Raw Material only; Filled/Packed items are
+             sellable stock and live in Stock Inventory instead. Has its own Add button
+             so Bulk creation never mingles with the plain "Add Item" (Standard-only) flow. ── */
+          {
+            key: 'bulk',
+            label: <Space><ContainerOutlined />Bulk Items</Space>,
+            children: (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                  <div>
+                    <Text strong style={{ color: textColor, fontSize: 15 }}>Bulk Raw Materials</Text>
+                    <div><Text type="secondary" style={{ fontSize: 12 }}>Liquid/powder stock tracked in Litres/Kg — the pool Filled/Packed items are packed from via Fill Stock.</Text></div>
+                  </div>
+                  <Button type="primary" icon={<PlusOutlined />}
+                    style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                    onClick={openAddBulkItem}>
+                    Add Bulk / Filled Item
+                  </Button>
+                </div>
+                <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                  <div className="table-responsive">
+                    <Table
+                      dataSource={bulkItems}
+                      columns={columns}
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                      size="small"
+                      locale={{ emptyText: 'No Bulk Raw Material items yet. Click "Add Bulk / Filled Item" to create one.' }}
+                      onRow={(record) => ({ onClick: () => setDetailItem(record), style: { cursor: 'pointer' } })}
+                    />
+                  </div>
+                </Card>
+              </div>
+            ),
+          },
+
+          /* ── Tab 3: Approvals ── */
           {
             key: 'approvals',
             label: <Space><SafetyCertificateOutlined /> Approvals <Tag color="orange" style={{ borderRadius: 10, marginLeft: 4 }}>{pendingAdjustments.filter(a => a.status === 'Pending').length}</Tag></Space>,
@@ -2085,7 +2287,7 @@ export default function Inventory() {
                         title: 'Operations Tab',
                         dataIndex: 'tabMapping',
                         render: v => v
-                          ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : v === 'Butter Paper' ? 'gold' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
+                          ? <Tag color={v === 'Box' ? 'blue' : v === 'Ziplock' ? 'cyan' : v === 'Butter Paper' ? 'gold' : v === 'Wooden Brush' ? 'volcano' : 'purple'} style={{ borderRadius: 12 }}>{v}</Tag>
                           : <Text type="secondary">—</Text>,
                       },
                       {
@@ -2249,6 +2451,8 @@ export default function Inventory() {
               <Option value="Box">Box</Option>
               <Option value="Ziplock">Ziplock (Frosted)</Option>
               <Option value="Butter Paper">Butter Paper</Option>
+              <Option value="Wooden Brush">Wooden Brush</Option>
+              <Option value="Other">Other</Option>
             </Select>
           </Form.Item>
 
@@ -2407,7 +2611,7 @@ export default function Inventory() {
                               optionFilterProp="label"
                               placeholder="Select from inventory"
                               style={{ width: '100%' }}
-                              options={inventoryList.map((i) => ({
+                              options={inventoryList.filter((i) => i.itemType !== 'bulk').map((i) => ({
                                 value: i.key,
                                 label: dupeInventoryNames.has(i.name) ? `${i.name} (${i.code || ''})` : i.name,
                               }))}
@@ -2507,7 +2711,14 @@ export default function Inventory() {
 
             {/* Details */}
             <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
-              <Text strong style={{ color: textColor, display: 'block', marginBottom: 10 }}>Item Details</Text>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <Text strong style={{ color: textColor }}>Item Details</Text>
+                {detailItem.lastPurchaseDate && (
+                  <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20, fontWeight: 500, margin: 0 }}>
+                    Last Purchased: {detailItem.lastPurchaseDate.format('DD MMM YYYY')}
+                  </Tag>
+                )}
+              </div>
               <Descriptions column={2} size="small" labelStyle={{ color: '#aaa', fontSize: 12 }} contentStyle={{ fontWeight: 600, fontSize: 13 }}>
                 <Descriptions.Item label="Category">{detailItem.category || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Unit">{detailItem.unit || '—'}</Descriptions.Item>
@@ -2734,7 +2945,7 @@ export default function Inventory() {
           ADD ITEM MODAL
       ═══════════════════════════════════════ */}
       <Modal
-        title={<span style={{ fontSize: 16, fontWeight: 700 }}>{editingItem ? 'Edit Inventory Item' : 'Add Inventory Item'}</span>}
+        title={<span style={{ fontSize: 16, fontWeight: 700 }}>{editingItem ? 'Edit Inventory Item' : addItemScope === 'bulk_filled' ? 'Add Bulk / Filled Item' : 'Add Inventory Item'}</span>}
         open={addItemModal}
         onCancel={() => { setAddItemModal(false); setEditingItem(null); addItemForm.resetFields(); }}
         footer={
@@ -2759,7 +2970,51 @@ export default function Inventory() {
           }}
         >
           <Row gutter={16}>
-            <Col xs={24} sm={editingItem ? 12 : 24}>
+            <Col xs={24} sm={editingItem ? 12 : 8}>
+              <Form.Item label="Item Type" name="itemType" initialValue="standard" tooltip="Standard: a normal stocked item. Bulk Raw Material: liquid/powder tracked in Litres/Kg (e.g. 50L coconut oil). Filled/Packed Item: a sellable per-piece size (e.g. a 10ml bottle) packed from a Bulk item.">
+                <Select
+                  disabled={!!editingItem}
+                  onChange={(v) => {
+                    if (v !== 'filled') addItemForm.setFieldsValue({ bulkSourceItemId: undefined, fillWastagePercent: undefined });
+                    addItemForm.setFieldsValue({ unit: v === 'bulk' ? 'Litres' : v === 'filled' ? 'ml' : 'Pcs' });
+                  }}
+                >
+                  {/* Standard is only offered from the plain "Add Item" flow; Bulk/Filled are only
+                      offered from the Bulk tab's "Add Bulk / Filled Item" flow — kept separate so
+                      the two never mingle. Editing always shows all 3 (disabled, just for display). */}
+                  {(editingItem || addItemScope === 'standard') && <Option value="standard">Standard Item</Option>}
+                  {(editingItem || addItemScope === 'bulk_filled') && <Option value="bulk">Bulk Raw Material (Litres/Kg)</Option>}
+                  {(editingItem || addItemScope === 'bulk_filled') && <Option value="filled">Filled / Packed Item (from Bulk)</Option>}
+                </Select>
+              </Form.Item>
+            </Col>
+            {!editingItem && (
+              <Col xs={24} sm={16}>
+                <Form.Item label="Item Code (to merge stock into an existing item)" name="mergeItemCode" tooltip="Enter an existing item's code to add this as new stock into it instead of creating a duplicate. Leave blank to add as a brand-new item — either way you'll be asked to confirm.">
+                  <Input placeholder="e.g. ITEM-260003 — leave blank to add as new" allowClear />
+                </Form.Item>
+              </Col>
+            )}
+          </Row>
+          {!editingItem && nameMatches.length > 0 && !watchedMergeItemCode && (
+            <Alert
+              type="info" showIcon
+              style={{ marginBottom: 12, borderRadius: 8 }}
+              message="Similar item(s) already in stock"
+              description={
+                <Space direction="vertical" size={2}>
+                  {nameMatches.map((m) => (
+                    <Text key={m.key} style={{ fontSize: 12, display: 'block' }}>
+                      {m.name} ({m.code}) — {m.current} {m.unit} in stock.{' '}
+                      <a onClick={() => addItemForm.setFieldsValue({ mergeItemCode: m.code })}>Use this code to merge</a>
+                    </Text>
+                  ))}
+                </Space>
+              }
+            />
+          )}
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
               <Form.Item label="Vendor" name="vendorId" tooltip="Which vendor this batch of stock was purchased from.">
                 <Select
                   allowClear
@@ -2788,15 +3043,64 @@ export default function Inventory() {
                 />
               </Form.Item>
             </Col>
-            {!editingItem && <Col xs={24} sm={8}><Form.Item label="Opening Stock" name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>}
-            {editingItem && (
-              <Col xs={24} sm={8}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                label={watchedItemType === 'filled' ? 'Fill Size' : 'Unit Value'}
+                name="unitValue"
+                tooltip={watchedItemType === 'filled' ? "How much bulk material one piece uses — e.g. 10 for a 10ml bottle." : "Quantity per unit — e.g. 500 for a 500 gram pack."}
+              >
+                <InputNumber style={{ width: '100%' }} min={0} placeholder={watchedItemType === 'filled' ? 'e.g. 10' : 'e.g. 500'} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label={watchedItemType === 'bulk' ? 'Bulk Unit' : watchedItemType === 'filled' ? 'Fill Unit' : 'Unit'} name="unit" initialValue="Pcs" tooltip="Unit this item is measured/stocked in.">
+                {watchedItemType === 'bulk' ? (
+                  <Select options={[{ value: 'Litres', label: 'Litres' }, { value: 'Kg', label: 'Kg' }]} placeholder="Select bulk unit" />
+                ) : watchedItemType === 'filled' ? (
+                  <Select disabled={!!editingItem} options={fillUnitOptions} placeholder="Select fill unit" />
+                ) : (
+                  <SelectWithAdd
+                    field="inventoryUnit"
+                    defaultOptions={UNIT_OPTIONS}
+                    placeholder="Select / Add unit"
+                  />
+                )}
+              </Form.Item>
+            </Col>
+            {watchedItemType === 'filled' && (
+              <>
+                <Col xs={24} sm={12}>
+                  <Form.Item label="Fill From Bulk Item" name="bulkSourceItemId" rules={[{ required: true, message: 'Select the bulk item this is filled from' }]}>
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder="Select bulk raw material"
+                      options={bulkItems.map((b) => ({ value: b.key, label: `${b.name} (${b.current} ${b.unit} available)` }))}
+                      notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No Bulk Raw Material items yet — add one first</span>}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Form.Item label="Fill Wastage %" name="fillWastagePercent" tooltip="Extra % of bulk material lost to spillage while filling — inflates how much bulk stock a fill run consumes.">
+                    <InputNumber style={{ width: '100%' }} min={0} max={99} placeholder="0" />
+                  </Form.Item>
+                </Col>
+              </>
+            )}
+            {!editingItem && watchedItemType !== 'filled' && <Col xs={24} sm={12}><Form.Item label={watchedItemType === 'bulk' ? 'Opening Bulk Stock' : 'Opening Stock'} name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>}
+            {editingItem && watchedItemType !== 'filled' && (
+              <Col xs={24} sm={12}>
                 <Form.Item label="Add Stock (Qty)" name="addStockQty" tooltip="Bought more of this same product? Enter the quantity here — it's added on top of the current stock as a new purchase batch under the Vendor + Purchase Date selected above.">
                   <InputNumber style={{ width: '100%' }} min={0} placeholder="0" />
                 </Form.Item>
               </Col>
             )}
-            <Col xs={24} sm={8}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
+            {editingItem && watchedItemType === 'filled' && (
+              <Col xs={24} sm={12} style={{ display: 'flex', alignItems: 'center' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Stock for filled items is added via "Fill Stock" on the item's row, not here.</Text>
+              </Col>
+            )}
+            <Col xs={24} sm={12}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Purchase Price" name="purchase_price">
                 <Input prefix="₹" addonAfter={<Form.Item name="purchase_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />
@@ -2841,8 +3145,8 @@ export default function Inventory() {
             <Col xs={24} sm={8}><Form.Item label="HSN" name="hsn"><Input placeholder="Ex: 6704" /></Form.Item></Col>
           </Row>
 
-          {/* ── Dynamic product-type attributes ── */}
-          {(() => {
+          {/* ── Dynamic product-type attributes (not applicable to raw Bulk items) ── */}
+          {watchedItemType !== 'bulk' && (() => {
             const activeDefs = productFieldDefs.length > 0 ? productFieldDefs : GENERIC_PRODUCT_FIELD_DEFS;
             const hasPackingMaterial = activeDefs.some((fd) => fd.key === 'packingMaterial');
             const selectedPackingMaterials = (Array.isArray(watchedPackingMaterial) ? watchedPackingMaterial : [watchedPackingMaterial])
@@ -2916,6 +3220,67 @@ export default function Inventory() {
             );
           })()}
         </Form>
+      </Modal>
+
+      {/* ═══════════════════════════════════════
+          FILL STOCK MODAL (Filled/Packed items, drawn from a linked Bulk item)
+      ═══════════════════════════════════════ */}
+      <Modal
+        title={<span style={{ fontSize: 16, fontWeight: 700 }}>Fill Stock — {fillStockModal.item?.name}</span>}
+        open={fillStockModal.open}
+        onCancel={() => { setFillStockModal({ open: false, item: null }); setFillQtyValue(null); }}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button onClick={() => { setFillStockModal({ open: false, item: null }); setFillQtyValue(null); }}>Cancel</Button>
+            <Button
+              type="primary"
+              disabled={!fillQtyValue || fillQtyValue <= 0 || fillPreview.insufficient}
+              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+              onClick={async () => {
+                try {
+                  const res = await fillStockMutation({ id: fillStockModal.item.key, fillQty: fillQtyValue }).unwrap();
+                  const filledQty = res?.data?.fillQty ?? fillQtyValue;
+                  enqueueSnackbar(`Filled ${filledQty} ${fillStockModal.item.unit} of ${fillStockModal.item.name}`, { variant: 'success' });
+                  setFillStockModal({ open: false, item: null });
+                  setFillQtyValue(null);
+                } catch (err) {
+                  enqueueSnackbar(err?.data?.message || err?.data || 'Fill failed', { variant: 'error' });
+                }
+              }}
+            >
+              Fill Stock
+            </Button>
+          </div>
+        }
+        width={440} centered
+      >
+        {(() => {
+          const item = fillStockModal.item;
+          if (!item) return null;
+          const { fillSize, wastage, needed, bulkSrc, insufficient } = fillPreview;
+          return (
+            <>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Packs pieces of &quot;{item.name}&quot; ({fillSize} {item.unit} each{wastage ? `, ${wastage}% wastage` : ''}) from bulk item &quot;{bulkSrc?.name || '—'}&quot; ({bulkSrc?.current ?? '—'} {bulkSrc?.unit || ''} available).
+              </Text>
+              <div style={{ marginTop: 16 }}>
+                <Text strong style={{ fontSize: 13 }}>Fill Quantity (pieces)</Text>
+                <div><Text type="secondary" style={{ fontSize: 11 }}>Auto-calculated from available bulk stock — edit to fill fewer pieces.</Text></div>
+                <InputNumber style={{ width: '100%', marginTop: 6 }} min={1} value={fillQtyValue} onChange={setFillQtyValue} placeholder="e.g. 100" />
+              </div>
+              {fillQtyValue > 0 && (
+                <Alert
+                  style={{ marginTop: 12, borderRadius: 8 }}
+                  type={insufficient ? 'error' : 'info'}
+                  showIcon
+                  message={insufficient
+                    ? `Not enough bulk stock — need ${needed.toFixed(3)} ${bulkSrc?.unit || ''}, only ${bulkSrc?.current ?? 0} ${bulkSrc?.unit || ''} available. Fill is blocked until enough is available.`
+                    : `Will use ${needed.toFixed(3)} ${bulkSrc?.unit || ''} from "${bulkSrc?.name || 'bulk item'}"`}
+                />
+              )}
+            </>
+          );
+        })()}
       </Modal>
 
       {/* ═══════════════════════════════════════

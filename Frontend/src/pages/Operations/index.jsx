@@ -76,6 +76,7 @@ import {
   useGetEmergencyRequestsQuery,
   useGetHotelDesignsQuery,
   useUploadStickerInvoiceMutation,
+  useDecideLrMismatchOpsMutation,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -106,6 +107,8 @@ const INVOICE_TYPE_SLUG = {
   Box: 'box',
   'Frosted Ziplock': 'ziplock',
   'Butter Paper': 'butter',
+  'Wooden Brush': 'wooden_brush',
+  Other: 'other',
 };
 
 // Matches StickerRequest.status (Backend/src/models/StickerRequest.js) — row.status now
@@ -154,6 +157,8 @@ export default function Operations() {
   const [boxSearch, setBoxSearch] = useState('');
   const [frostedSearch, setFrostedSearch] = useState('');
   const [butterSearch, setButterSearch] = useState('');
+  const [woodenBrushSearch, setWoodenBrushSearch] = useState('');
+  const [otherSearch, setOtherSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
   // Date-range filters — each Table listing real records gets its own, independent state.
   const [orderMgmtDateRange, setOrderMgmtDateRange] = useState(null);
@@ -161,6 +166,8 @@ export default function Operations() {
   const [boxDateRange, setBoxDateRange] = useState(null);
   const [frostedDateRange, setFrostedDateRange] = useState(null);
   const [butterDateRange, setButterDateRange] = useState(null);
+  const [woodenBrushDateRange, setWoodenBrushDateRange] = useState(null);
+  const [otherDateRange, setOtherDateRange] = useState(null);
 
   // API-backed state — RTK Query
   const { data: ordersData, isLoading: ordersLoading } = useGetOperationOrdersQuery({ limit: 500 }, { refetchOnMountOrArgChange: true });
@@ -181,6 +188,9 @@ export default function Operations() {
   const [emergencyOpsApprovalOrder, setEmergencyOpsApprovalOrder] = useState(null);
   const [approvingEmergencyTaskId, setApprovingEmergencyTaskId] = useState(null);
   const [approvingAllEmergency, setApprovingAllEmergency] = useState(false);
+  const [decideLrMismatchOps] = useDecideLrMismatchOpsMutation();
+  const [lrMismatchOpsOrder, setLrMismatchOpsOrder] = useState(null);
+  const [decidingLrMismatchOps, setDecidingLrMismatchOps] = useState(false);
   const { data: emergencyRequestsRaw } = useGetEmergencyRequestsQuery();
   // Group active emergency-dispatch requests by order — one entry per product/Task
   // that raised "Emergency Dispatch" in Task Management (see Sales/index.jsx for the
@@ -224,6 +234,8 @@ export default function Operations() {
     const stickerType = record.key?.endsWith('-box') ? 'Box'
       : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
       : record.key?.endsWith('-butter') ? 'Butter Paper'
+      : record.key?.endsWith('-wooden_brush') ? 'Wooden Brush'
+      : record.key?.endsWith('-other') ? 'Other'
       : 'Sticker';
     const key = `${(record.hotelLogo || '').toLowerCase()}-${(record.product || '').toLowerCase()}-${stickerType}`;
     return hotelDesignMap[key] || null;
@@ -235,7 +247,7 @@ export default function Operations() {
   // Vendor users from Settings (department = Vendors, role = Sticker/Box/Ziplock)
   const { data: usersData } = useGetUsersQuery();
   const vendorUsers = useMemo(() => (usersData?.data || []).filter(
-    u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper'].includes(u.role)
+    u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(u.role)
   ), [usersData]);
 
   // Packing config: resolve packingMaterial → Operations tab mapping
@@ -273,6 +285,8 @@ export default function Operations() {
       box: makeOpts('Box', 'Box'),
       frosted: makeOpts('Ziplock', 'Ziplock'),
       butter: makeOpts('Butter Paper', 'Butter Paper'),
+      wooden_brush: makeOpts('Wooden Brush', 'Wooden Brush'),
+      other: makeOpts('Other', 'Other'),
     };
   }, [printingVendorData, vendorUsers]);
 
@@ -301,6 +315,14 @@ export default function Operations() {
     // Per-product emergency-dispatch requests for this order — one entry per Task
     // that raised "Emergency Dispatch" in Task Management, most recent first.
     emergencyRequests: emergencyRequestsByOrder[o._id] || [],
+    // Dispatch LR mismatch on fields OTHER than Weight/Transport Name (Packages/Boxes,
+    // Destination) — needs a reason + BOTH Sales and Operations to approve. This
+    // captures the Operations side; see Actions column + modal below.
+    lrMismatchStatus: o.dispatchLrMismatchStatus || 'none',
+    lrMismatchReason: o.dispatchLrMismatchReason || '',
+    lrMismatchFields: o.dispatchLrMismatchFields || [],
+    lrMismatchSalesApproved: !!o.dispatchLrMismatchSalesApproved,
+    lrMismatchOpsApproved: !!o.dispatchLrMismatchOpsApproved,
     // Fall back to linked lead's splitDates so emergency products identified on the lead
     // (before order creation) are still reflected in the Operations queue.
     splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
@@ -396,9 +418,16 @@ export default function Operations() {
         const displayUnitType = item.displayUnitType || (isKitItem ? kitCfg?.displayUnitType : '') || '';
         const lamination = normYNOps(item.lamination || (isKitItem ? kitCfg?.lamination : ''));
         const pmRaw = item.packingMaterial || item.packaging || '';
+        // A Brush product whose own "Brush Type" spec (_BRUSH_TYPES in Sales/index.jsx) is
+        // "Wooden" always routes to the Wooden Brush tab — regardless of whatever packing
+        // material was ALSO selected for it (Box/Ziplock/etc.) — since wooden brushes go
+        // through their own production pipeline. Highest priority: overrides the config lookup.
+        const isWoodenBrushProduct = String(item.brushType || '').trim().toLowerCase() === 'wooden';
         // Config lookup first; string-match fallback for items without a config entry
         // (e.g. orders from before packing config was set up, or unregistered material names).
-        const packingMaterialTab = packingMaterialTabMap[pmRaw] || item.packingMaterialTab || packTabFromString(pmRaw);
+        const packingMaterialTab = isWoodenBrushProduct
+          ? 'Wooden Brush'
+          : (packingMaterialTabMap[pmRaw] || item.packingMaterialTab || packTabFromString(pmRaw));
         // Composition category. An item packed INSIDE a personalized outer (packagingIncludes) is a
         // Separate Kit / Separate Product inside the box → its OWN row reads as that (the personalized
         // outer packing is the synthesized personalized copy). Otherwise the per-kit Order Details
@@ -579,6 +608,8 @@ export default function Operations() {
     const stickerType = item.key?.endsWith('-box') ? 'Box'
       : item.key?.endsWith('-frosted') ? 'Frosted Ziplock'
       : item.key?.endsWith('-butter') ? 'Butter Paper'
+      : item.key?.endsWith('-wooden_brush') ? 'Wooden Brush'
+      : item.key?.endsWith('-other') ? 'Other'
       : 'Sticker';
     const pLower = (item.product || '').toLowerCase();
     const cat = item.category || '';
@@ -817,6 +848,28 @@ export default function Operations() {
             }
             return null;
           })()}
+          {record.lrMismatchStatus === 'pending' && !record.lrMismatchOpsApproved && (
+            <Tooltip title={`The dispatch lorry receipt's ${(record.lrMismatchFields || []).join(' / ') || 'details'} don't match what was entered — Sales approval is also required. Click to review.`}>
+              <Button
+                size="small"
+                danger
+                icon={<AlertFilled />}
+                style={{ fontWeight: 600 }}
+                onClick={(e) => { e.stopPropagation(); setLrMismatchOpsOrder(record); }}
+              >
+                LR Mismatch — Review
+              </Button>
+            </Tooltip>
+          )}
+          {record.lrMismatchStatus === 'pending' && record.lrMismatchOpsApproved && !record.lrMismatchSalesApproved && (
+            <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>LR Mismatch: Awaiting Sales</Tag>
+          )}
+          {record.lrMismatchStatus === 'approved' && (
+            <Tag color="success" style={{ fontSize: 10, margin: 0 }}>LR Mismatch Approved</Tag>
+          )}
+          {record.lrMismatchStatus === 'rejected' && (
+            <Tag color="error" style={{ fontSize: 10, margin: 0 }}>LR Mismatch Rejected</Tag>
+          )}
         </Space>
       ),
     },
@@ -966,7 +1019,8 @@ export default function Operations() {
         },
       },
       ...(label !== 'Sticker' ? [{
-        title: label === 'Box' ? 'Box Type' : label === 'Butter Paper' ? 'Butter Paper Type' : 'Ziplock Type',
+        title: label === 'Box' ? 'Box Type' : label === 'Butter Paper' ? 'Butter Paper Type'
+          : label === 'Wooden Brush' ? 'Wooden Brush Type' : label === 'Other' ? 'Other Type' : 'Ziplock Type',
         key: 'displayUnitType',
         render: (_, record) => {
           if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
@@ -1172,6 +1226,8 @@ export default function Operations() {
                           const queueType = record.key?.endsWith('-box') ? 'Box'
                             : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
                             : record.key?.endsWith('-butter') ? 'Butter Paper'
+                            : record.key?.endsWith('-wooden_brush') ? 'Wooden Brush'
+                            : record.key?.endsWith('-other') ? 'Other'
                             : 'Sticker';
                           try {
                             await createStickerRequest({
@@ -1239,6 +1295,8 @@ export default function Operations() {
                         const queueType = record.key?.endsWith('-box') ? 'Box'
                           : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
                           : record.key?.endsWith('-butter') ? 'Butter Paper'
+                          : record.key?.endsWith('-wooden_brush') ? 'Wooden Brush'
+                          : record.key?.endsWith('-other') ? 'Other'
                           : 'Sticker';
                         const existing = findStickerReq(record);
                         let stickerId;
@@ -1519,6 +1577,8 @@ export default function Operations() {
     requestForm.resetFields();
     // Auto-fill the automation vendor for this type
     const autoKey = type === 'Frosted Ziplock' ? 'Ziplock' : type;
+    // 'Wooden Brush'/'Other' automation-vendor keys are the same string as `type`, so the
+    // ternary above already resolves them correctly — no additional branch needed.
     const autoId = automationVendors[autoKey];
     if (autoId) requestForm.setFieldsValue({ vendorId: autoId });
     setRequestOpen(true);
@@ -1582,7 +1642,8 @@ export default function Operations() {
     // shared parent row. Non-kit orders with multiple products stay as individual rows.
     let tableSource = activeRows;
     if (type !== 'Sticker') {
-      const typeKey = type === 'Box' ? 'box' : type === 'Butter Paper' ? 'butter' : 'frosted';
+      const typeKey = type === 'Box' ? 'box' : type === 'Butter Paper' ? 'butter'
+        : type === 'Wooden Brush' ? 'wooden_brush' : type === 'Other' ? 'other' : 'frosted';
       const orderMap = new Map();
       activeRows.forEach((row) => {
         // Group by order, composition category, AND which specific kit (kitId, falling back to
@@ -1612,7 +1673,9 @@ export default function Operations() {
         const displayUnitMatchesTab =
           (typeKey === 'box' && (order?.displayUnitTab === 'Box' || duNameLc.includes('box'))) ||
           (typeKey === 'frosted' && (order?.displayUnitTab === 'Ziplock' || (!duNameLc.includes('butter') && (duNameLc.includes('ziplock') || duNameLc.includes('frosted') || duNameLc.includes('pouch'))))) ||
-          (typeKey === 'butter' && (order?.displayUnitTab === 'Butter Paper' || duNameLc.includes('butter')));
+          (typeKey === 'butter' && (order?.displayUnitTab === 'Butter Paper' || duNameLc.includes('butter'))) ||
+          (typeKey === 'wooden_brush' && (order?.displayUnitTab === 'Wooden Brush' || duNameLc.includes('wooden') || duNameLc.includes('brush'))) ||
+          (typeKey === 'other' && order?.displayUnitTab === 'Other');
         // Row-based fallback: group when every row in this tab for this order is a KIT row whose
         // destination IS this tab. Handles multi-kit orders where each kit routes by its OWN
         // display unit (so the order-level display unit may not match this tab).
@@ -1657,7 +1720,8 @@ export default function Operations() {
               // tab would each report the OTHER kit's qty added in.
               const kos = order?.kitOrders || [];
               if (kos.length) {
-                const tabLabel = typeKey === 'box' ? 'Box' : typeKey === 'frosted' ? 'Ziplock' : 'Butter Paper';
+                const tabLabel = typeKey === 'box' ? 'Box' : typeKey === 'frosted' ? 'Ziplock'
+                  : typeKey === 'wooden_brush' ? 'Wooden Brush' : typeKey === 'other' ? 'Other' : 'Butter Paper';
                 const matching = kos.filter((ko) => {
                   const du = ko.displayUnit || '';
                   const tab = displayUnitTabMap[du] || packTabFromString(du);
@@ -2022,6 +2086,16 @@ export default function Operations() {
             label: <Space><ContainerOutlined />Butter Paper</Space>,
             children: renderQueueCard('Butter Paper', productionQueues.butter, 'Butter Paper Queue', butterSearch, setButterSearch, butterDateRange, setButterDateRange),
           },
+          {
+            key: 'wooden_brush',
+            label: <Space><BoxPlotOutlined />Wooden Brush</Space>,
+            children: renderQueueCard('Wooden Brush', productionQueues.wooden_brush, 'Wooden Brush Queue', woodenBrushSearch, setWoodenBrushSearch, woodenBrushDateRange, setWoodenBrushDateRange),
+          },
+          {
+            key: 'other',
+            label: <Space><ContainerOutlined />Other</Space>,
+            children: renderQueueCard('Other', productionQueues.other, 'Other Queue', otherSearch, setOtherSearch, otherDateRange, setOtherDateRange),
+          },
         ])}
         activeKey={activeKeyFor(activeTab)}
       />
@@ -2119,6 +2193,8 @@ export default function Operations() {
                 requestType === 'Sticker' ? 'sticker'
                 : requestType === 'Box' ? 'box'
                 : requestType === 'Butter Paper' ? 'butter'
+                : requestType === 'Wooden Brush' ? 'wooden_brush'
+                : requestType === 'Other' ? 'other'
                 : 'frosted'
               ] || []).map(opt => ({
                 value: opt.value,
@@ -2441,6 +2517,88 @@ export default function Operations() {
                 description="The dispatch team will receive an immediate notification per approved product to proceed with delivery. This action cannot be undone."
                 style={{ borderRadius: 8 }}
               />
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Dispatch LR Mismatch (Packages/Destination) — Operations Approval Modal ── */}
+      <Modal
+        title={<Space><AlertFilled style={{ color: '#f5222d' }} /><span>LR Mismatch — Operations Review (Dual Approval)</span></Space>}
+        open={!!lrMismatchOpsOrder}
+        onCancel={() => setLrMismatchOpsOrder(null)}
+        width={Math.min(560, window.innerWidth - 32)}
+        footer={[<Button key="cancel" onClick={() => setLrMismatchOpsOrder(null)}>Close</Button>]}
+      >
+        {lrMismatchOpsOrder && (() => {
+          const liveOrder = apiOrders.find((o) => o.key === lrMismatchOpsOrder.key) || lrMismatchOpsOrder;
+          const isPending = liveOrder.lrMismatchStatus === 'pending';
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              <Alert type="error" showIcon
+                message={`${(liveOrder.lrMismatchFields || []).join(' & ') || 'Lorry Receipt'} Mismatch — Dual Approval Required`}
+                description="The dispatch team scanned the lorry receipt via AI and one or more fields (other than Weight/Transport Name) disagree with what was entered manually. Both Sales AND Operations must approve before the dispatcher can proceed — a reject from either side blocks it."
+                style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
+              />
+              <Descriptions bordered size="small" column={1} style={{ borderRadius: 8 }}>
+                <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{liveOrder.id}</span></Descriptions.Item>
+                <Descriptions.Item label="Client">{liveOrder.hotelLogo}</Descriptions.Item>
+                <Descriptions.Item label="Mismatched Fields">{(liveOrder.lrMismatchFields || []).join(', ') || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Reason Given">{liveOrder.lrMismatchReason || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Sales Approval">
+                  {liveOrder.lrMismatchSalesApproved ? <Tag color="success">Approved ✓</Tag> : <Tag color="orange">Pending</Tag>}
+                </Descriptions.Item>
+              </Descriptions>
+              {isPending ? (
+                <Space>
+                  <Button
+                    type="primary"
+                    loading={decidingLrMismatchOps}
+                    onClick={async () => {
+                      setDecidingLrMismatchOps(true);
+                      try {
+                        const res = await decideLrMismatchOps({ id: liveOrder.key, decision: 'approved' }).unwrap();
+                        enqueueSnackbar(
+                          res?.data?.dispatchLrMismatchStatus === 'approved'
+                            ? 'LR mismatch fully approved — dispatch may proceed.'
+                            : 'Operations approval recorded — awaiting Sales approval.',
+                          { variant: 'success' },
+                        );
+                        setLrMismatchOpsOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to approve', { variant: 'error' });
+                      } finally {
+                        setDecidingLrMismatchOps(false);
+                      }
+                    }}>
+                    Approve
+                  </Button>
+                  <Button
+                    danger
+                    loading={decidingLrMismatchOps}
+                    onClick={async () => {
+                      setDecidingLrMismatchOps(true);
+                      try {
+                        await decideLrMismatchOps({ id: liveOrder.key, decision: 'rejected' }).unwrap();
+                        enqueueSnackbar('LR mismatch rejected.', { variant: 'success' });
+                        setLrMismatchOpsOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to reject', { variant: 'error' });
+                      } finally {
+                        setDecidingLrMismatchOps(false);
+                      }
+                    }}>
+                    Reject
+                  </Button>
+                </Space>
+              ) : (
+                <Alert
+                  type={liveOrder.lrMismatchStatus === 'approved' ? 'success' : 'warning'}
+                  showIcon
+                  message={`Already ${liveOrder.lrMismatchStatus}`}
+                  style={{ borderRadius: 8 }}
+                />
+              )}
             </div>
           );
         })()}

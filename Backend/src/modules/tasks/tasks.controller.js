@@ -153,7 +153,7 @@ exports.getTasks = asyncHandler(async (req, res) => {
 
 // Map a kit's resolved display-unit tab (or legacy logoType) to the StickerRequest
 // stickerType queue it is actually tracked under (mirrors Operations/data.js kit routing).
-const KIT_TAB_TO_STICKER_TYPE = { Box: 'Box', Ziplock: 'Frosted Ziplock', 'Butter Paper': 'Butter Paper', Sticker: 'Sticker' };
+const KIT_TAB_TO_STICKER_TYPE = { Box: 'Box', Ziplock: 'Frosted Ziplock', 'Butter Paper': 'Butter Paper', 'Wooden Brush': 'Wooden Brush', Other: 'Other', Sticker: 'Sticker' };
 const normYN = (v) => { const s = String(v ?? '').trim().toUpperCase(); return s === 'YES' || s === 'NO' ? s : ''; };
 const DESIGN_READY_STATUSES = ['Approved', 'Done', 'In Process', 'Received'];
 
@@ -165,7 +165,7 @@ function resolveDesignType(it, order) {
   if (isKitItem) {
     const tab = it.displayUnitTab || order.displayUnitTab || '';
     if (KIT_TAB_TO_STICKER_TYPE[tab]) return KIT_TAB_TO_STICKER_TYPE[tab];
-    if (['Box', 'Frosted Ziplock', 'Butter Paper', 'Sticker'].includes(it.logoType)) return it.logoType;
+    if (['Box', 'Frosted Ziplock', 'Butter Paper', 'Wooden Brush', 'Other', 'Sticker'].includes(it.logoType)) return it.logoType;
     return '';
   }
   if (normYN(it.sticker) === 'YES') return 'Sticker';

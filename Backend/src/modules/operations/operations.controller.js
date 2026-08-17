@@ -205,13 +205,17 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
   if (!order) return next(new AppError('Order not found', 404));
 
-  // Build set of product indices that already have tasks for this order
-  const existingTasks = await Task.find({ orderId: order._id }).select('productIndex').lean();
-  const taskedIndices = new Set(
-    existingTasks
-      .filter((t) => t.productIndex !== undefined && t.productIndex !== null)
-      .map((t) => t.productIndex)
-  );
+  // Sum already-assigned qty per product index (any status — a Pending task still
+  // reserves that qty, same reasoning as utils/taskQuantity.js's checkTaskQuantityOverflow)
+  // rather than a boolean "has any task" — so a product whose order qty grew AFTER it was
+  // fully tasked (e.g. 500 done, then +500 added to the order) isn't skipped forever, and
+  // one only partially covered gets a follow-up task for just its true remaining qty.
+  const existingTasks = await Task.find({ orderId: order._id }).select('productIndex qty').lean();
+  const assignedQtyByIndex = new Map();
+  existingTasks.forEach((t) => {
+    if (t.productIndex === undefined || t.productIndex === null) return;
+    assignedQtyByIndex.set(t.productIndex, (assignedQtyByIndex.get(t.productIndex) || 0) + (Number(t.qty) || 0));
+  });
 
   const baseType = req.body.taskType || 'Production';
   const tasks = [];
@@ -229,7 +233,9 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
 
   for (let i = 0; i < (order.items || []).length; i++) {
     const it = order.items[i];
-    if (taskedIndices.has(i)) {
+    const required = it.isKit ? (Number(it.overallQty) || Number(it.qty) || 0) : (Number(it.qty) || 0);
+    const pending = Math.max(0, required - (assignedQtyByIndex.get(i) || 0));
+    if (pending <= 0) {
       skippedProducts.push(it.itemName);
       continue;
     }
@@ -242,7 +248,7 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
       taskName: `${baseType} — ${it.itemName}`,
       product: it.itemName,
       productIndex: i,
-      qty: it.qty,
+      qty: pending,
       clientName: order.clientName,
       status: 'Pending',
       paymentStatus: orderPaymentStatus,
@@ -307,6 +313,45 @@ exports.setOrderEmergency = asyncHandler(async (req, res, next) => {
     { new: true }
   );
   if (!order) return next(new AppError('Order not found', 404));
+  res.status(200).json({ success: true, data: order });
+});
+
+// PATCH /api/operations/orders/:id/lr-mismatch-decision — Operations side of the dual
+// (Sales + Operations) sign-off on an LR mismatch flagged by Dispatch for fields other
+// than Weight/Transport Name (see dispatch.controller.js requestLrMismatchApproval /
+// sales.controller.js decideLrMismatchSales). A reject from either side kills the
+// request immediately; an approve only flips the overall status to 'approved' once
+// Sales has approved too.
+exports.decideLrMismatchOps = asyncHandler(async (req, res, next) => {
+  const { decision } = req.body;
+  if (!['approved', 'rejected'].includes(decision)) {
+    return next(new AppError('decision must be "approved" or "rejected"', 400));
+  }
+  const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
+  if (!order) return next(new AppError('Order not found', 404));
+  if (order.dispatchLrMismatchStatus !== 'pending') {
+    return next(new AppError('No pending LR mismatch approval for this order', 400));
+  }
+
+  if (decision === 'rejected') {
+    order.dispatchLrMismatchStatus = 'rejected';
+  } else {
+    order.dispatchLrMismatchOpsApproved = true;
+    order.dispatchLrMismatchOpsApprovedBy = req.user._id;
+    order.dispatchLrMismatchOpsApprovedAt = Date.now();
+    if (order.dispatchLrMismatchSalesApproved) order.dispatchLrMismatchStatus = 'approved';
+  }
+  await order.save({ validateBeforeSave: false });
+
+  if (decision === 'approved' && order.dispatchLrMismatchStatus === 'pending') {
+    await notifyRoles({
+      modules: ['Sales Team'],
+      type: 'dispatch',
+      title: 'LR Mismatch — Operations Approved, Awaiting Sales',
+      message: `Order ${order.orderCode}: Operations has approved the LR mismatch. Sales approval is still required before dispatch can proceed.`,
+    });
+  }
+
   res.status(200).json({ success: true, data: order });
 });
 
@@ -559,6 +604,8 @@ exports.approveStickerRequest = asyncHandler(async (req, res, next) => {
       const designType = sticker.stickerType === 'Box' ? 'Box'
         : sticker.stickerType === 'Frosted Ziplock' ? 'Frosted Ziplock'
         : sticker.stickerType === 'Butter Paper' ? 'Butter Paper'
+        : sticker.stickerType === 'Wooden Brush' ? 'Wooden Brush'
+        : sticker.stickerType === 'Other' ? 'Other'
         : 'Sticker';
       HotelDesign.findOneAndUpdate(
         { hotelName: sticker.hotelLogo || sticker.hotelName, product: sticker.product, type: designType },

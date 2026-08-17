@@ -248,7 +248,7 @@ exports.updatePermissions = asyncHandler(async (req, res, next) => {
 // ─── Deleted Records (across all soft-deleted modules) ───────────────────────
 // Map of restore "type" -> { model, module label, fields to surface, label resolver }
 const DELETED_SOURCES = {
-  parties: { model: 'Party', module: 'Parties & Ledger', label: (d) => d.name },
+  parties: { model: 'Party', module: 'Ledgers', label: (d) => d.name },
   leads: { model: 'Lead', module: 'Sales Team', label: (d) => d.hotelName || d.clientName },
   orders: { model: 'Order', module: 'Sales Team', label: (d) => d.orderCode || d.clientName },
   quotations: { model: 'Quotation', module: 'Sales Team', label: (d) => d.quotCode || d.clientName },

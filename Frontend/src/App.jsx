@@ -117,7 +117,7 @@ function ThemedApp() {
               <Route path="/inventory" element={<PermissionRoute module="Inventory"><Inventory /></PermissionRoute>} />
               <Route path="/purchase" element={<PermissionRoute module="Purchase"><Purchase /></PermissionRoute>} />
               <Route path="/billing" element={<PermissionRoute module="Billing"><Billing /></PermissionRoute>} />
-              <Route path="/parties-ledger" element={<PermissionRoute module="Parties & Ledger"><PartiesLedger /></PermissionRoute>} />
+              <Route path="/parties-ledger" element={<PermissionRoute module="Ledgers"><PartiesLedger /></PermissionRoute>} />
               <Route path="/vendors-suppliers" element={<PermissionRoute module="Vendors & Suppliers"><VendorsSuppliers /></PermissionRoute>} />
               <Route path="/financial" element={<PermissionRoute module="Financial"><Financial /></PermissionRoute>} />
               <Route path="/expenses" element={<PermissionRoute module="Expenses"><Expenses /></PermissionRoute>} />

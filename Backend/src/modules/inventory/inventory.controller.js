@@ -13,6 +13,15 @@ const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { sendMessage, ensureDefaultWhatsAppEvents } = require('../../services/whatsAppService');
 
+// Bulk item's tracking unit → the fill units its linked "filled" (per-piece) items may use —
+// either the bulk unit's own metric sub-unit (small per-piece fills, e.g. a 10ml bottle) or
+// the bulk unit itself (large per-piece fills, e.g. a 1 Litre jug). Only these four metric
+// units are supported by the fill conversion (see UNIT_TO_BULK_FACTOR below).
+const BULK_FILL_UNITS = { Litres: ['ml', 'Litres'], Kg: ['gram', 'Kg'] };
+// Fill unit → how many of it make up 1 unit of its bulk item (ml/gram are sub-units of
+// Litres/Kg respectively; Litres/Kg fills draw 1:1 from a same-unit bulk item).
+const UNIT_TO_BULK_FACTOR = { ml: 1000, Litres: 1, gram: 1000, Kg: 1 };
+
 // Sends the "Stock Checking" WhatsApp template (configured in Integrations → WhatsApp →
 // Event Mapping) whenever a Live Staff Check records a discrepancy — for both Known and
 // Unknown reasons. Recipients come from the mapping's own `recipientUserIds` (selectable
@@ -91,21 +100,77 @@ exports.getItem = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: item });
 });
 
-exports.createItem = asyncHandler(async (req, res) => {
+exports.createItem = asyncHandler(async (req, res, next) => {
+  const { mergeItemCode, itemType, bulkSourceItemId, ...body } = req.body;
+
+  // 'filled' items are packed from a linked bulk item's stock via the /fill action — validate
+  // the link and unit compatibility up front so a mismatched pair can never be created.
+  if (itemType === 'filled') {
+    if (!bulkSourceItemId) return next(new AppError('Select which bulk item this is filled from', 400));
+    const bulkSource = await InventoryItem.findOne({ _id: bulkSourceItemId, deletedAt: null, itemType: 'bulk' });
+    if (!bulkSource) return next(new AppError('Bulk source item not found', 404));
+    const expectedUnits = BULK_FILL_UNITS[bulkSource.unit];
+    if (!expectedUnits) return next(new AppError(`Bulk item "${bulkSource.itemName}" must be tracked in Litres or Kg before it can be filled from`, 400));
+    if (!expectedUnits.includes(body.unit)) return next(new AppError(`Fill unit must be ${expectedUnits.join(' or ')} to match "${bulkSource.itemName}"'s bulk unit (${bulkSource.unit})`, 400));
+  }
+
+  // Merge into an existing item (matched by item code) instead of creating a duplicate —
+  // e.g. this is really more stock of a product already catalogued under a different name.
+  if (mergeItemCode) {
+    const existing = await InventoryItem.findOne({ itemCode: mergeItemCode, deletedAt: null });
+    if (!existing) return next(new AppError(`No item found with code "${mergeItemCode}"`, 404));
+    const qtyToAdd = Number(body.openingStock) || 0;
+    const qtyBefore = existing.currentStock;
+    const vendorId = body.vendorId || existing.vendorId;
+    let vendorName;
+    if (vendorId) vendorName = (await Vendor.findById(vendorId))?.name;
+    if (body.vendorId) existing.vendorId = body.vendorId;
+    if (body.purchasePrice != null) existing.purchasePrice = body.purchasePrice;
+    if (body.sellingPrice != null) existing.sellingPrice = body.sellingPrice;
+    const batchDate = body.purchaseDate || Date.now();
+    if (qtyToAdd > 0) {
+      existing.purchaseBatches.push({ vendorId: vendorId || undefined, vendorName, purchaseDate: batchDate, qty: qtyToAdd, remainingQty: qtyToAdd });
+      existing.currentStock = qtyBefore + qtyToAdd;
+    }
+    await existing.save({ validateBeforeSave: false });
+    if (qtyToAdd > 0) {
+      await StockMovement.create({
+        itemId: existing._id,
+        movementType: 'IN',
+        qty: qtyToAdd,
+        qtyBefore,
+        qtyAfter: existing.currentStock,
+        referenceType: 'Purchase',
+        vendorId: vendorId || undefined,
+        vendorName,
+        purchaseDate: batchDate,
+        approvalStatus: 'Approved',
+        approvedBy: req.user._id,
+        approvedAt: Date.now(),
+        createdBy: req.user._id,
+      });
+    }
+    return res.status(200).json({ success: true, merged: true, data: existing });
+  }
+
   const itemCode = await generateCode('ITEM');
-  const openingStock = req.body.openingStock || 0;
-  const purchaseDate = req.body.purchaseDate || Date.now();
+  // Filled items start empty — stock only enters them via the /fill action, which draws
+  // proportionally from the linked bulk item.
+  const openingStock = itemType === 'filled' ? 0 : (body.openingStock || 0);
+  const purchaseDate = body.purchaseDate || Date.now();
   let vendorName;
-  if (req.body.vendorId) {
-    const vendor = await Vendor.findById(req.body.vendorId);
+  if (body.vendorId) {
+    const vendor = await Vendor.findById(body.vendorId);
     vendorName = vendor?.name;
   }
   const item = await InventoryItem.create({
-    ...req.body,
+    ...body,
+    itemType: itemType || 'standard',
+    bulkSourceItemId: itemType === 'filled' ? bulkSourceItemId : undefined,
     itemCode,
     currentStock: openingStock,
     purchaseBatches: openingStock > 0
-      ? [{ vendorId: req.body.vendorId || undefined, vendorName, purchaseDate, qty: openingStock, remainingQty: openingStock }]
+      ? [{ vendorId: body.vendorId || undefined, vendorName, purchaseDate, qty: openingStock, remainingQty: openingStock }]
       : [],
     createdBy: req.user._id,
   });
@@ -117,7 +182,7 @@ exports.createItem = asyncHandler(async (req, res) => {
       qtyBefore: 0,
       qtyAfter: openingStock,
       referenceType: 'Opening',
-      vendorId: req.body.vendorId || undefined,
+      vendorId: body.vendorId || undefined,
       vendorName,
       purchaseDate,
       approvalStatus: 'Approved',
@@ -133,6 +198,9 @@ exports.updateItem = asyncHandler(async (req, res, next) => {
   const item = await InventoryItem.findOne({ _id: req.params.id, deletedAt: null });
   if (!item) return next(new AppError('Item not found', 404));
   const { productAttributes, addStockQty, purchaseDate, ...rest } = req.body;
+  if (item.itemType === 'filled' && (Number(addStockQty) || 0) > 0) {
+    return next(new AppError('Filled items are stocked via "Fill Stock", not Add Stock', 400));
+  }
   Object.assign(item, rest);
   if (productAttributes !== undefined) {
     item.productAttributes = productAttributes;
@@ -171,6 +239,120 @@ exports.updateItem = asyncHandler(async (req, res, next) => {
     await item.save({ validateBeforeSave: false });
   }
   res.status(200).json({ success: true, data: item });
+});
+
+// Fill Stock — packs `fillQty` pieces of a 'filled' item, drawing the equivalent amount
+// (plus wastage) from its linked bulk item's stock. Once filled, the item's own
+// currentStock/purchaseBatches carry the pieces forward exactly like any standard item —
+// order deduction never needs to know it was ever "filled".
+exports.fillStock = asyncHandler(async (req, res, next) => {
+  const item = await InventoryItem.findOne({ _id: req.params.id, deletedAt: null, itemType: 'filled' });
+  if (!item) return next(new AppError('Filled item not found', 404));
+
+  const bulk = await InventoryItem.findOne({ _id: item.bulkSourceItemId, deletedAt: null, itemType: 'bulk' });
+  if (!bulk) return next(new AppError('Linked bulk item not found', 404));
+
+  const fillSize = Number(item.unitValue) || 0;
+  if (fillSize <= 0) return next(new AppError(`"${item.itemName}" has no fill size set (Unit Value)`, 400));
+  const wastage = Math.min(Number(item.fillWastagePercent) || 0, 99);
+  // Fill-unit quantity needed per good piece, inflated to cover spillage, converted to the
+  // bulk item's own unit (Litres/Kg) via the fill unit's factor — 1000 for a sub-unit fill
+  // (ml/gram), 1:1 when the fill unit already matches the bulk unit (Litres/Kg). Same formula
+  // both directions: fillQty → bulk needed, and (below) bulk on hand → max whole pieces.
+  const fillUnitFactor = UNIT_TO_BULK_FACTOR[item.unit] || 1000;
+
+  // fillQty is optional — the UI auto-fills it from live bulk stock, but if it's omitted (or
+  // 0) here, compute the maximum whole pieces fillable from all bulk currently on hand
+  // ourselves, so the piece count never has to be worked out manually for either Litres or Kg
+  // bulk items.
+  let fillQty = Number(req.body.fillQty) || 0;
+  if (fillQty <= 0) {
+    fillQty = Math.floor((bulk.currentStock * fillUnitFactor * (1 - wastage / 100)) / fillSize);
+  }
+  if (fillQty <= 0) {
+    return next(new AppError(`Not enough bulk stock — "${bulk.itemName}" has ${bulk.currentStock} ${bulk.unit}, not enough for even 1 piece of "${item.itemName}"`, 400));
+  }
+
+  const rawNeeded = (fillQty * fillSize) / (1 - wastage / 100);
+  const bulkQtyNeeded = rawNeeded / fillUnitFactor;
+
+  if (bulk.currentStock < bulkQtyNeeded) {
+    return next(new AppError(`Not enough bulk stock — need ${bulkQtyNeeded.toFixed(3)} ${bulk.unit} of "${bulk.itemName}", only ${bulk.currentStock} ${bulk.unit} available`, 400));
+  }
+
+  const bulkQtyBefore = bulk.currentStock;
+  bulk.currentStock = Math.max(0, bulkQtyBefore - bulkQtyNeeded);
+
+  // Draw down oldest purchaseDate batches first, same FIFO convention used when an order
+  // deducts a standard item — one StockMovement per vendor batch touched.
+  const segments = [];
+  let remaining = bulkQtyNeeded;
+  const batches = (bulk.purchaseBatches || [])
+    .filter((b) => b.remainingQty > 0)
+    .sort((a, b) => new Date(a.purchaseDate) - new Date(b.purchaseDate));
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    const take = Math.min(batch.remainingQty, remaining);
+    batch.remainingQty -= take;
+    remaining -= take;
+    segments.push({ qty: take, vendorId: batch.vendorId, vendorName: batch.vendorName, purchaseDate: batch.purchaseDate });
+  }
+  if (remaining > 0) segments.push({ qty: remaining, vendorId: bulk.vendorId });
+  bulk.markModified('purchaseBatches');
+  await bulk.save({ validateBeforeSave: false });
+
+  let runningAfter = bulkQtyBefore;
+  for (const seg of segments) {
+    runningAfter -= seg.qty;
+    await StockMovement.create({
+      itemId: bulk._id,
+      movementType: 'OUT',
+      qty: seg.qty,
+      qtyBefore: runningAfter + seg.qty,
+      qtyAfter: Math.max(0, runningAfter),
+      referenceType: 'Manual',
+      reason: `Filled into ${item.itemName} (${fillQty} ${item.unit})`,
+      vendorId: seg.vendorId || undefined,
+      vendorName: seg.vendorName,
+      purchaseDate: seg.purchaseDate,
+      approvalStatus: 'Approved',
+      approvedBy: req.user._id,
+      createdBy: req.user._id,
+    });
+  }
+  if (bulk.minStock > 0 && bulk.currentStock < bulk.minStock) {
+    const isOut = bulk.currentStock === 0;
+    notifyRoles({ modules: ['Inventory', 'Purchase'], type: 'low_stock', title: isOut ? 'Out of Stock' : 'Low Stock Alert', message: `${bulk.itemName} — ${bulk.currentStock}/${bulk.minStock} ${bulk.unit} remaining`, link: '/inventory' }).catch(() => {});
+  }
+
+  // Credit the filled item — from here on it's a normal stocked item with its own batch.
+  const itemQtyBefore = item.currentStock;
+  const fillVendorName = bulk.vendorId ? (await Vendor.findById(bulk.vendorId))?.name : undefined;
+  item.currentStock = itemQtyBefore + fillQty;
+  item.purchaseBatches.push({
+    vendorId: bulk.vendorId || undefined,
+    vendorName: fillVendorName,
+    purchaseDate: Date.now(),
+    qty: fillQty,
+    remainingQty: fillQty,
+  });
+  await item.save({ validateBeforeSave: false });
+  await StockMovement.create({
+    itemId: item._id,
+    movementType: 'IN',
+    qty: fillQty,
+    qtyBefore: itemQtyBefore,
+    qtyAfter: item.currentStock,
+    referenceType: 'Manual',
+    reason: `Filled from bulk item "${bulk.itemName}" (${bulkQtyNeeded.toFixed(3)} ${bulk.unit} used${wastage ? `, ${wastage}% wastage` : ''})`,
+    vendorId: bulk.vendorId || undefined,
+    vendorName: fillVendorName,
+    approvalStatus: 'Approved',
+    approvedBy: req.user._id,
+    createdBy: req.user._id,
+  });
+
+  res.status(200).json({ success: true, data: { item, bulk, fillQty } });
 });
 
 exports.deleteItem = asyncHandler(async (req, res, next) => {

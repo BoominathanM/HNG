@@ -16,12 +16,14 @@ const { Text } = Typography;
 const { TextArea } = Input;
 
 // Each :type slug is backed by its own model/collection on the server
-// (StickerInvoice / BoxInvoice / ZiplockInvoice / ButterPaperInvoice).
+// (StickerInvoice / BoxInvoice / ZiplockInvoice / ButterPaperInvoice / WoodenBrushInvoice / OtherInvoice).
 const TYPE_LABELS = {
   sticker: 'Sticker',
   box: 'Box',
   ziplock: 'Frosted Ziplock',
   butter: 'Butter Paper',
+  wooden_brush: 'Wooden Brush',
+  other: 'Other',
 };
 
 export default function PackagingInvoices() {

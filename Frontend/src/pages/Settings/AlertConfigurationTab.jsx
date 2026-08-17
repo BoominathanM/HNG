@@ -25,6 +25,8 @@ const DESIGN_ROLES = [
   { role: 'Box', label: 'Box' },
   { role: 'Ziplock', label: 'Frosted Ziplock' },
   { role: 'Butter Paper', label: 'Butter Paper' },
+  { role: 'Wooden Brush', label: 'Wooden Brush' },
+  { role: 'Other', label: 'Other' },
 ];
 
 function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel, dynamicRecipient }) {
@@ -256,7 +258,7 @@ export default function AlertConfigurationTab() {
       {DESIGN_ROLES.every((r) => vendorUsersFor(r.role).length === 0) && (
         <Empty
           style={{ margin: '12px 0' }}
-          description="No active Vendors users found for Sticker/Box/Ziplock/Butter Paper roles yet — add them in the Users tab to enable these alerts."
+          description="No active Vendors users found for Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other roles yet — add them in the Users tab to enable these alerts."
           image={Empty.PRESENTED_IMAGE_SIMPLE}
         />
       )}

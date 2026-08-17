@@ -9,13 +9,13 @@ const AppError = require('../../utils/AppError');
 const { computeCompositionGrandTotal } = require('../../utils/orderCalc');
 
 exports.createParty = asyncHandler(async (req, res) => {
-  const { name, phone, type = 'Customer', gstNumber, panNumber, contactPerson, city, state, pincode, street } = req.body;
+  const { name, phone, type = 'Customer', gstNumber, panNumber, contactPerson, city, state, pincode, street, category } = req.body;
   if (!name) return res.status(400).json({ success: false, message: 'Party name is required' });
   // Upsert: match by phone (if provided) OR name to avoid duplicates
   const filter = phone
     ? { $or: [{ phone }, { name: new RegExp(`^${name.trim()}$`, 'i') }], deletedAt: null }
     : { name: new RegExp(`^${name.trim()}$`, 'i'), deletedAt: null };
-  const update = { $setOnInsert: { name, phone, type, gstNumber, panNumber, contactPerson, city, state, pincode, street, createdBy: req.user?._id } };
+  const update = { $setOnInsert: { name, phone, type, gstNumber, panNumber, contactPerson, city, state, pincode, street, category, createdBy: req.user?._id } };
   const party = await Party.findOneAndUpdate(filter, update, { upsert: true, new: true, setDefaultsOnInsert: true });
   res.status(200).json({ success: true, data: party });
 });

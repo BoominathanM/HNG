@@ -11,7 +11,7 @@ const alertConfigSchema = new mongoose.Schema({
   // Only set (and only meaningful) for group:'design'. Matches User.role values
   // (e.g. 'Ziplock'), NOT StickerRequest.stickerType (e.g. 'Frosted Ziplock') —
   // see ROLE_TO_STICKER_TYPE in utils/alertConfigQueries.js for the translation.
-  role: { type: String, enum: ['Sticker', 'Box', 'Ziplock', 'Butter Paper', null], default: null },
+  role: { type: String, enum: ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other', null], default: null },
   recipientUserIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   startTime: { type: String, default: '09:00' }, // HH:mm
   endTime: { type: String, default: '18:00' },   // HH:mm

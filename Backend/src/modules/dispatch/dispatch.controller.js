@@ -689,6 +689,76 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: dispatch, finishedType });
 });
 
+// PATCH /api/dispatch/:id/transport-mismatch — called from the LR AI-scan review once the
+// scanned transport name doesn't match what was manually entered. Weight is intentionally
+// not cross-checked here; only transport name requires sales sign-off. Flags the linked
+// order as pending and notifies the assigned sales person, who approves/rejects it from the
+// Sales Orders tab — this never blocks the dispatch flow itself.
+exports.reportTransportMismatch = asyncHandler(async (req, res, next) => {
+  const { expectedTransportName, scannedTransportName } = req.body;
+  const dispatch = await DispatchRecord.findById(req.params.id).populate('orderId', 'orderCode dispatchCode clientName assignedTo');
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  const o = dispatch.orderId;
+  if (!o) return next(new AppError('Order not linked to this dispatch', 404));
+
+  await Order.findByIdAndUpdate(o._id, {
+    dispatchTransportMismatchStatus: 'pending',
+    dispatchTransportMismatchExpected: expectedTransportName || '',
+    dispatchTransportMismatchScanned: scannedTransportName || '',
+    dispatchTransportMismatchReportedAt: Date.now(),
+    dispatchTransportMismatchDecidedBy: null,
+    dispatchTransportMismatchDecidedAt: null,
+  });
+
+  const msg = `Order ${o.orderCode || dispatch.dispatchCode}: the lorry receipt's transport name ("${scannedTransportName}") doesn't match the entered transport ("${expectedTransportName}"). Please review and approve or reject.`;
+  await notifyMany([{ userId: o.assignedTo, type: 'dispatch', title: 'Transport Name Mismatch — Review Needed', message: msg }]);
+
+  res.status(200).json({ success: true });
+});
+
+// PATCH /api/dispatch/:id/lr-mismatch-request — called when the AI-scanned lorry receipt
+// disagrees with what was manually entered on a field OTHER than Weight/Transport Name
+// (e.g. Packages/Boxes, Destination). Unlike the transport-name mismatch above, proceeding
+// here requires a reason plus BOTH Sales and Operations to approve (see decideLrMismatch in
+// sales.controller.js / operations.controller.js) — the dispatcher's "Finished Dispatch"
+// stays blocked until that happens, or until a corrected LR is re-uploaded and re-scanned
+// clean. Resubmitting (e.g. after a rejection) simply restarts the request.
+exports.requestLrMismatchApproval = asyncHandler(async (req, res, next) => {
+  const { reason, fields, details } = req.body;
+  if (!reason || !String(reason).trim()) return next(new AppError('A reason is required to request approval', 400));
+  const dispatch = await DispatchRecord.findById(req.params.id).populate('orderId', 'orderCode dispatchCode clientName assignedTo');
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  const o = dispatch.orderId;
+  if (!o) return next(new AppError('Order not linked to this dispatch', 404));
+
+  await Order.findByIdAndUpdate(o._id, {
+    dispatchLrMismatchStatus: 'pending',
+    dispatchLrMismatchReason: reason,
+    dispatchLrMismatchFields: Array.isArray(fields) ? fields : [],
+    dispatchLrMismatchDetails: details || {},
+    dispatchLrMismatchRequestedBy: req.user._id,
+    dispatchLrMismatchRequestedAt: Date.now(),
+    dispatchLrMismatchSalesApproved: false,
+    dispatchLrMismatchSalesApprovedBy: null,
+    dispatchLrMismatchSalesApprovedAt: null,
+    dispatchLrMismatchOpsApproved: false,
+    dispatchLrMismatchOpsApprovedBy: null,
+    dispatchLrMismatchOpsApprovedAt: null,
+  });
+
+  const fieldList = Array.isArray(fields) && fields.length ? fields.join(', ') : 'lorry receipt details';
+  const msg = `Order ${o.orderCode || dispatch.dispatchCode}: the lorry receipt's ${fieldList} doesn't match what was entered. Reason given: "${reason}". Both Sales and Operations approval are required before dispatch can proceed.`;
+  await notifyRoles({
+    modules: ['Sales Team', 'Operations'],
+    userIds: [o.assignedTo].filter(Boolean),
+    type: 'dispatch',
+    title: 'LR Mismatch — Approval Needed',
+    message: msg,
+  });
+
+  res.status(200).json({ success: true });
+});
+
 // ─── TRANSPORT ────────────────────────────────────────────────────────────────
 // The Transport tab table previously only showed the handful of fields stored
 // directly on the Transport doc itself (LR/boxes/weight/freight) — destination,

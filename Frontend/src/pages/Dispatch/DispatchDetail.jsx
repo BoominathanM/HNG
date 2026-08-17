@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, InputNumber, Upload, Typography, Space,
   Steps, Descriptions, Alert, Tag, Checkbox,
-  Table, Divider, Spin, Image,
+  Table, Divider, Spin, Image, Modal,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import html2pdf from 'html2pdf.js';
@@ -31,6 +31,8 @@ import {
   useGetKitsQuery,
   useUploadFilesMutation,
   useScanDispatchLRMutation,
+  useReportTransportMismatchMutation,
+  useRequestLrMismatchApprovalMutation,
 } from '../../store/api/apiSlice';
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
@@ -41,6 +43,11 @@ import { buildDispatchGroupedProducts, summarizeDispatchVerification, getRowPend
 const { Title, Text } = Typography;
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Case/whitespace/punctuation-insensitive compare used for the transport-name mismatch
+// check — AI-scanned and manually-entered names rarely match byte-for-byte (e.g. "VRL
+// Logistics" vs "VRL Logistics Pvt. Ltd.").
+const normalizeForCompare = (s) => (s || '').toString().trim().toLowerCase().replace(/[.,]/g, '');
 
 // Kit-aware grand total for a (possibly dispatch-filtered) products/kitOrders set —
 // mirrors Billing's computeCompositionGrandTotal (Billing/index.jsx) exactly, so the
@@ -95,6 +102,8 @@ export default function DispatchDetail() {
   const [uploadKitBoxPhotos] = useUploadKitBoxPhotosMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
   const [scanDispatchLR] = useScanDispatchLRMutation();
+  const [reportTransportMismatch] = useReportTransportMismatchMutation();
+  const [requestLrMismatchApproval] = useRequestLrMismatchApprovalMutation();
 
   // Derive orderId from raw dispatch data (before `order` useMemo is computed)
   const dispatchRaw = dispatchData?.data;
@@ -516,6 +525,14 @@ export default function DispatchDetail() {
       basePaymentConfirmed,
       emergencyApproved,
       reallyPaymentConfirmed,
+      // Dual-approval (Sales + Operations) for LR fields other than Weight/Transport
+      // Name — e.g. Packages/Boxes or Destination scanned off the lorry receipt not
+      // matching what was manually entered. See requestLrMismatchApproval below.
+      lrMismatchStatus: o.dispatchLrMismatchStatus || 'none',
+      lrMismatchReason: o.dispatchLrMismatchReason || '',
+      lrMismatchFields: o.dispatchLrMismatchFields || [],
+      lrMismatchSalesApproved: !!o.dispatchLrMismatchSalesApproved,
+      lrMismatchOpsApproved: !!o.dispatchLrMismatchOpsApproved,
       isCredit,
       creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
       payment: isCredit ? 'Credit' : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (emergencyApproved ? 'Emergency Approved' : (basePaymentConfirmed ? 'Confirmed' : 'Pending')))),
@@ -865,6 +882,8 @@ export default function DispatchDetail() {
   const [aiParsed, setAiParsed] = useState(null);
   const [lrEditMode, setLrEditMode] = useState(false);
   const [finishedDispatch, setFinishedDispatch] = useState(false);
+  const [lrMismatchReasonInput, setLrMismatchReasonInput] = useState('');
+  const [submittingLrMismatch, setSubmittingLrMismatch] = useState(false);
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -912,7 +931,7 @@ export default function DispatchDetail() {
     win.print();
   };
 
-  const handleConfirmDispatch = async () => {
+  const executeConfirmDispatch = async () => {
     enqueueSnackbar('Confirming dispatch...', { variant: 'info' });
     try {
       // The real invoice number/date live on the Billing invoice already linked to this
@@ -1034,6 +1053,44 @@ export default function DispatchDetail() {
     }
   };
 
+  // Both partial and full dispatch go through this confirmation gate before
+  // executeConfirmDispatch actually fires the mutation — dispatching is hard to undo
+  // (stock/tasks/notifications all follow it), so the dispatcher gets one explicit
+  // "are you sure" listing exactly what's going out this round.
+  const handleConfirmDispatch = () => {
+    const isFull = willFullyComplete;
+    Modal.confirm({
+      title: isFull ? 'Confirm Full Dispatch' : 'Confirm Partial Dispatch',
+      icon: <CarOutlined style={{ color: '#B11E6A' }} />,
+      width: 480,
+      content: (
+        <div>
+          <Text>
+            {isFull
+              ? 'This will dispatch the remaining quantity and mark the order fully dispatched.'
+              : 'This will dispatch only part of the order — the rest stays pending for a later round.'}
+          </Text>
+          <div style={{ marginTop: 12, background: 'rgba(177,30,106,0.06)', borderRadius: 8, padding: '8px 12px' }}>
+            {rowsBeingDispatchedNow.map((p) => (
+              <div key={p.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '2px 0' }}>
+                <span>{p.name || p.kitName || 'Item'}</span>
+                <strong>{dispatchNowCounts[p.key] || 0}</strong>
+              </div>
+            ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(177,30,106,0.15)' }}>
+              <span>Total this round</span>
+              <span>{totalDispatchNow}</span>
+            </div>
+          </div>
+        </div>
+      ),
+      okText: isFull ? 'Confirm Full Dispatch' : 'Confirm Partial Dispatch',
+      okButtonProps: { style: { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' } },
+      cancelText: 'Cancel',
+      onOk: executeConfirmDispatch,
+    });
+  };
+
   const handleSaveDraft = async () => {
     try {
       const vals = form.getFieldsValue();
@@ -1100,6 +1157,25 @@ export default function DispatchDetail() {
       const trackingUrl = parsed.trackingUrl || trackVals.trackingUrl || '';
       trackingForm.setFieldsValue({ trackingLR, trackingUrl });
 
+      // Transport name is the only LR field that requires sales sign-off on mismatch —
+      // weight is intentionally not verified. Flag the order and notify the assigned
+      // sales person so they can approve/reject from the Sales Orders tab; this never
+      // blocks the dispatch flow either way.
+      const expectedTransport = liveTransport || order.storedTransportName || order.transport || '';
+      const scannedTransport = parsed.transportName || '';
+      const expectedTransportNorm = normalizeForCompare(expectedTransport);
+      const scannedTransportNorm = normalizeForCompare(scannedTransport);
+      if (expectedTransportNorm && scannedTransportNorm
+        && !scannedTransportNorm.includes(expectedTransportNorm)
+        && !expectedTransportNorm.includes(scannedTransportNorm)) {
+        try {
+          await reportTransportMismatch({ id, expectedTransportName: expectedTransport, scannedTransportName: scannedTransport }).unwrap();
+          enqueueSnackbar('Transport name mismatch detected — Sales has been notified to review.', { variant: 'warning' });
+        } catch {
+          // Non-critical — a failed notification shouldn't block reviewing the LR.
+        }
+      }
+
       // Persist right away so a page refresh — before "Save as Draft" or "Finished
       // Dispatch" is clicked — never loses what the AI just extracted.
       try {
@@ -1125,6 +1201,31 @@ export default function DispatchDetail() {
       enqueueSnackbar(err?.data?.message || 'AI extraction failed. You can still fill details in manually.', { variant: 'error' });
     } finally {
       setAiParsing(false);
+    }
+  };
+
+  // Fields other than Weight/Transport Name (Packages/Boxes, Destination) disagreeing
+  // with the scanned LR require a reason + dual (Sales + Operations) sign-off before
+  // Finished Dispatch is allowed — see otherFieldsMismatch/otherMismatchBlocked above.
+  const handleRequestLrMismatchApproval = async () => {
+    if (!lrMismatchReasonInput.trim()) {
+      enqueueSnackbar('Enter a reason for the mismatch before requesting approval.', { variant: 'warning' });
+      return;
+    }
+    setSubmittingLrMismatch(true);
+    try {
+      await requestLrMismatchApproval({
+        id,
+        reason: lrMismatchReasonInput.trim(),
+        fields: otherMismatchFieldLabels,
+        details: otherMismatchDetails,
+      }).unwrap();
+      enqueueSnackbar('Approval requested from Sales and Operations.', { variant: 'success' });
+      setLrMismatchReasonInput('');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Failed to request approval.', { variant: 'error' });
+    } finally {
+      setSubmittingLrMismatch(false);
     }
   };
 
@@ -1301,11 +1402,38 @@ export default function DispatchDetail() {
     ? null
     : aiPackagesNum === manualBoxesNum;
 
-  const aiWeightNum = parseNumeric(aiParsed?.weight);
-  const manualWeightNum = parseNumeric(liveWeight ?? order.storedWeight ?? order.weight);
-  const weightMatch = (aiWeightNum == null || manualWeightNum == null)
+  // Weight is intentionally not cross-checked against the AI-scanned receipt — only
+  // Transport Name requires verification (see below); a weight mismatch is no longer
+  // flagged here.
+
+  // Cross-check the AI-parsed receipt's transport name against what was manually entered.
+  // A mismatch here doesn't block dispatch — it's flagged to the assigned sales person
+  // (via reportTransportMismatch in handleAIParse) for approve/reject from the Sales
+  // Orders tab.
+  const aiTransportNorm = normalizeForCompare(aiParsed?.transportName);
+  const manualTransportNorm = normalizeForCompare(liveTransport ?? order.storedTransportName ?? order.transport);
+  const transportMatch = (!aiTransportNorm || !manualTransportNorm)
     ? null
-    : Math.abs(aiWeightNum - manualWeightNum) < 0.01;
+    : (aiTransportNorm.includes(manualTransportNorm) || manualTransportNorm.includes(aiTransportNorm));
+
+  // Any AI-scanned LR field OTHER than Weight/Transport Name (currently: Packages/Boxes,
+  // Destination) that disagrees with what was manually entered requires a reason plus
+  // BOTH Sales and Operations sign-off before Finished Dispatch is allowed — see
+  // requestLrMismatchApproval / the "LR Mismatch Approval" card below. Re-uploading a
+  // corrected LR that rescans clean clears this without needing any approval at all.
+  const otherMismatchDetails = {};
+  const otherMismatchFieldLabels = [];
+  if (boxesMatch === false) {
+    otherMismatchFieldLabels.push('Packages/Boxes');
+    otherMismatchDetails.packages = { expected: manualBoxesNum, scanned: aiPackagesNum };
+  }
+  if (destinationMatch === false) {
+    otherMismatchFieldLabels.push('Destination');
+    otherMismatchDetails.destination = { expected: orderDestinationLabel, scanned: aiParsed?.toCity || '' };
+  }
+  const otherFieldsMismatch = otherMismatchFieldLabels.length > 0;
+  const lrMismatchApproved = order.lrMismatchStatus === 'approved';
+  const otherMismatchBlocked = otherFieldsMismatch && !lrMismatchApproved;
 
   // Transport / Weight / Boxes must be entered before dispatch can be confirmed — for
   // both Partial and Full Dispatch — same as the open/close box photo requirement below.
@@ -2177,23 +2305,83 @@ export default function DispatchDetail() {
                           />
                         )}
 
-                        {weightMatch === false && (
+                        {transportMatch === false && (
                           <Alert
                             type="error"
                             showIcon
-                            message="Weight Mismatch — Verify Before Dispatch"
-                            description={`The lorry receipt lists a weight of ${aiParsed.weight}, but ${manualWeightNum} kg was entered manually above. Confirm the correct weight before proceeding.`}
+                            message="Transport Name Mismatch — Sales Notified"
+                            description={`The lorry receipt's transport name ("${aiParsed.transportName}") does not match what was entered manually ("${liveTransport || order.storedTransportName || order.transport || '—'}"). The assigned sales person has been notified and can approve or reject this from the Sales Orders tab.`}
                             style={{ marginBottom: 12, borderRadius: 8 }}
                           />
                         )}
-                        {weightMatch === true && (
+                        {transportMatch === true && (
                           <Alert
                             type="success"
                             showIcon
-                            message="Weight Verified"
-                            description={`Lorry receipt weight (${aiParsed.weight}) matches the manually entered weight (${manualWeightNum} kg).`}
+                            message="Transport Name Verified"
+                            description={`Lorry receipt transport name ("${aiParsed.transportName}") matches the manually entered transport ("${liveTransport || order.storedTransportName || order.transport || '—'}").`}
                             style={{ marginBottom: 12, borderRadius: 8 }}
                           />
+                        )}
+
+                        {otherFieldsMismatch && (
+                          <div style={{ marginBottom: 12, border: '1.5px solid #ff4d4f55', borderRadius: 8, padding: 12, background: isDark ? '#2a1418' : '#fff2f0' }}>
+                            <Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>
+                              {otherMismatchFieldLabels.join(' & ')} Mismatch — Sales &amp; Operations Approval Required
+                            </Text>
+                            <div style={{ marginTop: 4, marginBottom: 10, fontSize: 12, color: isDark ? '#ccc' : '#666' }}>
+                              The lorry receipt disagrees with what was entered manually. Finished Dispatch stays blocked until you either re-upload a corrected LR that scans clean, or give a reason and get approval from BOTH Sales and Operations.
+                            </div>
+
+                            {order.lrMismatchStatus === 'approved' ? (
+                              <Alert type="success" showIcon message="Approved by Sales &amp; Operations — you may proceed with Finished Dispatch." style={{ borderRadius: 8 }} />
+                            ) : (
+                              <>
+                                {order.lrMismatchStatus === 'pending' && (
+                                  <Alert
+                                    type="warning"
+                                    showIcon
+                                    style={{ marginBottom: 10, borderRadius: 8 }}
+                                    message="Awaiting approval"
+                                    description={
+                                      <div>
+                                        <div>Reason given: "{order.lrMismatchReason}"</div>
+                                        <div style={{ marginTop: 4 }}>
+                                          Sales: {order.lrMismatchSalesApproved ? <Text type="success">Approved ✓</Text> : <Text type="secondary">Pending</Text>}
+                                          {' · '}
+                                          Operations: {order.lrMismatchOpsApproved ? <Text type="success">Approved ✓</Text> : <Text type="secondary">Pending</Text>}
+                                        </div>
+                                      </div>
+                                    }
+                                  />
+                                )}
+                                {order.lrMismatchStatus === 'rejected' && (
+                                  <Alert
+                                    type="error"
+                                    showIcon
+                                    style={{ marginBottom: 10, borderRadius: 8 }}
+                                    message="Rejected"
+                                    description="Sales or Operations rejected this mismatch. Re-upload the correct LR copy, or enter a new reason below to request approval again."
+                                  />
+                                )}
+                                <Input.TextArea
+                                  rows={2}
+                                  placeholder="Reason for the mismatch (required to request approval)"
+                                  value={lrMismatchReasonInput}
+                                  onChange={(e) => setLrMismatchReasonInput(e.target.value)}
+                                  style={{ marginBottom: 8 }}
+                                />
+                                <Button
+                                  danger
+                                  size="small"
+                                  loading={submittingLrMismatch}
+                                  onClick={handleRequestLrMismatchApproval}
+                                >
+                                  {order.lrMismatchStatus === 'pending' ? 'Resend Approval Request' : 'Request Approval (Sales & Operations)'}
+                                </Button>
+                              </>
+                            )}
+                          </div>
                         )}
 
                         <Form form={lrForm} layout="vertical" size="small">
@@ -2250,7 +2438,13 @@ export default function DispatchDetail() {
                               {[
                                 { label: 'LR Number', value: aiParsed.lrNumber, icon: <FileDoneOutlined />, highlight: true },
                                 { label: 'LR Date', value: aiParsed.lrDate, icon: <CheckSquareOutlined /> },
-                                { label: 'Transport', value: aiParsed.transportName, icon: <CarOutlined /> },
+                                {
+                                  label: 'Transport',
+                                  value: aiParsed.transportName,
+                                  icon: <CarOutlined />,
+                                  mismatch: transportMatch === false,
+                                  matched: transportMatch === true,
+                                },
                                 {
                                   label: 'Packages',
                                   value: aiParsed.packages,
@@ -2265,13 +2459,7 @@ export default function DispatchDetail() {
                                   mismatch: destinationMatch === false,
                                   matched: destinationMatch === true,
                                 },
-                                {
-                                  label: 'Weight',
-                                  value: aiParsed.weight,
-                                  icon: <AppstoreOutlined />,
-                                  mismatch: weightMatch === false,
-                                  matched: weightMatch === true,
-                                },
+                                { label: 'Weight', value: aiParsed.weight, icon: <AppstoreOutlined /> },
                                 { label: 'Freight', value: aiParsed.freight, icon: <ThunderboltOutlined /> },
                                 { label: 'Est. Delivery', value: aiParsed.estimatedDelivery, icon: <CheckCircleOutlined /> },
                                 { label: 'Tracking URL', value: aiParsed.trackingUrl, icon: <LinkOutlined /> },
@@ -2360,7 +2548,7 @@ export default function DispatchDetail() {
                   or the real Full Dispatch confirm, since each round needs its own LR/notify
                   step — label and copy switch to reflect which one this round actually is. */}
               {(() => {
-                const canFinish = dispatched || partialConfirmed;
+                const canFinish = (dispatched || partialConfirmed) && !otherMismatchBlocked;
                 const finishLabel = dispatched ? 'Fully Finished' : 'Partial Finished';
                 return (
                   <div style={{ background: finishedDispatch ? '#52c41a15' : isDark ? '#1a1a2a' : '#fff9fb', border: `1.5px solid ${finishedDispatch ? '#52c41a44' : '#B11E6A44'}`, borderRadius: 12, padding: 16 }}>
@@ -2372,9 +2560,14 @@ export default function DispatchDetail() {
                       <div style={{ marginTop: 6, fontSize: 12, color: isDark ? '#aaa' : '#666' }}>
                         Clicking this will notify <strong>{order.salesPerson}</strong> (Sales) and <strong>{order.client}</strong> (Customer) that {dispatched ? 'the order has been dispatched and is on the way' : 'this partial shipment has gone out'}.
                       </div>
-                      {!canFinish && !finishedDispatch && (
+                      {!(dispatched || partialConfirmed) && !finishedDispatch && (
                         <div style={{ marginTop: 6, fontSize: 12, color: '#fa8c16' }}>
                           Confirm Dispatch above first to enable this step.
+                        </div>
+                      )}
+                      {(dispatched || partialConfirmed) && otherMismatchBlocked && !finishedDispatch && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#ff4d4f' }}>
+                          Blocked by an unresolved {otherMismatchFieldLabels.join(' / ')} mismatch above — get Sales &amp; Operations approval, or re-upload a corrected LR.
                         </div>
                       )}
                     </div>

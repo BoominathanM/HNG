@@ -488,9 +488,20 @@ async function addLocalPurchaseStock(lp, userId) {
     const qty = Number(it.qty) || 0;
     if (!name || qty <= 0) continue;
     try {
-      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      let item = await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null });
-      const purchaseDate = lp.createdAt || Date.now();
+      // Each line picks Bulk Raw Material or Direct (standard) stock — Bulk lands on
+      // Inventory's Bulk tab (fillable from there like any other Bulk item), Direct lands
+      // in Stock Inventory as usual.
+      const itemType = it.itemType === 'bulk' ? 'bulk' : 'standard';
+      // Prefer an explicit item code (validated up front in createLocalPurchase, including
+      // that its type matches this line) — falls back to an exact-name match restricted to
+      // the same type, so a same-named Bulk and Direct item never merge into one another.
+      const codeRaw = String(it.itemCode || '').trim().toUpperCase();
+      let item = codeRaw ? await InventoryItem.findOne({ itemCode: codeRaw, deletedAt: null }) : null;
+      if (!item) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        item = await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), itemType, deletedAt: null });
+      }
+      const purchaseDate = lp.invoiceDate || lp.createdAt || Date.now();
       const supplyPrice = (Number(it.amount) || 0) / qty;
       const batch = { vendorId: lp.vendorId || undefined, vendorName: lp.vendorName, purchaseDate, qty, remainingQty: qty };
       const qtyBefore = item ? item.currentStock : 0;
@@ -504,7 +515,8 @@ async function addLocalPurchaseStock(lp, userId) {
         item = await InventoryItem.create({
           itemCode,
           itemName: name,
-          unit: it.unit || 'Pcs',
+          itemType,
+          unit: it.unit || (itemType === 'bulk' ? 'Litres' : 'Pcs'),
           purchasePrice: supplyPrice,
           currentStock: qty,
           vendorId: lp.vendorId || undefined,
@@ -536,7 +548,38 @@ async function addLocalPurchaseStock(lp, userId) {
   }
 }
 
-exports.createLocalPurchase = asyncHandler(async (req, res) => {
+exports.createLocalPurchase = asyncHandler(async (req, res, next) => {
+  // Item Code is optional per line (manual entry or typed in after an AI invoice scan) —
+  // validate every code entered actually matches an Inventory item BEFORE the record is
+  // created, so a typo never gets swallowed by addLocalPurchaseStock's per-item try/catch
+  // and silently fails to merge (same "reject, don't silently duplicate/drop" rule as the
+  // Inventory Add Item's mergeItemCode).
+  const codesEntered = [...new Set((req.body.items || [])
+    .map((it) => String(it.itemCode || '').trim().toUpperCase())
+    .filter(Boolean))];
+  if (codesEntered.length) {
+    const found = await InventoryItem.find({ itemCode: { $in: codesEntered }, deletedAt: null }).select('itemCode itemType itemName');
+    const foundByCode = new Map(found.map((f) => [f.itemCode, f]));
+    const missing = codesEntered.filter((c) => !foundByCode.has(c));
+    if (missing.length) return next(new AppError(`No item found with code(s): ${missing.join(', ')}`, 400));
+    // Each code's item must be the same Bulk/Direct type as this line is marked — merging a
+    // Bulk raw-material purchase into a Direct item's stock (or vice versa) would corrupt
+    // both the Bulk tab and the fill conversion math.
+    for (const it of req.body.items || []) {
+      const code = String(it.itemCode || '').trim().toUpperCase();
+      if (!code) continue;
+      const existing = foundByCode.get(code);
+      const requestedType = it.itemType === 'bulk' ? 'bulk' : 'standard';
+      if (existing.itemType !== requestedType) {
+        return next(new AppError(`Item code "${code}" (${existing.itemName}) is a ${existing.itemType === 'bulk' ? 'Bulk' : 'Direct'} item — set this line's stock type to match before merging`, 400));
+      }
+    }
+  }
+
+  // Bulk raw material must be tracked in Litres or Kg, same constraint as Inventory's Add Item.
+  const badBulkUnit = (req.body.items || []).find((it) => it.itemType === 'bulk' && !['Litres', 'Kg'].includes(it.unit));
+  if (badBulkUnit) return next(new AppError(`"${badBulkUnit.itemName}" is marked Bulk Raw Material — Unit must be Litres or Kg`, 400));
+
   const lpCode = await generateCode('LP');
   let vendorId = req.body.vendorId || null;
   // Local purchases are entered by name/phone (scanned invoice, no vendor picker) — auto-link

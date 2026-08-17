@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs, Divider, DatePicker, Tag, Empty } from 'antd';
+import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs, Divider, DatePicker, Tag, Empty, Checkbox } from 'antd';
 import { DownloadOutlined, FileExcelOutlined, FilePdfOutlined, SearchOutlined, FilterOutlined } from '@ant-design/icons';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -14,6 +14,7 @@ import useTabAccess from '../../hooks/useTabAccess';
 import {
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,
+  useGetLocalPurchaseReportQuery,
   useGetProfitLossQuery,
   useGetBillPLQuery,
   useGetMonthlyGstQuery,
@@ -103,10 +104,17 @@ export default function Reports() {
   const [purchaseReportSearch, setPurchaseReportSearch] = useState('');
   const [salesReportSearch, setSalesReportSearch] = useState('');
   const [salesProductFilter, setSalesProductFilter] = useState(null);
+  const [salesPersonFilter, setSalesPersonFilter] = useState(null);
   const [purchaseProductFilter, setPurchaseProductFilter] = useState(null);
   const [salesDateRange, setSalesDateRange] = useState(null);
   const [purchaseDateRange, setPurchaseDateRange] = useState(null);
   const [purchaseGstTab, setPurchaseGstTab] = useState('with_gst');
+
+  // Local Purchase Report state
+  const [lpSearch, setLpSearch] = useState('');
+  const [lpVendorFilter, setLpVendorFilter] = useState(null);
+  const [lpStatusFilter, setLpStatusFilter] = useState('all');
+  const [lpDateRange, setLpDateRange] = useState(null);
 
   // Auditor Tax Report state
   const [auditorSubTab, setAuditorSubTab] = useState('sales');
@@ -116,9 +124,14 @@ export default function Reports() {
   // Forwarding & Courier Charges Report state
   const [fcSearch, setFcSearch] = useState('');
   const [fcMonthFilter, setFcMonthFilter] = useState('all');
+  // 'combined' | 'forwarding' | 'courier' — mirrors gstViewMode below, driven by the two
+  // Forwarding/Courier checkboxes so either charge type can be viewed on its own.
+  const [fcViewMode, setFcViewMode] = useState('combined');
 
   // Monthly GST Report state
   const [gstMonthFilter, setGstMonthFilter] = useState('all');
+  // 'combined' | 'sales' | 'purchase' — driven by the GST Out (Sales) / GST In (Purchase)
+  // checkboxes in the filter bar; at least one stays checked at all times.
   const [gstViewMode, setGstViewMode] = useState('combined');
 
   // P&L state
@@ -149,6 +162,7 @@ export default function Reports() {
   // that tab's PDF export button, and by the header's PDF button via activeTabExportMap below.
   const salesRef = useRef(null);
   const purchaseRef = useRef(null);
+  const localPurchaseRef = useRef(null);
   const plRef = useRef(null);
   const billPlRef = useRef(null);
   const performanceRef = useRef(null);
@@ -183,6 +197,10 @@ export default function Reports() {
     () => toDateParams(purchaseDateRange) || headerDateParams,
     [purchaseDateRange, headerDateParams]
   );
+  const lpDateParams = useMemo(
+    () => toDateParams(lpDateRange) || headerDateParams,
+    [lpDateRange, headerDateParams]
+  );
   const plDateParams = useMemo(
     () => toDateParams(plDateRange) || headerDateParams,
     [plDateRange, headerDateParams]
@@ -190,6 +208,7 @@ export default function Reports() {
 
   const { data: salesReportRaw } = useGetSalesReportQuery(salesDateParams);
   const { data: purchaseReportRaw } = useGetPurchaseReportQuery(purchaseDateParams);
+  const { data: localPurchaseReportRaw } = useGetLocalPurchaseReportQuery(lpDateParams);
   const { data: profitLossRaw } = useGetProfitLossQuery(plDateParams);
   const { data: billPLRaw } = useGetBillPLQuery(headerDateParams);
   const { data: monthlyGstRaw } = useGetMonthlyGstQuery(headerDateParams);
@@ -198,6 +217,7 @@ export default function Reports() {
 
   const apiSalesData = useMemo(() => salesReportRaw || { data: [], summary: {}, chartData: [] }, [salesReportRaw]);
   const apiPurchaseData = useMemo(() => purchaseReportRaw || { data: [], summary: {}, chartData: [] }, [purchaseReportRaw]);
+  const apiLocalPurchaseData = useMemo(() => localPurchaseReportRaw || { data: [], summary: {}, chartData: [] }, [localPurchaseReportRaw]);
   const apiPLData = useMemo(() => profitLossRaw?.data || { summary: {}, monthlyData: [], expenseBreakdown: {} }, [profitLossRaw]);
   const apiBillPL = useMemo(() => billPLRaw?.data || [], [billPLRaw]);
   const apiGstData = useMemo(() => monthlyGstRaw?.data || [], [monthlyGstRaw]);
@@ -225,15 +245,18 @@ export default function Reports() {
 
   const salesRawData = apiSalesData.data || [];
   const purchaseRawData = apiPurchaseData.data || [];
+  const lpRawData = apiLocalPurchaseData.data || [];
 
   const salesChartData = apiSalesData.chartData?.length ? apiSalesData.chartData : [];
   const purchaseChartData = apiPurchaseData.chartData?.length ? apiPurchaseData.chartData : [];
+  const lpChartData = apiLocalPurchaseData.chartData?.length ? apiLocalPurchaseData.chartData : [];
 
   const filteredSalesData = salesRawData.filter(r => {
     const q = salesReportSearch.toLowerCase();
     const matchSearch = !q || (r.customer || '').toLowerCase().includes(q) || (r.inv_no || '').toLowerCase().includes(q) || (r.product || '').toLowerCase().includes(q);
     const matchProduct = !salesProductFilter || r.product === salesProductFilter;
-    return matchSearch && matchProduct;
+    const matchSalesPerson = !salesPersonFilter || r.salesPerson === salesPersonFilter;
+    return matchSearch && matchProduct && matchSalesPerson;
   });
 
   const filteredPurchaseData = purchaseRawData.filter(r => {
@@ -243,8 +266,19 @@ export default function Reports() {
     return matchSearch && matchProduct;
   });
 
+  const filteredLpData = lpRawData.filter(r => {
+    const q = lpSearch.toLowerCase();
+    const matchSearch = !q || (r.vendor || '').toLowerCase().includes(q) || (r.invoiceNo || '').toLowerCase().includes(q) || (r.lpCode || '').toLowerCase().includes(q) || (r.product || '').toLowerCase().includes(q);
+    const matchVendor = !lpVendorFilter || r.vendor === lpVendorFilter;
+    const matchStatus = lpStatusFilter === 'all' || r.paymentStatus === lpStatusFilter;
+    return matchSearch && matchVendor && matchStatus;
+  });
+
   const salesTotal = filteredSalesData.reduce((s, r) => s + r.inv_value, 0);
   const purchaseTotal = filteredPurchaseData.reduce((s, r) => s + r.inv_value, 0);
+  const lpTotal = filteredLpData.reduce((s, r) => s + r.totalAmount, 0);
+  const lpPaidTotal = filteredLpData.reduce((s, r) => s + r.paidAmount, 0);
+  const lpPendingTotal = filteredLpData.reduce((s, r) => s + r.pendingAmount, 0);
 
   const plMonthlyDataActive = (apiPLData.monthlyData?.length ? apiPLData.monthlyData : [])
     .map(d => ({ ...d, expenses: d.expenses || {} }));
@@ -324,7 +358,9 @@ export default function Reports() {
 
   // Dynamic filter options from real data
   const salesProductOptions = useMemo(() => [...new Set(salesRawData.map(r => r.product).filter(Boolean))], [salesRawData]);
+  const salesPersonOptions = useMemo(() => [...new Set(salesRawData.map(r => r.salesPerson).filter(Boolean))], [salesRawData]);
   const purchaseProductOptions = useMemo(() => [...new Set(purchaseRawData.map(r => r.product).filter(Boolean))], [purchaseRawData]);
+  const lpVendorOptions = useMemo(() => [...new Set(lpRawData.map(r => r.vendor).filter(Boolean))], [lpRawData]);
   const plProductOptions = useMemo(() => activeProductPLData.map(p => p.product).filter(Boolean), [activeProductPLData]);
   const plMonthOptions = useMemo(() => plMonthlyDataActive.map(d => d.month), [plMonthlyDataActive]);
   const billPlProductOptions = useMemo(() => [...new Set(apiBillPL.map(r => r.product).filter(Boolean))], [apiBillPL]);
@@ -345,13 +381,21 @@ export default function Reports() {
     }, {})
   ).map(([name, value], i) => ({ name, value, color: CHART_COLORS[i % CHART_COLORS.length] }));
 
+  // Vendor distribution for local purchase pie
+  const lpByVendor = Object.entries(
+    filteredLpData.reduce((acc, r) => {
+      acc[r.vendor] = (acc[r.vendor] || 0) + r.totalAmount;
+      return acc;
+    }, {})
+  ).map(([name, value], i) => ({ name, value, color: CHART_COLORS[i % CHART_COLORS.length] }));
+
   // Export handlers for tabs whose data is computed at component scope (not inside a
   // per-tab IIFE) — registered here so both the tab's own button and the header's
   // Excel/PDF buttons (which fire whichever tab is active) call the exact same logic.
   const exportSalesExcel = () => {
-    const headers = ['GSTIN/UIN', 'Customer Name', 'State Code', 'Place of Supply', 'Invoice No', 'Original Invoice No', 'Invoice Date', 'Invoice Value', 'Taxable Value', 'Total Tax (%)', 'Total Tax Amount', 'Central Tax (CGST)', 'State/UT Tax (SGST)', 'Integrated Tax (IGST)', 'Cess'];
+    const headers = ['GSTIN/UIN', 'Customer Name', 'Sales Person', 'State Code', 'Place of Supply', 'Invoice No', 'Original Invoice No', 'Invoice Date', 'Invoice Value', 'Taxable Value', 'Total Tax (%)', 'Total Tax Amount', 'Central Tax (CGST)', 'State/UT Tax (SGST)', 'Integrated Tax (IGST)', 'Cess'];
     const rows = filteredSalesData.map(r => [
-      r.gst_no, r.customer, r.state_code, r.state_name,
+      r.gst_no, r.customer, r.salesPerson, r.state_code, r.state_name,
       r.inv_no, r.orig_inv_no, r.inv_date, r.inv_value,
       r.taxable, r.total_tax > 0 ? ((r.total_tax / r.taxable) * 100).toFixed(0) + '%' : '0%',
       r.total_tax, r.cgst, r.sgst, r.igst, 0,
@@ -371,6 +415,16 @@ export default function Reports() {
     exportToExcel(headers, rows, 'Purchase_Report.csv');
   };
   const exportPurchasePdf = () => exportRefToPdf(purchaseRef, 'Purchase_Report.pdf');
+
+  const exportLpExcel = () => {
+    const headers = ['LP Code', 'Invoice No', 'Date', 'Vendor', 'Products', 'Qty', 'Total Amount', 'GST Amount', 'Paid Amount', 'Pending Amount', 'Payment Status', 'Due Date'];
+    const rows = filteredLpData.map(r => [
+      r.lpCode, r.invoiceNo, r.date, r.vendor, r.product, r.qty,
+      r.totalAmount, r.gstAmount, r.paidAmount, r.pendingAmount, r.paymentStatus, r.dueDate,
+    ]);
+    exportToExcel(headers, rows, 'Local_Purchase_Report.csv');
+  };
+  const exportLpPdf = () => exportRefToPdf(localPurchaseRef, 'Local_Purchase_Report.pdf');
 
   const exportPlExcel = () => {
     // Exports every expense category with its own column regardless of which chips are
@@ -443,11 +497,23 @@ export default function Reports() {
     return matchSearch && matchMonth;
   });
   const exportFcExcel = () => {
-    const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Forwarding Charge', 'Courier Charge', 'Total Charge'];
-    const rows = fcFilteredForExport.map((r, i) => [
-      i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.forwardingCharge, r.courierCharge, r.totalCharge,
-    ]);
-    exportToExcel(headers, rows, 'Forwarding_Courier_Charges_Report.csv');
+    // Export matches the selected view — Forwarding-only / Courier-only download their own
+    // standalone report instead of always dumping the combined columns.
+    if (fcViewMode === 'forwarding') {
+      const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Forwarding Charge'];
+      const rows = fcFilteredForExport.map((r, i) => [i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.forwardingCharge]);
+      exportToExcel(headers, rows, 'Forwarding_Charges_Report.csv');
+    } else if (fcViewMode === 'courier') {
+      const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Courier Charge'];
+      const rows = fcFilteredForExport.map((r, i) => [i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.courierCharge]);
+      exportToExcel(headers, rows, 'Courier_Charges_Report.csv');
+    } else {
+      const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Forwarding Charge', 'Courier Charge', 'Total Charge'];
+      const rows = fcFilteredForExport.map((r, i) => [
+        i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.forwardingCharge, r.courierCharge, r.totalCharge,
+      ]);
+      exportToExcel(headers, rows, 'Forwarding_Courier_Charges_Report.csv');
+    }
   };
   const exportFcPdf = () => exportRefToPdf(forwardingCourierRef, 'Forwarding_Courier_Charges_Report.pdf');
 
@@ -508,6 +574,7 @@ export default function Reports() {
   const activeTabExportMap = {
     sales_report: { excel: exportSalesExcel, pdf: exportSalesPdf },
     purchase_report: { excel: exportPurchaseExcel, pdf: exportPurchasePdf },
+    local_purchase_report: { excel: exportLpExcel, pdf: exportLpPdf },
     pl: { excel: exportPlExcel, pdf: exportPlPdf },
     bill_pl: { excel: exportBillPlExcel, pdf: exportBillPlPdf },
     performance: { excel: exportPerformanceExcel, pdf: exportPerformancePdf },
@@ -568,6 +635,11 @@ export default function Reports() {
                         <Option key={p} value={p}>{p}</Option>
                       ))}
                     </Select>
+                    <Select allowClear placeholder="Select Sales Person" value={salesPersonFilter} onChange={setSalesPersonFilter} style={{ width: 200 }}>
+                      {salesPersonOptions.map(p => (
+                        <Option key={p} value={p}>{p}</Option>
+                      ))}
+                    </Select>
                     <DatePicker.RangePicker style={{ width: 260 }} onChange={setSalesDateRange} />
                     <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search customer, invoice..." allowClear value={salesReportSearch} onChange={(e) => setSalesReportSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
                     <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportSalesExcel}>Excel</Button>
@@ -583,6 +655,7 @@ export default function Reports() {
                         <Space>
                           <Text strong style={{ color: textColor }}>Month-wise Sales Revenue</Text>
                           {salesProductFilter && <Tag style={{ background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20 }}>{salesProductFilter}</Tag>}
+                          {salesPersonFilter && <Tag style={{ background: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44', borderRadius: 20 }}>{salesPersonFilter}</Tag>}
                         </Space>
                       }
                       style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
@@ -639,6 +712,7 @@ export default function Reports() {
                     columns={[
                       { title: 'GST No', dataIndex: 'gst_no', key: 'gst_no', width: 160, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
                       { title: 'Customer Name', dataIndex: 'customer', key: 'customer', width: 150, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', width: 140, render: v => v ? <Tag style={{ background: '#7c3aed15', color: '#7c3aed', border: '1px solid #7c3aed33', borderRadius: 20 }}>{v}</Tag> : <Text type="secondary" style={{ fontSize: 12 }}>—</Text> },
                       { title: 'Product', dataIndex: 'product', key: 'product', width: 140, render: v => <Tag style={{ background: '#8a165215', color: '#8a1652', border: '1px solid #8a165233', borderRadius: 20 }}>{v}</Tag> },
                       { title: 'State Code', dataIndex: 'state_code', key: 'state_code', width: 90, align: 'center' },
                       { title: 'State Name', dataIndex: 'state_name', key: 'state_name', width: 130 },
@@ -897,6 +971,158 @@ export default function Reports() {
                     </>
                   );
                 })()}
+                </div>
+              </div>
+            ),
+          },
+
+          /* ─────────── LOCAL PURCHASE REPORT ─────────── */
+          {
+            key: 'local_purchase_report',
+            label: 'Local Purchase Report',
+            children: (
+              <div>
+                <Card style={{ borderRadius: 12, border: 'none', background: cardBg, marginBottom: 14, boxShadow: '0 2px 12px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px' } }}>
+                  <Space wrap style={{ width: '100%' }}>
+                    <FilterOutlined style={{ color: '#B11E6A' }} />
+                    <Text strong style={{ color: textColor, fontSize: 13 }}>Filter by:</Text>
+                    <Select allowClear placeholder="Select Vendor" value={lpVendorFilter} onChange={setLpVendorFilter} style={{ width: 200 }}>
+                      {lpVendorOptions.map(v => (
+                        <Option key={v} value={v}>{v}</Option>
+                      ))}
+                    </Select>
+                    <Select value={lpStatusFilter} onChange={setLpStatusFilter} style={{ width: 170 }}>
+                      <Option value="all">All Payment Status</Option>
+                      <Option value="Paid">Paid</Option>
+                      <Option value="Partially Paid">Partially Paid</Option>
+                      <Option value="Pending">Pending</Option>
+                    </Select>
+                    <DatePicker.RangePicker style={{ width: 260 }} onChange={setLpDateRange} />
+                    <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search vendor, invoice..." allowClear value={lpSearch} onChange={(e) => setLpSearch(e.target.value)} style={{ width: 220, borderRadius: 8 }} />
+                    <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportLpExcel}>Excel</Button>
+                    <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportLpPdf}>PDF</Button>
+                  </Space>
+                </Card>
+
+                <div ref={localPurchaseRef}>
+                <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                  {[
+                    { label: 'Total Local Purchases', value: lpTotal, color: '#B11E6A', sub: `${filteredLpData.length} bills` },
+                    { label: 'Total Paid', value: lpPaidTotal, color: '#52c41a', sub: 'Settled to vendors' },
+                    { label: 'Total Pending', value: lpPendingTotal, color: '#fa8c16', sub: 'Yet to be paid' },
+                  ].map((s, i) => (
+                    <Col xs={24} sm={8} key={s.label}>
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
+                        <Card style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: `linear-gradient(135deg,${s.color}22,${s.color}08)` }} styles={{ body: { padding: '12px 14px' } }}>
+                          <Text style={{ fontSize: 10, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 3 }}>{s.label}</Text>
+                          <div style={{ fontSize: 17, fontWeight: 800, color: s.color }}>₹{(s.value ?? 0).toLocaleString()}</div>
+                          <Text style={{ fontSize: 10, color: '#aaa' }}>{s.sub}</Text>
+                        </Card>
+                      </motion.div>
+                    </Col>
+                  ))}
+                </Row>
+
+                <Row gutter={[14, 14]} style={{ marginBottom: 14 }}>
+                  <Col xs={24} lg={16}>
+                    <Card
+                      title={
+                        <Space>
+                          <Text strong style={{ color: textColor }}>Month-wise Local Purchase Spending</Text>
+                          {lpVendorFilter && <Tag style={{ background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20 }}>{lpVendorFilter}</Tag>}
+                        </Space>
+                      }
+                      style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                      styles={{ body: { padding: '12px 16px 16px' } }}
+                    >
+                      <ResponsiveContainer width="100%" height={240}>
+                        <BarChart data={lpChartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                          <XAxis dataKey="month" tick={{ fill: tickColor, fontSize: 12 }} />
+                          <YAxis tick={{ fill: tickColor, fontSize: 12 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
+                          <Tooltip formatter={(v, n) => [`₹${(v ?? 0).toLocaleString()}`, n]} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
+                          <Legend />
+                          <Bar dataKey="paid" fill="#52c41a" name="Paid" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="pending" fill="#fa8c16" name="Pending" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </Card>
+                  </Col>
+                  <Col xs={24} lg={8}>
+                    <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }} styles={{ body: { padding: '16px' } }}>
+                      <Text strong style={{ color: textColor, display: 'block', marginBottom: 12 }}>Local Purchase by Vendor</Text>
+                      <ResponsiveContainer width="100%" height={160}>
+                        <PieChart>
+                          <Pie data={lpByVendor} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={65} label={false}>
+                            {lpByVendor.map((entry, idx) => (
+                              <Cell key={idx} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(v) => `₹${(v ?? 0).toLocaleString()}`} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 4 }}>
+                        {lpByVendor.map(e => (
+                          <div key={e.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Space size={6}>
+                              <div style={{ width: 8, height: 8, borderRadius: '50%', background: e.color }} />
+                              <Text style={{ fontSize: 11, color: textColor }}>{e.name}</Text>
+                            </Space>
+                            <Text style={{ fontSize: 11, fontWeight: 600 }}>₹{(e.value ?? 0).toLocaleString()}</Text>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  </Col>
+                </Row>
+
+                <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                    <Title level={5} style={{ color: textColor, margin: 0 }}>Local Purchase Records</Title>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{filteredLpData.length} records • Total: <Text strong style={{ color: '#B11E6A' }}>₹{(lpTotal ?? 0).toLocaleString()}</Text></Text>
+                  </div>
+                  <Table
+                    size="small"
+                    scroll={{ x: 'max-content' }}
+                    dataSource={filteredLpData}
+                    rowKey="key"
+                    columns={[
+                      { title: 'LP Code', dataIndex: 'lpCode', key: 'lpCode', width: 110, render: v => <Text style={{ color: '#B11E6A', fontSize: 12 }}>{v}</Text> },
+                      { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', width: 120, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Date', dataIndex: 'date', key: 'date', width: 100, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', width: 150, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Products', dataIndex: 'product', key: 'product', width: 200, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Qty', dataIndex: 'qty', key: 'qty', width: 70, align: 'center', render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Total Amount', dataIndex: 'totalAmount', key: 'totalAmount', width: 120, render: v => <Text strong>₹{(v ?? 0).toLocaleString()}</Text> },
+                      { title: 'GST Amount', dataIndex: 'gstAmount', key: 'gstAmount', width: 110, render: v => <Text style={{ color: '#fa8c16', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                      { title: 'Paid Amount', dataIndex: 'paidAmount', key: 'paidAmount', width: 110, render: v => <Text style={{ color: '#52c41a', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                      { title: 'Pending Amount', dataIndex: 'pendingAmount', key: 'pendingAmount', width: 120, render: v => <Text style={{ color: v > 0 ? '#ff4d4f' : '#aaa', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                      {
+                        title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 130, fixed: 'right',
+                        render: v => <Tag style={{ background: `${statusColor[v] || '#888'}18`, color: statusColor[v] || '#888', border: `1px solid ${statusColor[v] || '#888'}44`, borderRadius: 20 }}>{v}</Tag>,
+                      },
+                      { title: 'Due Date', dataIndex: 'dueDate', key: 'dueDate', width: 100, render: v => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                    ]}
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                    locale={{ emptyText: <Empty description="No local purchase records found" /> }}
+                    summary={(data) => {
+                      const tTotal = data.reduce((s, r) => s + r.totalAmount, 0);
+                      const tGst = data.reduce((s, r) => s + r.gstAmount, 0);
+                      const tPaid = data.reduce((s, r) => s + r.paidAmount, 0);
+                      const tPending = data.reduce((s, r) => s + r.pendingAmount, 0);
+                      return (
+                        <Table.Summary.Row style={{ fontWeight: 700, background: isDark ? '#2a1a2e' : '#fdf5fa' }}>
+                          <Table.Summary.Cell colSpan={6}><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
+                          <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>₹{(tTotal ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                          <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tGst ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                          <Table.Summary.Cell><Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(tPaid ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                          <Table.Summary.Cell><Text strong style={{ color: tPending > 0 ? '#ff4d4f' : '#aaa', fontSize: 12 }}>₹{(tPending ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                          <Table.Summary.Cell colSpan={2} />
+                        </Table.Summary.Row>
+                      );
+                    }}
+                  />
+                </Card>
                 </div>
               </div>
             ),
@@ -1805,14 +2031,33 @@ export default function Reports() {
                           ))}
                         </Select>
                         <Text strong style={{ color: textColor, fontSize: 13 }}>View:</Text>
-                        {[['combined', 'Combined'], ['sales', 'Sales Only'], ['purchase', 'Purchase Only']].map(([k, lbl]) => (
-                          <div key={k} onClick={() => setGstViewMode(k)} style={{
-                            padding: '4px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: 600, transition: 'all 0.15s',
-                            border: `1.5px solid ${gstViewMode === k ? '#B11E6A' : borderColor}`,
-                            background: gstViewMode === k ? '#B11E6A18' : 'transparent',
-                            color: gstViewMode === k ? '#B11E6A' : isDark ? '#aaa' : '#666',
-                          }}>{lbl}</div>
-                        ))}
+                        {/* GST Out = sales/output GST, GST In = purchase/input GST (ITC). Both checked
+                            shows the combined report; unchecking one isolates the other as its own
+                            standalone report (same gstViewMode values 'combined'/'sales'/'purchase'
+                            every KPI/chart/table/export below already branches on). At least one
+                            stays checked at all times. */}
+                        <Checkbox
+                          checked={gstViewMode !== 'purchase'}
+                          onChange={(e) => {
+                            const salesOn = e.target.checked;
+                            const purchaseOn = gstViewMode !== 'sales';
+                            if (!salesOn && !purchaseOn) return;
+                            setGstViewMode(salesOn && purchaseOn ? 'combined' : salesOn ? 'sales' : 'purchase');
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, color: textColor }}>GST Out (Sales)</Text>
+                        </Checkbox>
+                        <Checkbox
+                          checked={gstViewMode !== 'sales'}
+                          onChange={(e) => {
+                            const purchaseOn = e.target.checked;
+                            const salesOn = gstViewMode !== 'purchase';
+                            if (!salesOn && !purchaseOn) return;
+                            setGstViewMode(salesOn && purchaseOn ? 'combined' : salesOn ? 'sales' : 'purchase');
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, color: textColor }}>GST In (Purchase)</Text>
+                        </Checkbox>
                       </Space>
                       <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportGstExcel}>Excel</Button>
                       <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportGstPdf}>PDF</Button>
@@ -2006,14 +2251,23 @@ export default function Reports() {
               const totalCourier = filteredFcRows.reduce((s, r) => s + r.courierCharge, 0);
               const totalCharges = filteredFcRows.reduce((s, r) => s + r.totalCharge, 0);
 
+              // fcViewMode: 'combined' | 'forwarding' | 'courier' — driven by the Forwarding/Courier
+              // checkboxes in the filter bar, same pattern as Monthly GST's gstViewMode above, so
+              // either charge type can be reviewed as its own standalone report.
               const fcColumns = [
                 { title: 'S.No', key: 'sno', width: 55, align: 'center', fixed: 'left', render: (_, __, i) => <Text style={{ fontSize: 12 }}>{i + 1}</Text> },
                 { title: 'Month', key: 'month', width: 110, render: (_, r) => <Text style={{ fontSize: 12 }}>{r.month} {r.year}</Text> },
                 { title: 'Hotel', dataIndex: 'hotel', key: 'hotel', width: 180, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
                 { title: 'Invoices', dataIndex: 'invoiceCount', key: 'invoiceCount', width: 90, align: 'center', render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
-                { title: 'Forwarding Charge', dataIndex: 'forwardingCharge', key: 'forwardingCharge', width: 150, render: v => <Text style={{ color: '#fa8c16', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
-                { title: 'Courier Charge', dataIndex: 'courierCharge', key: 'courierCharge', width: 150, render: v => <Text style={{ color: '#1890ff', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
-                { title: 'Total Charge', dataIndex: 'totalCharge', key: 'totalCharge', width: 150, fixed: 'right', render: v => <Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                ...(fcViewMode !== 'courier' ? [
+                  { title: 'Forwarding Charge', dataIndex: 'forwardingCharge', key: 'forwardingCharge', width: 150, render: v => <Text style={{ color: '#fa8c16', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                ] : []),
+                ...(fcViewMode !== 'forwarding' ? [
+                  { title: 'Courier Charge', dataIndex: 'courierCharge', key: 'courierCharge', width: 150, render: v => <Text style={{ color: '#1890ff', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                ] : []),
+                ...(fcViewMode === 'combined' ? [
+                  { title: 'Total Charge', dataIndex: 'totalCharge', key: 'totalCharge', width: 150, fixed: 'right', render: v => <Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                ] : []),
               ];
 
               return (
@@ -2036,6 +2290,32 @@ export default function Reports() {
                           onChange={e => setFcSearch(e.target.value)}
                           style={{ width: 220, borderRadius: 8 }}
                         />
+                        <Text strong style={{ color: textColor, fontSize: 13 }}>View:</Text>
+                        {/* Both checked shows the combined report; unchecking one isolates the other
+                            as its own standalone Forwarding/Courier report. At least one stays
+                            checked at all times. */}
+                        <Checkbox
+                          checked={fcViewMode !== 'courier'}
+                          onChange={(e) => {
+                            const fwdOn = e.target.checked;
+                            const courOn = fcViewMode !== 'forwarding';
+                            if (!fwdOn && !courOn) return;
+                            setFcViewMode(fwdOn && courOn ? 'combined' : fwdOn ? 'forwarding' : 'courier');
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, color: textColor }}>Forwarding Charge</Text>
+                        </Checkbox>
+                        <Checkbox
+                          checked={fcViewMode !== 'forwarding'}
+                          onChange={(e) => {
+                            const courOn = e.target.checked;
+                            const fwdOn = fcViewMode !== 'courier';
+                            if (!fwdOn && !courOn) return;
+                            setFcViewMode(fwdOn && courOn ? 'combined' : fwdOn ? 'forwarding' : 'courier');
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, color: textColor }}>Courier Charge</Text>
+                        </Checkbox>
                       </Space>
                       <Space>
                         <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportFcExcel}>Excel</Button>
@@ -2045,12 +2325,18 @@ export default function Reports() {
                   </Card>
 
                   <div ref={forwardingCourierRef}>
-                  {/* Summary KPI cards */}
+                  {/* Summary KPI cards — scoped to the selected view so Forwarding/Courier read as their own separate report */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
                     {[
-                      { label: 'Total Forwarding Charges', value: `₹${(totalForwarding ?? 0).toLocaleString()}`, color: '#fa8c16', sub: `${filteredFcRows.length} groups` },
-                      { label: 'Total Courier Charges', value: `₹${(totalCourier ?? 0).toLocaleString()}`, color: '#1890ff', sub: 'From invoice payments' },
-                      { label: 'Total Charges', value: `₹${(totalCharges ?? 0).toLocaleString()}`, color: '#52c41a', sub: 'Forwarding + Courier' },
+                      ...(fcViewMode !== 'courier' ? [
+                        { label: 'Total Forwarding Charges', value: `₹${(totalForwarding ?? 0).toLocaleString()}`, color: '#fa8c16', sub: `${filteredFcRows.length} groups` },
+                      ] : []),
+                      ...(fcViewMode !== 'forwarding' ? [
+                        { label: 'Total Courier Charges', value: `₹${(totalCourier ?? 0).toLocaleString()}`, color: '#1890ff', sub: 'From invoice payments' },
+                      ] : []),
+                      ...(fcViewMode === 'combined' ? [
+                        { label: 'Total Charges', value: `₹${(totalCharges ?? 0).toLocaleString()}`, color: '#52c41a', sub: 'Forwarding + Courier' },
+                      ] : []),
                     ].map((s, i) => (
                       <Col xs={24} sm={8} key={s.label}>
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
@@ -2081,8 +2367,8 @@ export default function Reports() {
                         <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
                         <Tooltip formatter={v => `₹${(v ?? 0).toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
                         <Legend />
-                        <Bar dataKey="Forwarding" fill="#fa8c16" name="Forwarding Charge" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="Courier" fill="#1890ff" name="Courier Charge" radius={[4, 4, 0, 0]} />
+                        {fcViewMode !== 'courier' && <Bar dataKey="Forwarding" fill="#fa8c16" name="Forwarding Charge" radius={[4, 4, 0, 0]} />}
+                        {fcViewMode !== 'forwarding' && <Bar dataKey="Courier" fill="#1890ff" name="Courier Charge" radius={[4, 4, 0, 0]} />}
                       </BarChart>
                     </ResponsiveContainer>
                   </Card>
@@ -2111,9 +2397,15 @@ export default function Reports() {
                             <Table.Summary.Cell colSpan={4}>
                               <Text strong style={{ fontSize: 12 }}>Grand Total</Text>
                             </Table.Summary.Cell>
-                            <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tFwd ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
-                            <Table.Summary.Cell><Text strong style={{ color: '#1890ff', fontSize: 12 }}>₹{(tCour ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
-                            <Table.Summary.Cell><Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(tTot ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            {fcViewMode !== 'courier' && (
+                              <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tFwd ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            )}
+                            {fcViewMode !== 'forwarding' && (
+                              <Table.Summary.Cell><Text strong style={{ color: '#1890ff', fontSize: 12 }}>₹{(tCour ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            )}
+                            {fcViewMode === 'combined' && (
+                              <Table.Summary.Cell><Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(tTot ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            )}
                           </Table.Summary.Row>
                         );
                       }}

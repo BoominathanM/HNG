@@ -43,6 +43,7 @@ import {
   useAddPurchaseNoteMutation,
   useCompareQuotationsMutation,
   useSelectBestQuotationMutation,
+  useGetPickupOrdersQuery,
 } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
 import html2pdf from 'html2pdf.js';
@@ -177,6 +178,7 @@ export default function Purchase() {
     price: `₹${i.purchasePrice}/${i.unit}`,
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
     sellerName: i.vendorId?.name || null,
+    itemType: i.itemType || 'standard',
   })), [itemsData]);
 
   const dupeItemNames = useMemo(() => {
@@ -482,12 +484,27 @@ export default function Purchase() {
   // Missing/Short-Received table and the attach-to-upcoming banner keep working after
   // a partial receipt is confirmed — a plain 'Received' order still rolls off.
   const { data: dispatchTrackingData } = useGetPurchaseOrdersQuery({ dispatchStatus: 'In Transit,Partially Received' });
+  // Pickup Order Taken Status (set by the dispatch person in Dispatch → Pickup Order tab)
+  // drives the pre-received delivery status shown here — 'Pickups' tag is invalidated on
+  // every updatePickupOrder call, so this stays live without any extra plumbing.
+  const { data: dtPickupOrdersData } = useGetPickupOrdersQuery();
   const [dispatchTrackingOrders, setDispatchTrackingOrders] = useState([]);
   useEffect(() => {
+    const takenStatusByPurchaseOrderId = {};
+    (dtPickupOrdersData?.data || []).forEach((p) => {
+      if (p.purchaseOrderId) takenStatusByPurchaseOrderId[p.purchaseOrderId] = p.takenStatus;
+    });
     setDispatchTrackingOrders((dispatchTrackingData?.data || []).map((o) => {
       const missingItems = (o.receivedItems || [])
         .filter((li) => li.missingQty > 0)
         .map((li) => ({ key: li.itemId?._id || li.itemId || li.itemName, name: li.itemName, ordered: li.orderedQty, received: li.receivedQty, missing: li.missingQty }));
+      const pickupTakenStatus = takenStatusByPurchaseOrderId[o._id];
+      let deliveryStatus;
+      if (o.dispatchStatus === 'Received') deliveryStatus = 'Delivered';
+      else if (o.dispatchStatus === 'Partially Received') deliveryStatus = 'Partial Delivery';
+      else if (pickupTakenStatus === 'Taken') deliveryStatus = 'Taken';
+      else if (pickupTakenStatus === 'Pickup Dropped') deliveryStatus = 'Pickup Received';
+      else deliveryStatus = 'In Transit';
       return {
         key: o._id, orderId: o.poCode, date: o.createdAt?.slice(0, 10),
         supplier: o.vendorId?.name || '-', vendorId: o.vendorId?._id || o.vendorId,
@@ -498,7 +515,7 @@ export default function Purchase() {
         lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
         paymentProof: o.paymentProofUrl || null,
         paymentHistory: o.paymentHistory || [],
-        deliveryStatus: o.dispatchStatus === 'Received' ? 'Delivered' : o.dispatchStatus === 'Partially Received' ? 'Partial Delivery' : 'In Transit',
+        deliveryStatus,
         receivedStatus: o.dispatchStatus === 'Received' ? 'received' : o.dispatchStatus === 'Partially Received' ? 'partial' : null,
         missingItems,
         missedBy: o.missedBy || null,
@@ -506,7 +523,7 @@ export default function Purchase() {
         missingResolved: !!o.missingResolved,
       };
     }));
-  }, [dispatchTrackingData]);
+  }, [dispatchTrackingData, dtPickupOrdersData]);
 
   const [showTakenModal, setShowTakenModal] = useState(false);
   const [takenTarget, setTakenTarget] = useState(null);
@@ -691,6 +708,10 @@ export default function Purchase() {
   const [localPurchases, setLocalPurchases] = useState([]);
   const [showAddLocalPurchaseModal, setShowAddLocalPurchaseModal] = useState(false);
   const [localPurchaseForm] = Form.useForm();
+  // Subscribing here (rather than reading via getFieldValue only inside Form.List's render
+  // prop) forces a re-render on every keystroke in any item row, so the name-collision hint
+  // below stays live instead of only updating when a row is added/removed.
+  const watchedLPItems = Form.useWatch('items', localPurchaseForm);
   const [localPurchasePaymentType, setLocalPurchasePaymentType] = useState('credit');
   const [localPurchasePaidBy, setLocalPurchasePaidBy] = useState('');
   const [localPurchaseScanLoading, setLocalPurchaseScanLoading] = useState(false);
@@ -1153,6 +1174,7 @@ export default function Purchase() {
       const items = (extracted.items || []).map(it => ({ name: it.name, qty: it.qty, unit: it.unit, amount: it.amount }));
       const scanned = {
         invoiceNo: extracted.invoiceNo || 'INV-' + Date.now(),
+        invoiceDate: extracted.invoiceDate || '',
         vendorName: extracted.vendorName || '',
         vendorPhone: knownVendor?.phone || extracted.vendorPhone || '',
         vendorAddress: knownVendor?.address || extracted.vendorAddress || '',
@@ -1166,11 +1188,12 @@ export default function Purchase() {
       setLocalPurchaseScannedDetails(scanned);
       setLocalPurchaseNewVendorDetected(scanned.isNewVendor);
       const fieldValues = { invoiceNo: scanned.invoiceNo };
+      if (scanned.invoiceDate && dayjs(scanned.invoiceDate).isValid()) fieldValues.invoiceDate = dayjs(scanned.invoiceDate);
       if (scanned.vendorName) fieldValues.vendorName = scanned.vendorName;
       if (scanned.vendorPhone) fieldValues.vendorPhone = scanned.vendorPhone;
       if (scanned.totalAmount) fieldValues.totalAmount = scanned.totalAmount;
       if (scanned.gstAmount) fieldValues.gstAmount = scanned.gstAmount;
-      if (items.length) fieldValues.items = items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount }));
+      if (items.length) fieldValues.items = items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount, itemType: 'standard' }));
       localPurchaseForm.setFieldsValue(fieldValues);
 
       enqueueSnackbar(
@@ -1196,7 +1219,7 @@ export default function Purchase() {
       invoiceFile: localPurchaseInvoiceFile?.name || null,
       vendorName: values.vendorName || localPurchaseScannedDetails?.vendorName || '',
       vendorPhone: values.vendorPhone || localPurchaseScannedDetails?.vendorPhone || '',
-      items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0 })),
+      items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0, itemCode: String(it.itemCode || '').trim().toUpperCase() || undefined, itemType: it.itemType === 'bulk' ? 'bulk' : 'standard' })),
       totalAmount: values.totalAmount || localPurchaseScannedDetails?.totalAmount || 0,
       gstAmount: Number(values.gstAmount ?? localPurchaseScannedDetails?.gstAmount) || 0,
       paymentType: values.paymentType || 'credit',
@@ -1210,6 +1233,10 @@ export default function Purchase() {
       paymentProofUrl: values.paymentType === 'instant' ? (getFileUrl(values.paymentProofFile?.fileList?.[0]) || null) : null,
     };
 
+    // Confirm the merge-vs-new decision for every line before anything is committed — same
+    // "reject silent duplication" rule as Inventory's Add Item mergeItemCode, adapted to a
+    // multi-row form as one summary popup instead of a per-row confirm.
+    const proceed = async () => {
     if (localPurchaseNewVendorDetected && values.addToVendors) {
       const newVendor = {
         id: Date.now(),
@@ -1258,9 +1285,11 @@ export default function Purchase() {
         vendorPhone: newLP.vendorPhone,
         items: (newLP.items || []).map((it) => ({
           itemName: it.itemName || it.name || 'Item',
+          itemCode: it.itemCode || undefined,
           qty: Number(it.qty) || 0,
           unit: it.unit || 'Pcs',
           amount: Number(it.amount) || 0,
+          itemType: it.itemType === 'bulk' ? 'bulk' : 'standard',
         })),
         totalAmount: Number(newLP.totalAmount) || 0,
         gstAmount: Number(newLP.gstAmount) || 0,
@@ -1272,6 +1301,7 @@ export default function Purchase() {
         ...(newLP.purchasePersonName ? { purchasePersonName: newLP.purchasePersonName } : {}),
         ...(newLP.purchasePersonPhone ? { purchasePersonPhone: newLP.purchasePersonPhone } : {}),
         ...(newLP.paymentProofUrl ? { paymentProofUrl: newLP.paymentProofUrl } : {}),
+        ...(values.invoiceDate ? { invoiceDate: values.invoiceDate.toDate() } : {}),
         ...(values.paymentType === 'credit' && values.dueDate ? { dueDate: values.dueDate.toDate() } : {}),
       }).unwrap();
     } catch (err) {
@@ -1286,6 +1316,28 @@ export default function Purchase() {
     setLocalPurchasePaymentType('credit');
     setLocalPurchasePaidBy('');
     enqueueSnackbar('Local purchase recorded successfully!', { variant: 'success' });
+    };
+
+    const summaryLines = newLP.items.map((it) => {
+      const typeLabel = it.itemType === 'bulk' ? 'Bulk Raw Material' : 'Direct Stock';
+      const code = String(it.itemCode || '').trim().toUpperCase();
+      if (!code) return `${it.name} — add as NEW ${typeLabel} item`;
+      const matched = inventoryItems.find((i) => i.code === code);
+      return `${it.name} — merge into "${matched ? matched.name : code}" (${code}, ${typeLabel})`;
+    });
+    Modal.confirm({
+      title: 'Confirm items before saving',
+      width: 480,
+      content: (
+        <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+          {summaryLines.map((line, i) => (
+            <div key={i} style={{ fontSize: 13, padding: '4px 0', borderBottom: i < summaryLines.length - 1 ? `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}` : 'none' }}>{line}</div>
+          ))}
+        </div>
+      ),
+      okText: 'Confirm & Save',
+      onOk: proceed,
+    });
   };
 
   const handleAddSupplierInline = () => {
@@ -2660,6 +2712,8 @@ export default function Purchase() {
                         <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search order ID, supplier, item..." allowClear value={dtSearch} onChange={(e) => setDtSearch(e.target.value)} style={{ width: 250, borderRadius: 8 }} />
                         <Select allowClear placeholder="Delivery Status" value={dtDeliveryFilter} onChange={setDtDeliveryFilter} style={{ width: 170, borderRadius: 8 }}>
                           <Option value="In Transit">In Transit</Option>
+                          <Option value="Taken">Taken</Option>
+                          <Option value="Pickup Received">Pickup Received</Option>
                           <Option value="Delivered">Delivered</Option>
                           <Option value="Partial Delivery">Partial Delivery</Option>
                         </Select>
@@ -2791,7 +2845,7 @@ export default function Purchase() {
                           {
                             title: 'Delivery Status', key: 'delivery_status', width: 120, align: 'center',
                             render: (_, r) => {
-                              const statusColorMap = { 'Delivered': 'success', 'Partial Delivery': 'warning', 'In Transit': 'processing' };
+                              const statusColorMap = { 'Delivered': 'success', 'Partial Delivery': 'warning', 'Pickup Received': 'cyan', 'Taken': 'blue', 'In Transit': 'processing' };
                               return <Tag color={statusColorMap[r.deliveryStatus] || 'default'} style={{ borderRadius: 10 }}>{r.deliveryStatus || 'Pending'}</Tag>;
                             }
                           },
@@ -3044,13 +3098,14 @@ export default function Purchase() {
                                     { title: 'Item Name', dataIndex: 'itemName', render: (v, r) => v || r.name || '—' },
                                     { title: 'Qty', dataIndex: 'qty', width: 80, render: v => v ?? '—' },
                                     { title: 'Unit', dataIndex: 'unit', width: 90, render: v => v || '—' },
+                                    { title: 'Stock Type', dataIndex: 'itemType', width: 110, render: v => <Tag color={v === 'bulk' ? 'blue' : 'default'} style={{ borderRadius: 8 }}>{v === 'bulk' ? 'Bulk' : 'Direct'}</Tag> },
                                     { title: 'Amount', dataIndex: 'amount', width: 120, render: v => <Text strong>₹{(v || 0).toLocaleString()}</Text> },
                                   ]}
                                   summary={rows => {
                                     const sum = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
                                     return (
                                       <Table.Summary.Row>
-                                        <Table.Summary.Cell index={0} colSpan={3}><Text strong>Total</Text></Table.Summary.Cell>
+                                        <Table.Summary.Cell index={0} colSpan={4}><Text strong>Total</Text></Table.Summary.Cell>
                                         <Table.Summary.Cell index={1}><Text strong style={{ color: '#B11E6A' }}>₹{sum.toLocaleString()}</Text></Table.Summary.Cell>
                                       </Table.Summary.Row>
                                     );
@@ -3822,6 +3877,7 @@ export default function Purchase() {
               </div>
               <Row gutter={8}>
                 {[
+                  { label: 'Invoice Date', val: localPurchaseScannedDetails.invoiceDate && dayjs(localPurchaseScannedDetails.invoiceDate).isValid() ? dayjs(localPurchaseScannedDetails.invoiceDate).format('DD MMM YYYY') : '—' },
                   { label: 'Vendor Name', val: localPurchaseScannedDetails.vendorName },
                   { label: 'Phone', val: localPurchaseScannedDetails.vendorPhone },
                   { label: 'Address', val: localPurchaseScannedDetails.vendorAddress },
@@ -3860,39 +3916,94 @@ export default function Purchase() {
 
           {/* Items Purchased — editable list, auto-filled from AI scan */}
           <Text strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>Items / Products Purchased</Text>
-          <Form.List name="items" initialValue={[{ itemName: '', qty: 1, unit: 'Pcs', amount: 0 }]}>
+          <Form.List name="items" initialValue={[{ itemName: '', qty: 1, unit: 'Pcs', amount: 0, itemCode: '', itemType: 'standard' }]}>
             {(fields, { add, remove }) => (
               <div style={{ marginBottom: 16 }}>
-                {fields.map(({ key, name, ...restField }) => (
-                  <Row gutter={6} key={key} wrap={false} align="middle" style={{ marginBottom: 4 }}>
-                    <Col flex="auto" style={{ minWidth: 0 }}>
-                      <Form.Item {...restField} name={[name, 'itemName']} style={{ marginBottom: 8 }} rules={[{ required: true, message: 'Item name required' }]}>
-                        <Input placeholder="e.g. Packing Boxes" />
-                      </Form.Item>
-                    </Col>
-                    <Col flex="0 0 60px">
-                      <Form.Item {...restField} name={[name, 'qty']} style={{ marginBottom: 8 }}>
-                        <InputNumber min={0} placeholder="Qty" style={{ width: '100%' }} />
-                      </Form.Item>
-                    </Col>
-                    <Col flex="0 0 64px">
-                      <Form.Item {...restField} name={[name, 'unit']} style={{ marginBottom: 8 }}>
-                        <Input placeholder="Unit" />
-                      </Form.Item>
-                    </Col>
-                    <Col flex="0 0 84px">
-                      <Form.Item {...restField} name={[name, 'amount']} style={{ marginBottom: 8 }}>
-                        <InputNumber min={0} prefix="₹" placeholder="Amt" style={{ width: '100%' }} />
-                      </Form.Item>
-                    </Col>
-                    <Col flex="0 0 28px">
-                      {fields.length > 1 && (
-                        <Button danger type="text" size="small" icon={<CloseOutlined />} onClick={() => remove(name)} style={{ marginBottom: 8, padding: 0 }} />
+                {fields.map(({ key, name, ...restField }) => {
+                  const typedName = String(watchedLPItems?.[name]?.itemName || '').trim().toLowerCase();
+                  const typedCode = String(watchedLPItems?.[name]?.itemCode || '').trim();
+                  const rowItemType = watchedLPItems?.[name]?.itemType === 'bulk' ? 'bulk' : 'standard';
+                  const rowMatches = !typedCode && typedName.length >= 3
+                    ? inventoryItems.filter((i) => {
+                        const iName = (i.name || '').toLowerCase();
+                        return iName && (iName.includes(typedName) || typedName.includes(iName));
+                      }).slice(0, 2)
+                    : [];
+                  return (
+                    <div key={key} style={{ marginBottom: 8, padding: '8px 8px 2px', borderRadius: 8, border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}` }}>
+                      <Row gutter={6} wrap={false} align="middle">
+                        <Col flex="auto" style={{ minWidth: 0 }}>
+                          <Form.Item {...restField} name={[name, 'itemName']} style={{ marginBottom: 6 }} rules={[{ required: true, message: 'Item name required' }]}>
+                            <Input placeholder="e.g. Packing Boxes" />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="0 0 150px">
+                          <Form.Item {...restField} name={[name, 'itemType']} initialValue="standard" style={{ marginBottom: 6 }} tooltip="Direct Stock lands in Stock Inventory as usual. Bulk Raw Material lands on Inventory's Bulk tab (Litres/Kg) and is packed into sellable stock later via Fill Stock.">
+                            <Select
+                              size="small"
+                              options={[{ value: 'standard', label: 'Direct Stock' }, { value: 'bulk', label: 'Bulk Raw Material' }]}
+                              onChange={(v) => {
+                                const items = localPurchaseForm.getFieldValue('items') || [];
+                                const row = items[name] || {};
+                                items[name] = {
+                                  ...row,
+                                  itemType: v,
+                                  unit: v === 'bulk'
+                                    ? (['Litres', 'Kg'].includes(row.unit) ? row.unit : 'Litres')
+                                    : (row.unit === 'Litres' || row.unit === 'Kg' ? 'Pcs' : row.unit),
+                                };
+                                localPurchaseForm.setFieldsValue({ items });
+                              }}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="0 0 28px">
+                          {fields.length > 1 && (
+                            <Button danger type="text" size="small" icon={<CloseOutlined />} onClick={() => remove(name)} style={{ marginBottom: 6, padding: 0 }} />
+                          )}
+                        </Col>
+                      </Row>
+                      <Row gutter={6} wrap={false} align="middle">
+                        <Col flex="0 0 60px">
+                          <Form.Item {...restField} name={[name, 'qty']} style={{ marginBottom: 6 }}>
+                            <InputNumber min={0} placeholder="Qty" style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="0 0 64px">
+                          <Form.Item {...restField} name={[name, 'unit']} style={{ marginBottom: 6 }}>
+                            {rowItemType === 'bulk' ? (
+                              <Select size="small" options={[{ value: 'Litres', label: 'Litres' }, { value: 'Kg', label: 'Kg' }]} placeholder="Unit" />
+                            ) : (
+                              <Input placeholder="Unit" />
+                            )}
+                          </Form.Item>
+                        </Col>
+                        <Col flex="0 0 84px">
+                          <Form.Item {...restField} name={[name, 'amount']} style={{ marginBottom: 6 }}>
+                            <InputNumber min={0} prefix="₹" placeholder="Amt" style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="auto" style={{ minWidth: 0 }}>
+                          <Form.Item {...restField} name={[name, 'itemCode']} style={{ marginBottom: 6 }} tooltip="Enter an existing item's code to merge this stock into it instead of creating a duplicate item. The existing item's stock type (Direct/Bulk) must match what's selected above. Leave blank to add as new.">
+                            <Input placeholder="Item Code (optional — merges into existing item)" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      {rowMatches.length > 0 && (
+                        <Text style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginTop: -4, marginBottom: 6 }}>
+                          Similar: {rowMatches.map((m, i) => (
+                            <span key={m.key}>
+                              {i > 0 && ', '}
+                              {m.name} ({m.code}, {m.current} {m.unit}, {m.itemType === 'bulk' ? 'Bulk' : 'Direct'}){' '}
+                              <a onClick={() => { const items = localPurchaseForm.getFieldValue('items'); items[name] = { ...items[name], itemCode: m.code, itemType: m.itemType }; localPurchaseForm.setFieldsValue({ items }); }}>use code</a>
+                            </span>
+                          ))}
+                        </Text>
                       )}
-                    </Col>
-                  </Row>
-                ))}
-                <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ itemName: '', qty: 1, unit: 'Pcs', amount: 0 })} style={{ width: '100%', color: '#B11E6A', borderColor: '#B11E6A66' }}>
+                    </div>
+                  );
+                })}
+                <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ itemName: '', qty: 1, unit: 'Pcs', amount: 0, itemCode: '', itemType: 'standard' })} style={{ width: '100%', color: '#B11E6A', borderColor: '#B11E6A66' }}>
                   Add Item
                 </Button>
               </div>
@@ -3943,6 +4054,11 @@ export default function Purchase() {
             <Col span={12}>
               <Form.Item label="GST Amount (₹)" name="gstAmount">
                 <InputNumber prefix="₹" style={{ width: '100%' }} min={0} placeholder="0.00" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Invoice Date" name="invoiceDate" tooltip="Auto-filled from the scanned invoice — used as this stock's purchase date">
+                <DatePicker style={{ width: '100%', borderRadius: 8 }} format="DD-MM-YYYY" />
               </Form.Item>
             </Col>
           </Row>

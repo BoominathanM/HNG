@@ -429,6 +429,45 @@ export default function Tasks() {
     });
     return result;
   };
+
+  // Task-wise assigned progress for a Today's Checklist card — e.g. "250/500 Soap
+  // packing" once some quantity has been assigned under that task name, shown
+  // independently per task name (each name tracks its own qty against the product's
+  // full required qty — see normTaskName). Reads straight from tasksData rather than
+  // the Suggested Tasks relevance filter above, so it reflects whatever was actually
+  // assigned (including custom task names typed via the New Task modal), not just
+  // configured Time Management task names.
+  const getTaskProgress = (item) => {
+    const orderIdStr = item.orderId?.toString ? item.orderId.toString() : item.orderId;
+    const productIndex = typeof item.id === 'string' ? item.id.split('-')[1] : undefined;
+    const requiredQty = Number(item.qty) || 0;
+    if (!orderIdStr || productIndex === undefined || requiredQty <= 0) return [];
+    const byName = new Map();
+    (tasksData?.data || []).forEach((t) => {
+      const oid = (typeof t.orderId === 'object' ? t.orderId?._id : t.orderId)?.toString();
+      if (oid !== orderIdStr) return;
+      if (String(t.productIndex ?? '') !== String(productIndex)) return;
+      const name = (t.taskName || '').trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      const entry = byName.get(key) || { name, qty: 0, doneQty: 0 };
+      const tQty = Number(t.qty) || 0;
+      entry.qty += tQty;
+      // Only Done task qty counts as actually finished — an assigned-but-not-yet-worked
+      // task must not read as complete just because its qty adds up to the required total
+      // (e.g. a fresh follow-up task covering a post-completion order-qty increase).
+      if (t.status === 'Done') entry.doneQty += tQty;
+      byName.set(key, entry);
+    });
+    let rows = Array.from(byName.values());
+    // Emergency/Tentative split cards share the same productIndex — discount whatever's
+    // attributable to the sibling card's own qty, same adjustment getRelevantTaskOptions
+    // above makes, so each split card's progress reflects only its own portion.
+    if (item.siblingQty) {
+      rows = rows.map((r) => ({ ...r, qty: Math.max(0, r.qty - item.siblingQty), doneQty: Math.max(0, r.doneQty - item.siblingQty) }));
+    }
+    return rows.filter((r) => r.qty > 0).map((r) => ({ ...r, requiredQty, pendingQty: Math.max(0, requiredQty - r.doneQty) }));
+  };
   const [createTimeConfig] = useCreateTaskTimeConfigMutation();
   const [updateTimeConfig] = useUpdateTaskTimeConfigMutation();
   const [deleteTimeConfig] = useDeleteTaskTimeConfigMutation();
@@ -934,7 +973,15 @@ export default function Tasks() {
       // Auto-fetch the start time from the assignment time (now).
       startTime: dayjs(),
     });
-    setAssignSubTasks(presetTaskName ? [{ id: nextSubTaskId(), description: presetTaskName, qty: s.qty || '', assignee: '' }] : []);
+    // Prefill with what's still PENDING for this task name, not the product's full qty —
+    // otherwise re-assigning after a prior round already covers part of it (e.g. an order
+    // qty increase after the first 500 were already Done) silently offers the whole 1000
+    // again instead of just the 500 that's actually outstanding.
+    const presetProgress = presetTaskName
+      ? getTaskProgress(s).find((p) => p.name.toLowerCase() === presetTaskName.trim().toLowerCase())
+      : null;
+    const presetQty = presetProgress ? presetProgress.pendingQty : (s.qty || '');
+    setAssignSubTasks(presetTaskName ? [{ id: nextSubTaskId(), description: presetTaskName, qty: presetQty || '', assignee: '' }] : []);
     setAssignModalOpen(true);
   };
 
@@ -1710,7 +1757,7 @@ export default function Tasks() {
                           );
                         })()}
 
-                        <Row gutter={[16, 16]}>
+                        <Row gutter={[20, 20]}>
                           {items.filter((s) => !s.__kitPlaceholder).map((s) => {
                             // Design/printing are hard-gated server-side — every item reaching this
                             // checklist is print/design-complete already, so readiness here is purely
@@ -1735,24 +1782,29 @@ export default function Tasks() {
                             const materialBlocked = s.materialStockReady === false;
                             return (
                               <Col xs={24} md={12} lg={8} key={s.id}>
-                                <motion.div whileHover={{ y: -2 }}>
+                                <motion.div whileHover={{ y: -2 }} style={{ height: '100%' }}>
                                   <Card
                                     style={{
-                                      borderRadius: 12,
+                                      borderRadius: 14,
                                       border: s.stockReady ? 'none' : '1.5px solid #ff4d4f',
                                       background: s.stockReady ? cardBg : (isDark ? '#2d1516' : '#fff1f0'),
                                       boxShadow: s.stockReady ? '0 4px 20px rgba(177,30,106,0.06)' : '0 4px 20px rgba(255,77,79,0.15)',
+                                      // Fixed height so every checklist card renders the same size
+                                      // regardless of how much content (alerts/progress/chips) it has —
+                                      // the middle section below scrolls internally instead of growing
+                                      // the card and breaking row alignment.
+                                      height: 440,
                                     }}
-                                    styles={{ body: { padding: 16 } }}
+                                    styles={{ body: { padding: 22, height: '100%', display: 'flex', flexDirection: 'column' } }}
                                   >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                                       <Space size={4} wrap>
                                         {s.isUrgent && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
                                         {s.logoType && <Tag color="purple" style={{ fontSize: 11 }}>{s.logoType}</Tag>}
                                       </Space>
                                       <Text style={{ fontSize: 11, color: '#999' }}>{s.orderCode}</Text>
                                     </div>
-                                    <Text strong style={{ display: 'block', marginBottom: 4, color: textColor }}>{s.product}</Text>
+                                    <Text strong style={{ display: 'block', marginBottom: 6, color: textColor, fontSize: 16 }}>{s.product}</Text>
                                     <Space size={4} wrap style={{ marginBottom: 10 }}>
                                       {/* Per-product emergency count (kit-aware — see backend buildEmergencyQtyMap):
                                           only some kits/products in an order may be marked emergency via splitDates,
@@ -1785,6 +1837,11 @@ export default function Tasks() {
                                         {s.stockReady ? `Stock: ${s.inventoryStock ?? '—'}` : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
                                       </Tag>
                                     </Space>
+                                    {/* Scrollable middle — keeps the card's overall height fixed (see
+                                        `height: 520` above) no matter how many alerts/progress badges/
+                                        suggested-task chips this product has; header and the Assign
+                                        Task button below stay pinned outside this scroll area. */}
+                                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
                                     <Alert
                                       type="info"
                                       showIcon
@@ -1808,6 +1865,35 @@ export default function Tasks() {
                                         style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
                                       />
                                     )}
+                                    {/* Task Progress — task-wise assigned/required qty (e.g. "250/500 Soap
+                                        packing"), one badge per distinct task name that has any qty
+                                        assigned so far (see getTaskProgress). Each task name tracks its
+                                        own progress against this product's full qty independently — e.g.
+                                        "Soap packing" and "Sticker placing" each show their own X/Y. */}
+                                    {(() => {
+                                      const progress = getTaskProgress(s);
+                                      if (progress.length === 0) return null;
+                                      return (
+                                        <div style={{ marginBottom: 12 }}>
+                                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task Progress</Text>
+                                          <Space size={4} wrap>
+                                            {progress.map((p) => {
+                                              const done = p.doneQty >= p.requiredQty;
+                                              return (
+                                                <Tag
+                                                  key={p.name}
+                                                  color={done ? 'green' : 'gold'}
+                                                  style={{ borderRadius: 10, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}
+                                                >
+                                                  {Number(p.doneQty).toLocaleString()}/{Number(p.requiredQty).toLocaleString()} {p.name}
+                                                  {!done && p.pendingQty > 0 ? ` · ${Number(p.pendingQty).toLocaleString()} pending` : ''}
+                                                </Tag>
+                                              );
+                                            })}
+                                          </Space>
+                                        </div>
+                                      );
+                                    })()}
                                     {/* Suggested Tasks — quick-assign chips, filtered to only the configured
                                         task names that actually fit THIS product/order spec (see
                                         getRelevantTaskOptions): explicit per-product configs, or general
@@ -1884,7 +1970,8 @@ export default function Tasks() {
                                         </div>
                                       );
                                     })()}
-                                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingTop: 10, flexShrink: 0 }}>
                                       <Button
                                         size="small" type="primary" icon={<UserOutlined />}
                                         style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
@@ -1904,7 +1991,7 @@ export default function Tasks() {
                   </div>
                 ) : (
                   /* ── Hotel cards view ── */
-                  <Row gutter={[16, 16]}>
+                  <Row gutter={[24, 24]} align="stretch">
                     {Object.entries(hotelGroups).map(([hotel, orders]) => {
                       const allItems = Object.values(orders).flat();
                       // Kit-packing placeholder entries (see hotelGroups above) aren't real
@@ -1915,29 +2002,102 @@ export default function Tasks() {
                       const readyCount = realItems.filter((i) => i.fullyReady).length;
                       const urgentCount = allItems.filter((i) => i.isUrgent).length;
                       const orderCount = Object.keys(orders).length;
+
+                      // Per-order breakdown — a hotel with several orders can mix Emergency/
+                      // Sample/Regular, so each order gets its own date + type row instead of
+                      // one merged badge for the whole card (which would hide that mix).
+                      const orderRows = Object.entries(orders).map(([orderCode, items]) => {
+                        const orderUrgent = items.some((i) => i.isUrgent);
+                        const orderDateRaw = items.map((i) => i.orderCreatedAt).find(Boolean);
+                        // orderCategory isn't part of the suggested-task payload, so
+                        // cross-reference the full order doc (ordersList) by orderCode.
+                        const doc = ordersList.find((o) => o.orderCode === orderCode);
+                        const isSample = !orderUrgent && (doc?.orderCategory === 'SAMPLE' || doc?.leadId?.leadType === 'SAMPLE');
+                        const meta = orderUrgent
+                          ? { label: 'Emergency', color: '#ff4d4f', bg: isDark ? '#3a1618' : '#fff1f0' }
+                          : isSample
+                            ? { label: 'Sample', color: '#1677ff', bg: isDark ? '#111d2c' : '#e6f4ff' }
+                            : { label: 'Regular', color: '#389e0d', bg: isDark ? '#132312' : '#f6ffed' };
+                        return { orderCode, date: orderDateRaw ? new Date(orderDateRaw) : null, meta };
+                      }).sort((a, b) => (a.date && b.date ? a.date - b.date : 0));
+
                       return (
-                        <Col xs={24} sm={12} md={8} lg={6} key={hotel}>
-                          <motion.div whileHover={{ y: -3 }}>
+                        <Col xs={24} sm={12} lg={8} key={hotel} style={{ display: 'flex' }}>
+                          <motion.div whileHover={{ y: -3 }} style={{ width: '100%' }}>
                             <Card
                               hoverable
                               onClick={() => setSelectedHotel(hotel)}
-                              style={{ borderRadius: 12, border: '1.5px solid', borderColor: urgentCount > 0 ? '#ff4d4f' : isDark ? '#333' : '#f0e0eb', background: cardBg, cursor: 'pointer' }}
-                              styles={{ body: { padding: 16 } }}
+                              style={{
+                                borderRadius: 14, border: 'none', height: '100%',
+                                boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.35)' : '0 2px 10px rgba(0,0,0,0.08)',
+                                background: cardBg, cursor: 'pointer',
+                              }}
+                              styles={{ body: { padding: 22, height: '100%', display: 'flex', flexDirection: 'column' } }}
                             >
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                                <Avatar style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', fontSize: 16 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                                <Avatar size={44} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', fontSize: 18 }}>
                                   {hotel.charAt(0).toUpperCase()}
                                 </Avatar>
-                                {urgentCount > 0 && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
+                                {urgentCount > 0 && (
+                                  <Tag
+                                    style={{
+                                      fontSize: 16, fontWeight: 900, padding: '7px 18px', borderRadius: 10,
+                                      letterSpacing: 0.5, textTransform: 'uppercase', margin: 0, border: 'none',
+                                      background: '#ff4d4f', color: '#fff',
+                                      boxShadow: '0 3px 10px rgba(255,77,79,0.45)',
+                                    }}
+                                  >
+                                    Emergency
+                                  </Tag>
+                                )}
                               </div>
-                              <Text strong style={{ display: 'block', fontSize: 14, color: textColor, marginBottom: 6, lineHeight: '1.3' }}>{hotel}</Text>
-                              <Space size={[4, 4]} wrap style={{ marginBottom: 8 }}>
+                              <Text strong style={{ display: 'block', fontSize: 18, color: textColor, marginBottom: 10, lineHeight: '1.3' }}>{hotel}</Text>
+                              <Space size={[6, 6]} wrap style={{ marginBottom: 12 }}>
                                 <Tag color="blue">{orderCount} order{orderCount !== 1 ? 's' : ''}</Tag>
                                 <Tag color="default">{realItems.length} item{realItems.length !== 1 ? 's' : ''}</Tag>
                                 {readyCount > 0 && <Tag color="green">{readyCount} stock ready</Tag>}
                                 {realItems.length - readyCount > 0 && <Tag color="red">{realItems.length - readyCount} stock short</Tag>}
                               </Space>
-                              <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', marginTop: 4 }}>
+
+                              {/* Per-order date + Emergency/Sample/Regular breakdown — scrollable
+                                  and flex-grown so every card in the row ends up the same height,
+                                  regardless of how many orders each hotel has. */}
+                              <div
+                                style={{ flex: 1, minHeight: 60, maxHeight: 190, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10, paddingRight: 2 }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {orderRows.map(({ orderCode, date, meta }) => (
+                                  <div
+                                    key={orderCode}
+                                    onClick={() => setSelectedHotel(hotel)}
+                                    style={{
+                                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                      padding: '7px 12px', borderRadius: 10, cursor: 'pointer',
+                                      background: meta.bg, border: `1.5px solid ${meta.color}55`,
+                                    }}
+                                  >
+                                    <div>
+                                      <Text strong style={{ fontSize: 13, color: textColor, display: 'block' }}>{orderCode}</Text>
+                                      {date && (
+                                        <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>
+                                          {dayjs(date).format('DD MMM YYYY')}
+                                        </Text>
+                                      )}
+                                    </div>
+                                    <Tag
+                                      style={{
+                                        fontSize: 12, fontWeight: 800, padding: '3px 10px', borderRadius: 8,
+                                        border: `1.5px solid ${meta.color}`, color: meta.color,
+                                        background: isDark ? '#00000030' : '#ffffffb0', margin: 0,
+                                      }}
+                                    >
+                                      {meta.label}
+                                    </Tag>
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div style={{ fontSize: 12, color: isDark ? '#aaa' : '#888', marginTop: 6 }}>
                                 Click to view orders →
                               </div>
                             </Card>

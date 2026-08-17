@@ -15,6 +15,16 @@ const { cloudinary } = require('../../config/cloudinary');
 const { notifyRoles } = require('../../utils/notify');
 const { resolveMaterialStock } = require('../../utils/materialStockMatch');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
+const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
+
+// Lead.category defaults to 'Hotel' but leads created before this field existed have no
+// `category` stored in Mongo at all — a raw { category: 'Hotel' } match would wrongly
+// exclude them, so 'Hotel' also matches missing/null.
+function categoryMatch(category) {
+  return category === 'Hotel'
+    ? { $or: [{ category: 'Hotel' }, { category: { $exists: false } }, { category: null }] }
+    : { category };
+}
 
 // ─── LEADS ───────────────────────────────────────────────────────────────────
 exports.getLeads = asyncHandler(async (req, res) => {
@@ -37,6 +47,10 @@ exports.getLeads = asyncHandler(async (req, res) => {
     }
   }
   if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
+  if (req.query.category) {
+    const cm = categoryMatch(req.query.category);
+    if (cm.$or) andConds.push(cm); else Object.assign(filter, cm);
+  }
   if (req.query.search) {
     const re = new RegExp(req.query.search, 'i');
     andConds.push({ $or: [{ hotelName: re }, { phone: re }, { locationCity: re }] });
@@ -128,16 +142,23 @@ exports.updateLeadStatus = asyncHandler(async (req, res, next) => {
 });
 
 // Auto-fetch existing hotel details for "Old Hotel" lead creation (by name + optional branch).
+// Scoped to `category` when provided so a same-named Hotel and Hospital lead never cross-fill.
 exports.getHotelByName = asyncHandler(async (req, res) => {
   const name = req.query.name;
   const branch = req.query.branch;
+  const category = req.query.category;
   if (!name) return res.status(200).json({ success: true, data: null });
   const nameRe = new RegExp(`^${name.trim()}$`, 'i');
   // Prefer the most recent matching lead (richest detail); fall back to a party record.
   const leadFilter = { hotelName: nameRe, deletedAt: null };
   if (branch) leadFilter.branch = new RegExp(`^${branch.trim()}$`, 'i');
+  if (category) Object.assign(leadFilter, categoryMatch(category));
   let lead = await Lead.findOne(leadFilter).sort('-createdAt').lean();
-  if (!lead) lead = await Lead.findOne({ hotelName: nameRe, deletedAt: null }).sort('-createdAt').lean();
+  if (!lead) {
+    const fallbackFilter = { hotelName: nameRe, deletedAt: null };
+    if (category) Object.assign(fallbackFilter, categoryMatch(category));
+    lead = await Lead.findOne(fallbackFilter).sort('-createdAt').lean();
+  }
   let party = null;
   if (!lead) party = await Party.findOne({ name: nameRe, deletedAt: null }).lean();
   const source = lead || party;
@@ -145,9 +166,12 @@ exports.getHotelByName = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: source, matchedOn: lead ? 'lead' : 'party' });
 });
 
-// Distinct existing hotel names (for the Old-Hotel selector).
+// Distinct existing hotel names (for the Old-Hotel selector), scoped to the selected
+// Category so a Hospital search never surfaces Hotel names and vice versa.
 exports.getHotelNames = asyncHandler(async (req, res) => {
-  const names = await Lead.distinct('hotelName', { deletedAt: null });
+  const filter = { deletedAt: null };
+  if (req.query.category) Object.assign(filter, categoryMatch(req.query.category));
+  const names = await Lead.distinct('hotelName', filter);
   res.status(200).json({ success: true, data: names.filter(Boolean).sort() });
 });
 
@@ -413,6 +437,7 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     kitOverallQty: req.body.kitOverallQty != null ? Number(req.body.kitOverallQty) : (lead.kitOverallQty != null ? Number(lead.kitOverallQty) : undefined),
     // Copy lead contact details so they flow through to the eventual order
     hotelName: req.body.hotelName || lead.hotelName || '',
+    category: req.body.category || lead.category || '',
     email: req.body.email || lead.email || '',
     location: lead.location || lead.locationCity,
     phone: lead.phone,
@@ -684,6 +709,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     kitPrice: negObj.kitPrice != null ? negObj.kitPrice : (lead?.kitPrice != null ? lead.kitPrice : undefined),
     kitOverallQty: negObj.kitOverallQty != null ? negObj.kitOverallQty : (lead?.kitOverallQty != null ? lead.kitOverallQty : undefined),
     hotelName: resolveField(negObj.hotelName, lead?.hotelName, negotiation.clientName),
+    category: resolveField(negObj.category, lead?.category),
     email: resolveField(negObj.email, lead?.email),
     // Contact & billing details copied from negotiation extras or lead
     location: resolveField(negObj.location, lead?.location, lead?.locationCity),
@@ -868,13 +894,152 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data });
 });
 
+// Order edit: qty-decrease guard. Operations/Tasks/Dispatch all key their "required
+// qty" off the live order (see resolveRequiredQty in utils/taskQuantity.js and
+// forwardOrderToDispatch below), so once work has started against a quantity, reducing
+// it here would silently orphan already-completed/dispatched units. Edits may only
+// raise a quantity, never lower it. Only checked when the patch actually touches
+// items/kitOrders/kitOverallQty — payment-only or status-only updates (Billing,
+// Dispatch, etc.) never hit this.
+function orderItemKey(it) {
+  if (it.itemId) return `id:${it.itemId}`;
+  return `nc:${String(it.itemName || it.name || '').trim().toLowerCase()}|${it.category || ''}`;
+}
+
+function findOrderQuantityDecreases(existing, patch) {
+  const violations = [];
+
+  if (Array.isArray(patch.items)) {
+    const oldItems = Array.isArray(existing.items) ? existing.items : [];
+    for (const oldItem of oldItems) {
+      const key = orderItemKey(oldItem);
+      const label = oldItem.itemName || oldItem.name || 'item';
+      const newItem = patch.items.find((it) => orderItemKey(it) === key);
+      if (!newItem) {
+        if ((Number(oldItem.qty) || 0) > 0) violations.push(`"${label}" was removed (was qty ${oldItem.qty || 0})`);
+        continue;
+      }
+      const oldQty = Number(oldItem.qty) || 0;
+      const newQty = Number(newItem.qty) || 0;
+      if (newQty < oldQty) violations.push(`"${label}" qty ${oldQty} → ${newQty}`);
+      if (oldItem.isKit || newItem.isKit) {
+        const oldOverall = Number(oldItem.overallQty) || 0;
+        const newOverall = Number(newItem.overallQty) || 0;
+        if (oldOverall > 0 && newOverall < oldOverall) violations.push(`"${label}" overall qty ${oldOverall} → ${newOverall}`);
+      }
+    }
+  }
+
+  if (Array.isArray(patch.kitOrders)) {
+    const oldKitOrders = (Array.isArray(existing.kitOrders) ? existing.kitOrders : []).filter((k) => k && k.kitId);
+    for (const oldKit of oldKitOrders) {
+      const oldQty = Number(oldKit.overallQty) || 0;
+      if (oldQty <= 0) continue;
+      const newKit = patch.kitOrders.find((k) => k && k.kitId === oldKit.kitId);
+      const label = oldKit.kitName || oldKit.kitId;
+      if (!newKit) { violations.push(`Kit "${label}" was removed (was qty ${oldQty})`); continue; }
+      const newQty = Number(newKit.overallQty) || 0;
+      if (newQty < oldQty) violations.push(`Kit "${label}" overall qty ${oldQty} → ${newQty}`);
+    }
+  }
+
+  if (patch.kitOverallQty !== undefined) {
+    const oldQty = Number(existing.kitOverallQty) || 0;
+    const newQty = Number(patch.kitOverallQty) || 0;
+    if (oldQty > 0 && newQty < oldQty) violations.push(`Kit overall qty ${oldQty} → ${newQty}`);
+  }
+
+  return violations;
+}
+
+// Keeps an already-forwarded DispatchRecord's quantities in sync when the source order's
+// qty is increased after dispatch started. DispatchRecord.items[].qtyOrdered and
+// .kitDispatch[].overallQty are otherwise snapshotted ONCE at forward time
+// (forwardOrderToDispatch, tasks.controller.js) and never revisited — without this, the
+// Dispatch page's "X of Y" would silently undercount the increase. items[] is matched by
+// array position (it's seeded 1:1 with order.items at forward time — see the comment in
+// dispatchGrouping.js); kitOrders[] is matched by kitId, same key DispatchRecord.kitDispatch
+// itself is keyed by. Decreases can't reach here — findOrderQuantityDecreases already
+// rejects the request before this runs.
+async function syncDispatchRecordQuantities(orderId, existingOrder, patch) {
+  const dispatch = await DispatchRecord.findOne({ orderId });
+  if (!dispatch) return; // not forwarded to Dispatch yet — nothing to resync
+
+  let dirty = false;
+
+  if (Array.isArray(patch.items)) {
+    const oldItems = Array.isArray(existingOrder.items) ? existingOrder.items : [];
+    oldItems.forEach((oldItem, i) => {
+      const newItem = patch.items[i];
+      if (!newItem || !dispatch.items[i]) return;
+      const delta = (Number(newItem.qty) || 0) - (Number(oldItem.qty) || 0);
+      if (delta > 0) {
+        dispatch.items[i].qtyOrdered = (Number(dispatch.items[i].qtyOrdered) || 0) + delta;
+        dirty = true;
+      }
+    });
+    // Any item appended past the old array's length is a brand-new line added after this
+    // order was already forwarded — seed a fresh dispatch row for it too.
+    for (let i = oldItems.length; i < patch.items.length; i++) {
+      const it = patch.items[i];
+      if (it && !dispatch.items[i]) {
+        dispatch.items.push({
+          itemId: it.itemId, itemName: it.itemName, qtyOrdered: Number(it.qty) || 0, qtyDispatched: 0,
+          boxes: it.boxes, isKit: it.isKit, kitId: it.kitId, kitName: it.kitName, kitType: it.kitType, category: it.category,
+        });
+        dirty = true;
+      }
+    }
+  }
+
+  if (Array.isArray(patch.kitOrders)) {
+    const oldKitOrders = Array.isArray(existingOrder.kitOrders) ? existingOrder.kitOrders : [];
+    patch.kitOrders.forEach((newKit) => {
+      if (!newKit || !newKit.kitId) return;
+      const oldKit = oldKitOrders.find((k) => k && k.kitId === newKit.kitId);
+      const delta = (Number(newKit.overallQty) || 0) - (Number(oldKit?.overallQty) || 0);
+      if (delta <= 0) return;
+      const kd = dispatch.kitDispatch.find((k) => k.kitId === newKit.kitId);
+      if (kd) {
+        kd.overallQty = (Number(kd.overallQty) || 0) + delta;
+        dirty = true;
+      } else if (!oldKit) {
+        dispatch.kitDispatch.push({
+          kitId: newKit.kitId, kitName: newKit.kitName || newKit.kitType,
+          category: newKit.category || 'separate_kit', overallQty: Number(newKit.overallQty) || 0, dispatchedQty: 0,
+        });
+        dirty = true;
+      }
+    });
+  }
+
+  if (dirty) await dispatch.save();
+}
+
 exports.updateOrder = asyncHandler(async (req, res, next) => {
+  const existingForQtyCheck = await Order.findOne({ _id: req.params.id, deletedAt: null }).lean();
+  if (!existingForQtyCheck) return next(new AppError('Order not found', 404));
+
+  const qtyDecreases = findOrderQuantityDecreases(existingForQtyCheck, req.body);
+  if (qtyDecreases.length) {
+    return next(new AppError(`Order quantity cannot be reduced once placed — it can only be increased. ${qtyDecreases.join('; ')}`, 400));
+  }
+
+  const editHistoryEntries = buildOrderEditHistory(existingForQtyCheck, req.body, req.user);
+
   const order = await Order.findOneAndUpdate(
     { _id: req.params.id, deletedAt: null },
-    req.body,
+    editHistoryEntries.length
+      ? { $set: req.body, $push: { editHistory: { $each: editHistoryEntries } } }
+      : req.body,
     { new: true, runValidators: true }
   );
   if (!order) return next(new AppError('Order not found', 404));
+  if (Array.isArray(req.body.items) || Array.isArray(req.body.kitOrders)) {
+    await syncDispatchRecordQuantities(order._id, existingForQtyCheck, req.body).catch((err) => {
+      console.error(`Dispatch qty resync failed for order ${order.orderCode}:`, err.message);
+    });
+  }
   // If this update recorded a payment (paidAmount / balance / paymentCollection),
   // keep any linked Billing invoice's advance/balance in sync too. Sales's quick
   // "Add Payment Entry" writes straight onto the order — without this, the linked
@@ -925,6 +1090,67 @@ exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
   if (['Dispatched', 'Delivered'].includes(req.body.status) && order.leadId) {
     await Lead.findByIdAndUpdate(order.leadId, { status: req.body.status });
   }
+  res.status(200).json({ success: true, data: order });
+});
+
+// PATCH /api/sales/orders/:id/transport-mismatch-decision — Sales approves or rejects a
+// dispatch LR transport-name mismatch flagged by Dispatch (see dispatch.controller.js
+// reportTransportMismatch). Approve/reject is purely a sign-off record; it doesn't alter
+// the dispatch itself.
+exports.decideTransportMismatch = asyncHandler(async (req, res, next) => {
+  const { decision } = req.body;
+  if (!['approved', 'rejected'].includes(decision)) {
+    return next(new AppError('decision must be "approved" or "rejected"', 400));
+  }
+  const order = await Order.findOneAndUpdate(
+    { _id: req.params.id, deletedAt: null },
+    {
+      dispatchTransportMismatchStatus: decision,
+      dispatchTransportMismatchDecidedBy: req.user._id,
+      dispatchTransportMismatchDecidedAt: Date.now(),
+    },
+    { new: true }
+  );
+  if (!order) return next(new AppError('Order not found', 404));
+  res.status(200).json({ success: true, data: order });
+});
+
+// PATCH /api/sales/orders/:id/lr-mismatch-decision — Sales side of the dual (Sales +
+// Operations) sign-off on an LR mismatch flagged by Dispatch for fields other than
+// Weight/Transport Name (see dispatch.controller.js requestLrMismatchApproval). A reject
+// from either side kills the request immediately; an approve only flips the overall status
+// to 'approved' once Operations has approved too (see operations.controller.js
+// decideLrMismatchOps).
+exports.decideLrMismatchSales = asyncHandler(async (req, res, next) => {
+  const { decision } = req.body;
+  if (!['approved', 'rejected'].includes(decision)) {
+    return next(new AppError('decision must be "approved" or "rejected"', 400));
+  }
+  const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
+  if (!order) return next(new AppError('Order not found', 404));
+  if (order.dispatchLrMismatchStatus !== 'pending') {
+    return next(new AppError('No pending LR mismatch approval for this order', 400));
+  }
+
+  if (decision === 'rejected') {
+    order.dispatchLrMismatchStatus = 'rejected';
+  } else {
+    order.dispatchLrMismatchSalesApproved = true;
+    order.dispatchLrMismatchSalesApprovedBy = req.user._id;
+    order.dispatchLrMismatchSalesApprovedAt = Date.now();
+    if (order.dispatchLrMismatchOpsApproved) order.dispatchLrMismatchStatus = 'approved';
+  }
+  await order.save({ validateBeforeSave: false });
+
+  if (decision === 'approved' && order.dispatchLrMismatchStatus === 'pending') {
+    await notifyRoles({
+      modules: ['Operations'],
+      type: 'dispatch',
+      title: 'LR Mismatch — Sales Approved, Awaiting Operations',
+      message: `Order ${order.orderCode}: Sales has approved the LR mismatch. Operations approval is still required before dispatch can proceed.`,
+    });
+  }
+
   res.status(200).json({ success: true, data: order });
 });
 

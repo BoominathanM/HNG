@@ -2,6 +2,8 @@ const StickerInvoice = require('../../models/StickerInvoice');
 const BoxInvoice = require('../../models/BoxInvoice');
 const ZiplockInvoice = require('../../models/ZiplockInvoice');
 const ButterPaperInvoice = require('../../models/ButterPaperInvoice');
+const WoodenBrushInvoice = require('../../models/WoodenBrushInvoice');
+const OtherInvoice = require('../../models/OtherInvoice');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 
@@ -12,6 +14,8 @@ const MODELS = {
   box: BoxInvoice,
   ziplock: ZiplockInvoice,
   butter: ButterPaperInvoice,
+  wooden_brush: WoodenBrushInvoice,
+  other: OtherInvoice,
 };
 
 exports.getPackagingInvoices = asyncHandler(async (req, res, next) => {

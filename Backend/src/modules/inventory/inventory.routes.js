@@ -39,6 +39,7 @@ router.put('/:id', ctrl.updateItem);
 router.delete('/:id', ctrl.deleteItem);
 router.post('/:id/sell-request', ctrl.sellStockRequest);
 router.post('/:id/add-request', ctrl.addStockRequest);
+router.post('/:id/fill', ctrl.fillStock);
 router.patch('/approvals/:id/approve', ctrl.approveMovement);
 router.patch('/approvals/:id/reject', ctrl.rejectMovement);
 

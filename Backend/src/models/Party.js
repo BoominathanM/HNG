@@ -11,7 +11,10 @@ const partySchema = new mongoose.Schema({
   openingBalDir: { type: String, enum: ['receive', 'pay'], default: 'receive' },
   creditPeriod: { type: Number, default: 7 },
   creditLimit: Number,
-  category: { type: String, enum: ['VIP', 'Regular', 'Wholesale', ''] },
+  // Mirrors Lead.category (Hotel/Hospital/custom, free-text via the same DropdownOption
+  // store) — set when a Customer party is auto-registered from a Lead. Absent/legacy
+  // parties are treated as 'Hotel' by readers, matching Lead/Order's convention.
+  category: String,
   contactPerson: String,
   dob: Date,
   street: String,

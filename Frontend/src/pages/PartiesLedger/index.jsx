@@ -58,8 +58,8 @@ export default function PartiesLedger() {
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
   const [activeTab, setActiveTab] = useState('all');
-  const { filterTabs, activeKeyFor } = useTabAccess('Parties & Ledger');
-  const { requireAccess } = usePageAccess('Parties & Ledger');
+  const { filterTabs, activeKeyFor } = useTabAccess('Ledgers');
+  const { requireAccess } = usePageAccess('Ledgers');
   const [supplierSearch, setSupplierSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [allSearch, setAllSearch] = useState('');
@@ -683,7 +683,7 @@ export default function PartiesLedger() {
   return (
     <div className="page-container fade-in">
       <div style={{ marginBottom: 20 }}>
-        <PageBreadcrumb title="Parties & Ledger" items={[{ label: 'Parties & Ledger' }]} style={{ marginBottom: 0 }} />
+        <PageBreadcrumb title="Ledgers" items={[{ label: 'Ledgers' }]} style={{ marginBottom: 0 }} />
       </div>
 
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>

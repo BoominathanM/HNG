@@ -4,7 +4,7 @@ const AlertConfig = require('../models/AlertConfig');
 const MODULES = [
   'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
   'Staff Management', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing',
-  'Parties & Ledger', 'Financial', 'Expenses', 'Reports', 'Notifications',
+  'Ledgers', 'Financial', 'Expenses', 'Reports', 'Notifications',
   'Integration', 'Settings',
 ];
 
@@ -18,7 +18,7 @@ const MODULE_TABS = {
   'Purchase':         ['Purchase Orders', 'History'],
   'Vendors & Suppliers': ['Vendors', 'Printing Suppliers'],
   'Billing':          ['Invoices', 'Order in Process'],
-  'Parties & Ledger': ['Parties', 'Ledger'],
+  'Ledgers': ['Parties', 'Ledger'],
   'Financial':        ["P&L", 'Balance Sheet'],
   'Expenses':         ['All Expenses', 'Categories'],
   'Reports':          ['Sales', 'Operations', 'Financial'],
@@ -72,6 +72,8 @@ const ALERT_CONFIG_ROWS = [
   { group: 'design', role: 'Box' },
   { group: 'design', role: 'Ziplock' },
   { group: 'design', role: 'Butter Paper' },
+  { group: 'design', role: 'Wooden Brush' },
+  { group: 'design', role: 'Other' },
   { group: 'sales_approval', role: null },
   { group: 'operations_approval', role: null },
   { group: 'task', role: null },

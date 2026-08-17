@@ -16,7 +16,7 @@ exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
   if (!['design', 'sales_approval', 'operations_approval', 'task'].includes(group)) {
     return next(new AppError('Invalid alert group', 400));
   }
-  if (group === 'design' && !['Sticker', 'Box', 'Ziplock', 'Butter Paper'].includes(role)) {
+  if (group === 'design' && !['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(role)) {
     return next(new AppError('Invalid design role', 400));
   }
   const normalizedRole = group === 'design' ? role : null;

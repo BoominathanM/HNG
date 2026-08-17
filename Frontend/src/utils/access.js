@@ -17,7 +17,7 @@ export const MODULE_ROUTES = [
   { module: 'Purchase', path: '/purchase' },
   { module: 'Vendors & Suppliers', path: '/vendors-suppliers' },
   { module: 'Billing', path: '/billing' },
-  { module: 'Parties & Ledger', path: '/parties-ledger' },
+  { module: 'Ledgers', path: '/parties-ledger' },
   { module: 'Financial', path: '/financial' },
   { module: 'Expenses', path: '/expenses' },
   { module: 'Reports', path: '/reports' },

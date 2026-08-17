@@ -176,6 +176,12 @@ export default function OperationDetail() {
       butter_paper: vendors
         .filter((v) => v.supplierType === 'Butter Paper')
         .map((v) => ({ value: v._id, label: v.name })),
+      wooden_brush: vendors
+        .filter((v) => v.supplierType === 'Wooden Brush')
+        .map((v) => ({ value: v._id, label: v.name })),
+      other: vendors
+        .filter((v) => v.supplierType === 'Other')
+        .map((v) => ({ value: v._id, label: v.name })),
     };
   }, [printingVendorData]);
   const invMap = useMemo(() => {
@@ -628,6 +634,26 @@ export default function OperationDetail() {
   }, [printingModalType, id, allOrders, productionQueues]);
 
   const order = allOrders.find((item) => item.id === id);
+  // Remaining (not-yet-tasked) qty per product index — sums ALL existing tasks' qty for
+  // that slot (any status; a Pending task still reserves its qty, same reasoning as the
+  // backend's checkTaskQuantityOverflow) against the item's live required qty. Lets a
+  // product whose order qty grew AFTER it was fully tasked (e.g. 500 done, +500 added)
+  // surface again with only the true remainder, instead of "Assign All"/the per-row button
+  // treating "has any task at all" as permanently fully covered.
+  const pendingQtyByIndex = useMemo(() => {
+    const tasks = orderTasksData?.data || [];
+    const assignedByIndex = new Map();
+    tasks.forEach((t) => {
+      if (t.productIndex === undefined || t.productIndex === null) return;
+      assignedByIndex.set(t.productIndex, (assignedByIndex.get(t.productIndex) || 0) + (Number(t.qty) || 0));
+    });
+    const map = new Map();
+    (order?.items || []).forEach((it, idx) => {
+      const required = it.isKit ? (Number(it.overallQty) || Number(it.qty) || 0) : (Number(it.qty) || 0);
+      map.set(idx, Math.max(0, required - (assignedByIndex.get(idx) || 0)));
+    });
+    return map;
+  }, [orderTasksData, order]);
   // Merges in-flight local edits (printingStatusValues, keyed generically by any record/
   // synthetic key — real item keys and 'kitdu:<kitId>' keys never collide) into order's own
   // printingStatusOverrides, so a just-saved kit Display Unit status (see kitPrintGate below)
@@ -1065,9 +1091,13 @@ export default function OperationDetail() {
   const [assignAllRows, setAssignAllRows] = useState([]);
   const handleAssignAllProducts = () => {
     if (!order) return;
+    // Pending (not-yet-tasked) qty per product, not a boolean "has any task" — a product
+    // already fully tasked stays excluded, but one only partially covered (e.g. after its
+    // order qty was increased past what's already assigned) reappears with just its
+    // remaining qty prefilled instead of being skipped entirely.
     const rows = (order.items || [])
-      .map((it, idx) => ({ productIndex: idx, itemName: it.itemName || it.name || `Item ${idx + 1}`, qty: it.qty || 0 }))
-      .filter((r) => !taskedProductIndices.has(r.productIndex) && !taskedProductNames.has((r.itemName || '').toLowerCase()))
+      .map((it, idx) => ({ productIndex: idx, itemName: it.itemName || it.name || `Item ${idx + 1}`, qty: pendingQtyByIndex.get(idx) ?? (it.qty || 0) }))
+      .filter((r) => r.qty > 0)
       .map((r) => ({ ...r, assignee: undefined }));
     if (rows.length === 0) {
       enqueueSnackbar('All products already have tasks assigned', { variant: 'info' });
@@ -1364,7 +1394,8 @@ export default function OperationDetail() {
   const resolveKitSR = (record) => {
     if (!(record.isKit || record.kitType)) return null;
     const duTab = record.displayUnitTab || '';
-    const st = duTab === 'Ziplock' ? 'Frosted Ziplock' : duTab === 'Butter Paper' ? 'Butter Paper' : 'Box';
+    const st = duTab === 'Ziplock' ? 'Frosted Ziplock' : duTab === 'Butter Paper' ? 'Butter Paper'
+      : duTab === 'Wooden Brush' ? 'Wooden Brush' : duTab === 'Other' ? 'Other' : 'Box';
     const cat = record.category || '';
     const kt = (record.kitName || record.kitType || '').toLowerCase();
     const sameTab = kitSRList.filter((sr) => (sr.stickerType || 'Box') === st);
@@ -2380,10 +2411,14 @@ export default function OperationDetail() {
         const itemIndex = (order?.items || []).findIndex((it) => String(it.key) === resolveBaseItemKey(record.key));
         const alreadyTasked = (itemIndex >= 0 && taskedProductIndices.has(itemIndex))
           || taskedProductNames.has((record.product || record.itemName || record.name || '').toLowerCase());
+        const pendingQty = itemIndex >= 0 ? pendingQtyByIndex.get(itemIndex) : undefined;
+        const fullyCovered = pendingQty === undefined ? alreadyTasked : pendingQty <= 0;
         return (
           <Space direction="vertical" size={4}>
             {alreadyTasked && (
-              <Tag color="green" style={{ borderRadius: 6, fontSize: 10, margin: 0 }}>✓ Task Assigned</Tag>
+              <Tag color={fullyCovered ? 'green' : 'gold'} style={{ borderRadius: 6, fontSize: 10, margin: 0 }}>
+                {fullyCovered ? '✓ Task Assigned' : `${pendingQty} pending`}
+              </Tag>
             )}
             <Button
               type="primary"

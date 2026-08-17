@@ -302,7 +302,11 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
 
   const invoices = await Invoice.find(filter)
     .populate('partyId', 'name gstNumber state')
-    .populate('orderId', `orderCode state ${ORDER_MONEY_FIELDS}`)
+    .populate({
+      path: 'orderId',
+      select: `orderCode state salesPerson assignedTo ${ORDER_MONEY_FIELDS}`,
+      populate: { path: 'assignedTo', select: 'fullName' },
+    })
     .sort('-invoiceDate');
 
   const monthlyMap = {};
@@ -323,6 +327,9 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
       gst_no: inv.partyId?.gstNumber || '',
       customer: inv.partyId?.name || '',
       product: allProducts,
+      // Same fallback chain used across Dispatch/Operations/Sales (Order.salesPerson is a
+      // free-text "Assigned To (Sales)" field; assignedTo is the linked User when set instead).
+      salesPerson: order?.salesPerson || order?.assignedTo?.fullName || '',
       state_code: '',
       state_name: order?.state || inv.partyId?.state || '',
       inv_no: inv.invoiceNumber || '',
@@ -375,6 +382,67 @@ exports.getPurchaseReport = asyncHandler(async (req, res) => {
     withoutGst: data.filter((r) => r.total_tax === 0),
     summary: { totalValue, count: orders.length + localPurchases.length },
     chartData: Object.values(monthlyMap),
+  });
+});
+
+// ─── LOCAL PURCHASE REPORT ─────────────────────────────────────────────────────
+// Standalone report for informal/local vendor bills (LocalPurchase) — kept separate from
+// the merged Purchase Report above (which combines PurchaseOrder + LocalPurchase into one
+// GST-format table) so local purchases can be reviewed/exported on their own, with their
+// own payment status/paid-vs-pending tracking (fields PurchaseOrder doesn't carry).
+exports.getLocalPurchaseReport = asyncHandler(async (req, res) => {
+  const dateFilter = buildDateFilterOn(req, 'createdAt');
+  const localPurchases = await LocalPurchase.find(dateFilter)
+    .populate('vendorId', 'name phone taxId')
+    .sort('-createdAt');
+
+  const data = localPurchases.map((lp) => {
+    const items = lp.items || [];
+    const total = Number(lp.totalAmount) || 0;
+    const paid = Number(lp.paidAmount) || 0;
+    const pending = r2(Math.max(total - paid, 0));
+    return {
+      key: String(lp._id),
+      lpCode: lp.lpCode || '',
+      invoiceNo: lp.invoiceNo || '',
+      date: lp.createdAt?.toISOString().slice(0, 10) || '',
+      vendor: lp.vendorId?.name || lp.vendorName || '',
+      vendorPhone: lp.vendorId?.phone || lp.vendorPhone || '',
+      product: items.map((it) => it.itemName).filter(Boolean).join(', '),
+      itemCount: items.length,
+      qty: items.reduce((s, it) => s + (Number(it.qty) || 0), 0),
+      totalAmount: r2(total),
+      gstAmount: r2(Number(lp.gstAmount) || 0),
+      paidAmount: r2(paid),
+      pendingAmount: pending,
+      paymentType: lp.paymentType || '',
+      paymentStatus: lp.paymentStatus || 'Pending',
+      paidBy: lp.paidBy || '',
+      dueDate: lp.dueDate?.toISOString().slice(0, 10) || '',
+    };
+  });
+
+  const monthlyMap = {};
+  localPurchases.forEach((lp) => {
+    const key = lp.createdAt?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
+    const total = Number(lp.totalAmount) || 0;
+    const paid = Number(lp.paidAmount) || 0;
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, amount: 0, paid: 0, pending: 0, count: 0 };
+    monthlyMap[key].amount += total;
+    monthlyMap[key].paid += paid;
+    monthlyMap[key].pending += Math.max(total - paid, 0);
+    monthlyMap[key].count += 1;
+  });
+
+  const totalAmount = r2(data.reduce((s, r) => s + r.totalAmount, 0));
+  const totalPaid = r2(data.reduce((s, r) => s + r.paidAmount, 0));
+  const totalPending = r2(data.reduce((s, r) => s + r.pendingAmount, 0));
+
+  res.status(200).json({
+    success: true,
+    data,
+    summary: { totalAmount, totalPaid, totalPending, count: data.length },
+    chartData: Object.values(monthlyMap).map((m) => ({ ...m, amount: r2(m.amount), paid: r2(m.paid), pending: r2(m.pending) })),
   });
 });
 
@@ -954,6 +1022,24 @@ exports.exportPurchaseReport = asyncHandler(async (req, res) => {
     .join('\n');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename=purchase-report.csv');
+  res.send(csv);
+});
+
+exports.exportLocalPurchaseReport = asyncHandler(async (req, res) => {
+  const localPurchases = await LocalPurchase.find().populate('vendorId', 'name').sort('-createdAt');
+  const csv = ['LP Code,Invoice No,Date,Vendor,Items,Qty,Total Amount,GST Amount,Paid Amount,Pending Amount,Payment Status,Due Date']
+    .concat(localPurchases.map((lp) => {
+      const items = lp.items || [];
+      const total = Number(lp.totalAmount) || 0;
+      const paid = Number(lp.paidAmount) || 0;
+      const pending = Math.max(total - paid, 0);
+      const productNames = items.map((it) => it.itemName).filter(Boolean).join('; ');
+      const qty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+      return `${lp.lpCode || ''},${lp.invoiceNo || ''},${lp.createdAt?.toISOString().slice(0, 10)},${lp.vendorId?.name || lp.vendorName || ''},"${productNames}",${qty},${total},${lp.gstAmount || 0},${paid},${pending},${lp.paymentStatus || ''},${lp.dueDate?.toISOString().slice(0, 10) || ''}`;
+    }))
+    .join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename=local-purchase-report.csv');
   res.send(csv);
 });
 

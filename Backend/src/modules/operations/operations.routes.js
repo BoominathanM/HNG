@@ -14,6 +14,7 @@ router.patch('/orders/:id/status', ctrl.updateOrderStatus);
 router.post('/orders/:id/assign-task', ctrl.assignTask);
 router.post('/orders/:id/assign-tasks-per-product', ctrl.assignTasksPerProduct);
 router.patch('/orders/:id/emergency', ctrl.setOrderEmergency);
+router.patch('/orders/:id/lr-mismatch-decision', ctrl.decideLrMismatchOps);
 router.patch('/orders/:id/items/:itemKey/printing-status', ctrl.updateItemPrintingStatus);
 router.post('/orders/:id/partial-split', ctrl.splitPartialDelivery);
 
@@ -31,8 +32,8 @@ router.post('/stickers/:id/send-design-confirmation', ctrl.sendDesignConfirmatio
 router.get('/hotel-designs', ctrl.getHotelDesigns);
 router.post('/hotel-designs', ctrl.saveHotelDesign);
 
-// Packaging tab invoices (Sticker/Box/Ziplock/Butter Paper) — each :type is backed by its
-// own model/collection (see packagingInvoices.controller.js MODELS map).
+// Packaging tab invoices (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other) — each :type
+// is backed by its own model/collection (see packagingInvoices.controller.js MODELS map).
 router.get('/invoices/:type', invoiceCtrl.getPackagingInvoices);
 router.post('/invoices/:type', upload.single('invoice'), invoiceCtrl.uploadPackagingInvoice);
 

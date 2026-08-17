@@ -13,7 +13,7 @@ const orderItemSchema = new mongoose.Schema({
   qty: Number,
   lineTotal: Number,
   // ─── Operations / packaging fields ───
-  logoType: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'None', ''], default: '' },
+  logoType: { type: String, enum: ['Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'Wooden Brush', 'Other', 'None', ''], default: '' },
   // Normalize legacy/lowercase values (e.g. 'yes'/'no') to the enum BEFORE validation runs,
   // so converting older quotations/negotiations whose items stored 'yes' doesn't 500.
   sticker: {
@@ -108,7 +108,7 @@ const orderSchema = new mongoose.Schema({
   expectedDeliveryDate: Date,
   items: [orderItemSchema],
   // Resolved from selected display unit's tabMapping (Box | Ziplock | Sticker | Butter Paper)
-  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', 'Butter Paper', ''], default: '' },
+  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', 'Butter Paper', 'Wooden Brush', 'Other', ''], default: '' },
   // Logo branding
   logoRequired: { type: Boolean, default: false },
   logoUrl: String,
@@ -130,6 +130,31 @@ const orderSchema = new mongoose.Schema({
   emergencyApprovedAt: Date,
   emergencyTaskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
   emergencyReason: String,
+  // Dispatch LR transport-name mismatch (AI-scanned lorry receipt vs. the manually entered
+  // transport name) — flagged for the assigned sales person to approve/reject from the Sales
+  // Orders tab. Weight is intentionally NOT cross-checked/tracked here, only transport name.
+  dispatchTransportMismatchStatus: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' },
+  dispatchTransportMismatchExpected: String,
+  dispatchTransportMismatchScanned: String,
+  dispatchTransportMismatchReportedAt: Date,
+  dispatchTransportMismatchDecidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  dispatchTransportMismatchDecidedAt: Date,
+  // Dispatch LR mismatch on fields OTHER than Weight/Transport Name (e.g. Packages/Boxes,
+  // Destination) — unlike the transport-name mismatch above (single sales sign-off, never
+  // blocking), this requires a reason + BOTH Sales and Operations to approve before the
+  // dispatcher can proceed with Finished Dispatch (see requestLrMismatchApproval).
+  dispatchLrMismatchStatus: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' },
+  dispatchLrMismatchReason: String,
+  dispatchLrMismatchFields: [String],
+  dispatchLrMismatchDetails: mongoose.Schema.Types.Mixed,
+  dispatchLrMismatchRequestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  dispatchLrMismatchRequestedAt: Date,
+  dispatchLrMismatchSalesApproved: { type: Boolean, default: false },
+  dispatchLrMismatchSalesApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  dispatchLrMismatchSalesApprovedAt: Date,
+  dispatchLrMismatchOpsApproved: { type: Boolean, default: false },
+  dispatchLrMismatchOpsApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  dispatchLrMismatchOpsApprovedAt: Date,
   // Delivery routing (copied from the originating lead/negotiation at conversion).
   deliveryBy: String,
   transportationBy: String,
@@ -178,6 +203,17 @@ const orderSchema = new mongoose.Schema({
   forwardingChargeAmount: { type: Number, default: 0 },
   paymentProofs: [mongoose.Schema.Types.Mixed],
   splitDates: [mongoose.Schema.Types.Mixed],
+  // Field-level audit trail for order edits (see utils/orderEditHistory.js), rendered as the
+  // Activity Timeline card in Sales' Order Detail view. Declared explicitly (rather than left
+  // to strict:false) so it reliably round-trips like the other previously-implicit fields above.
+  editHistory: [{
+    field: String,
+    oldValue: String,
+    newValue: String,
+    changedAt: { type: Date, default: Date.now },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    changedByName: String,
+  }],
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

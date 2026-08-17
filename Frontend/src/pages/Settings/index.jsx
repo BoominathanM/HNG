@@ -38,7 +38,7 @@ const { Option } = Select;
 
 const MODULES = [
   'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
-  'Staff Management', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing', 'Parties & Ledger',
+  'Staff Management', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing', 'Ledgers',
   'Financial', 'Expenses', 'Reports', 'Notifications', 'Integration', 'Settings',
 ];
 
@@ -53,7 +53,7 @@ const MODULE_PERM_TYPES = {
   Purchase: ['read', 'add', 'edit', 'delete'],
   'Vendors & Suppliers': ['read', 'add', 'edit', 'delete'],
   Billing: ['read', 'add', 'edit', 'delete'],
-  'Parties & Ledger': ['read', 'add', 'edit', 'delete'],
+  Ledgers: ['read', 'add', 'edit', 'delete'],
   Financial: ['read', 'add', 'edit', 'delete'],
   Expenses: ['read', 'add', 'edit', 'delete'],
   Reports: ['read'],
@@ -67,7 +67,7 @@ const MODULE_PERM_TYPES = {
 // renders (and what useTabAccess() enforces).
 const MODULE_TABS = MODULE_TAB_DEFS;
 
-const VENDOR_ROLES = ['Sticker', 'Box', 'Ziplock', 'Butter Paper'];
+const VENDOR_ROLES = ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'];
 
 const DEPT_ROLES = {
   Admin: ['Admin'],
@@ -76,7 +76,7 @@ const DEPT_ROLES = {
   'Task Management': ['Task Management Executive', 'Task Management Manager', 'Task Management Head'],
   Dispatch: ['Dispatch Executive', 'Dispatch Manager', 'Dispatch Head'],
   Finance: ['Finance Executive', 'Finance Manager', 'Finance Head'],
-  Vendors: ['Sticker', 'Box', 'Ziplock', 'Butter Paper'],
+  Vendors: ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'],
 };
 
 const ALL_PERMS = { read: true, add: true, edit: true, delete: true };
@@ -1478,7 +1478,7 @@ export default function Settings() {
                     />
                     <Select value={deletedModuleFilter} onChange={setDeletedModuleFilter} style={{ width: 180 }}>
                       <Option value="all">All Modules</Option>
-                      <Option value="Parties & Ledger">Parties & Ledger</Option>
+                      <Option value="Ledgers">Ledgers</Option>
                       <Option value="Sales Team">Sales Team</Option>
                       <Option value="Billing">Billing</Option>
                       <Option value="Inventory">Inventory</Option>

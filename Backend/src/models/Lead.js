@@ -20,6 +20,10 @@ const leadSchema = new mongoose.Schema({
   leadCode: { type: String, unique: true },
 
   // Hotel / Company info
+  // Business category (Hotel/Hospital/custom) — drives the dynamic "Hotel Name"/"Hospital
+  // Name"/"Hotel Logo" labels on the Lead form and the Leads/Orders category filters.
+  // Not enum-restricted: new values are added via the Settings dropdown-options store (SelectWithAdd).
+  category: { type: String, default: 'Hotel', trim: true },
   hotelName: { type: String, required: [true, 'Hotel/Company name is required'], trim: true },
   branch: String,
   hotelType: { type: String, enum: ['OLD', 'NEW'], default: 'OLD' },
@@ -34,6 +38,7 @@ const leadSchema = new mongoose.Schema({
   altName: String,
   altNumber: String,
   email: { type: String, lowercase: true },
+  landlineNumber: String,
   locationCity: String,
   location: String,
   destination: String,
@@ -95,7 +100,7 @@ const leadSchema = new mongoose.Schema({
   specifications: [mongoose.Schema.Types.Mixed],
   productType: mongoose.Schema.Types.Mixed,
   displayUnit: String,
-  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', 'Butter Paper', ''], default: '' },
+  displayUnitTab: { type: String, enum: ['Box', 'Ziplock', 'Sticker', 'Butter Paper', 'Wooden Brush', 'Other', ''], default: '' },
   packingMaterial: String,
   kitDisplayUnit: String,
   kitSize: String,
@@ -135,5 +140,6 @@ const leadSchema = new mongoose.Schema({
 leadSchema.index({ status: 1, deletedAt: 1 });
 leadSchema.index({ assignedTo: 1, deletedAt: 1 });
 leadSchema.index({ hotelName: 1, deletedAt: 1 });
+leadSchema.index({ category: 1, deletedAt: 1 });
 
 module.exports = mongoose.model('Lead', leadSchema);

@@ -10,7 +10,7 @@ const stickerRequestSchema = new mongoose.Schema({
   // Separate Kit and once as Personalized (a separate kit packed inside a personalized outer unit).
   category: { type: String, default: '' },
   // queue this request belongs to ('Display Unit' = kit packaging approval, not a sticker)
-  stickerType: { type: String, enum: ['Product', 'Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'Display Unit'], default: 'Sticker' },
+  stickerType: { type: String, enum: ['Product', 'Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'Wooden Brush', 'Other', 'Display Unit'], default: 'Sticker' },
   quantity: Number,
   stickerSize: String,
   designFileUrl: String,

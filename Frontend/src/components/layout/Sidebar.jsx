@@ -29,7 +29,7 @@ const ALL_MENU_ITEMS = [
   { key: '/purchase', icon: <ShoppingOutlined />, label: 'Purchase', module: 'Purchase' },
   { key: '/vendors-suppliers', icon: <ContactsOutlined />, label: 'Vendors & Suppliers', module: 'Vendors & Suppliers' },
   { key: '/billing', icon: <DollarOutlined />, label: 'Billing', module: 'Billing' },
-  { key: '/parties-ledger', icon: <BookOutlined />, label: 'Parties & Ledger', module: 'Parties & Ledger' },
+  { key: '/parties-ledger', icon: <BookOutlined />, label: 'Ledgers', module: 'Ledgers' },
   { key: '/financial', icon: <BankOutlined />, label: 'Financial', module: 'Financial' },
   { key: '/expenses', icon: <DollarOutlined />, label: 'Expenses', module: 'Expenses' },
   { key: '/reports', icon: <BarChartOutlined />, label: 'Reports', module: 'Reports' },

@@ -41,7 +41,7 @@ import {
   useUpdateCompanySettingsMutation,
 } from '../../store/api/apiSlice';const MODULES = [
   'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
-  'Staff Management', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing', 'Parties & Ledger',
+  'Staff Management', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing', 'Ledgers',
   'Financial', 'Expenses', 'Reports', 'Notifications', 'Integration', 'Settings',
 ];
 
@@ -56,7 +56,7 @@ const MODULE_PERM_TYPES = {
   Purchase: ['read', 'add', 'edit', 'delete'],
   'Vendors & Suppliers': ['read', 'add', 'edit', 'delete'],
   Billing: ['read', 'add', 'edit', 'delete'],
-  'Parties & Ledger': ['read', 'add', 'edit', 'delete'],
+  Ledgers: ['read', 'add', 'edit', 'delete'],
   Financial: ['read', 'add', 'edit', 'delete'],
   Expenses: ['read', 'add', 'edit', 'delete'],
   Reports: ['read'],
@@ -116,7 +116,7 @@ export default function VendorsSuppliers() {
 
   const [viewVendor, setViewVendor] = useState(null);
   // Bills for this vendor, merged across PurchaseOrder and LocalPurchase (the two
-  // separate collections vendor spend is split across) — same source as Parties & Ledger.
+  // separate collections vendor spend is split across) — same source as Ledgers.
   const { data: vendorLedgerData } = useGetVendorLedgerQuery(viewVendor?.id, { skip: !viewVendor?.id });
   const vendorHistoryRaw = useMemo(() => (vendorLedgerData?.bills || []).map((b) => ({
     key: b._id,
@@ -184,7 +184,7 @@ export default function VendorsSuppliers() {
   const [purchaseExpenses, setPurchaseExpenses] = useState([]);  /* ── Vendor users (from Settings > Users with dept = Vendors) ── */
   const vendorUsers = useMemo(() => {
     const all = usersData?.data || [];
-    return all.filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper'].includes(u.role));
+    return all.filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(u.role));
   }, [usersData]);
 
   /* ── Company settings (for automation vendors) ── */
@@ -219,7 +219,7 @@ export default function VendorsSuppliers() {
 
   const getRolesForDept = (dept) => {
     if (!dept) return [];
-    const defaults = ['Sticker', 'Box', 'Ziplock', 'Butter Paper'];
+    const defaults = ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'];
     const allUsers = usersData?.data || [];
     const dbRoles = allUsers
       .filter(u => u.department === dept)
@@ -630,6 +630,8 @@ export default function VendorsSuppliers() {
                               { value: 'Box', label: 'Box' },
                               { value: 'Ziplock', label: 'Ziplock' },
                               { value: 'Butter Paper', label: 'Butter Paper' },
+                              { value: 'Wooden Brush', label: 'Wooden Brush' },
+                              { value: 'Other', label: 'Other' },
                             ]}
                           />
                           <DatePicker.RangePicker
@@ -657,12 +659,12 @@ export default function VendorsSuppliers() {
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 12 }}>
                             Select one automation vendor per type — tasks will be auto-assigned to them for Sticker / Box / Ziplock orders.
                           </Text>
-                          {['Sticker', 'Box', 'Ziplock', 'Butter Paper'].map(type => {
+                          {['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].map(type => {
                             const typeUsers = vendorUsers.filter(u => u.role === type);
                             if (!typeUsers.length) return null;
                             return (
                               <div key={type} style={{ marginBottom: 10 }}>
-                                <Tag color={type === 'Sticker' ? 'blue' : type === 'Box' ? 'green' : type === 'Butter Paper' ? 'gold' : 'orange'} style={{ marginBottom: 8, fontWeight: 600, borderRadius: 8 }}>{type}</Tag>
+                                <Tag color={type === 'Sticker' ? 'blue' : type === 'Box' ? 'green' : type === 'Butter Paper' ? 'gold' : type === 'Wooden Brush' ? 'volcano' : type === 'Other' ? 'default' : 'orange'} style={{ marginBottom: 8, fontWeight: 600, borderRadius: 8 }}>{type}</Tag>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                                   {typeUsers.map(u => {
                                     const isAuto = automationVendors[type] === u._id;
@@ -719,7 +721,7 @@ export default function VendorsSuppliers() {
                           {
                             title: 'Type', dataIndex: 'type', width: 100,
                             render: (v) => (
-                              <Tag color={v === 'Sticker' ? 'blue' : v === 'Box' ? 'green' : 'orange'} style={{ borderRadius: 10, fontWeight: 600 }}>{v}</Tag>
+                              <Tag color={v === 'Sticker' ? 'blue' : v === 'Box' ? 'green' : v === 'Wooden Brush' ? 'volcano' : v === 'Other' ? 'default' : 'orange'} style={{ borderRadius: 10, fontWeight: 600 }}>{v}</Tag>
                             ),
                           },
                           { title: 'Name', dataIndex: 'name', width: 180, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
@@ -746,7 +748,7 @@ export default function VendorsSuppliers() {
         title={
           viewPrintingSupplier && (
             <Space>
-              <Tag color={viewPrintingSupplier.type === 'Sticker' ? 'blue' : viewPrintingSupplier.type === 'Box' ? 'green' : 'orange'} style={{ borderRadius: 10, fontWeight: 700 }}>{viewPrintingSupplier.type}</Tag>
+              <Tag color={viewPrintingSupplier.type === 'Sticker' ? 'blue' : viewPrintingSupplier.type === 'Box' ? 'green' : viewPrintingSupplier.type === 'Wooden Brush' ? 'volcano' : viewPrintingSupplier.type === 'Other' ? 'default' : 'orange'} style={{ borderRadius: 10, fontWeight: 700 }}>{viewPrintingSupplier.type}</Tag>
               <Text strong style={{ fontSize: 16 }}>{viewPrintingSupplier.name}</Text>
             </Space>
           )

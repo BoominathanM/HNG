@@ -17,7 +17,7 @@ import {
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
   WarningOutlined, ExclamationCircleOutlined, DollarOutlined, AlertFilled, ExperimentOutlined,
-  AppstoreOutlined, LoadingOutlined, DeleteOutlined,
+  AppstoreOutlined, LoadingOutlined, DeleteOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -29,6 +29,7 @@ import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import {
   useGetLeadsQuery,
+  useGetOptionsQuery,
   useGetSalesQuotationsQuery,
   useGetNegotiationsQuery,
   useUpdateNegotiationMutation,
@@ -73,6 +74,8 @@ import {
   useGetPackingConfigQuery,
   useApproveEmergencySalesHeadMutation,
   useGetEmergencyRequestsQuery,
+  useDecideTransportMismatchMutation,
+  useDecideLrMismatchSalesMutation,
   useLazyVerifyGstinQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
@@ -1295,7 +1298,7 @@ function ItemAttachmentsUpload({ namePath, restField = {}, disabled = false, lab
   );
 }
 
-function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], inventoryItemsData = [], kits = [], packingMaterialOptions = PACKING_MATERIAL_OPTIONS }) {
+function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isDark, inventoryItems = [], inventoryItemsData = [], kits = [], packingMaterialOptions = PACKING_MATERIAL_OPTIONS, minQty, qtyLocked = false }) {
   const { name, key, ...rest } = field;
   const isKit = Form.useWatch([fieldName, name, 'isKit']);
   const kitType = Form.useWatch([fieldName, name, 'kitType']);
@@ -1678,9 +1681,24 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
               <Row gutter={8}>
                 <Col span={8}>
                   <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY</Text>
-                  <Form.Item {...rest} name={[name, 'qty']} rules={[{ required: true, message: '!' }]} style={{ marginBottom: 0 }}>
-                    <InputNumber placeholder="Qty" style={{ width: '100%' }} min={0} disabled={isItemDisabled} size="small" />
+                  <Form.Item
+                    {...rest}
+                    name={[name, 'qty']}
+                    rules={[
+                      { required: true, message: '!' },
+                      {
+                        validator: (_, val) => (minQty > 0 && (Number(val) || 0) < minQty)
+                          ? Promise.reject(new Error(`Can't go below ${minQty} (already ordered)`))
+                          : Promise.resolve(),
+                      },
+                    ]}
+                    style={{ marginBottom: 0 }}
+                  >
+                    <InputNumber placeholder="Qty" style={{ width: '100%' }} min={minQty > 0 ? minQty : 0} disabled={isItemDisabled} size="small" />
                   </Form.Item>
+                  {minQty > 0 && (
+                    <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>Ordered: {minQty} · increase only</div>
+                  )}
                   {invItem && (
                     <div style={{
                       fontSize: 10,
@@ -1756,7 +1774,9 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 ) : (
                   <Button type="text" icon={<CheckOutlined />} onClick={() => setIsLocalEdit(false)} size="small" style={{ color: '#52c41a' }} />
                 )}
-                <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} size="small" />
+                {!qtyLocked && (
+                  <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)} size="small" />
+                )}
               </Space>
             </Col>
           )}
@@ -1879,7 +1899,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   );
 }
 
-function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false, inventoryItems = [], inventoryItemsData = [], kits = [], packingMaterialOptions = PACKING_MATERIAL_OPTIONS }) {
+function ProductFormList({ fieldName = 'products', disabled = false, showSpecs = false, inventoryItems = [], inventoryItemsData = [], kits = [], packingMaterialOptions = PACKING_MATERIAL_OPTIONS, minQtyByIndex = [] }) {
   const isDark = useSelector((s) => s.theme.isDark);
   return (
     <Form.List name={fieldName}>
@@ -1899,6 +1919,8 @@ function ProductFormList({ fieldName = 'products', disabled = false, showSpecs =
               inventoryItemsData={inventoryItemsData}
               kits={kits}
               packingMaterialOptions={packingMaterialOptions}
+              minQty={minQtyByIndex[index]}
+              qtyLocked={index < minQtyByIndex.length}
             />
           ))}
           {!disabled && (
@@ -2182,9 +2204,12 @@ export default function Sales() {
   const [searchText, setSearchText] = useState('');
   const [dateRange, setDateRange] = useState(null);
   const [leadStatusFilter, setLeadStatusFilter] = useState(null);
+  const [leadCategoryFilter, setLeadCategoryFilter] = useState(null);
   const [leadsPage, setLeadsPage] = useState(1);
   const [leadsPageSize, setLeadsPageSize] = useState(10);
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
+  const [orderCategoryFilter, setOrderCategoryFilter] = useState(null);
+  const [orderNatureFilter, setOrderNatureFilter] = useState(null);
   const [quotStatusFilter, setQuotStatusFilter] = useState(null);
   const [reminderTypeFilter, setReminderTypeFilter] = useState(null);
   const [complaintStatusFilter, setComplaintStatusFilter] = useState(null);
@@ -2200,6 +2225,8 @@ export default function Sales() {
   const [quotDateRange, setQuotDateRange] = useState(null);
   const [reminderDateRange, setReminderDateRange] = useState(null);
   const [customerDateRange, setCustomerDateRange] = useState(null);
+  const [customerCategoryFilter, setCustomerCategoryFilter] = useState(null);
+  const [viewPartyInfo, setViewPartyInfo] = useState(null);
   const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
 
@@ -2534,6 +2561,7 @@ export default function Sales() {
       state: order.state || '',
       pincode: order.pincode || '',
       gstNumber: order.gstNumber || '',
+      category: order.category || undefined,
       hotelType: order.hotelType || undefined,
       rooms: order.rooms || order.numRooms || order.rowsInHotel || undefined,
       occupancy: order.occupancy || order.generalOccupancy || undefined,
@@ -2673,6 +2701,7 @@ export default function Sales() {
         state: vals.state || orderEditTarget.state,
         pincode: vals.pincode || orderEditTarget.pincode,
         gstNumber: vals.gstNumber || orderEditTarget.gstNumber,
+        category: vals.category || orderEditTarget.category,
         hotelType: vals.hotelType || orderEditTarget.hotelType,
         rooms: vals.rooms ?? orderEditTarget.rooms,
         occupancy: vals.occupancy ?? orderEditTarget.occupancy,
@@ -2744,6 +2773,7 @@ export default function Sales() {
           state: updated.state,
           pincode: updated.pincode,
           gstNumber: updated.gstNumber,
+          category: updated.category || undefined,
           hotelType: updated.hotelType || undefined,
           rooms: updated.rooms || undefined,
           occupancy: updated.occupancy || undefined,
@@ -3179,6 +3209,8 @@ export default function Sales() {
 
   // Watched values for conditional rendering
   const watchedBillType = Form.useWatch('billType', leadForm);
+  const watchedCategory = Form.useWatch('category', leadForm);
+  const categoryLabel = watchedCategory || 'Hotel';
   const watchedHotelType = Form.useWatch('hotelType', leadForm);
   const watchedLeadType = Form.useWatch('leadType', leadForm);
   const watchedShippingSameAsBilling = Form.useWatch('shippingSameAsBilling', leadForm);
@@ -3309,7 +3341,7 @@ export default function Sales() {
     }
   };
 
-  const { data: leadsRaw } = useGetLeadsQuery({ page: leadsPage, limit: leadsPageSize, ...(leadStatusFilter ? { status: leadStatusFilter } : {}) });
+  const { data: leadsRaw } = useGetLeadsQuery({ page: leadsPage, limit: leadsPageSize, ...(leadStatusFilter ? { status: leadStatusFilter } : {}), ...(leadCategoryFilter ? { category: leadCategoryFilter } : {}) });
   const { data: quotationsRaw } = useGetSalesQuotationsQuery();
   const { data: negotiationsRaw } = useGetNegotiationsQuery();
   const { data: ordersRaw } = useGetSalesOrdersQuery({ limit: 500 });
@@ -3326,10 +3358,20 @@ export default function Sales() {
   });
   const { data: partiesRaw } = useGetPartiesQuery();
   const { data: remindersRaw } = useGetRemindersQuery();
-  const { data: hotelNamesRaw } = useGetHotelNamesQuery();
+  // Scoped to the selected Category so the "Old Hotel/Hospital" name list only ever
+  // shows names that belong to that category (existing pre-feature leads default to 'Hotel').
+  const { data: hotelNamesRaw } = useGetHotelNamesQuery({ category: watchedCategory || 'Hotel' });
+  const { data: categoryOptionsRaw } = useGetOptionsQuery({ field: 'category' });
   const [lookupHotel] = useLazyLookupHotelQuery();
   const remindersData = remindersRaw?.data || [];
   const hotelNameOptions = (hotelNamesRaw?.data || []).map((n) => ({ value: n, label: n }));
+  // Category filter choices: the two defaults plus any custom values added via the
+  // Add Lead form's Category dropdown (persisted through the same DropdownOption store).
+  const categoryFilterOptions = React.useMemo(() => {
+    const map = new Map([['Hotel', 'Hotel'], ['Hospital', 'Hospital']]);
+    (categoryOptionsRaw?.data || []).forEach((o) => { if (o?.value) map.set(o.value, o.label || o.value); });
+    return Array.from(map, ([value, label]) => ({ value, label }));
+  }, [categoryOptionsRaw]);
   const { data: perfRaw, isLoading: perfLoading } = useGetMyPerformanceQuery();
   const { data: staffRaw } = useGetStaffQuery();
   const { data: usersRaw } = useGetUsersQuery({ limit: 1000 });
@@ -3355,7 +3397,11 @@ export default function Sales() {
   const kits = kitsRaw?.data || [];
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
   const { data: itemsRaw } = useGetItemsQuery({ limit: 1000 });
-  const inventoryItemsRaw = itemsRaw?.data || [];
+  // 'bulk' raw-material items (e.g. "Coconut Oil - Bulk") are never directly sellable —
+  // only their linked 'filled' per-piece items (e.g. "Coconut Oil 10ml") are. Excluding them
+  // here keeps a bulk item's stock pool from being drawn down by an order line directly,
+  // which would corrupt the Fill Stock math that also draws from the same currentStock.
+  const inventoryItemsRaw = (itemsRaw?.data || []).filter((i) => i.itemType !== 'bulk');
   const inventoryItems = React.useMemo(() => {
     const nameCount = {};
     inventoryItemsRaw.forEach(i => { nameCount[i.itemName] = (nameCount[i.itemName] || 0) + 1; });
@@ -3551,6 +3597,12 @@ export default function Sales() {
   const [emergencySalesApprovalOrder, setEmergencySalesApprovalOrder] = useState(null);
   const [approvingEmergencyTaskId, setApprovingEmergencyTaskId] = useState(null);
   const [approvingAllEmergency, setApprovingAllEmergency] = useState(false);
+  const [decideTransportMismatch] = useDecideTransportMismatchMutation();
+  const [transportMismatchOrder, setTransportMismatchOrder] = useState(null);
+  const [decidingTransportMismatch, setDecidingTransportMismatch] = useState(false);
+  const [decideLrMismatchSales] = useDecideLrMismatchSalesMutation();
+  const [lrMismatchOrder, setLrMismatchOrder] = useState(null);
+  const [decidingLrMismatch, setDecidingLrMismatch] = useState(false);
   const { data: emergencyRequestsRaw } = useGetEmergencyRequestsQuery();
   // Group active emergency-dispatch requests by order — an order can hold several
   // products, each raised as its own request, so this must be a list per order key,
@@ -3800,6 +3852,7 @@ export default function Sales() {
         state: o.state || o.leadId?.state,
         pincode: o.pincode || o.leadId?.pincode,
         destination: o.destination || o.leadId?.destination,
+        category: o.category || o.leadId?.category,
         hotelType: o.hotelType || o.leadId?.hotelType,
         rooms: o.rooms ?? o.numRooms ?? o.rowsInHotel ?? o.leadId?.rowsInHotel ?? o.leadId?.numRooms ?? o.leadId?.rooms,
         occupancy: o.occupancy ?? o.generalOccupancy ?? o.leadId?.generalOccupancy ?? o.leadId?.occupancy,
@@ -3849,6 +3902,20 @@ export default function Sales() {
         // that raised "Emergency Dispatch" in Task Management), most recent first.
         emergencyRequests: emergencyRequestsByOrder[o._id] || [],
         orderCategory: (o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE') ? 'SAMPLE' : (o.orderCategory || 'ORDER'),
+        // Dispatch LR transport-name mismatch — flagged by Dispatch when the AI-scanned
+        // lorry receipt's transport name doesn't match what was manually entered; Sales
+        // approves/rejects it here (see Actions column + modal below).
+        transportMismatchStatus: o.dispatchTransportMismatchStatus || 'none',
+        transportMismatchExpected: o.dispatchTransportMismatchExpected || '',
+        transportMismatchScanned: o.dispatchTransportMismatchScanned || '',
+        // Dispatch LR mismatch on fields OTHER than Weight/Transport Name (Packages/Boxes,
+        // Destination) — needs a reason + BOTH Sales and Operations to approve. This
+        // captures the Sales side; see Actions column + modal below.
+        lrMismatchStatus: o.dispatchLrMismatchStatus || 'none',
+        lrMismatchReason: o.dispatchLrMismatchReason || '',
+        lrMismatchFields: o.dispatchLrMismatchFields || [],
+        lrMismatchSalesApproved: !!o.dispatchLrMismatchSalesApproved,
+        lrMismatchOpsApproved: !!o.dispatchLrMismatchOpsApproved,
       };
     }));
   }, [ordersRaw, emergencyRequestsByOrder, leadsData]);
@@ -3973,7 +4040,7 @@ export default function Sales() {
   }, [viewMode, selectedRecord?.gstNumber, selectedRecord?.gstVerifiedData]);
 
   const newLeadDefaults = {
-    hotelType: 'OLD', billType: 'GST', forwardingCharge: false, forwardingChargeAmount: 0,
+    category: 'Hotel', hotelType: 'OLD', billType: 'GST', forwardingCharge: false, forwardingChargeAmount: 0,
     deliveryBy: 'HNG', transportationBy: 'CLIENT', paymentTerms: 'BEFORE_100',
     logoNeeded: false, shippingSameAsBilling: true,
     products: [],
@@ -4068,6 +4135,7 @@ export default function Sales() {
       locationCity: values.location,
       location: values.location,
       salesPerson: values.salesPerson,
+      category: values.category,
       hotelType: values.hotelType,
       numRooms: Number(values.rowsInHotel) || undefined,
       generalOccupancy: Number(values.generalOccupancy) || undefined,
@@ -4348,6 +4416,7 @@ export default function Sales() {
             name: payload.hotelName || payload.billingName,
             phone: payload.phone,
             type: 'Customer',
+            category: payload.category,
             gstNumber: payload.gstNumber,
             gstVerifiedData: gstAddApiData || undefined,
             contactPerson: payload.contactPerson,
@@ -4375,7 +4444,7 @@ export default function Sales() {
     const now = new Date().toISOString();
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
     const fieldsBySection = {
-      hotel: ['hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
+      hotel: ['category', 'hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'landlineNumber', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
       billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber', 'gstPhone'],
       shipping: ['shippingSameAsBilling', 'shippingAddress', 'shippingCity', 'shippingState', 'shippingPincode'],
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
@@ -4507,7 +4576,7 @@ export default function Sales() {
       customerId: null,
       hotelName: lead.hotelName, billingName: lead.billingName, location: lead.location,
       contactPerson: lead.contactPerson, phone: lead.phone,
-      hotelType: lead.hotelType, billType: lead.billType, gstNumber: lead.gstNumber,
+      category: lead.category, hotelType: lead.hotelType, billType: lead.billType, gstNumber: lead.gstNumber,
       salesPerson: lead.salesPerson,
       products: (lead.products || []).map(p => ({ ...p })),
       forwardingCharge: lead.forwardingCharge, forwardingChargeAmount: lead.forwardingChargeAmount || 0,
@@ -4568,6 +4637,7 @@ export default function Sales() {
         phone: lead.phone,
         email: lead.email,
         salesPerson: lead.salesPerson,
+        category: lead.category,
         hotelType: lead.hotelType,
         gstNumber: lead.gstNumber,
         forwardingCharge: lead.forwardingCharge,
@@ -4615,6 +4685,7 @@ export default function Sales() {
         clientName: lead.hotelName || lead.billingName,
         clientPartyId: lead.clientPartyId?._id || lead.clientPartyId,
         hotelName: lead.hotelName,
+        category: lead.category,
         hotelType: lead.hotelType,
         billingName: lead.billingName,
         location: lead.location,
@@ -4828,6 +4899,7 @@ export default function Sales() {
           alternativeRole: values.alternativeRole || src.alternativeRole || src.altRole,
           alternativePhone: values.alternativePhone || src.alternativePhone || src.altNumber,
           salesPerson: src.salesPerson || src.assignedTo?.fullName,
+          category: values.category || src.category,
           hotelType: values.hotelType || src.hotelType,
           gstNumber: values.gstNumber || src.gstNumber,
           gstPercent: src.gstPercent,
@@ -4905,6 +4977,12 @@ export default function Sales() {
     if (hay.includes('butter') || hay.includes('paper')) return 'Butter Paper';
     if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
     if (hay.includes('box')) return 'Box';
+    // Wooden Brush keyword match deliberately excludes materialCategory — that field can
+    // legitimately be 'Wooden' for an unrelated product (e.g. a wooden-handled brush) without
+    // its PACKAGING being wooden, so scanning it here (like `hay` does) would misroute orders
+    // that have nothing to do with wooden-brush packaging.
+    const packagingOnlyHay = `${p?.printing || ''} ${p?.packingMaterial || ''} ${p?.logoType || ''} ${kitDisplayUnit}`.toLowerCase();
+    if (packagingOnlyHay.includes('wooden') || packagingOnlyHay.includes('brush')) return 'Wooden Brush';
     // When sticker is explicitly No, don't infer 'Sticker' from keyword matching — the packing
     // material config tabMapping (resolved in Operations via packingMaterialTab) takes over routing.
     if (p?.sticker !== 'NO' && hay.includes('sticker')) return 'Sticker';
@@ -4961,14 +5039,50 @@ export default function Sales() {
   };
 
   // Old Hotel: auto-fetch existing hotel details (by name + branch) and prefill the lead form.
+  // Clear every auto-filled/looked-up field — used when Category or Hotel Type changes,
+  // since either one changes which pool of existing records "Old" lookup searches and
+  // stale data from the previous pool must not linger on the form.
+  const clearHotelLookupFields = () => {
+    leadForm.setFieldsValue({
+      hotelName: undefined,
+      billingName: undefined,
+      contactPerson: undefined,
+      pocDesignation: undefined,
+      phone: undefined,
+      email: undefined,
+      location: undefined,
+      destination: undefined,
+      gstNumber: undefined,
+      branch: undefined,
+      alternativeRole: undefined,
+      alternativeName: undefined,
+      alternativePhone: undefined,
+      generalOccupancy: undefined,
+      rowsInHotel: undefined,
+      hotelLogo: [],
+      detailedAddress: undefined,
+      city: undefined,
+      state: undefined,
+      pincode: undefined,
+      shippingAddress: undefined,
+      shippingCity: undefined,
+      shippingState: undefined,
+      shippingPincode: undefined,
+      shippingSameAsBilling: true,
+      billType: 'GST',
+      gstPhone: undefined,
+    });
+  };
+
   const handleOldHotelLookup = async () => {
     const hotelType = leadForm.getFieldValue('hotelType');
     if (hotelType !== 'OLD') return;
     const name = leadForm.getFieldValue('hotelName');
     const branch = leadForm.getFieldValue('branch');
+    const category = leadForm.getFieldValue('category') || 'Hotel';
     if (!name) return;
     try {
-      const res = await lookupHotel({ name, branch }).unwrap();
+      const res = await lookupHotel({ name, branch, category }).unwrap();
       const d = res?.data;
       if (d) {
         leadForm.setFieldsValue({
@@ -5108,6 +5222,7 @@ export default function Sales() {
       phone: q.phone,
       email: q.email,
       salesPerson: q.salesPerson,
+      category: q.category,
       hotelType: q.hotelType,
       gstNumber: q.gstNumber,
       gstPercent: q.gstPercent,
@@ -5180,6 +5295,7 @@ export default function Sales() {
         clientName: order.clientName || order.hotelName,
         clientPartyId: order.clientPartyId?._id || order.clientPartyId,
         hotelName: order.hotelName,
+        category: order.category,
         hotelType: order.hotelType,
         billingName: order.billingName,
         location: order.location,
@@ -5232,6 +5348,99 @@ export default function Sales() {
       setActiveTab('orders');
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create sample order', { variant: 'error' });
+    }
+  };
+
+  // Creates a fresh order carrying over everything from the source order (qty, specs, kit
+  // config) EXCEPT each product's price — that's refreshed to the item's CURRENT inventory
+  // selling price (same inventoryItemId-first, then name, lookup used when a product is picked
+  // from Inventory — see ProductItem's `invItem` resolution above). The original order is untouched.
+  const reorderOrder = async (order) => {
+    try {
+      let priceChanges = 0;
+      const reorderProducts = (order.products || []).filter(Boolean).map(p => {
+        const lookupKey = p.kitType || p.name;
+        const invItem = p.inventoryItemId
+          ? inventoryItemsRaw.find(i => String(i._id) === String(p.inventoryItemId))
+          : (lookupKey ? inventoryItemsRaw.find(i => i.itemName === lookupKey) : undefined);
+        const oldRate = Number(p.rate) || 0;
+        const currentRate = invItem?.sellingPrice != null ? Number(invItem.sellingPrice) : oldRate;
+        if (currentRate !== oldRate) priceChanges++;
+        return { ...p, rate: currentRate };
+      });
+      const subtotal = r2(calcTotal(reorderProducts));
+      const gstAmt = r2(calcGstAmount(reorderProducts));
+      // Kit rows' rates feed kitOrderValue's rowsSum, so a refreshed rate here already flows
+      // into the kit-aware total below — kitOrders itself (overallQty, kitPrice) is untouched.
+      const kitAwareTotal = r2(computeRecordGrandTotal({
+        products: reorderProducts,
+        kitOrders: order.kitOrders || [],
+        forwardingCharge: order.forwardingCharge,
+        forwardingChargeAmount: order.forwardingChargeAmount || 0,
+      }));
+      const grandTotal = kitAwareTotal > 0 ? kitAwareTotal : subtotal + gstAmt;
+      const payload = {
+        clientName: order.clientName || order.hotelName,
+        clientPartyId: order.clientPartyId?._id || order.clientPartyId,
+        hotelName: order.hotelName,
+        category: order.category,
+        hotelType: order.hotelType,
+        billingName: order.billingName,
+        location: order.location,
+        clientPhone: order.clientPhone || order.phone,
+        phone: order.phone || order.clientPhone,
+        contactPerson: order.contactPerson,
+        salesPerson: order.salesPerson,
+        gstNumber: order.gstNumber,
+        gstPercent: order.gstPercent,
+        billType: order.billType,
+        detailedAddress: order.detailedAddress,
+        city: order.city,
+        state: order.state,
+        pincode: order.pincode,
+        products: reorderProducts,
+        // Operations reads order.items — map products so reordered products show there too
+        items: reorderProducts.map(p => mapOrderItem(p, order.kitDisplayUnit || order.displayUnit || '')),
+        totalAmount: subtotal,
+        gstAmount: gstAmt,
+        total: grandTotal,
+        orderCategory: order.orderCategory === 'SAMPLE' ? 'SAMPLE' : 'ORDER',
+        status: 'In Production',
+        logoRequired: order.logoRequired,
+        logoUrl: order.logoUrl,
+        displayUnit: order.displayUnit,
+        kitDisplayUnit: order.kitDisplayUnit,
+        displayUnitTab: order.displayUnitTab,
+        packingMaterial: order.packingMaterial,
+        selectedKit: order.selectedKit,
+        selectedKits: order.selectedKits || [],
+        kitOrders: order.kitOrders || [],
+        packagingIncludes: order.packagingIncludes || [],
+        packagingIncludesQty: order.packagingIncludesQty || {},
+        kitSize: order.kitSize,
+        kitSticker: order.kitSticker || undefined,
+        kitLogo: order.kitLogo || undefined,
+        kitPrinting: order.kitPrinting || undefined,
+        kitPrice: order.kitPrice != null ? Number(order.kitPrice) : undefined,
+        kitOverallQty: order.kitOverallQty,
+        productType: order.productType,
+        deliveryBy: order.deliveryBy,
+        transportationBy: order.transportationBy,
+        forwardingCharge: order.forwardingCharge,
+        forwardingChargeAmount: order.forwardingChargeAmount || 0,
+        expectedDeliveryDate: order.expectedDeliveryDate,
+      };
+      await createSalesOrderMutation(payload).unwrap();
+      enqueueSnackbar(
+        priceChanges > 0
+          ? `Reorder created! ${priceChanges} item${priceChanges > 1 ? 's' : ''} updated to current inventory price.`
+          : 'Reorder created with the same items and prices!',
+        { variant: 'success' }
+      );
+      setViewMode('table');
+      setActiveTab('orders');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to create reorder', { variant: 'error' });
     }
   };
 
@@ -5412,6 +5621,16 @@ export default function Sales() {
   const openNegotiationDetail = (n) => { setSelectedRecord(n); setViewMode('negotiation-detail'); };
   const openOrderDetail = (o) => { setSelectedRecord(o); setViewMode('order-detail'); };
 
+  // Party model only stores the essentials (name/phone/gst/address/category) — the richer
+  // hotel fields (branch, rooms, occupancy, POC designation, alt. contacts, destination) live
+  // on the originating Lead. Join by hotel name (same matching pattern used elsewhere in this
+  // file, e.g. ExpandedPartyOrders) so the eye-view shows the same "Hotel / Company Information"
+  // richness as the Lead/Order detail cards, without needing a backend change.
+  const openPartyInfo = (record) => {
+    const lead = leadsData.find(l => (l.hotelName || '').toLowerCase().trim() === (record.hotelName || '').toLowerCase().trim());
+    setViewPartyInfo({ ...lead, ...record });
+  };
+
   const editExistingQuotation = (q) => {
     setEditingQuotation(q);
     quotationForm.resetFields();
@@ -5580,6 +5799,10 @@ export default function Sales() {
       title: 'Hotel / Company', dataIndex: 'hotelName', width: 175,
       render: (v) => <Text strong style={{ color: textColor, fontSize: 13 }}>{v}</Text>,
     },
+    {
+      title: 'Category', dataIndex: 'category', width: 95,
+      render: (v) => <Tag color={v === 'Hospital' ? 'purple' : 'blue'} style={{ fontSize: 12 }}>{v || 'Hotel'}</Tag>,
+    },
     { title: 'Source', dataIndex: 'source', width: 110, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     { title: 'Assigned To', dataIndex: 'salesPerson', width: 115, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     { title: 'Follow Up Note', dataIndex: 'followUpName', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
@@ -5711,6 +5934,20 @@ export default function Sales() {
     { title: 'Phone', dataIndex: 'phone', width: 130, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Created At', dataIndex: 'createdAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
+    {
+      title: 'Action', key: 'action', width: 70, fixed: 'right',
+      render: (_, r) => (
+        <Tooltip title="View Hotel / Company Information">
+          <Button
+            size="small"
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={(e) => { e.stopPropagation(); openPartyInfo(r); }}
+            style={{ color: '#B11E6A', padding: 0 }}
+          />
+        </Tooltip>
+      ),
+    },
   ];
 
   const negotiationColumns = [
@@ -5911,6 +6148,10 @@ export default function Sales() {
       ),
     },
     { title: 'Hotel', dataIndex: 'hotelName', width: 175, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Category', dataIndex: 'category', width: 95,
+      render: (v) => <Tag color={v === 'Hospital' ? 'purple' : 'blue'} style={{ fontSize: 12 }}>{v || 'Hotel'}</Tag>,
+    },
     { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'GST Number', dataIndex: 'gstNumber', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     {
@@ -6047,6 +6288,47 @@ export default function Sales() {
             }
             return null;
           })()}
+          {r.transportMismatchStatus === 'pending' && (
+            <Tooltip title="The dispatch lorry receipt's transport name doesn't match what was entered — review and approve or reject.">
+              <Button
+                size="small"
+                danger
+                icon={<CarOutlined />}
+                style={{ fontWeight: 600 }}
+                onClick={(e) => { e.stopPropagation(); setTransportMismatchOrder(r); }}
+              >
+                Transport Mismatch
+              </Button>
+            </Tooltip>
+          )}
+          {r.transportMismatchStatus === 'approved' && (
+            <Tag color="success" style={{ fontSize: 11, margin: 0 }}>Transport Mismatch Approved</Tag>
+          )}
+          {r.transportMismatchStatus === 'rejected' && (
+            <Tag color="error" style={{ fontSize: 11, margin: 0 }}>Transport Mismatch Rejected</Tag>
+          )}
+          {r.lrMismatchStatus === 'pending' && !r.lrMismatchSalesApproved && (
+            <Tooltip title={`The dispatch lorry receipt's ${(r.lrMismatchFields || []).join(' / ') || 'details'} don't match what was entered — Operations approval is also required. Click to review.`}>
+              <Button
+                size="small"
+                danger
+                icon={<AlertFilled />}
+                style={{ fontWeight: 600 }}
+                onClick={(e) => { e.stopPropagation(); setLrMismatchOrder(r); }}
+              >
+                LR Mismatch — Review
+              </Button>
+            </Tooltip>
+          )}
+          {r.lrMismatchStatus === 'pending' && r.lrMismatchSalesApproved && !r.lrMismatchOpsApproved && (
+            <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>LR Mismatch: Awaiting Operations</Tag>
+          )}
+          {r.lrMismatchStatus === 'approved' && (
+            <Tag color="success" style={{ fontSize: 11, margin: 0 }}>LR Mismatch Approved</Tag>
+          )}
+          {r.lrMismatchStatus === 'rejected' && (
+            <Tag color="error" style={{ fontSize: 11, margin: 0 }}>LR Mismatch Rejected</Tag>
+          )}
           <Popconfirm
             title="Delete this order?"
             description="It will move to Settings → Deleted Records and can be restored anytime."
@@ -7458,6 +7740,7 @@ export default function Sales() {
         quotationCode: full.quotationId?.quotCode || base.quotationCode,
         negotiationCode: full.negotiationId?.negCode || base.negotiationCode,
         statusHistory: full.statusHistory || base.statusHistory || [],
+        editHistory: full.editHistory || base.editHistory || [],
         // Always carry paymentCollection from the richest source available
         paymentCollection: (full.paymentCollection?.length ? full.paymentCollection : null)
           || (base.paymentCollection?.length ? base.paymentCollection : null)
@@ -7499,6 +7782,7 @@ export default function Sales() {
         alternativeRole: base.alternativeRole || full.alternativeRole || lead.alternativeRole || lead.altRole,
         alternativePhone: base.alternativePhone || full.alternativePhone || lead.alternativePhone || lead.altNumber,
         destination: base.destination || full.destination || lead.destination,
+        category: base.category || full.category || lead.category,
         hotelType: base.hotelType || full.hotelType || lead.hotelType,
         rooms: base.rooms || full.rooms || lead.rooms || lead.numRooms || lead.rowsInHotel,
         occupancy: base.occupancy || full.occupancy || lead.occupancy || lead.generalOccupancy,
@@ -7645,6 +7929,18 @@ export default function Sales() {
                   </Button>
                 </Popconfirm>
               )}
+              <Popconfirm
+                title="Reorder this order?"
+                description="Creates a new order with the same products, quantities and specs — each item's price is refreshed to its CURRENT inventory selling price. Your original order stays unchanged."
+                onConfirm={() => reorderOrder(o)}
+                okText="Create Reorder"
+                cancelText="Cancel"
+                okButtonProps={{ style: { background: '#1677ff', borderColor: '#1677ff' } }}
+              >
+                <Button icon={<ReloadOutlined />} style={{ borderRadius: 8, color: '#1677ff', borderColor: '#1677ff55' }}>
+                  Reorder
+                </Button>
+              </Popconfirm>
               <Button
                 icon={<WarningOutlined />}
                 style={{ background: '#ff4d4f', color: '#fff', border: 'none', borderRadius: 8 }}
@@ -8455,6 +8751,29 @@ export default function Sales() {
                 )}
               </Card>
 
+              {/* Activity Timeline — field-level edit history (what changed, old → new, by whom, when) */}
+              <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><HistoryOutlined style={{ color: '#722ed1' }} /><span>Activity Timeline</span></Space>}>
+                {(o.editHistory || []).length === 0 ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>No edits recorded yet.</Text>
+                ) : (
+                  <Table
+                    size="small"
+                    pagination={{ pageSize: 8, size: 'small', hideOnSinglePage: true }}
+                    rowKey={(r, i) => `${r.field}-${r.changedAt}-${i}`}
+                    dataSource={[...(o.editHistory || [])].reverse()}
+                    scroll={{ x: 'max-content' }}
+                    columns={[
+                      { title: 'Date & Time', dataIndex: 'changedAt', width: 140, render: v => <Text style={{ fontSize: 12 }}>{fmtDateTimeShort(v)}</Text> },
+                      { title: 'Field', dataIndex: 'field', width: 150, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                      { title: 'Old Value', dataIndex: 'oldValue', render: v => <Text type="secondary" style={{ fontSize: 12, textDecoration: 'line-through' }}>{v}</Text> },
+                      { title: 'New Value', dataIndex: 'newValue', render: v => <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>{v}</Text> },
+                      { title: 'Edited By', dataIndex: 'changedByName', width: 130, render: v => <Text style={{ fontSize: 12 }}>{v || 'System'}</Text> },
+                    ]}
+                  />
+                )}
+              </Card>
+
               {/* GST API Details Card */}
               {o.gstNumber && (
                 <Card
@@ -8715,8 +9034,17 @@ export default function Sales() {
                       </Form.Item>
                       <Row gutter={16} style={{ marginTop: 10 }} align="bottom">
                         <Col xs={12} sm={5}>
-                          <Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 0 }} tooltip="Total number of kits ordered.">
-                            <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kit count" />
+                          <Form.Item label="Overall Qty" name="kitOverallQty" style={{ marginBottom: 0 }} tooltip="Total number of kits ordered."
+                            rules={[{
+                              validator: (_, val) => {
+                                const floor = Number(orderEditTarget?.kitOverallQty) || 0;
+                                return (floor > 0 && (Number(val) || 0) < floor)
+                                  ? Promise.reject(new Error(`Can't go below ${floor} (already ordered)`))
+                                  : Promise.resolve();
+                              },
+                            }]}
+                          >
+                            <InputNumber min={Math.max(1, Number(orderEditTarget?.kitOverallQty) || 0)} style={{ width: '100%' }} placeholder="Total kit count" />
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={9}>
@@ -8898,8 +9226,17 @@ export default function Sales() {
                               </Form.Item>
                             </Col>
                             <Col xs={12} sm={4}>
-                              <Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}>
-                                <InputNumber min={1} style={{ width: '100%' }} placeholder="Total kits" />
+                              <Form.Item label="Overall Qty" name={['kitOrders', kitIndex, 'overallQty']} style={{ marginBottom: 0 }}
+                                rules={[{
+                                  validator: (_, val) => {
+                                    const floor = Number(orderEditTarget?.kitOrders?.find(k => k?.kitId === kitId)?.overallQty) || 0;
+                                    return (floor > 0 && (Number(val) || 0) < floor)
+                                      ? Promise.reject(new Error(`Can't go below ${floor} (already ordered)`))
+                                      : Promise.resolve();
+                                  },
+                                }]}
+                              >
+                                <InputNumber min={Math.max(1, Number(orderEditTarget?.kitOrders?.find(k => k?.kitId === kitId)?.overallQty) || 0)} style={{ width: '100%' }} placeholder="Total kits" />
                               </Form.Item>
                             </Col>
                             <Col xs={12} sm={4}>
@@ -9123,7 +9460,9 @@ export default function Sales() {
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} /><ShoppingCartOutlined style={{ color: '#1890ff' }} /><span>Products & Specifications</span></Space>}>
                 <ProductHeaders />
-                <ProductFormList fieldName="editProducts" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} packingMaterialOptions={configPackingMaterialOptions} />
+                <ProductFormList fieldName="editProducts" showSpecs={true} inventoryItems={inventoryItems} inventoryItemsData={inventoryItemsRaw} kits={kits} packingMaterialOptions={configPackingMaterialOptions}
+                  minQtyByIndex={((orderEditTarget?.products?.length ? orderEditTarget.products : orderEditTarget?.items) || []).filter(Boolean).map(p => Number(p.qty) || 0)}
+                />
                 <Form.Item noStyle shouldUpdate>
                   {({ getFieldValue }) => {
                     const prods = getFieldValue('editProducts') || [];
@@ -10825,7 +11164,7 @@ export default function Sales() {
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
               {isDetail && record.hotelLogoUrl && (
-                <img src={record.hotelLogoUrl} alt="Hotel Logo" style={{ height: 48, maxWidth: 120, objectFit: 'contain', borderRadius: 8, border: '1px solid #B11E6A22', padding: 4, background: '#fff' }} />
+                <img src={record.hotelLogoUrl} alt={`${record.category || 'Hotel'} Logo`} style={{ height: 48, maxWidth: 120, objectFit: 'contain', borderRadius: 8, border: '1px solid #B11E6A22', padding: 4, background: '#fff' }} />
               )}
               {isDetail && (
                 <Space>
@@ -10842,7 +11181,7 @@ export default function Sales() {
               {isDetail && (
                 <Space>
                   <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>
-                    {record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}
+                    {record.hotelType === 'OLD' ? `Old ${record.category || 'Hotel'}` : `New ${record.category || 'Hotel'}`}
                   </Tag>
                   <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 12, fontSize: 12 }}>
                     {record.billType === 'GST' ? 'GST Bill' : 'Non-GST'}
@@ -10884,7 +11223,7 @@ export default function Sales() {
             {[
               { label: 'Total Value', value: `₹${totalValue.toLocaleString()}`, icon: <CreditCardOutlined /> },
               { label: 'Products', value: `${record.products?.length || 0} items`, icon: <ShoppingCartOutlined /> },
-              { label: 'Hotel Type', value: record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel', icon: <BankOutlined /> },
+              { label: `${record.category || 'Hotel'} Type`, value: record.hotelType === 'OLD' ? `Old ${record.category || 'Hotel'}` : `New ${record.category || 'Hotel'}`, icon: <BankOutlined /> },
               { label: 'Next Follow-up', value: record.followUpDate ? `${dayjs(record.followUpDate).format('DD MMM YYYY')}${record.followUpTime ? ' · ' + record.followUpTime : ''}` : 'Not set', icon: <HistoryOutlined /> },
             ].map((s, i) => (
               <Col xs={12} sm={6} key={i}>
@@ -10909,7 +11248,7 @@ export default function Sales() {
                     <span>Hotel / Company Information</span>
                   </Space>
                 }
-                extra={usePerCardEdit && (
+                extra={usePerCardEdit && currentUser?.role !== 'Sales Executive' && (
                   editingSection === 'hotel' ? (
                     <Space size="small">
                       <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('hotel')} style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -10923,10 +11262,11 @@ export default function Sales() {
                 {usePerCardEdit && editingSection !== 'hotel' ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ background: isDark ? 'transparent' : '#fff' }}>
-                      <Descriptions.Item label="Hotel / Company" span={1}>{record.hotelName}</Descriptions.Item>
+                      <Descriptions.Item label="Category" span={1}>{record.category || 'Hotel'}</Descriptions.Item>
+                      <Descriptions.Item label={`${record.category || 'Hotel'} / Company`} span={1}>{record.hotelName}</Descriptions.Item>
                       <Descriptions.Item label="Billing Name" span={1}>{record.billingName || '—'}</Descriptions.Item>
-                      <Descriptions.Item label="Hotel Type" span={1}>
-                        <Tag color={record.hotelType === 'OLD' ? 'blue' : 'green'}>{record.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}</Tag>
+                      <Descriptions.Item label={`${record.category || 'Hotel'} Type`} span={1}>
+                        <Tag color={record.hotelType === 'OLD' ? 'blue' : 'green'}>{record.hotelType === 'OLD' ? `Old ${record.category || 'Hotel'}` : `New ${record.category || 'Hotel'}`}</Tag>
                         {record.hotelType === 'NEW' && record.leadType && (
                           <Tag color="orange" style={{ marginLeft: 4 }}>{record.leadType}</Tag>
                         )}
@@ -10938,6 +11278,7 @@ export default function Sales() {
                       <Descriptions.Item label="POC Designation">{record.pocDesignation || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Phone">{record.phone || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Email">{record.email || '—'}</Descriptions.Item>
+                      <Descriptions.Item label="Landline Number">{record.landlineNumber || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Alt. Name">{record.alternativeName || record.altName || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Alt. Role">{record.alternativeRole || record.altRole || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Alt. Number">{record.alternativePhone || record.altNumber || '—'}</Descriptions.Item>
@@ -10976,58 +11317,44 @@ export default function Sales() {
                   </div>
                 ) : (
                   <Row gutter={16}>
-                    <Col xs={24} sm={6}>
-                      <Form.Item label="Hotel Type" name="hotelType" rules={[{ required: true }]}>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Category" name="category" rules={[{ required: true, message: 'Category is required' }]}>
+                        <SelectWithAdd
+                          field="category"
+                          defaultOptions={[{ value: 'Hotel', label: 'Hotel' }, { value: 'Hospital', label: 'Hospital' }]}
+                          placeholder="Select / Add Category"
+                          onChange={() => {
+                            // The Old-{Category} name list is scoped per category, so any name/details
+                            // already picked from the previous category's list no longer apply.
+                            clearHotelLookupFields();
+                          }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label={`${categoryLabel} Type`} name="hotelType" rules={[{ required: true }]}>
                         <Select
-                          placeholder="Select hotel type"
+                          placeholder={`Select ${categoryLabel.toLowerCase()} type`}
                           onChange={(val) => {
                             if (val !== 'NEW') leadForm.setFieldValue('leadType', undefined);
                             // Clear auto-filled hotel lookup fields when switching hotel type
                             // to prevent stale OLD hotel data appearing for a NEW hotel entry (and vice versa)
-                            leadForm.setFieldsValue({
-                              hotelName: undefined,
-                              billingName: undefined,
-                              contactPerson: undefined,
-                              pocDesignation: undefined,
-                              phone: undefined,
-                              email: undefined,
-                              location: undefined,
-                              destination: undefined,
-                              gstNumber: undefined,
-                              branch: undefined,
-                              alternativeRole: undefined,
-                              alternativeName: undefined,
-                              alternativePhone: undefined,
-                              generalOccupancy: undefined,
-                              rowsInHotel: undefined,
-                              hotelLogo: [],
-                              detailedAddress: undefined,
-                              city: undefined,
-                              state: undefined,
-                              pincode: undefined,
-                              shippingAddress: undefined,
-                              shippingCity: undefined,
-                              shippingState: undefined,
-                              shippingPincode: undefined,
-                              shippingSameAsBilling: true,
-                              billType: 'GST',
-                              gstPhone: undefined,
-                            });
+                            clearHotelLookupFields();
                           }}
                         >
-                          <Option value="OLD">Old Hotel</Option>
-                          <Option value="NEW">New Hotel</Option>
+                          <Option value="OLD">{`Old ${categoryLabel}`}</Option>
+                          <Option value="NEW">{`New ${categoryLabel}`}</Option>
                         </Select>
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={6}>
-                      <Form.Item label="Hotel / Company Name" name="hotelName" rules={[{ required: true }]}>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label={`${categoryLabel} / Company Name`} name="hotelName" rules={[{ required: true }]}>
                         {watchedHotelType === 'NEW' ? (
-                          <Input placeholder="Enter new hotel / company name" />
+                          <Input placeholder={`Enter new ${categoryLabel.toLowerCase()} / company name`} />
                         ) : (
                           <AutoComplete
                             options={hotelNameOptions}
-                            placeholder="Search existing hotel..."
+                            placeholder={`Search existing ${categoryLabel.toLowerCase()}...`}
                             filterOption={(input, option) => (option?.value || '').toLowerCase().includes(input.toLowerCase())}
                             onSelect={() => setTimeout(handleOldHotelLookup, 0)}
                             onBlur={handleOldHotelLookup}
@@ -11036,13 +11363,13 @@ export default function Sales() {
                         )}
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={6}>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="Branch" name="branch">
                         <Input placeholder="e.g. Main Branch" onBlur={handleOldHotelLookup} />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={6}>
-                      <Form.Item label="Hotel Logo" name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label={`${categoryLabel} Logo`} name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
                         <Upload
                           customRequest={makeCloudinaryRequest('logos')}
                           accept="image/*,.pdf,.svg,.ai"
@@ -11105,6 +11432,11 @@ export default function Sales() {
                     <Col xs={24} sm={8}>
                       <Form.Item label="Email" name="email" rules={[{ required: true, message: 'Email is required' }, ...emailRules(false)]}>
                         <Input placeholder="Email address" prefix={<MailOutlined style={{ color: '#ccc' }} />} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Form.Item label="Landline Number" name="landlineNumber">
+                        <Input placeholder="e.g. 044-12345678" prefix={<PhoneOutlined style={{ color: '#ccc' }} />} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -14278,6 +14610,14 @@ export default function Sales() {
                   <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                     <Select
                       allowClear
+                      placeholder="Category"
+                      value={leadCategoryFilter}
+                      onChange={(val) => { setLeadCategoryFilter(val); setLeadsPage(1); }}
+                      options={categoryFilterOptions}
+                      style={{ width: 160, borderRadius: 8 }}
+                    />
+                    <Select
+                      allowClear
                       placeholder="Lead Status"
                       value={leadStatusFilter}
                       onChange={(val) => { setLeadStatusFilter(val); setLeadsPage(1); }}
@@ -14466,6 +14806,14 @@ export default function Sales() {
                   <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                     <Select
                       allowClear
+                      placeholder="Category"
+                      value={orderCategoryFilter}
+                      onChange={setOrderCategoryFilter}
+                      options={categoryFilterOptions}
+                      style={{ width: 160, borderRadius: 8 }}
+                    />
+                    <Select
+                      allowClear
                       placeholder="Order Status"
                       value={orderStatusFilter}
                       onChange={setOrderStatusFilter}
@@ -14474,6 +14822,17 @@ export default function Sales() {
                       {['In Production', 'Dispatch Ready', 'Payment Pending', 'Completed', 'Partially Completed', 'Invoiced'].map(s => (
                         <Option key={s} value={s}>{s}</Option>
                       ))}
+                    </Select>
+                    <Select
+                      allowClear
+                      placeholder="Order Type"
+                      value={orderNatureFilter}
+                      onChange={setOrderNatureFilter}
+                      style={{ width: 160, borderRadius: 8 }}
+                    >
+                      <Option value="SAMPLE">Sample</Option>
+                      <Option value="EMERGENCY">Emergency</Option>
+                      <Option value="REGULAR">Regular</Option>
                     </Select>
                     <DatePicker.RangePicker
                       style={{ borderRadius: 8 }}
@@ -14492,6 +14851,10 @@ export default function Sales() {
                   <Table
                     dataSource={[...ordersData.filter(r => {
                       if (orderStatusFilter && r.status !== orderStatusFilter) return false;
+                      if (orderCategoryFilter && (r.category || 'Hotel') !== orderCategoryFilter) return false;
+                      if (orderNatureFilter === 'SAMPLE' && r.orderCategory !== 'SAMPLE') return false;
+                      if (orderNatureFilter === 'EMERGENCY' && !(r.isUrgent || r.isEmergency)) return false;
+                      if (orderNatureFilter === 'REGULAR' && (r.orderCategory === 'SAMPLE' || r.isUrgent || r.isEmergency)) return false;
                       if (orderSearchText) { const q = orderSearchText.toLowerCase(); if (!['hotelName', 'location', 'oid'].some(k => (r[k] || '').toLowerCase().includes(q))) return false; }
                       if (orderDateRange) { const d = r.createdAt ? r.createdAt.slice(0, 10) : ''; if (d < orderDateRange[0] || d > orderDateRange[1]) return false; }
                       return true;
@@ -14513,6 +14876,14 @@ export default function Sales() {
               children: (
                 <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
                   <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
+                    <Select
+                      allowClear
+                      placeholder="Category"
+                      value={customerCategoryFilter}
+                      onChange={setCustomerCategoryFilter}
+                      options={categoryFilterOptions}
+                      style={{ width: 160, borderRadius: 8 }}
+                    />
                     <DatePicker.RangePicker
                       style={{ borderRadius: 8 }}
                       onChange={(dates) => setCustomerDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
@@ -14521,6 +14892,7 @@ export default function Sales() {
                   </div>
                   <Table
                     dataSource={filtered(customersData).filter(r => {
+                      if (customerCategoryFilter && (r.category || 'Hotel') !== customerCategoryFilter) return false;
                       if (customerDateRange) { const d = r.createdAt ? r.createdAt.slice(0, 10) : ''; if (d < customerDateRange[0] || d > customerDateRange[1]) return false; }
                       return true;
                     })}
@@ -14604,6 +14976,55 @@ export default function Sales() {
           activeKey={activeKeyFor(activeTab)}
         />
       </Card>
+
+      {/* ── Party View Modal — Hotel / Company Information alone (eye-view from Parties tab) ── */}
+      <Modal
+        title={
+          <Space>
+            <BankOutlined style={{ color: '#B11E6A' }} />
+            <span>Hotel / Company Information</span>
+          </Space>
+        }
+        open={!!viewPartyInfo}
+        onCancel={() => setViewPartyInfo(null)}
+        footer={<Button onClick={() => setViewPartyInfo(null)}>Close</Button>}
+        width={Math.min(760, window.innerWidth - 32)}
+      >
+        {viewPartyInfo && (
+          <Descriptions bordered size="small" column={{ xs: 1, sm: 2 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ marginTop: 8 }}>
+            <Descriptions.Item label="Category">{viewPartyInfo.category || 'Hotel'}</Descriptions.Item>
+            <Descriptions.Item label={`${viewPartyInfo.category || 'Hotel'} / Company`}>{viewPartyInfo.hotelName || '—'}</Descriptions.Item>
+            {viewPartyInfo.billingName && <Descriptions.Item label="Billing Name">{viewPartyInfo.billingName}</Descriptions.Item>}
+            {viewPartyInfo.hotelType && (
+              <Descriptions.Item label={`${viewPartyInfo.category || 'Hotel'} Type`}>
+                <Tag color={viewPartyInfo.hotelType === 'OLD' ? 'blue' : 'green'}>{viewPartyInfo.hotelType === 'OLD' ? `Old ${viewPartyInfo.category || 'Hotel'}` : `New ${viewPartyInfo.category || 'Hotel'}`}</Tag>
+              </Descriptions.Item>
+            )}
+            {viewPartyInfo.branch && <Descriptions.Item label="Branch">{viewPartyInfo.branch}</Descriptions.Item>}
+            {(viewPartyInfo.rooms || viewPartyInfo.numRooms || viewPartyInfo.rowsInHotel) && (
+              <Descriptions.Item label="No. of Rooms">{viewPartyInfo.rooms || viewPartyInfo.numRooms || viewPartyInfo.rowsInHotel}</Descriptions.Item>
+            )}
+            {viewPartyInfo.generalOccupancy && <Descriptions.Item label="Occupancy (%)">{`${viewPartyInfo.generalOccupancy}%`}</Descriptions.Item>}
+            <Descriptions.Item label="Contact Person">{viewPartyInfo.contactPerson || '—'}</Descriptions.Item>
+            {viewPartyInfo.pocDesignation && <Descriptions.Item label="POC Designation">{viewPartyInfo.pocDesignation}</Descriptions.Item>}
+            <Descriptions.Item label="Phone">{viewPartyInfo.phone || '—'}</Descriptions.Item>
+            <Descriptions.Item label="Email">{viewPartyInfo.email || '—'}</Descriptions.Item>
+            {(viewPartyInfo.alternativeName || viewPartyInfo.altName) && <Descriptions.Item label="Alt. Name">{viewPartyInfo.alternativeName || viewPartyInfo.altName}</Descriptions.Item>}
+            {(viewPartyInfo.alternativeRole || viewPartyInfo.altRole) && <Descriptions.Item label="Alt. Role">{viewPartyInfo.alternativeRole || viewPartyInfo.altRole}</Descriptions.Item>}
+            {(viewPartyInfo.alternativePhone || viewPartyInfo.altNumber) && <Descriptions.Item label="Alt. Number">{viewPartyInfo.alternativePhone || viewPartyInfo.altNumber}</Descriptions.Item>}
+            <Descriptions.Item label="Location / City">{viewPartyInfo.location || viewPartyInfo.city || '—'}</Descriptions.Item>
+            {viewPartyInfo.destination && <Descriptions.Item label="Destination">{viewPartyInfo.destination}</Descriptions.Item>}
+            <Descriptions.Item label="Assigned To">{viewPartyInfo.salesPerson || '—'}</Descriptions.Item>
+            {viewPartyInfo.gstNumber && <Descriptions.Item label="GSTIN">{viewPartyInfo.gstNumber}</Descriptions.Item>}
+            {viewPartyInfo.panNumber && <Descriptions.Item label="PAN">{viewPartyInfo.panNumber}</Descriptions.Item>}
+            {viewPartyInfo.state && <Descriptions.Item label="State">{viewPartyInfo.state}</Descriptions.Item>}
+            {viewPartyInfo.pincode && <Descriptions.Item label="Pincode">{viewPartyInfo.pincode}</Descriptions.Item>}
+            {(viewPartyInfo.street || viewPartyInfo.detailedAddress) && <Descriptions.Item label="Address" span={2}>{viewPartyInfo.street || viewPartyInfo.detailedAddress}</Descriptions.Item>}
+            {viewPartyInfo.creditPeriod > 0 && <Descriptions.Item label="Credit Period">{`${viewPartyInfo.creditPeriod} days`}</Descriptions.Item>}
+            {viewPartyInfo.creditLimit > 0 && <Descriptions.Item label="Credit Limit">{`₹${Number(viewPartyInfo.creditLimit).toLocaleString()}`}</Descriptions.Item>}
+          </Descriptions>
+        )}
+      </Modal>
 
       {/* ── Raise Complaint Modal ─────────────────────────────────────────────── */}
       <Modal
@@ -14756,6 +15177,164 @@ export default function Sales() {
                 description="The Operations Head will receive a notification to approve each product in the Operations page. Only after both approvals can that product's dispatch proceed."
                 style={{ borderRadius: 8 }}
               />
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Dispatch Transport Name Mismatch — Sales Approval Modal ───────── */}
+      <Modal
+        title={<Space><CarOutlined style={{ color: '#ff4d4f' }} /><span>Transport Name Mismatch — Review</span></Space>}
+        open={!!transportMismatchOrder}
+        onCancel={() => setTransportMismatchOrder(null)}
+        width={Math.min(520, window.innerWidth - 32)}
+        footer={[<Button key="cancel" onClick={() => setTransportMismatchOrder(null)}>Close</Button>]}
+      >
+        {transportMismatchOrder && (() => {
+          // Re-derive the live row so the modal reflects the decision immediately
+          // instead of freezing on the snapshot taken when it opened.
+          const liveOrder = ordersData.find((o) => o.key === transportMismatchOrder.key) || transportMismatchOrder;
+          const isPending = liveOrder.transportMismatchStatus === 'pending';
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              <Alert type="error" showIcon
+                message="Transport Name Mismatch Detected"
+                description="The dispatch team scanned the lorry receipt via AI and the transport name doesn't match what was entered manually. Weight is not affected by this check. Review both values below and approve or reject."
+                style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
+              />
+              <Descriptions bordered size="small" column={1} style={{ borderRadius: 8 }}>
+                <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{liveOrder.oid}</span></Descriptions.Item>
+                <Descriptions.Item label="Client">{liveOrder.hotelName}</Descriptions.Item>
+                <Descriptions.Item label="Entered Transport">{liveOrder.transportMismatchExpected || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Scanned Transport (LR)">{liveOrder.transportMismatchScanned || '—'}</Descriptions.Item>
+              </Descriptions>
+              {isPending ? (
+                <Space>
+                  <Button
+                    type="primary"
+                    loading={decidingTransportMismatch}
+                    onClick={async () => {
+                      setDecidingTransportMismatch(true);
+                      try {
+                        await decideTransportMismatch({ id: liveOrder._id || liveOrder.key, decision: 'approved' }).unwrap();
+                        enqueueSnackbar('Transport name mismatch approved.', { variant: 'success' });
+                        setTransportMismatchOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to approve', { variant: 'error' });
+                      } finally {
+                        setDecidingTransportMismatch(false);
+                      }
+                    }}>
+                    Approve
+                  </Button>
+                  <Button
+                    danger
+                    loading={decidingTransportMismatch}
+                    onClick={async () => {
+                      setDecidingTransportMismatch(true);
+                      try {
+                        await decideTransportMismatch({ id: liveOrder._id || liveOrder.key, decision: 'rejected' }).unwrap();
+                        enqueueSnackbar('Transport name mismatch rejected.', { variant: 'success' });
+                        setTransportMismatchOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to reject', { variant: 'error' });
+                      } finally {
+                        setDecidingTransportMismatch(false);
+                      }
+                    }}>
+                    Reject
+                  </Button>
+                </Space>
+              ) : (
+                <Alert
+                  type={liveOrder.transportMismatchStatus === 'approved' ? 'success' : 'warning'}
+                  showIcon
+                  message={`Already ${liveOrder.transportMismatchStatus}`}
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Dispatch LR Mismatch (Packages/Destination) — Sales Approval Modal ── */}
+      <Modal
+        title={<Space><AlertFilled style={{ color: '#f5222d' }} /><span>LR Mismatch — Sales Review (Dual Approval)</span></Space>}
+        open={!!lrMismatchOrder}
+        onCancel={() => setLrMismatchOrder(null)}
+        width={Math.min(560, window.innerWidth - 32)}
+        footer={[<Button key="cancel" onClick={() => setLrMismatchOrder(null)}>Close</Button>]}
+      >
+        {lrMismatchOrder && (() => {
+          const liveOrder = ordersData.find((o) => o.key === lrMismatchOrder.key) || lrMismatchOrder;
+          const isPending = liveOrder.lrMismatchStatus === 'pending';
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              <Alert type="error" showIcon
+                message={`${(liveOrder.lrMismatchFields || []).join(' & ') || 'Lorry Receipt'} Mismatch — Dual Approval Required`}
+                description="The dispatch team scanned the lorry receipt via AI and one or more fields (other than Weight/Transport Name) disagree with what was entered manually. Both Sales AND Operations must approve before the dispatcher can proceed — a reject from either side blocks it."
+                style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
+              />
+              <Descriptions bordered size="small" column={1} style={{ borderRadius: 8 }}>
+                <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{liveOrder.oid}</span></Descriptions.Item>
+                <Descriptions.Item label="Client">{liveOrder.hotelName}</Descriptions.Item>
+                <Descriptions.Item label="Mismatched Fields">{(liveOrder.lrMismatchFields || []).join(', ') || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Reason Given">{liveOrder.lrMismatchReason || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Operations Approval">
+                  {liveOrder.lrMismatchOpsApproved ? <Tag color="success">Approved ✓</Tag> : <Tag color="orange">Pending</Tag>}
+                </Descriptions.Item>
+              </Descriptions>
+              {isPending ? (
+                <Space>
+                  <Button
+                    type="primary"
+                    loading={decidingLrMismatch}
+                    onClick={async () => {
+                      setDecidingLrMismatch(true);
+                      try {
+                        const res = await decideLrMismatchSales({ id: liveOrder._id || liveOrder.key, decision: 'approved' }).unwrap();
+                        enqueueSnackbar(
+                          res?.data?.dispatchLrMismatchStatus === 'approved'
+                            ? 'LR mismatch fully approved — dispatch may proceed.'
+                            : 'Sales approval recorded — awaiting Operations approval.',
+                          { variant: 'success' },
+                        );
+                        setLrMismatchOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to approve', { variant: 'error' });
+                      } finally {
+                        setDecidingLrMismatch(false);
+                      }
+                    }}>
+                    Approve
+                  </Button>
+                  <Button
+                    danger
+                    loading={decidingLrMismatch}
+                    onClick={async () => {
+                      setDecidingLrMismatch(true);
+                      try {
+                        await decideLrMismatchSales({ id: liveOrder._id || liveOrder.key, decision: 'rejected' }).unwrap();
+                        enqueueSnackbar('LR mismatch rejected.', { variant: 'success' });
+                        setLrMismatchOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to reject', { variant: 'error' });
+                      } finally {
+                        setDecidingLrMismatch(false);
+                      }
+                    }}>
+                    Reject
+                  </Button>
+                </Space>
+              ) : (
+                <Alert
+                  type={liveOrder.lrMismatchStatus === 'approved' ? 'success' : 'warning'}
+                  showIcon
+                  message={`Already ${liveOrder.lrMismatchStatus}`}
+                  style={{ borderRadius: 8 }}
+                />
+              )}
             </div>
           );
         })()}

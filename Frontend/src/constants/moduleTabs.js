@@ -27,6 +27,8 @@ export const MODULE_TAB_DEFS = {
     { key: 'box', label: 'Box' },
     { key: 'frosted', label: 'Frosted Ziplock' },
     { key: 'butter_paper', label: 'Butter Paper' },
+    { key: 'wooden_brush', label: 'Wooden Brush' },
+    { key: 'other', label: 'Other' },
   ],
   'Task Management': [
     { key: 'current', label: 'Current Task' },
@@ -40,6 +42,7 @@ export const MODULE_TAB_DEFS = {
   ],
   Inventory: [
     { key: 'stock', label: 'Stock Inventory' },
+    { key: 'bulk', label: 'Bulk Items' },
     { key: 'approvals', label: 'Approvals' },
     { key: 'history', label: 'Stock History' },
     { key: 'livecheck', label: 'Live Staff Checking' },
@@ -62,7 +65,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'quotation-in-process', label: 'Quotation in Process' },
     { key: 'invoices', label: 'Invoices' },
   ],
-  'Parties & Ledger': [
+  'Ledgers': [
     { key: 'all', label: 'All Parties' },
     { key: 'suppliers', label: 'Vendors Ledger' },
     { key: 'customers', label: 'Customers Ledger' },
@@ -78,6 +81,7 @@ export const MODULE_TAB_DEFS = {
   Reports: [
     { key: 'sales_report', label: 'Sales Report' },
     { key: 'purchase_report', label: 'Purchase Report' },
+    { key: 'local_purchase_report', label: 'Local Purchase Report' },
     { key: 'pl', label: 'Profit & Loss' },
     { key: 'bill_pl', label: 'Bill-wise P&L' },
     { key: 'performance', label: 'Performance' },

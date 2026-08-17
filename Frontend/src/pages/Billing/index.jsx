@@ -563,7 +563,7 @@ export default function Billing() {
   const [viewDocType, setViewDocType] = useState('invoice');
   const [ledgerEntries, setLedgerEntries] = useState([]);
 
-  // Parties & Ledgers tab state
+  // Ledgers tab state
   const [viewBillingPartyLedger, setViewBillingPartyLedger] = useState(null);
   const [billingPartiesSearch, setBillingPartiesSearch] = useState('');
 

@@ -111,7 +111,7 @@ export const apiSlice = createApi({
 
     // ── Staff ───────────────────────────────────────────────────────────────
     getStaff: builder.query({
-      query: () => ({ url: '/staff' }),
+      query: (params) => ({ url: '/staff', params }),
       providesTags: ['Staff'],
     }),
     getStaffMember: builder.query({
@@ -298,6 +298,14 @@ export const apiSlice = createApi({
     scanDispatchLR: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/dispatch/${id}/scan-lr`, method: 'post', data }),
     }),
+    reportTransportMismatch: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/dispatch/${id}/transport-mismatch`, method: 'patch', data }),
+      invalidatesTags: ['Orders'],
+    }),
+    requestLrMismatchApproval: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/dispatch/${id}/lr-mismatch-request`, method: 'patch', data }),
+      invalidatesTags: (result, error, { id }) => ['Orders', 'Operations', { type: 'Dispatch', id }],
+    }),
     verifyItem: builder.mutation({
       query: ({ id, itemId, formData, verified }) => ({
         url: `/dispatch/${id}/items/${itemId}/verify`,
@@ -382,6 +390,10 @@ export const apiSlice = createApi({
     addStockRequest: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/inventory/${id}/add-request`, method: 'post', data }),
       invalidatesTags: ['Inventory', 'StockApprovals'],
+    }),
+    fillStock: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/inventory/${id}/fill`, method: 'post', data }),
+      invalidatesTags: ['Inventory', 'StockHistory'],
     }),
     getStockApprovals: builder.query({
       query: () => ({ url: '/inventory/approvals' }),
@@ -623,6 +635,14 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/sales/orders/${id}`, method: 'delete' }),
       invalidatesTags: ['Orders', 'Reports', 'DeletedRecords'],
     }),
+    decideTransportMismatch: builder.mutation({
+      query: ({ id, decision }) => ({ url: `/sales/orders/${id}/transport-mismatch-decision`, method: 'patch', data: { decision } }),
+      invalidatesTags: ['Orders'],
+    }),
+    decideLrMismatchSales: builder.mutation({
+      query: ({ id, decision }) => ({ url: `/sales/orders/${id}/lr-mismatch-decision`, method: 'patch', data: { decision } }),
+      invalidatesTags: ['Orders', 'Operations', 'Dispatch'],
+    }),
     getComplaints: builder.query({
       query: (params) => ({ url: '/sales/complaints', params }),
       providesTags: ['Complaints'],
@@ -644,11 +664,11 @@ export const apiSlice = createApi({
       providesTags: ['Reminders'],
     }),
     getHotelNames: builder.query({
-      query: () => ({ url: '/sales/hotels' }),
+      query: (params) => ({ url: '/sales/hotels', params }),
       providesTags: ['Leads'],
     }),
     lookupHotel: builder.query({
-      query: ({ name, branch }) => ({ url: '/sales/hotels/lookup', params: { name, branch } }),
+      query: ({ name, branch, category }) => ({ url: '/sales/hotels/lookup', params: { name, branch, category } }),
     }),
     uploadFiles: builder.mutation({
       query: ({ formData, folder }) => ({
@@ -880,6 +900,10 @@ export const apiSlice = createApi({
       query: ({ id, isEmergency }) => ({ url: `/operations/orders/${id}/emergency`, method: 'patch', data: { isEmergency } }),
       invalidatesTags: ['Operations'],
     }),
+    decideLrMismatchOps: builder.mutation({
+      query: ({ id, decision }) => ({ url: `/operations/orders/${id}/lr-mismatch-decision`, method: 'patch', data: { decision } }),
+      invalidatesTags: ['Orders', 'Operations', 'Dispatch'],
+    }),
     updateItemPrintingStatus: builder.mutation({
       query: ({ orderId, itemKey, printingStatus, product }) => ({
         url: `/operations/orders/${orderId}/items/${itemKey}/printing-status`,
@@ -1070,7 +1094,7 @@ export const apiSlice = createApi({
       invalidatesTags: ['Options'],
     }),
 
-    // ── Parties & Ledger ─────────────────────────────────────────────────────
+    // ── Ledgers ───────────────────────────────────────────────────────────────
     createParty: builder.mutation({
       query: (data) => ({ url: '/parties', method: 'post', data }),
       invalidatesTags: ['Parties'],
@@ -1112,6 +1136,10 @@ export const apiSlice = createApi({
     }),
     getPurchaseReport: builder.query({
       query: (params) => ({ url: '/reports/purchase', params }),
+      providesTags: ['Reports'],
+    }),
+    getLocalPurchaseReport: builder.query({
+      query: (params) => ({ url: '/reports/local-purchase', params }),
       providesTags: ['Reports'],
     }),
     getProfitLoss: builder.query({
@@ -1356,12 +1384,15 @@ export const {
   useGetLatestTaskInsightQuery,
   useAssignTasksPerProductMutation,
   useSetOrderEmergencyMutation,
+  useDecideLrMismatchOpsMutation,
   useSplitPartialDeliveryMutation,
   useGetHotelDesignsQuery,
   useSaveHotelDesignMutation,
   useApproveStickerRequestMutation,
   useUploadDispatchLRMutation,
   useScanDispatchLRMutation,
+  useReportTransportMismatchMutation,
+  useRequestLrMismatchApprovalMutation,
   useVerifyItemMutation,
   // Inventory
   useGetItemsQuery,
@@ -1371,6 +1402,7 @@ export const {
   useDeleteItemMutation,
   useSellStockRequestMutation,
   useAddStockRequestMutation,
+  useFillStockMutation,
   useGetStockApprovalsQuery,
   useApproveMovementMutation,
   useRejectMovementMutation,
@@ -1432,6 +1464,8 @@ export const {
   useUpdateSalesOrderMutation,
   useUpdateSalesOrderStatusMutation,
   useDeleteSalesOrderMutation,
+  useDecideTransportMismatchMutation,
+  useDecideLrMismatchSalesMutation,
   useGetComplaintsQuery,
   useCreateComplaintMutation,
   useUpdateComplaintStatusMutation,
@@ -1529,6 +1563,7 @@ export const {
   // Reports
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,
+  useGetLocalPurchaseReportQuery,
   useGetProfitLossQuery,
   useGetBillPLQuery,
   useGetMonthlyGstQuery,

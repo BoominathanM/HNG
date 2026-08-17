@@ -429,11 +429,12 @@ export default function Dispatch() {
   // (Finance-paid pickups need no reimbursement, so they never appear here).
   const reimbExpenses = useMemo(() => allPickupOrders.filter((r) => r.paymentBy === 'Pickup Team'), [allPickupOrders]);
 
-  // Staff list for the "Pickup Employee Name" selector on the payment modal.
-  const { data: pickupStaffRaw } = useGetStaffQuery();
-  const pickupStaffOptions = useMemo(() => (pickupStaffRaw?.data || []).map((s) => ({
-    value: s._id, label: s.fullName,
-  })), [pickupStaffRaw]);
+  // Staff list for the "Pickup Employee Name" selector on the payment modal —
+  // Dispatch department staff only.
+  const { data: pickupStaffRaw } = useGetStaffQuery({ department: 'Dispatch', limit: 500 });
+  const pickupStaffOptions = useMemo(() => (pickupStaffRaw?.data || [])
+    .filter((s) => s.department === 'Dispatch')
+    .map((s) => ({ value: s._id, label: s.fullName })), [pickupStaffRaw]);
 
   // ── Taken Status / Payment By modal state ────────────────────────────────
   const [showPickupPayModal, setShowPickupPayModal] = useState(false);

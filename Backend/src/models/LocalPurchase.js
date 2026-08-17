@@ -3,15 +3,27 @@ const mongoose = require('mongoose');
 const localPurchaseSchema = new mongoose.Schema({
   lpCode: { type: String, unique: true },
   invoiceNo: { type: String, required: true },
+  // Date printed on the invoice itself (from AI scan or manual entry) — used as the
+  // purchaseDate on this purchase's InventoryItem.purchaseBatches, distinct from
+  // createdAt/timestamps below which just tracks when this record was entered.
+  invoiceDate: Date,
   invoiceFileUrl: String,
   vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
   vendorName: String,
   vendorPhone: String,
   items: [{
     itemName: String,
+    // Optional — set when the entered item should merge into an existing Inventory item
+    // by code rather than being matched by name (same convention as Inventory's Add Item
+    // mergeItemCode). Left blank, addLocalPurchaseStock falls back to matching by itemName.
+    itemCode: String,
     qty: Number,
     unit: String,
     amount: Number,
+    // 'standard': added straight to Stock Inventory as normal sellable/usable stock.
+    // 'bulk': raw liquid/powder (unit must be Litres/Kg) — lands on Inventory's Bulk tab
+    // instead, same as a Bulk item created directly there; filled from later via Fill Stock.
+    itemType: { type: String, enum: ['standard', 'bulk'], default: 'standard' },
   }],
   totalAmount: { type: Number, required: true },
   gstAmount: { type: Number, default: 0 },

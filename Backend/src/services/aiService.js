@@ -268,6 +268,7 @@ async function extractVendorFields({ apiKey, model, file }) {
 
 const INVOICE_EXTRACTION_PROMPT = `You are a data-entry assistant extracting details from a local purchase invoice/bill (image or PDF). Extract:
 - invoiceNo: the invoice/bill number printed on the document
+- invoiceDate: the invoice/bill date printed on the document, formatted YYYY-MM-DD if a date is present, else ""
 - vendorName: the seller/vendor/shop name printed on the document
 - vendorPhone: the vendor's contact phone number, if printed
 - vendorAddress: the vendor's postal address, if printed
@@ -277,7 +278,7 @@ const INVOICE_EXTRACTION_PROMPT = `You are a data-entry assistant extracting det
 - totalAmount: the grand total amount of the invoice as a plain number (no currency symbols/commas)
 
 Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
-{ "invoiceNo": "", "vendorName": "", "vendorPhone": "", "vendorAddress": "", "vendorGST": "", "items": [ { "name": "", "qty": 0, "unit": "Pcs", "amount": 0, "hsn": "", "gst": "" } ], "gstAmount": 0, "totalAmount": 0 }
+{ "invoiceNo": "", "invoiceDate": "", "vendorName": "", "vendorPhone": "", "vendorAddress": "", "vendorGST": "", "items": [ { "name": "", "qty": 0, "unit": "Pcs", "amount": 0, "hsn": "", "gst": "" } ], "gstAmount": 0, "totalAmount": 0 }
 If a field cannot be determined from the document, use an empty string ("" ), 0 for numeric fields, or [] for items — do not guess or invent data.`;
 
 // file: { url, originalName, mimetype } — Cloudinary-hosted, already uploaded by multer.
@@ -335,6 +336,7 @@ async function extractInvoiceFields({ apiKey, model, file }) {
 
   return {
     invoiceNo: parsed.invoiceNo || '',
+    invoiceDate: parsed.invoiceDate || '',
     vendorName: parsed.vendorName || '',
     vendorPhone: parsed.vendorPhone || '',
     vendorAddress: parsed.vendorAddress || '',

@@ -7,7 +7,7 @@ const mongoose = require('mongoose');
 // restored, and `snapshot` keeps a full copy of the record at deletion time.
 const deletedRecordSchema = new mongoose.Schema({
   type:     { type: String, required: true },   // restore key, e.g. 'parties', 'leads'
-  module:   { type: String, required: true },   // human label, e.g. 'Parties & Ledger'
+  module:   { type: String, required: true },   // human label, e.g. 'Ledgers'
   name:     { type: String, default: '—' },     // display name of the record
   refId:    { type: mongoose.Schema.Types.ObjectId, required: true }, // original doc _id
   snapshot: { type: mongoose.Schema.Types.Mixed },                    // full doc at delete time

@@ -16,6 +16,10 @@ export const packTabFromString = (pm) => {
   if (p.includes('butter') || p.includes('paper')) return 'Butter Paper';
   if (p.includes('ziplock') || p.includes('frosted') || p.includes('pouch')) return 'Ziplock';
   if (p.includes('box')) return 'Box';
+  if (p.includes('wooden') || p.includes('brush')) return 'Wooden Brush';
+  // 'Other' is deliberately NOT keyword-matched here — "other" is a substring of many
+  // unrelated words (another, brother, mother…) and would misroute free-text packing
+  // material names. It's reachable only via an explicit tabMapping/displayUnitTab selection.
   return '';
 };
 
@@ -39,9 +43,12 @@ export const inferItemLogoType = (sticker, printing, pmRaw, packingMaterialTab, 
   if (hay.includes('butter') || hay.includes('paper')) return 'Butter Paper';
   if (hay.includes('frosted') || hay.includes('ziplock') || hay.includes('pouch')) return 'Frosted Ziplock';
   if (hay.includes('box')) return 'Box';
+  if (hay.includes('wooden') || hay.includes('brush')) return 'Wooden Brush';
   if (packingMaterialTab === 'Butter Paper') return 'Butter Paper';
   if (packingMaterialTab === 'Ziplock') return 'Frosted Ziplock';
   if (packingMaterialTab === 'Box') return 'Box';
+  if (packingMaterialTab === 'Wooden Brush') return 'Wooden Brush';
+  if (packingMaterialTab === 'Other') return 'Other';
   // Printing=Yes with no resolvable packaging destination → print/sticker tab.
   if (printing === 'YES') return 'Sticker';
   if (sticker !== 'NO' && hay.includes('sticker')) return 'Sticker';
@@ -183,6 +190,32 @@ const hasButterPaperPackaging = (item, order) => {
   return false;
 };
 
+// Returns true when the item's physical packaging is wooden brush — regardless of whether
+// the item also needs sticker printing. Mirrors hasButterPaperPackaging.
+const hasWoodenBrushPackaging = (item, order) => {
+  const isKitItem = !!(item.isKit || item.kitType);
+  if (isKitItem && kitTabOf(item, order) === 'Wooden Brush') return true;
+  if (item.packingMaterialTab === 'Wooden Brush') return true;
+  if (item.logoType === 'Wooden Brush') return true;
+  const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
+  if (pm.includes('wooden') || pm.includes('brush')) return true;
+  if (isKitItem) {
+    const du = kitDuNameOf(item, order).toLowerCase();
+    return du.includes('wooden') || du.includes('brush');
+  }
+  return false;
+};
+
+// Returns true when the item's packaging is explicitly "Other" — deliberately NO keyword/
+// string matching (see packTabFromString comment above), only explicit config selections.
+const hasOtherPackaging = (item, order) => {
+  const isKitItem = !!(item.isKit || item.kitType);
+  if (isKitItem && kitTabOf(item, order) === 'Other') return true;
+  if (item.packingMaterialTab === 'Other') return true;
+  if (item.logoType === 'Other') return true;
+  return false;
+};
+
 const isFrostedZiplock = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
   // Kit items: display unit determines final tab; sticker flag still respected
@@ -252,12 +285,15 @@ const getItemPackagingType = (item, order) => {
     if (tab === 'Butter Paper') return 'butter';
     if (tab === 'Ziplock') return 'frosted';
     if (tab === 'Box') return 'box';
+    if (tab === 'Wooden Brush') return 'wooden_brush';
+    if (tab === 'Other') return 'other';
     // displayUnitTab not resolved (legacy / unregistered display unit) → fall back to the
     // display unit NAME before considering any packing-material signal.
     const du = kitDuNameOf(item, order).toLowerCase();
     if (du.includes('butter')) return 'butter';
     if (du.includes('ziplock') || du.includes('frosted') || du.includes('pouch')) return 'frosted';
     if (du.includes('box')) return 'box';
+    if (du.includes('wooden') || du.includes('brush')) return 'wooden_brush';
     // Display unit entirely unresolvable → fall through to the generic fallbacks below so the
     // kit still lands somewhere (legacy orders with no display unit at all).
   }
@@ -268,12 +304,17 @@ const getItemPackagingType = (item, order) => {
   if (item.packingMaterialTab === 'Butter Paper') return 'butter';
   if (item.packingMaterialTab === 'Ziplock') return 'frosted';
   if (item.packingMaterialTab === 'Box') return 'box';
+  if (item.packingMaterialTab === 'Wooden Brush') return 'wooden_brush';
+  if (item.packingMaterialTab === 'Other') return 'other';
   if (hasButterPaperPackaging(item, order)) return 'butter';
   if (hasFrostedPackaging(item, order)) return 'frosted';
+  if (hasWoodenBrushPackaging(item, order)) return 'wooden_brush';
+  if (hasOtherPackaging(item, order)) return 'other';
   if (item.logoType === 'Box') return 'box';
   const pm = (item.packaging || item.packingMaterial || '').toLowerCase();
   if (pm.includes('butter')) return 'butter';
   if (pm.includes('box')) return 'box';
+  if (pm.includes('wooden') || pm.includes('brush')) return 'wooden_brush';
   return 'sticker';
 };
 
@@ -283,6 +324,8 @@ export const PACKAGING_TYPE_LABELS = {
   box: 'Box',
   frosted: 'Frosted Ziplock',
   butter: 'Butter Paper',
+  wooden_brush: 'Wooden Brush',
+  other: 'Other',
 };
 
 // Statuses that indicate the item has moved ON from sticker to box/frosted manufacturing.
@@ -894,6 +937,185 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         }
       });
       // Emergency products first within this order
+      return result.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
+    }),
+
+    // Wooden Brush queue: items with wooden brush packaging.
+    // If sticker printing is also needed (sticker=YES), the item only appears here
+    // AFTER its sticker has been printed — preventing premature queue entry and
+    // keeping it out of the sticker tab and this tab simultaneously.
+    // Within each order: emergency products (from splitDates) appear first; remaining items
+    // carry isEmergencyGated=true until all emergency items for that order are done.
+    wooden_brush: orders.flatMap((order) => {
+      const emergencyQtyMap = getEmergencyProductQtyMap(order);
+      const emergencyAllDone = areAllEmergencyItemsDone(order);
+      const kitCfgById = Object.fromEntries(
+        (order.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]),
+      );
+      const result = [];
+      (order.items || []).forEach((item, idx) => {
+        const isKitItem = !!(item.isKit || item.kitType);
+        const packType = getItemPackagingType(item, order);
+        // Kit items can appear in BOTH this tab and another packaging tab simultaneously:
+        //   - displayUnitTab drives the KIT ASSEMBLY step
+        //   - packingMaterialTab drives the INDIVIDUAL PRODUCT PACKING step
+        // When a PERSONALIZED kit item has packingMaterialTab='Wooden Brush' but the display unit
+        // routes elsewhere, include it here for the individual packing step — independent of the
+        // kit assembly step. Restricted to personalized kits: a SEPARATE kit has no inner/outer
+        // split, so it is routed SOLELY by its display unit and must never leak into a different tab.
+        const needsWoodenBrushPacking = packType === 'wooden_brush' ||
+          (isKitItem && itemCategoryOf(item) === 'personalized'
+            && item.packingMaterialTab === 'Wooden Brush' && kitTabOf(item, order) !== 'Wooden Brush');
+        if (!needsWoodenBrushPacking) return;
+        const product = item.product || item.itemName;
+        // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
+        const needsPrint = itemNeedsPrintStep(item);
+        // "Must clear the Sticker/Print tab first" — Sticker=Yes (any item) or any print step on a
+        // KIT. A standalone Printing=Yes (Sticker=No) product goes DIRECTLY here (no print-first hold).
+        const mustClearSticker = mustPrintBeforePackaging(item);
+        // "Belongs in Wooden Brush" — used for the no-logo exclusion check. Recognize the kit's
+        // display unit by NAME too (mirrors getItemPackagingType's fallback) so kit orders route
+        // even when the display unit has no packing-config tabMapping (displayUnitTab unresolved).
+        const duNameLc = kitDuNameOf(item, order).toLowerCase();
+        const hasExplicitWoodenBrushTab = (isKitItem && (kitTabOf(item, order) === 'Wooden Brush' || duNameLc.includes('wooden') || duNameLc.includes('brush'))) || item.packingMaterialTab === 'Wooden Brush';
+        // "Can bypass the sticker-first gate" — standalone items that don't need the sticker step.
+        const canBypassWoodenBrushSticker = !isKitItem && hasExplicitWoodenBrushTab && !mustClearSticker;
+        if (mustClearSticker && !canBypassWoodenBrushSticker && !isStickerPrinted(order.id, product, idx)) return;
+        // No print step, Logo Required = No → no routing to this tab, unless explicit tab.
+        if (!needsPrint && !order.logoRequired && !hasExplicitWoodenBrushTab) return;
+        const pKey = (product || '').toLowerCase();
+        const eQty = emergencyQtyMap.get(pKey);
+        // See sticker queue above: kit-component items store per-kit qty in item.qty (~1),
+        // not the true order total — must match the basis emergencyQtyMap's eQty used.
+        const itemQty = effectiveItemQty(item, order, kitCfgById);
+        const woodenBrushNote = mustClearSticker
+          ? 'Print approved — now in wooden brush manufacturing queue'
+          : needsPrint ? 'Wooden brush manufacturing (printing at packaging stage)' : 'Wooden brush manufacturing';
+
+        const makeWoodenBrushRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
+          key: `${order.id}-${idx}-wooden_brush${keySuffix}`,
+          orderId: order.id,
+          orderCategory: order.orderCategory || 'ORDER',
+          category: itemCategoryOf(item),
+          hotelLogo: order.hotelLogo || order.clientName,
+          product,
+          qty,
+          size: item.size,
+          status: findSR(order.id, product, 'Wooden Brush')?.status || 'Pending',
+          sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
+          verified: false,
+          note: woodenBrushNote,
+          stickerPrinting: needsPrint ? 'Yes' : 'No',
+          packagingType: 'wooden_brush',
+          isUrgent: order.isUrgent || false,
+          isEmergencyProduct,
+          isEmergencyGated,
+          logoRequired: order.logoRequired || false,
+          logoUrl: order.logoUrl || '',
+          isKit: isKitItem,
+          kitId: item.kitId || '',
+          kitName: item.kitName || item.kitType || '',
+          displayUnit: item.displayUnit || kitCfgById[String(item.kitId)]?.displayUnit || kitDuNameOf(item, order) || '',
+          displayUnitType: item.displayUnitType || (isKitItem ? kitCfgById[String(item.kitId)]?.displayUnitType : '') || '',
+          lamination: item.lamination || '',
+          sticker: item.sticker || '',
+          stickerSize: item.stickerSize || '',
+          printing: item.printing || '',
+          packingMaterial: item.packingMaterial || item.packaging || '',
+        });
+
+        if (eQty !== undefined) {
+          if (eQty === null || itemQty <= eQty) {
+            result.push(makeWoodenBrushRow(itemQty, '', true, false));
+          } else {
+            result.push(makeWoodenBrushRow(eQty, '-emg', true, false));
+            result.push(makeWoodenBrushRow(itemQty - eQty, '-rem', false, !emergencyAllDone));
+          }
+        } else {
+          result.push(makeWoodenBrushRow(itemQty, '', false, emergencyQtyMap.size > 0 && !emergencyAllDone));
+        }
+      });
+      // Emergency products first within this order
+      return result.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
+    }),
+
+    // Other queue: items with an explicitly-selected "Other" packing material/display unit.
+    // Deliberately NO keyword/string-match fallback here (see hasOtherPackaging/packTabFromString
+    // comments above) — an item only lands here via an explicit packingMaterialTab/displayUnitTab
+    // = 'Other' selection, never guessed from free text, so unrelated legacy orders can't misroute.
+    // Within each order: emergency products (from splitDates) appear first; remaining items
+    // carry isEmergencyGated=true until all emergency items for that order are done.
+    other: orders.flatMap((order) => {
+      const emergencyQtyMap = getEmergencyProductQtyMap(order);
+      const emergencyAllDone = areAllEmergencyItemsDone(order);
+      const kitCfgById = Object.fromEntries(
+        (order.kitOrders || []).filter((k) => k?.kitId).map((k) => [String(k.kitId), k]),
+      );
+      const result = [];
+      (order.items || []).forEach((item, idx) => {
+        const isKitItem = !!(item.isKit || item.kitType);
+        const packType = getItemPackagingType(item, order);
+        const needsOtherPacking = packType === 'other' ||
+          (isKitItem && itemCategoryOf(item) === 'personalized'
+            && item.packingMaterialTab === 'Other' && kitTabOf(item, order) !== 'Other');
+        if (!needsOtherPacking) return;
+        const product = item.product || item.itemName;
+        const needsPrint = itemNeedsPrintStep(item);
+        const mustClearSticker = mustPrintBeforePackaging(item);
+        const hasExplicitOtherTab = (isKitItem && kitTabOf(item, order) === 'Other') || item.packingMaterialTab === 'Other';
+        const canBypassOtherSticker = !isKitItem && hasExplicitOtherTab && !mustClearSticker;
+        if (mustClearSticker && !canBypassOtherSticker && !isStickerPrinted(order.id, product, idx)) return;
+        if (!needsPrint && !order.logoRequired && !hasExplicitOtherTab) return;
+        const pKey = (product || '').toLowerCase();
+        const eQty = emergencyQtyMap.get(pKey);
+        const itemQty = effectiveItemQty(item, order, kitCfgById);
+        const otherNote = mustClearSticker
+          ? 'Print approved — now in packing queue'
+          : needsPrint ? 'Packing (printing at packaging stage)' : 'Packing';
+
+        const makeOtherRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
+          key: `${order.id}-${idx}-other${keySuffix}`,
+          orderId: order.id,
+          orderCategory: order.orderCategory || 'ORDER',
+          category: itemCategoryOf(item),
+          hotelLogo: order.hotelLogo || order.clientName,
+          product,
+          qty,
+          size: item.size,
+          status: findSR(order.id, product, 'Other')?.status || 'Pending',
+          sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
+          verified: false,
+          note: otherNote,
+          stickerPrinting: needsPrint ? 'Yes' : 'No',
+          packagingType: 'other',
+          isUrgent: order.isUrgent || false,
+          isEmergencyProduct,
+          isEmergencyGated,
+          logoRequired: order.logoRequired || false,
+          logoUrl: order.logoUrl || '',
+          isKit: isKitItem,
+          kitId: item.kitId || '',
+          kitName: item.kitName || item.kitType || '',
+          displayUnit: item.displayUnit || kitCfgById[String(item.kitId)]?.displayUnit || kitDuNameOf(item, order) || '',
+          displayUnitType: item.displayUnitType || (isKitItem ? kitCfgById[String(item.kitId)]?.displayUnitType : '') || '',
+          lamination: item.lamination || '',
+          sticker: item.sticker || '',
+          stickerSize: item.stickerSize || '',
+          printing: item.printing || '',
+          packingMaterial: item.packingMaterial || item.packaging || '',
+        });
+
+        if (eQty !== undefined) {
+          if (eQty === null || itemQty <= eQty) {
+            result.push(makeOtherRow(itemQty, '', true, false));
+          } else {
+            result.push(makeOtherRow(eQty, '-emg', true, false));
+            result.push(makeOtherRow(itemQty - eQty, '-rem', false, !emergencyAllDone));
+          }
+        } else {
+          result.push(makeOtherRow(itemQty, '', false, emergencyQtyMap.size > 0 && !emergencyAllDone));
+        }
+      });
       return result.sort((a, b) => (b.isEmergencyProduct ? 1 : 0) - (a.isEmergencyProduct ? 1 : 0));
     }),
   };
