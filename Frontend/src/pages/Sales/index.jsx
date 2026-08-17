@@ -76,6 +76,7 @@ import {
   useGetEmergencyRequestsQuery,
   useDecideTransportMismatchMutation,
   useDecideLrMismatchSalesMutation,
+  useDecideInvoiceMismatchMutation,
   useLazyVerifyGstinQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
@@ -3603,6 +3604,9 @@ export default function Sales() {
   const [decideLrMismatchSales] = useDecideLrMismatchSalesMutation();
   const [lrMismatchOrder, setLrMismatchOrder] = useState(null);
   const [decidingLrMismatch, setDecidingLrMismatch] = useState(false);
+  const [decideInvoiceMismatch] = useDecideInvoiceMismatchMutation();
+  const [invoiceMismatchOrder, setInvoiceMismatchOrder] = useState(null);
+  const [decidingInvoiceMismatch, setDecidingInvoiceMismatch] = useState(false);
   const { data: emergencyRequestsRaw } = useGetEmergencyRequestsQuery();
   // Group active emergency-dispatch requests by order — an order can hold several
   // products, each raised as its own request, so this must be a list per order key,
@@ -3916,6 +3920,11 @@ export default function Sales() {
         lrMismatchFields: o.dispatchLrMismatchFields || [],
         lrMismatchSalesApproved: !!o.dispatchLrMismatchSalesApproved,
         lrMismatchOpsApproved: !!o.dispatchLrMismatchOpsApproved,
+        // General invoice/LR mismatch reason (single Sales-only approval) — flagged by
+        // Dispatch for anything wrong with the scanned invoice that doesn't fit the
+        // Transport/Packages/Destination checks above. See Actions column + modal below.
+        invoiceMismatchStatus: o.dispatchInvoiceMismatchStatus || 'none',
+        invoiceMismatchReason: o.dispatchInvoiceMismatchReason || '',
       };
     }));
   }, [ordersRaw, emergencyRequestsByOrder, leadsData]);
@@ -6328,6 +6337,25 @@ export default function Sales() {
           )}
           {r.lrMismatchStatus === 'rejected' && (
             <Tag color="error" style={{ fontSize: 11, margin: 0 }}>LR Mismatch Rejected</Tag>
+          )}
+          {r.invoiceMismatchStatus === 'pending' && (
+            <Tooltip title="Dispatch flagged a mismatch on the scanned invoice/lorry receipt — review and approve or reject.">
+              <Button
+                size="small"
+                danger
+                icon={<AlertFilled />}
+                style={{ fontWeight: 600 }}
+                onClick={(e) => { e.stopPropagation(); setInvoiceMismatchOrder(r); }}
+              >
+                Invoice Mismatch
+              </Button>
+            </Tooltip>
+          )}
+          {r.invoiceMismatchStatus === 'approved' && (
+            <Tag color="success" style={{ fontSize: 11, margin: 0 }}>Invoice Mismatch Approved</Tag>
+          )}
+          {r.invoiceMismatchStatus === 'rejected' && (
+            <Tag color="error" style={{ fontSize: 11, margin: 0 }}>Invoice Mismatch Rejected</Tag>
           )}
           <Popconfirm
             title="Delete this order?"
@@ -15332,6 +15360,79 @@ export default function Sales() {
                   type={liveOrder.lrMismatchStatus === 'approved' ? 'success' : 'warning'}
                   showIcon
                   message={`Already ${liveOrder.lrMismatchStatus}`}
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Dispatch Invoice Mismatch — Sales Approval Modal (single approval) ── */}
+      <Modal
+        title={<Space><AlertFilled style={{ color: '#B11E6A' }} /><span>Invoice Mismatch — Review</span></Space>}
+        open={!!invoiceMismatchOrder}
+        onCancel={() => setInvoiceMismatchOrder(null)}
+        width={Math.min(520, window.innerWidth - 32)}
+        footer={[<Button key="cancel" onClick={() => setInvoiceMismatchOrder(null)}>Close</Button>]}
+      >
+        {invoiceMismatchOrder && (() => {
+          const liveOrder = ordersData.find((o) => o.key === invoiceMismatchOrder.key) || invoiceMismatchOrder;
+          const isPending = liveOrder.invoiceMismatchStatus === 'pending';
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              <Alert type="error" showIcon
+                message="Invoice / Lorry Receipt Mismatch Reported"
+                description="Dispatch flagged something wrong with the scanned invoice/lorry receipt. Review the reason and approve or reject — approving lets Dispatch re-upload the corrected invoice and continue."
+                style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
+              />
+              <Descriptions bordered size="small" column={1} style={{ borderRadius: 8 }}>
+                <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{liveOrder.oid}</span></Descriptions.Item>
+                <Descriptions.Item label="Client">{liveOrder.hotelName}</Descriptions.Item>
+                <Descriptions.Item label="Reason Given">{liveOrder.invoiceMismatchReason || '—'}</Descriptions.Item>
+              </Descriptions>
+              {isPending ? (
+                <Space>
+                  <Button
+                    type="primary"
+                    loading={decidingInvoiceMismatch}
+                    onClick={async () => {
+                      setDecidingInvoiceMismatch(true);
+                      try {
+                        await decideInvoiceMismatch({ id: liveOrder._id || liveOrder.key, decision: 'approved' }).unwrap();
+                        enqueueSnackbar('Invoice mismatch approved — Dispatch can now re-upload the corrected invoice.', { variant: 'success' });
+                        setInvoiceMismatchOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to approve', { variant: 'error' });
+                      } finally {
+                        setDecidingInvoiceMismatch(false);
+                      }
+                    }}>
+                    Approve
+                  </Button>
+                  <Button
+                    danger
+                    loading={decidingInvoiceMismatch}
+                    onClick={async () => {
+                      setDecidingInvoiceMismatch(true);
+                      try {
+                        await decideInvoiceMismatch({ id: liveOrder._id || liveOrder.key, decision: 'rejected' }).unwrap();
+                        enqueueSnackbar('Invoice mismatch rejected.', { variant: 'success' });
+                        setInvoiceMismatchOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to reject', { variant: 'error' });
+                      } finally {
+                        setDecidingInvoiceMismatch(false);
+                      }
+                    }}>
+                    Reject
+                  </Button>
+                </Space>
+              ) : (
+                <Alert
+                  type={liveOrder.invoiceMismatchStatus === 'approved' ? 'success' : 'warning'}
+                  showIcon
+                  message={`Already ${liveOrder.invoiceMismatchStatus}`}
                   style={{ borderRadius: 8 }}
                 />
               )}

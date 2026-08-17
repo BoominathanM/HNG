@@ -84,6 +84,8 @@ export default function Expenses() {
     proofUrl: e.proofUrl,
     paidBy: e.paidBy,
     paidDate: e.paidDate?.slice(0, 10),
+    paidAmount: e.paidAmount,
+    paidDateTime: e.paidDate,
   })), [expData]);
 
   const { filterTabs } = useTabAccess('Expenses');
@@ -92,18 +94,22 @@ export default function Expenses() {
   const handleExport = () => {
     const rows = applyExpFilter(allExpenses);
     if (!rows.length) { enqueueSnackbar('No data to export', { variant: 'warning' }); return; }
-    const headers = ['Date', 'Category', 'Description', 'Vendor', 'Amount', 'Status'];
+    const headers = ['Expense ID', 'Date', 'Category', 'Description', 'Vendor', 'Amount', 'Paid Amount', 'Paid Date & Time', 'Status'];
     const csv = [
       headers.join(','),
       ...rows.map(r => {
         const cat = EXPENSE_CATEGORIES.find(x => x.value === r.category);
         const catLabel = r.category === 'OTHER' ? (r.customCategory || 'Other') : (cat?.label || r.category);
+        const paidDateTime = r.paidDateTime ? dayjs(r.paidDateTime).format('YYYY-MM-DD HH:mm:ss') : '';
         return [
+          `"${r.expenseCode || ''}"`,
           r.date || '',
           `"${catLabel}"`,
           `"${(r.desc || '').replace(/"/g, '""')}"`,
           `"${(r.vendor || '').replace(/"/g, '""')}"`,
           r.amount || 0,
+          r.paidAmount || 0,
+          paidDateTime,
           r.status || '',
         ].join(',');
       }),

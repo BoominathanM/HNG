@@ -306,6 +306,10 @@ export const apiSlice = createApi({
       query: ({ id, ...data }) => ({ url: `/dispatch/${id}/lr-mismatch-request`, method: 'patch', data }),
       invalidatesTags: (result, error, { id }) => ['Orders', 'Operations', { type: 'Dispatch', id }],
     }),
+    requestInvoiceMismatchApproval: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/dispatch/${id}/invoice-mismatch-request`, method: 'patch', data }),
+      invalidatesTags: (result, error, { id }) => ['Orders', { type: 'Dispatch', id }],
+    }),
     verifyItem: builder.mutation({
       query: ({ id, itemId, formData, verified }) => ({
         url: `/dispatch/${id}/items/${itemId}/verify`,
@@ -642,6 +646,10 @@ export const apiSlice = createApi({
     decideLrMismatchSales: builder.mutation({
       query: ({ id, decision }) => ({ url: `/sales/orders/${id}/lr-mismatch-decision`, method: 'patch', data: { decision } }),
       invalidatesTags: ['Orders', 'Operations', 'Dispatch'],
+    }),
+    decideInvoiceMismatch: builder.mutation({
+      query: ({ id, decision, note }) => ({ url: `/sales/orders/${id}/invoice-mismatch-decision`, method: 'patch', data: { decision, note } }),
+      invalidatesTags: ['Orders', 'Dispatch'],
     }),
     getComplaints: builder.query({
       query: (params) => ({ url: '/sales/complaints', params }),
@@ -1334,6 +1342,7 @@ export const {
   useDeleteVendorMutation,
   useGetVendorHistoryQuery,
   useGetVendorLedgerQuery,
+  useLazyGetVendorLedgerQuery,
   useUpdateVendorStatusMutation,
   useGenerateAiSummaryMutation,
   useScanVendorDocumentMutation,
@@ -1393,6 +1402,7 @@ export const {
   useScanDispatchLRMutation,
   useReportTransportMismatchMutation,
   useRequestLrMismatchApprovalMutation,
+  useRequestInvoiceMismatchApprovalMutation,
   useVerifyItemMutation,
   // Inventory
   useGetItemsQuery,
@@ -1466,6 +1476,7 @@ export const {
   useDeleteSalesOrderMutation,
   useDecideTransportMismatchMutation,
   useDecideLrMismatchSalesMutation,
+  useDecideInvoiceMismatchMutation,
   useGetComplaintsQuery,
   useCreateComplaintMutation,
   useUpdateComplaintStatusMutation,
@@ -1555,6 +1566,7 @@ export const {
   // Parties
   useGetPartiesQuery,
   useGetPartyLedgerQuery,
+  useLazyGetPartyLedgerQuery,
   useGetPartyOrdersQuery,
   useCreatePartyMutation,
   useDeletePartyMutation,

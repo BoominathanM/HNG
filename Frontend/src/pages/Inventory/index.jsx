@@ -624,6 +624,7 @@ export default function Inventory() {
     qtyAfter: m.qtyAfter,
     vendor: m.vendorId?.name || m.vendorName || '—',
     hotel: m.partyId?.name || m.partyName || '—',
+    orderId: m.referenceCode || '—',
     source: m.referenceType || '—',
     person: m.createdBy?.fullName || 'Admin',
     notes: m.reason || '',
@@ -1418,6 +1419,7 @@ export default function Inventory() {
             { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', render: v => v && v !== '—' ? <Tag color="geekblue" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text> },
             { title: 'Source / Entity', dataIndex: 'source', key: 'source', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
             { title: 'Hotel / Party', dataIndex: 'hotel', key: 'hotel', render: v => v && v !== '—' ? <Tag color="purple" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text> },
+            { title: 'Order ID', dataIndex: 'orderId', key: 'orderId', render: v => v && v !== '—' ? <Text style={{ fontWeight: 600, fontSize: 12 }}>{v}</Text> : <Text type="secondary">—</Text> },
             { title: 'Person', dataIndex: 'person', key: 'person' },
             { title: 'Notes', dataIndex: 'notes', key: 'notes', render: v => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : '—' },
           ]}

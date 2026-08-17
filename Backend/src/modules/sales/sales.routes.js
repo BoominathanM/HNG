@@ -44,6 +44,7 @@ router.delete('/orders/:id', ctrl.deleteOrder);
 router.patch('/orders/:id/status', ctrl.updateOrderStatus);
 router.patch('/orders/:id/transport-mismatch-decision', ctrl.decideTransportMismatch);
 router.patch('/orders/:id/lr-mismatch-decision', ctrl.decideLrMismatchSales);
+router.patch('/orders/:id/invoice-mismatch-decision', ctrl.decideInvoiceMismatch);
 
 // Complaints
 router.get('/complaints', ctrl.getComplaints);

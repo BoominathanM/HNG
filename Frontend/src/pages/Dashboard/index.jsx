@@ -80,7 +80,7 @@ export default function Dashboard() {
 
       <Row gutter={[16, 16]} className="stat-cards-row" style={{ marginBottom: 24 }}>
         {statCards.map((s, i) => (
-          <Col xs={12} sm={8} md={6} lg={4} xl={4} key={s.title}>
+          <Col xs={12} sm={8} md={8} lg={6} xl={6} key={s.title}>
             <motion.div {...fadeIn(i * 0.08)}><StatCard {...s} /></motion.div>
           </Col>
         ))}

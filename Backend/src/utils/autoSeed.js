@@ -64,9 +64,9 @@ const seedAdminIfEmpty = async () => {
   }
 };
 
-// Alert Configuration always edits 7 fixed rows (4 design roles + sales +
-// operations approval + task) — seed them idempotently so the Settings tab
-// never has to handle a create/delete flow, only edit.
+// Alert Configuration always edits 8 fixed rows (4 design roles + sales +
+// operations approval + task + dispatch reason) — seed them idempotently so the
+// Settings tab never has to handle a create/delete flow, only edit.
 const ALERT_CONFIG_ROWS = [
   { group: 'design', role: 'Sticker' },
   { group: 'design', role: 'Box' },
@@ -77,6 +77,7 @@ const ALERT_CONFIG_ROWS = [
   { group: 'sales_approval', role: null },
   { group: 'operations_approval', role: null },
   { group: 'task', role: null },
+  { group: 'dispatch_reason', role: null },
 ];
 
 const seedAlertConfigsIfMissing = async () => {

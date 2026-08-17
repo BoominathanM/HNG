@@ -346,6 +346,28 @@ export default function AlertConfigurationTab() {
           />
         </Col>
       </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Dispatch Reason Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          Rings the order's own assigned sales person when Dispatch reports an invoice/lorry receipt mismatch reason, until it's approved or rejected.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('dispatch_reason', null)?._id || 'dispatch_reason'}
+            title="Dispatch Reason Alert"
+            description="Notifies the order's assigned sales person about a pending invoice mismatch reason."
+            group="dispatch_reason"
+            role={null}
+            config={findConfig('dispatch_reason', null)}
+            dynamicRecipient
+          />
+        </Col>
+      </Row>
     </div>
   );
 }

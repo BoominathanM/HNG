@@ -27,11 +27,13 @@ function isWithinWindow(config, now) {
 // cron tick has evaluated it — same latency as the scheduler's own cadence.
 exports.getActiveAlerts = asyncHandler(async (req, res) => {
   const now = new Date();
-  // 'task' configs apply to whichever task's assignedTo matches this user
-  // (checked per-item below), not to a fixed recipientUserIds list.
+  // 'task' and 'dispatch_reason' configs apply to whichever record's dynamic recipient
+  // (task assignee / order's assigned sales person) matches this user (checked per-item
+  // below), not to a fixed recipientUserIds list.
+  const DYNAMIC_RECIPIENT_GROUPS = ['task', 'dispatch_reason'];
   const configs = await AlertConfig.find({
     isEnabled: true,
-    $or: [{ recipientUserIds: req.user._id }, { group: 'task' }],
+    $or: [{ recipientUserIds: req.user._id }, { group: { $in: DYNAMIC_RECIPIENT_GROUPS } }],
   });
 
   const results = [];
@@ -48,7 +50,7 @@ exports.getActiveAlerts = asyncHandler(async (req, res) => {
     const logByRecord = new Map(logs.map((l) => [String(l.recordId), l]));
 
     for (const item of pending) {
-      if (config.group === 'task' && String(item.recipientUserId || '') !== String(req.user._id)) continue;
+      if (DYNAMIC_RECIPIENT_GROUPS.includes(config.group) && String(item.recipientUserId || '') !== String(req.user._id)) continue;
       const log = logByRecord.get(String(item.recordId));
       if (!log) continue; // not yet evaluated by the scheduler
       results.push({

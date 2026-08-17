@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs, Divider, DatePicker, Tag, Empty, Checkbox } from 'antd';
-import { DownloadOutlined, FileExcelOutlined, FilePdfOutlined, SearchOutlined, FilterOutlined } from '@ant-design/icons';
+import { Row, Col, Card, Table, Button, Select, Input, Typography, Space, Tabs, Divider, DatePicker, Tag, Empty, Checkbox, Popover } from 'antd';
+import { DownloadOutlined, FileExcelOutlined, FilePdfOutlined, SearchOutlined, FilterOutlined, CalendarOutlined } from '@ant-design/icons';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -91,6 +91,40 @@ const periodToRange = (period) => {
   }
 };
 
+// Indian fiscal year: Apr 1 – Mar 31. Returns the dayjs start-of-day for the FY that `base`
+// falls in (e.g. any date in Jan–Mar resolves to the previous calendar year's Apr 1).
+const fiscalYearStart = (base) => base.year(base.month() >= 3 ? base.year() : base.year() - 1).month(3).date(1).startOf('day');
+
+// Named quick-select date buckets for the P&L "Select Date" filter — each resolves to a
+// concrete [start, end] dayjs range as of the moment this is called.
+const quickDateRanges = () => {
+  const now = dayjs();
+  const thisFyStart = fiscalYearStart(now);
+  const thisFyEnd = thisFyStart.add(1, 'year').subtract(1, 'day').endOf('day');
+  const prevFyStart = thisFyStart.subtract(1, 'year');
+  const prevFyEnd = thisFyStart.subtract(1, 'day').endOf('day');
+  const qStartMonth = Math.floor(now.month() / 3) * 3;
+  const thisQStart = now.month(qStartMonth).startOf('month');
+  const thisQEnd = thisQStart.add(2, 'month').endOf('month');
+  const lastQStart = thisQStart.subtract(3, 'month');
+  const lastQEnd = thisQStart.subtract(1, 'day').endOf('day');
+
+  return [
+    { key: 'today', label: 'Today', range: [now.startOf('day'), now.endOf('day')] },
+    { key: 'yesterday', label: 'Yesterday', range: [now.subtract(1, 'day').startOf('day'), now.subtract(1, 'day').endOf('day')] },
+    { key: 'this_week', label: 'This week', range: [now.startOf('week'), now.endOf('week')] },
+    { key: 'last_week', label: 'Last Week', range: [now.subtract(1, 'week').startOf('week'), now.subtract(1, 'week').endOf('week')] },
+    { key: 'last_7_days', label: 'Last 7 days', range: [now.subtract(6, 'day').startOf('day'), now.endOf('day')] },
+    { key: 'this_month', label: 'This month', range: [now.startOf('month'), now.endOf('month')] },
+    { key: 'last_month', label: 'Last Month', range: [now.subtract(1, 'month').startOf('month'), now.subtract(1, 'month').endOf('month')] },
+    { key: 'this_quarter', label: 'This quarter', range: [thisQStart, thisQEnd] },
+    { key: 'last_quarter', label: 'Last quarter', range: [lastQStart, lastQEnd] },
+    { key: 'current_fy', label: 'Current fiscal year', range: [thisFyStart, thisFyEnd] },
+    { key: 'previous_fy', label: 'Previous fiscal year', range: [prevFyStart, prevFyEnd] },
+    { key: 'last_365_days', label: 'Last 365 Days', range: [now.subtract(365, 'day').startOf('day'), now.endOf('day')] },
+  ];
+};
+
 export default function Reports() {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
@@ -137,6 +171,10 @@ export default function Reports() {
   // P&L state
   const [plSelectedMonth, setPlSelectedMonth] = useState('all');
   const [plDateRange, setPlDateRange] = useState(null);
+  // Tracks which "Select Date" quick bucket (Today/This week/Current fiscal year/etc.) is
+  // active, purely so the picker panel can highlight it; the actual filtering runs off
+  // plDateRange like it always has. Cleared whenever the RangePicker itself is used directly.
+  const [plQuickSelect, setPlQuickSelect] = useState(null);
   // All expense categories are deducted (checked) by default — Net Profit starts as
   // Gross Profit minus every real expense category, matching the P&L definition; unchecking
   // a chip excludes just that category from the Net Profit calc.
@@ -183,9 +221,13 @@ export default function Reports() {
   // Date-range pickers below feed these as query params, so the backend does the actual
   // filtering (buildDateFilterOn in reports.controller) rather than the UI silently ignoring
   // the selected range. Tab-specific pickers (when set) override the header's global range.
+  // RangePicker (without showTime) resolves both ends to midnight — normalizing here to
+  // startOf/endOf day (idempotent for ranges already at those bounds, e.g. periodToRange's
+  // output) is what makes a same-day range (start === end) actually match that day's records
+  // instead of only records timestamped exactly at midnight.
   const toDateParams = (range) => (
     range?.[0] && range?.[1]
-      ? { startDate: range[0].toISOString(), endDate: range[1].toISOString() }
+      ? { startDate: range[0].startOf('day').toISOString(), endDate: range[1].endOf('day').toISOString() }
       : undefined
   );
   const headerDateParams = useMemo(() => toDateParams(headerDateRange), [headerDateRange]);
@@ -354,6 +396,12 @@ export default function Reports() {
   // Product-specific monthly breakdown (for detail view when a product is selected)
   const selectedProductMonthly = plProductFilter
     ? plBaseData.map(d => ({ ...d, netProfit: d.grossProfit - plSelectedExpenses.reduce((s, cat) => s + (d.expenses[cat] || 0), 0) }))
+    : null;
+  // Sold Qty / Stock Qty for the selected product — sourced from activeProductPLData (the
+  // same per-product totals the unfiltered "Product-wise Profit & Loss" table shows), so the
+  // single-product detail view carries the same two figures instead of dropping them.
+  const selectedProductStats = plProductFilter
+    ? activeProductPLData.find(p => p.product === plProductFilter)
     : null;
 
   // Dynamic filter options from real data
@@ -1154,11 +1202,54 @@ export default function Reports() {
                         <Option value="all">All Months</Option>
                         {plMonthOptions.map(m => <Option key={m} value={m}>{m}</Option>)}
                       </Select>
-                      <DatePicker.RangePicker onChange={setPlDateRange} style={{ width: 250 }} />
-                      {(plProductFilter || plSelectedMonth !== 'all') && (
+                      <DatePicker.RangePicker
+                        value={plDateRange}
+                        onChange={(range) => { setPlDateRange(range); setPlQuickSelect(null); }}
+                        style={{ width: 250 }}
+                      />
+                      <Popover
+                        trigger="click"
+                        placement="bottomLeft"
+                        title={<Text strong style={{ fontSize: 13 }}>Select Date</Text>}
+                        content={
+                          <div style={{ width: 270, maxHeight: 380, overflowY: 'auto' }}>
+                            {quickDateRanges().map(opt => {
+                              const isActive = plQuickSelect === opt.key;
+                              return (
+                                <div
+                                  key={opt.key}
+                                  onClick={() => { setPlDateRange(opt.range); setPlQuickSelect(opt.key); }}
+                                  style={{
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                    padding: '7px 8px', borderRadius: 8, cursor: 'pointer',
+                                    background: isActive ? '#B11E6A12' : 'transparent',
+                                  }}
+                                >
+                                  <div>
+                                    <div style={{ fontSize: 13, fontWeight: 600, color: isActive ? '#B11E6A' : textColor }}>{opt.label}</div>
+                                    <div style={{ fontSize: 11, color: '#999' }}>{opt.range[0].format('DD MMM YYYY')} - {opt.range[1].format('DD MMM YYYY')}</div>
+                                  </div>
+                                  <div style={{
+                                    width: 15, height: 15, borderRadius: '50%', flexShrink: 0,
+                                    border: `1.5px solid ${isActive ? '#B11E6A' : borderColor}`,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  }}>
+                                    {isActive && <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#B11E6A' }} />}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        }
+                      >
+                        <Button icon={<CalendarOutlined />} style={{ borderRadius: 8 }}>
+                          {plQuickSelect ? quickDateRanges().find(o => o.key === plQuickSelect)?.label : 'Select Date'}
+                        </Button>
+                      </Popover>
+                      {(plProductFilter || plSelectedMonth !== 'all' || plDateRange) && (
                         <Button
                           size="small"
-                          onClick={() => { setPlProductFilter(null); setPlSelectedMonth('all'); setPlDateRange(null); }}
+                          onClick={() => { setPlProductFilter(null); setPlSelectedMonth('all'); setPlDateRange(null); setPlQuickSelect(null); }}
                           style={{ color: '#ff4d4f', borderColor: '#ff4d4f44', borderRadius: 20, fontSize: 12 }}
                         >
                           Clear Filters
@@ -1171,11 +1262,16 @@ export default function Reports() {
                       <Button icon={<DownloadOutlined />} type="primary" style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }} onClick={exportPlDownload}>Download Report</Button>
                     </Space>
                   </div>
-                  {(plProductFilter || plSelectedMonth !== 'all') && (
+                  {(plProductFilter || plSelectedMonth !== 'all' || plDateRange) && (
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
                       <Text style={{ fontSize: 12, color: '#888' }}>Active filters:</Text>
                       {plProductFilter && <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20 }}>{plProductFilter}</Tag>}
                       {plSelectedMonth !== 'all' && <Tag style={{ background: '#8a165215', color: '#8a1652', border: '1px solid #8a165233', borderRadius: 20 }}>{plSelectedMonth}</Tag>}
+                      {plDateRange && (
+                        <Tag style={{ background: '#6b124015', color: '#6b1240', border: '1px solid #6b124033', borderRadius: 20 }}>
+                          {plQuickSelect ? quickDateRanges().find(o => o.key === plQuickSelect)?.label : `${plDateRange[0].format('DD MMM YYYY')} - ${plDateRange[1].format('DD MMM YYYY')}`}
+                        </Tag>
+                      )}
                     </div>
                   )}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
@@ -1377,11 +1473,11 @@ export default function Reports() {
                           </>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: '#52c41a10', borderRadius: 8, border: '1px solid #52c41a22' }}>
-                          <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>Paid Amount</Text>
+                          <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>Received Amount</Text>
                           <Text style={{ fontSize: 13, color: '#52c41a', fontWeight: 700 }}>₹{(totalPaid ?? 0).toLocaleString()}</Text>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: '#fa8c1610', borderRadius: 8, border: '1px solid #fa8c1622' }}>
-                          <Text style={{ fontSize: 12, color: '#fa8c16', fontWeight: 600 }}>Pending Amount</Text>
+                          <Text style={{ fontSize: 12, color: '#fa8c16', fontWeight: 600 }}>Credit to be Collected</Text>
                           <Text style={{ fontSize: 13, color: '#fa8c16', fontWeight: 700 }}>₹{(totalPending ?? 0).toLocaleString()}</Text>
                         </div>
                         <Divider style={{ margin: '2px 0' }} />
@@ -1455,11 +1551,26 @@ export default function Reports() {
                 <Card
                   title={
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                      <Space>
+                      <Space wrap>
                         <Text strong style={{ color: textColor }}>
                           {plProductFilter ? `${plProductFilter} — Monthly P&L Breakdown` : 'Product-wise Profit & Loss'}
                         </Text>
                         {plProductFilter && <Tag style={{ background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44', borderRadius: 20 }}>{plProductFilter}</Tag>}
+                        {plProductFilter && selectedProductStats && (
+                          <>
+                            <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
+                              Sold Qty: {(selectedProductStats.soldQty ?? 0).toLocaleString()}
+                            </Tag>
+                            <Tag style={{
+                              background: (selectedProductStats.stockQty ?? 0) < 200 ? '#ff4d4f15' : '#52c41a15',
+                              color: (selectedProductStats.stockQty ?? 0) < 200 ? '#ff4d4f' : '#52c41a',
+                              border: `1px solid ${(selectedProductStats.stockQty ?? 0) < 200 ? '#ff4d4f33' : '#52c41a33'}`,
+                              borderRadius: 20, fontSize: 11, fontWeight: 700,
+                            }}>
+                              Stock Qty: {(selectedProductStats.stockQty ?? 0).toLocaleString()}
+                            </Tag>
+                          </>
+                        )}
                       </Space>
                       <Button icon={<DownloadOutlined />} size="small" style={{ color: '#B11E6A', borderColor: '#B11E6A44' }}>Download</Button>
                     </div>

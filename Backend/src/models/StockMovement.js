@@ -14,6 +14,10 @@ const stockMovementSchema = new mongoose.Schema({
   notes: String,
   referenceType: { type: String, enum: ['Order', 'Purchase', 'Sale', 'Check', 'Opening', 'Manual'] },
   referenceId: mongoose.Schema.Types.ObjectId,
+  // Human-readable code of the referenced document (Order.orderCode, PurchaseOrder.poCode,
+  // LocalPurchase.lpCode) — snapshotted like vendorName/partyName since referenceId is a
+  // polymorphic ObjectId that can't be populate()'d, and the source doc can be deleted later.
+  referenceCode: String,
   supplyPrice: Number,
   sellPrice: Number,
   departureDate: Date,

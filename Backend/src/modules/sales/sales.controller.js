@@ -608,6 +608,7 @@ async function deductInventoryForOrder(order, userId) {
           qtyAfter: Math.max(0, runningAfter),
           referenceType: 'Order',
           referenceId: order._id,
+          referenceCode: order.orderCode,
           vendorId: seg.vendorId || undefined,
           vendorName: seg.vendorName,
           purchaseDate: seg.purchaseDate,
@@ -1150,6 +1151,32 @@ exports.decideLrMismatchSales = asyncHandler(async (req, res, next) => {
       message: `Order ${order.orderCode}: Sales has approved the LR mismatch. Operations approval is still required before dispatch can proceed.`,
     });
   }
+
+  res.status(200).json({ success: true, data: order });
+});
+
+// PATCH /api/sales/orders/:id/invoice-mismatch-decision — Sales decides on a general
+// invoice/lorry-receipt mismatch reason raised by Dispatch (see dispatch.controller.js
+// requestInvoiceMismatchApproval). Single-approval only, unlike the dual Sales+Operations
+// LR mismatch above. Approving flips dispatchInvoiceMismatchAwaitingReupload so Dispatch
+// can re-upload the corrected invoice and continue.
+exports.decideInvoiceMismatch = asyncHandler(async (req, res, next) => {
+  const { decision, note } = req.body;
+  if (!['approved', 'rejected'].includes(decision)) {
+    return next(new AppError('decision must be "approved" or "rejected"', 400));
+  }
+  const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
+  if (!order) return next(new AppError('Order not found', 404));
+  if (order.dispatchInvoiceMismatchStatus !== 'pending') {
+    return next(new AppError('No pending invoice mismatch approval for this order', 400));
+  }
+
+  order.dispatchInvoiceMismatchStatus = decision;
+  order.dispatchInvoiceMismatchDecidedBy = req.user._id;
+  order.dispatchInvoiceMismatchDecidedAt = Date.now();
+  order.dispatchInvoiceMismatchDecisionNote = note || '';
+  order.dispatchInvoiceMismatchAwaitingReupload = decision === 'approved';
+  await order.save({ validateBeforeSave: false });
 
   res.status(200).json({ success: true, data: order });
 });

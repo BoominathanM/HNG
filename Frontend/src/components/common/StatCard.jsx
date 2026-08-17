@@ -24,15 +24,15 @@ export default function StatCard({ title, value, icon, color, change, suffix }) 
           boxShadow: `0 4px 20px ${color}25`,
           overflow: 'hidden',
         }}
-        styles={{ body: { padding: '16px 18px' } }}
+        styles={{ body: { padding: '14px 16px' } }}
         hoverable
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-          <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
+          <div style={{ minWidth: 0, flex: 1 }} title={title}>
             <Text style={{ fontSize: 12, color: isDark ? '#bbb' : '#666', fontWeight: 500, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {title}
             </Text>
-            <Title level={3} style={{ margin: '4px 0 0', color: isDark ? '#ffffff' : '#1a1a2e', fontWeight: 700, fontSize: 'clamp(16px, 2.5vw, 22px)' }}>
+            <Title level={3} style={{ margin: '4px 0 0', color: isDark ? '#ffffff' : '#1a1a2e', fontWeight: 700, fontSize: 'clamp(15px, 2.2vw, 22px)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {value}{suffix && <span style={{ fontSize: 14, fontWeight: 500 }}> {suffix}</span>}
             </Title>
             {change !== undefined && (
@@ -45,10 +45,10 @@ export default function StatCard({ title, value, icon, color, change, suffix }) 
             )}
           </div>
           <div className="stat-icon-box" style={{
-            width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+            width: 38, height: 38, borderRadius: 10, flexShrink: 0,
             background: isDark ? `${color}35` : `${color}22`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 20, color,
+            fontSize: 18, color,
           }}>
             {icon}
           </div>

@@ -12,7 +12,7 @@ import {
   CameraOutlined, UploadOutlined, EnvironmentOutlined,
   ArrowLeftOutlined, PrinterOutlined, SaveOutlined, ThunderboltOutlined,
   InboxOutlined, CheckCircleOutlined, FileDoneOutlined, CheckSquareOutlined,
-  LinkOutlined, BellOutlined, CarOutlined, WhatsAppOutlined, EditOutlined,
+  LinkOutlined, BellOutlined, CarOutlined, WhatsAppOutlined, ExclamationCircleOutlined,
   LoadingOutlined, GiftOutlined, AppstoreOutlined, CheckCircleFilled,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
@@ -33,6 +33,7 @@ import {
   useScanDispatchLRMutation,
   useReportTransportMismatchMutation,
   useRequestLrMismatchApprovalMutation,
+  useRequestInvoiceMismatchApprovalMutation,
 } from '../../store/api/apiSlice';
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
@@ -104,6 +105,7 @@ export default function DispatchDetail() {
   const [scanDispatchLR] = useScanDispatchLRMutation();
   const [reportTransportMismatch] = useReportTransportMismatchMutation();
   const [requestLrMismatchApproval] = useRequestLrMismatchApprovalMutation();
+  const [requestInvoiceMismatchApproval] = useRequestInvoiceMismatchApprovalMutation();
 
   // Derive orderId from raw dispatch data (before `order` useMemo is computed)
   const dispatchRaw = dispatchData?.data;
@@ -533,6 +535,12 @@ export default function DispatchDetail() {
       lrMismatchFields: o.dispatchLrMismatchFields || [],
       lrMismatchSalesApproved: !!o.dispatchLrMismatchSalesApproved,
       lrMismatchOpsApproved: !!o.dispatchLrMismatchOpsApproved,
+      // General invoice/LR mismatch reason (single Sales-only approval) — replaces the
+      // old self-service "Edit Details" toggle. See requestInvoiceMismatchApproval below.
+      invoiceMismatchStatus: o.dispatchInvoiceMismatchStatus || 'none',
+      invoiceMismatchReason: o.dispatchInvoiceMismatchReason || '',
+      invoiceMismatchDecisionNote: o.dispatchInvoiceMismatchDecisionNote || '',
+      invoiceMismatchAwaitingReupload: !!o.dispatchInvoiceMismatchAwaitingReupload,
       isCredit,
       creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
       payment: isCredit ? 'Credit' : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (emergencyApproved ? 'Emergency Approved' : (basePaymentConfirmed ? 'Confirmed' : 'Pending')))),
@@ -880,10 +888,12 @@ export default function DispatchDetail() {
   const [lrFileList, setLrFileList] = useState([]);
   const [aiParsing, setAiParsing] = useState(false);
   const [aiParsed, setAiParsed] = useState(null);
-  const [lrEditMode, setLrEditMode] = useState(false);
   const [finishedDispatch, setFinishedDispatch] = useState(false);
   const [lrMismatchReasonInput, setLrMismatchReasonInput] = useState('');
   const [submittingLrMismatch, setSubmittingLrMismatch] = useState(false);
+  const [showInvoiceMismatchBox, setShowInvoiceMismatchBox] = useState(false);
+  const [invoiceMismatchReasonInput, setInvoiceMismatchReasonInput] = useState('');
+  const [submittingInvoiceMismatch, setSubmittingInvoiceMismatch] = useState(false);
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -1148,7 +1158,6 @@ export default function DispatchDetail() {
       const parsed = res?.data || {};
       setAiParsed(parsed);
       lrForm.setFieldsValue(parsed);
-      setLrEditMode(false);
 
       // Mirror the extracted LR number / tracking URL into the "Tracking via Lorry
       // Service" fields below, without clobbering anything already typed there.
@@ -1226,6 +1235,28 @@ export default function DispatchDetail() {
       enqueueSnackbar(err?.data?.message || 'Failed to request approval.', { variant: 'error' });
     } finally {
       setSubmittingLrMismatch(false);
+    }
+  };
+
+  // General invoice/LR mismatch — free-text reason for anything wrong with the scanned
+  // invoice that doesn't fit the specific Transport/Packages/Destination checks above.
+  // Sent only to this order's own assigned sales person; single approval unblocks the
+  // Upload/AI-Parse controls again so the corrected invoice can be re-uploaded.
+  const handleRequestInvoiceMismatchApproval = async () => {
+    if (!invoiceMismatchReasonInput.trim()) {
+      enqueueSnackbar('Enter a reason for the mismatch before sending to Sales.', { variant: 'warning' });
+      return;
+    }
+    setSubmittingInvoiceMismatch(true);
+    try {
+      await requestInvoiceMismatchApproval({ id, reason: invoiceMismatchReasonInput.trim() }).unwrap();
+      enqueueSnackbar(`Sent to ${order.salesPerson || 'Sales'} for approval.`, { variant: 'success' });
+      setInvoiceMismatchReasonInput('');
+      setShowInvoiceMismatchBox(false);
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Failed to send for approval.', { variant: 'error' });
+    } finally {
+      setSubmittingInvoiceMismatch(false);
     }
   };
 
@@ -2215,6 +2246,7 @@ export default function DispatchDetail() {
                   listType="picture"
                   fileList={lrFileList}
                   maxCount={3}
+                  disabled={order.invoiceMismatchStatus === 'pending'}
                   customRequest={makeUpload('dispatch/lr')}
                   accept=".pdf,.jpg,.jpeg,.png"
                   onChange={({ fileList }) => {
@@ -2224,10 +2256,15 @@ export default function DispatchDetail() {
                     }
                   }}
                 >
-                  <Button icon={<UploadOutlined />} block style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
-                    Upload Lorry Receipt (PDF / Image)
+                  <Button icon={<UploadOutlined />} block disabled={order.invoiceMismatchStatus === 'pending'} style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}>
+                    {order.invoiceMismatchAwaitingReupload ? 'Re-upload Corrected Lorry Receipt (PDF / Image)' : 'Upload Lorry Receipt (PDF / Image)'}
                   </Button>
                 </Upload>
+                {order.invoiceMismatchStatus === 'pending' && (
+                  <Text style={{ fontSize: 11, color: '#fa8c16', display: 'block', marginTop: 6 }}>
+                    Upload is disabled while your reported mismatch is awaiting Sales approval.
+                  </Text>
+                )}
 
                 {/* AI Parse — shown once receipt is uploaded */}
                 {lrUploaded && (
@@ -2243,6 +2280,7 @@ export default function DispatchDetail() {
                         size="small"
                         icon={<ThunderboltOutlined />}
                         loading={aiParsing}
+                        disabled={order.invoiceMismatchStatus === 'pending'}
                         style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
                         onClick={handleAIParse}
                       >
@@ -2255,17 +2293,91 @@ export default function DispatchDetail() {
                       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                           <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>
-                            <CheckCircleOutlined style={{ marginRight: 4 }} />AI extracted details — review &amp; edit if needed
+                            <CheckCircleOutlined style={{ marginRight: 4 }} />AI extracted details — review below
                           </Text>
-                          <Button
-                            size="small"
-                            icon={<EditOutlined />}
-                            onClick={() => setLrEditMode(!lrEditMode)}
-                            style={{ borderColor: '#B11E6A55', color: '#B11E6A' }}
-                          >
-                            {lrEditMode ? 'View Summary' : 'Edit Details'}
-                          </Button>
+                          {order.invoiceMismatchStatus === 'none' ? (
+                            <Button
+                              size="small"
+                              danger={showInvoiceMismatchBox}
+                              icon={<ExclamationCircleOutlined />}
+                              onClick={() => setShowInvoiceMismatchBox((v) => !v)}
+                              style={!showInvoiceMismatchBox ? { borderColor: '#B11E6A55', color: '#B11E6A' } : undefined}
+                            >
+                              {showInvoiceMismatchBox ? 'Cancel' : 'Report Mismatch'}
+                            </Button>
+                          ) : (
+                            <Tag
+                              color={order.invoiceMismatchStatus === 'pending' ? 'gold' : order.invoiceMismatchStatus === 'approved' ? 'success' : 'error'}
+                              style={{ margin: 0, borderRadius: 12 }}
+                            >
+                              {order.invoiceMismatchStatus === 'pending' && 'Mismatch — Awaiting Sales'}
+                              {order.invoiceMismatchStatus === 'approved' && (order.invoiceMismatchAwaitingReupload ? 'Approved — Reupload Invoice' : 'Mismatch Approved')}
+                              {order.invoiceMismatchStatus === 'rejected' && 'Mismatch Rejected'}
+                            </Tag>
+                          )}
                         </div>
+
+                        {/* Invoice Mismatch — general-purpose reason field for anything
+                            wrong with the scanned invoice, sent to this order's own sales
+                            person (single approval). Replaces the old "Edit Details"
+                            self-fix toggle — the dispatcher can no longer silently correct
+                            AI-scanned fields; they must flag it and get sign-off instead. */}
+                        {(showInvoiceMismatchBox || order.invoiceMismatchStatus === 'pending' || order.invoiceMismatchStatus === 'rejected' || order.invoiceMismatchAwaitingReupload) && (
+                          <div style={{ marginBottom: 12, border: '1.5px solid #B11E6A55', borderRadius: 8, padding: 12, background: isDark ? '#241522' : '#fff5fa' }}>
+                            <Text strong style={{ fontSize: 13, color: '#B11E6A' }}>Invoice Mismatch — Sales Review</Text>
+                            <div style={{ marginTop: 4, marginBottom: 10, fontSize: 12, color: isDark ? '#ccc' : '#666' }}>
+                              Found something wrong with the scanned invoice/lorry receipt? Describe it below and send it to {order.salesPerson || 'the assigned sales person'} for approval — once approved, you can re-upload the corrected invoice and continue.
+                            </div>
+
+                            {order.invoiceMismatchStatus === 'pending' && (
+                              <Alert
+                                type="warning"
+                                showIcon
+                                style={{ marginBottom: 10, borderRadius: 8 }}
+                                message="Awaiting Sales approval"
+                                description={`Reason given: "${order.invoiceMismatchReason}"`}
+                              />
+                            )}
+                            {order.invoiceMismatchStatus === 'approved' && order.invoiceMismatchAwaitingReupload && (
+                              <Alert
+                                type="success"
+                                showIcon
+                                style={{ marginBottom: 10, borderRadius: 8 }}
+                                message="Approved — re-upload the corrected invoice"
+                                description="Sales approved the reported mismatch. Upload the correct lorry receipt/invoice above and run AI Parse again to continue the dispatch flow."
+                              />
+                            )}
+                            {order.invoiceMismatchStatus === 'rejected' && (
+                              <Alert
+                                type="error"
+                                showIcon
+                                style={{ marginBottom: 10, borderRadius: 8 }}
+                                message="Rejected by Sales"
+                                description={order.invoiceMismatchDecisionNote ? `Note: "${order.invoiceMismatchDecisionNote}"` : 'Enter a new reason below to request approval again, or upload a corrected invoice.'}
+                              />
+                            )}
+
+                            {(order.invoiceMismatchStatus === 'none' || order.invoiceMismatchStatus === 'rejected') && (
+                              <>
+                                <Input.TextArea
+                                  rows={2}
+                                  placeholder="Describe the mismatch (required)"
+                                  value={invoiceMismatchReasonInput}
+                                  onChange={(e) => setInvoiceMismatchReasonInput(e.target.value)}
+                                  style={{ marginBottom: 8 }}
+                                />
+                                <Button
+                                  danger
+                                  size="small"
+                                  loading={submittingInvoiceMismatch}
+                                  onClick={handleRequestInvoiceMismatchApproval}
+                                >
+                                  {order.invoiceMismatchStatus === 'rejected' ? 'Resend to Sales' : 'Send to Sales'}
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        )}
 
                         {destinationMatch === false && (
                           <Alert
@@ -2385,57 +2497,8 @@ export default function DispatchDetail() {
                         )}
 
                         <Form form={lrForm} layout="vertical" size="small">
-                          {lrEditMode ? (
-                            <Row gutter={12}>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="LR Number" name="lrNumber">
-                                  <Input placeholder="e.g. LR-78921" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="LR Date" name="lrDate">
-                                  <Input placeholder="YYYY-MM-DD" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="Transport Name" name="transportName">
-                                  <Input placeholder="e.g. Fast Cargo Pvt Ltd" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="No. of Packages" name="packages">
-                                  <Input placeholder="30" prefix={<InboxOutlined />} />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="From City" name="fromCity">
-                                  <Input placeholder="Coimbatore" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="To City" name="toCity">
-                                  <Input placeholder="Mumbai" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="Weight" name="weight">
-                                  <Input placeholder="45.5 Kg" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="Freight Amount" name="freight">
-                                  <Input placeholder="₹2,100" />
-                                </Form.Item>
-                              </Col>
-                              <Col xs={24} sm={12}>
-                                <Form.Item label="Estimated Delivery" name="estimatedDelivery">
-                                  <Input placeholder="YYYY-MM-DD" />
-                                </Form.Item>
-                              </Col>
-                            </Row>
-                          ) : (
-                            <Row gutter={[10, 10]}>
-                              {[
+                          <Row gutter={[10, 10]}>
+                            {[
                                 { label: 'LR Number', value: aiParsed.lrNumber, icon: <FileDoneOutlined />, highlight: true },
                                 { label: 'LR Date', value: aiParsed.lrDate, icon: <CheckSquareOutlined /> },
                                 {
@@ -2498,8 +2561,7 @@ export default function DispatchDetail() {
                                   </Card>
                                 </Col>
                               ))}
-                            </Row>
-                          )}
+                          </Row>
                         </Form>
                       </motion.div>
                     )}
@@ -2548,7 +2610,8 @@ export default function DispatchDetail() {
                   or the real Full Dispatch confirm, since each round needs its own LR/notify
                   step — label and copy switch to reflect which one this round actually is. */}
               {(() => {
-                const canFinish = (dispatched || partialConfirmed) && !otherMismatchBlocked;
+                const invoiceMismatchBlocked = order.invoiceMismatchStatus === 'pending' || order.invoiceMismatchAwaitingReupload;
+                const canFinish = (dispatched || partialConfirmed) && !otherMismatchBlocked && !invoiceMismatchBlocked;
                 const finishLabel = dispatched ? 'Fully Finished' : 'Partial Finished';
                 return (
                   <div style={{ background: finishedDispatch ? '#52c41a15' : isDark ? '#1a1a2a' : '#fff9fb', border: `1.5px solid ${finishedDispatch ? '#52c41a44' : '#B11E6A44'}`, borderRadius: 12, padding: 16 }}>
@@ -2568,6 +2631,13 @@ export default function DispatchDetail() {
                       {(dispatched || partialConfirmed) && otherMismatchBlocked && !finishedDispatch && (
                         <div style={{ marginTop: 6, fontSize: 12, color: '#ff4d4f' }}>
                           Blocked by an unresolved {otherMismatchFieldLabels.join(' / ')} mismatch above — get Sales &amp; Operations approval, or re-upload a corrected LR.
+                        </div>
+                      )}
+                      {(dispatched || partialConfirmed) && invoiceMismatchBlocked && !finishedDispatch && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#ff4d4f' }}>
+                          {order.invoiceMismatchStatus === 'pending'
+                            ? 'Blocked — waiting for Sales to review the reported invoice mismatch above.'
+                            : 'Blocked — re-upload the corrected invoice above to continue.'}
                         </div>
                       )}
                     </div>

@@ -155,6 +155,21 @@ const orderSchema = new mongoose.Schema({
   dispatchLrMismatchOpsApproved: { type: Boolean, default: false },
   dispatchLrMismatchOpsApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   dispatchLrMismatchOpsApprovedAt: Date,
+  // General dispatch invoice/lorry-receipt mismatch — a free-text reason the dispatcher
+  // raises for ANY discrepancy noticed while reviewing the AI-scanned invoice (replaces
+  // the old self-service "Edit Details" toggle). Unlike dispatchLrMismatch* above (dual
+  // Sales+Operations, Packages/Destination only), this needs only the order's own
+  // assigned sales person to approve (see requestInvoiceMismatchApproval / decideInvoiceMismatch).
+  // Approval sets AwaitingReupload so Dispatch can re-upload the corrected invoice —
+  // the next successful scan-lr clears it automatically (see scanLorryReceipt).
+  dispatchInvoiceMismatchStatus: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' },
+  dispatchInvoiceMismatchReason: String,
+  dispatchInvoiceMismatchRequestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  dispatchInvoiceMismatchRequestedAt: Date,
+  dispatchInvoiceMismatchDecidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  dispatchInvoiceMismatchDecidedAt: Date,
+  dispatchInvoiceMismatchDecisionNote: String,
+  dispatchInvoiceMismatchAwaitingReupload: { type: Boolean, default: false },
   // Delivery routing (copied from the originating lead/negotiation at conversion).
   deliveryBy: String,
   transportationBy: String,

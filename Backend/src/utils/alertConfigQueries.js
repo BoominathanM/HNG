@@ -83,6 +83,25 @@ async function getPendingRecordsForConfig(config) {
     }));
   }
 
+  if (config.group === 'dispatch_reason') {
+    // Like 'task', the recipient is dynamic — the order's own assigned sales person,
+    // not a fixed admin-picked recipientUserIds list — resolved per-record here and
+    // matched against the logged-in user in modules/alerts/alerts.controller.js.
+    const items = await Order.find({
+      dispatchInvoiceMismatchStatus: 'pending',
+      assignedTo: { $ne: null },
+      deletedAt: null,
+    }).lean();
+    return items.map((r) => ({
+      recordType: 'Order',
+      recordId: r._id,
+      record: r,
+      recipientUserId: r.assignedTo,
+      title: `Invoice mismatch pending — Order ${r.orderCode || r._id}`,
+      link: '/sales',
+    }));
+  }
+
   if (config.group === 'sales_approval' || config.group === 'operations_approval') {
     const approvedField = config.group === 'sales_approval' ? 'salesApproved' : 'opsHeadApproved';
     const emergencyField = config.group === 'sales_approval' ? 'emergencySalesApproved' : 'emergencyOpsApproved';

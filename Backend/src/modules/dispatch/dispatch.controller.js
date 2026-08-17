@@ -606,6 +606,13 @@ exports.scanLorryReceipt = asyncHandler(async (req, res, next) => {
   const { fileUrl, mimetype, originalName } = req.body;
   if (!fileUrl) return next(new AppError('No lorry receipt file to scan — upload one first', 400));
 
+  const dispatch = await DispatchRecord.findById(req.params.id)
+    .populate('orderId', 'dispatchInvoiceMismatchStatus dispatchInvoiceMismatchAwaitingReupload');
+  const o = dispatch?.orderId;
+  if (o?.dispatchInvoiceMismatchStatus === 'pending') {
+    return next(new AppError('An invoice mismatch reason is awaiting Sales approval — wait for a decision before re-scanning.', 409));
+  }
+
   const config = await aiService.getAiConfig({ withKey: true });
   const apiKey = aiService.resolveApiKey(config);
   if (!apiKey) {
@@ -615,6 +622,14 @@ exports.scanLorryReceipt = asyncHandler(async (req, res, next) => {
   const file = { url: fileUrl, originalName: originalName || 'lorry-receipt', mimetype };
   try {
     const extracted = await aiService.extractLorryReceiptFields({ apiKey, model: config.model, file });
+    // A re-scan after Sales approved the mismatch reason is treated as the corrected
+    // invoice — clear the awaiting-reupload flag so Finished Dispatch unblocks again.
+    if (o?.dispatchInvoiceMismatchAwaitingReupload) {
+      await Order.findByIdAndUpdate(o._id, {
+        dispatchInvoiceMismatchStatus: 'none',
+        dispatchInvoiceMismatchAwaitingReupload: false,
+      });
+    }
     res.status(200).json({ success: true, data: extracted });
   } catch (err) {
     return next(new AppError(`AI extraction failed: ${err.message}`, err.statusCode || 502));
@@ -755,6 +770,40 @@ exports.requestLrMismatchApproval = asyncHandler(async (req, res, next) => {
     title: 'LR Mismatch — Approval Needed',
     message: msg,
   });
+
+  res.status(200).json({ success: true });
+});
+
+// PATCH /api/dispatch/:id/invoice-mismatch-request — general-purpose mismatch flag the
+// dispatcher raises for ANY discrepancy noticed while reviewing the AI-scanned invoice/
+// lorry receipt (replaces the old self-service "Edit Details" toggle). Unlike
+// requestLrMismatchApproval above (dual Sales+Operations, Packages/Destination only),
+// this needs only the order's own assigned sales person to approve — see
+// decideInvoiceMismatch in sales.controller.js — and rings its own dedicated
+// 'dispatch_reason' Alert Configuration sound (see utils/alertConfigQueries.js). Approval
+// flips dispatchInvoiceMismatchAwaitingReupload so the dispatcher can re-upload the
+// corrected invoice; the next scan-lr clears it (see scanLorryReceipt above).
+exports.requestInvoiceMismatchApproval = asyncHandler(async (req, res, next) => {
+  const { reason } = req.body;
+  if (!reason || !String(reason).trim()) return next(new AppError('A reason is required to request approval', 400));
+  const dispatch = await DispatchRecord.findById(req.params.id).populate('orderId', 'orderCode dispatchCode clientName assignedTo');
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  const o = dispatch.orderId;
+  if (!o) return next(new AppError('Order not linked to this dispatch', 404));
+
+  await Order.findByIdAndUpdate(o._id, {
+    dispatchInvoiceMismatchStatus: 'pending',
+    dispatchInvoiceMismatchReason: reason.trim(),
+    dispatchInvoiceMismatchRequestedBy: req.user._id,
+    dispatchInvoiceMismatchRequestedAt: Date.now(),
+    dispatchInvoiceMismatchDecidedBy: null,
+    dispatchInvoiceMismatchDecidedAt: null,
+    dispatchInvoiceMismatchDecisionNote: null,
+    dispatchInvoiceMismatchAwaitingReupload: false,
+  });
+
+  const msg = `Order ${o.orderCode || dispatch.dispatchCode}: the dispatch team flagged a mismatch on the scanned invoice/lorry receipt. Reason given: "${reason.trim()}". Please review and approve or reject.`;
+  await notifyMany([{ userId: o.assignedTo, type: 'dispatch', title: 'Invoice Mismatch — Review Needed', message: msg }]);
 
   res.status(200).json({ success: true });
 });
